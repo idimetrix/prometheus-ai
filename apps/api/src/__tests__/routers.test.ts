@@ -151,17 +151,19 @@ vi.mock("@prometheus/billing/products", () => ({
   },
 }));
 
+const queueMock = {
+  add: vi.fn().mockResolvedValue({ id: "job_mock" }),
+  getJob: vi.fn().mockResolvedValue(null),
+  getWaitingCount: vi.fn().mockResolvedValue(3),
+  getActiveCount: vi.fn().mockResolvedValue(1),
+  getCompletedCount: vi.fn().mockResolvedValue(100),
+  getFailedCount: vi.fn().mockResolvedValue(2),
+  getDelayedCount: vi.fn().mockResolvedValue(0),
+  getWaiting: vi.fn().mockResolvedValue([]),
+};
+
 vi.mock("@prometheus/queue", () => ({
-  agentTaskQueue: {
-    add: vi.fn().mockResolvedValue({ id: "job_mock" }),
-    getJob: vi.fn().mockResolvedValue(null),
-    getWaitingCount: vi.fn().mockResolvedValue(3),
-    getActiveCount: vi.fn().mockResolvedValue(1),
-    getCompletedCount: vi.fn().mockResolvedValue(100),
-    getFailedCount: vi.fn().mockResolvedValue(2),
-    getDelayedCount: vi.fn().mockResolvedValue(0),
-    getWaiting: vi.fn().mockResolvedValue([]),
-  },
+  agentTaskQueue: queueMock,
 }));
 
 vi.mock("@prometheus/logger", () => ({
@@ -198,6 +200,15 @@ beforeEach(() => {
   mockDb.insert.mockReturnValue(insertChain);
   mockDb.update.mockReturnValue(updateChain);
   mockDb.select.mockReturnValue(selectChain);
+  // Re-establish queue mock defaults
+  queueMock.add.mockReset().mockResolvedValue({ id: "job_mock" });
+  queueMock.getJob.mockReset().mockResolvedValue(null);
+  queueMock.getWaitingCount.mockReset().mockResolvedValue(3);
+  queueMock.getActiveCount.mockReset().mockResolvedValue(1);
+  queueMock.getCompletedCount.mockReset().mockResolvedValue(100);
+  queueMock.getFailedCount.mockReset().mockResolvedValue(2);
+  queueMock.getDelayedCount.mockReset().mockResolvedValue(0);
+  queueMock.getWaiting.mockReset().mockResolvedValue([]);
 });
 
 // ═════════════════════════════════════════════════════════════════════════════

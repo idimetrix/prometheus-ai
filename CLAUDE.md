@@ -8,6 +8,7 @@ AI-powered engineering platform with 12 specialist agents.
 - `apps/` - 9 services (web, api, orchestrator, queue-worker, socket-server, mcp-gateway, model-router, project-brain, sandbox-manager)
 - `packages/` - 15 shared packages
 - `infra/` - Docker, k8s manifests, deployment scripts
+- `.claude/skills/` - Architecture, database, API, and deployment skill references
 
 ## Commands
 
@@ -16,8 +17,9 @@ pnpm dev          # Start all services in dev mode
 pnpm build        # Build all packages
 pnpm typecheck    # TypeScript check all packages
 pnpm test         # Run all tests
-pnpm db:push      # Push DB schema changes
-pnpm db:migrate   # Run DB migrations
+pnpm test --filter=@prometheus/api    # Test specific package
+pnpm db:push      # Push DB schema changes (dev)
+pnpm db:migrate   # Run DB migrations (prod)
 ```
 
 ## Dev Setup
@@ -30,14 +32,18 @@ pnpm db:push          # Create database tables
 pnpm dev              # Start development
 ```
 
-## Tech Stack
+## Service URLs (Local Dev)
 
-- **Frontend:** Next.js 16, React 19, Tailwind CSS 4, shadcn/ui, Zustand, tRPC client
-- **Backend:** tRPC v11, Hono, Drizzle ORM, PostgreSQL 16 + pgvector, Redis/Valkey, BullMQ
-- **Auth:** Clerk
-- **Billing:** Stripe
-- **AI:** Multi-provider LLM routing (Ollama, Cerebras, Groq, Gemini, Anthropic, OpenAI)
-- **Infra:** Docker, k3s, KEDA, Traefik, GitHub Actions
+| Service | URL |
+|---------|-----|
+| Web | http://localhost:3000 |
+| API | http://localhost:4000 |
+| Socket Server | http://localhost:4001 |
+| Orchestrator | http://localhost:4002 |
+| Project Brain | http://localhost:4003 |
+| Model Router | http://localhost:4004 |
+| MCP Gateway | http://localhost:4005 |
+| Sandbox Manager | http://localhost:4006 |
 
 ## Key Conventions
 
@@ -46,4 +52,6 @@ pnpm dev              # Start development
 - Use Drizzle ORM for database queries (never raw SQL)
 - Use `@prometheus/logger` for structured logging
 - Use `@prometheus/utils` generateId() for all IDs
-- RLS via org_id on all tenant-scoped queries
+- RLS via org_id on all tenant-scoped queries — see `drizzle-rls-patterns` skill
+- tRPC + Hono patterns — see `trpc-hono-patterns` skill
+- Full architecture map — see `prometheus-stack` skill

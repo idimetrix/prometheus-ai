@@ -1,0 +1,14 @@
+{
+  "hooks": {
+    "Notification": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "notify-send 'Claude Code' 'Needs your attention' --urgency=normal"
+          }
+        ]
+      }
+    ]
+  }
+}
