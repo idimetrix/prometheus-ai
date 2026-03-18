@@ -1,0 +1,28 @@
+{
+  "name": "@prometheus/project-brain",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsup src/index.ts --format esm",
+    "start": "node dist/index.js",
+    "typecheck": "tsc --noEmit",
+    "clean": "rm -rf dist .turbo"
+  },
+  "dependencies": {
+    "hono": "^4.7.0",
+    "@hono/node-server": "^1.14.0",
+    "@prometheus/db": "workspace:*",
+    "@prometheus/ai": "workspace:*",
+    "@prometheus/queue": "workspace:*",
+    "@prometheus/logger": "workspace:*",
+    "@prometheus/types": "workspace:*"
+  },
+  "devDependencies": {
+    "@prometheus/config-typescript": "workspace:*",
+    "tsx": "^4.19.0",
+    "tsup": "^8.4.0",
+    "typescript": "^5.7.0"
+  }
+}

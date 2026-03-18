@@ -1,0 +1,10 @@
+{
+  "name": "@prometheus/config-tailwind",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "main": "index.ts",
+  "dependencies": {
+    "tailwindcss": "^4.0.0"
+  }
+}

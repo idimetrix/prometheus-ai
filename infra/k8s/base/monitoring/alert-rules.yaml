@@ -1,0 +1,85 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: prometheus-alerts
+  namespace: prometheus
+spec:
+  groups:
+    - name: critical-alerts
+      rules:
+        - alert: NodeRAMCritical
+          expr: (1 - node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes) > 0.85
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: "Node RAM usage above 85%"
+
+        - alert: NodeCPUCritical
+          expr: 100 - (avg by(instance) (rate(node_cpu_seconds_total{mode="idle"}[5m])) * 100) > 90
+          for: 3m
+          labels:
+            severity: critical
+          annotations:
+            summary: "Node CPU usage above 90%"
+
+        - alert: AgentQueueDeep
+          expr: bullmq_queue_waiting{queue="agent-tasks"} > 100
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Agent task queue depth exceeds 100"
+
+        - alert: PodOOMKilled
+          expr: kube_pod_container_status_last_terminated_reason{reason="OOMKilled"} > 0
+          labels:
+            severity: critical
+          annotations:
+            summary: "Pod OOM killed"
+
+        - alert: PostgreSQLReplicationLag
+          expr: pg_replication_lag > 30
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "PostgreSQL replication lag above 30 seconds"
+
+        - alert: CertExpiryWarning
+          expr: (cert_expiry_timestamp - time()) / 86400 < 7
+          labels:
+            severity: warning
+          annotations:
+            summary: "TLS certificate expiring within 7 days"
+
+        - alert: DiskUsageHigh
+          expr: (1 - node_filesystem_avail_bytes / node_filesystem_size_bytes) > 0.80
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Disk usage above 80%"
+
+        - alert: APIErrorRateHigh
+          expr: rate(http_requests_total{status=~"5.."}[5m]) / rate(http_requests_total[5m]) > 0.05
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: "API error rate above 5%"
+
+        - alert: AgentFailureRateHigh
+          expr: rate(agent_tasks_failed_total[1h]) / rate(agent_tasks_total[1h]) > 0.20
+          for: 30m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Agent task failure rate above 20%"
+
+        - alert: CreditLedgerImbalance
+          expr: abs(credit_balance_computed - credit_balance_stored) > 0
+          labels:
+            severity: critical
+          annotations:
+            summary: "Credit ledger imbalance detected"

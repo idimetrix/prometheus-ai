@@ -1,0 +1,33 @@
+{
+  "name": "@prometheus/api",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsup src/index.ts --format esm --dts",
+    "start": "node dist/index.js",
+    "typecheck": "tsc --noEmit",
+    "clean": "rm -rf dist .turbo"
+  },
+  "dependencies": {
+    "@hono/node-server": "^1.14.0",
+    "@hono/trpc-server": "^0.3.0",
+    "hono": "^4.7.0",
+    "@trpc/server": "^11.0.0",
+    "superjson": "^2.2.0",
+    "zod": "^3.24.0",
+    "@prometheus/db": "workspace:*",
+    "@prometheus/auth": "workspace:*",
+    "@prometheus/types": "workspace:*",
+    "@prometheus/validators": "workspace:*",
+    "@prometheus/logger": "workspace:*",
+    "@prometheus/queue": "workspace:*"
+  },
+  "devDependencies": {
+    "@prometheus/config-typescript": "workspace:*",
+    "tsx": "^4.19.0",
+    "tsup": "^8.4.0",
+    "typescript": "^5.7.0"
+  }
+}

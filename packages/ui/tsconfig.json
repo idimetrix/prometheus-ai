@@ -1,0 +1,8 @@
+{
+  "extends": "@prometheus/config-typescript/nextjs.json",
+  "compilerOptions": {
+    "rootDir": "./src",
+    "outDir": "./dist"
+  },
+  "include": ["src"]
+}

@@ -1,0 +1,29 @@
+{
+  "name": "@prometheus/sandbox-manager",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsup src/index.ts --format esm",
+    "start": "node dist/index.js",
+    "typecheck": "tsc --noEmit",
+    "clean": "rm -rf dist .turbo"
+  },
+  "dependencies": {
+    "hono": "^4.7.0",
+    "@hono/node-server": "^1.14.0",
+    "dockerode": "^4.0.0",
+    "@prometheus/logger": "workspace:*",
+    "@prometheus/types": "workspace:*",
+    "@prometheus/queue": "workspace:*",
+    "@prometheus/utils": "workspace:*"
+  },
+  "devDependencies": {
+    "@prometheus/config-typescript": "workspace:*",
+    "@types/dockerode": "^3.3.0",
+    "tsx": "^4.19.0",
+    "tsup": "^8.4.0",
+    "typescript": "^5.7.0"
+  }
+}

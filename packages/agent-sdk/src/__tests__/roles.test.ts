@@ -1,0 +1,49 @@
+import { describe, it, expect } from "vitest";
+import { AGENT_ROLES, getAgentConfig } from "../roles";
+
+describe("AGENT_ROLES", () => {
+  it("should have 11 specialist roles", () => {
+    expect(Object.keys(AGENT_ROLES)).toHaveLength(11);
+  });
+
+  it("should have all required roles", () => {
+    const requiredRoles = [
+      "orchestrator", "discovery", "architect", "planner",
+      "frontend_coder", "backend_coder", "integration_coder",
+      "test_engineer", "ci_loop", "security_auditor", "deploy_engineer",
+    ];
+    for (const role of requiredRoles) {
+      expect(AGENT_ROLES).toHaveProperty(role);
+    }
+  });
+
+  it("should have valid configs for each role", () => {
+    for (const [key, config] of Object.entries(AGENT_ROLES)) {
+      expect(config.role).toBeTruthy();
+      expect(config.displayName).toBeTruthy();
+      expect(config.description).toBeTruthy();
+      expect(config.preferredModel).toBeTruthy();
+      expect(typeof config.create).toBe("function");
+    }
+  });
+
+  it("should create agent instances", () => {
+    for (const [key, config] of Object.entries(AGENT_ROLES)) {
+      const agent = config.create();
+      expect(agent).toBeTruthy();
+      expect(agent.getPreferredModel()).toBe(config.preferredModel);
+    }
+  });
+});
+
+describe("getAgentConfig", () => {
+  it("should return config for valid role", () => {
+    const config = getAgentConfig("orchestrator");
+    expect(config).toBeTruthy();
+    expect(config?.displayName).toBe("Orchestrator");
+  });
+
+  it("should return undefined for invalid role", () => {
+    expect(getAgentConfig("nonexistent")).toBeUndefined();
+  });
+});

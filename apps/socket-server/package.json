@@ -1,0 +1,27 @@
+{
+  "name": "@prometheus/socket-server",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsup src/index.ts --format esm",
+    "start": "node dist/index.js",
+    "typecheck": "tsc --noEmit",
+    "clean": "rm -rf dist .turbo"
+  },
+  "dependencies": {
+    "socket.io": "^4.8.0",
+    "@socket.io/redis-adapter": "^8.3.0",
+    "@prometheus/auth": "workspace:*",
+    "@prometheus/queue": "workspace:*",
+    "@prometheus/logger": "workspace:*",
+    "@prometheus/types": "workspace:*"
+  },
+  "devDependencies": {
+    "@prometheus/config-typescript": "workspace:*",
+    "tsx": "^4.19.0",
+    "tsup": "^8.4.0",
+    "typescript": "^5.7.0"
+  }
+}

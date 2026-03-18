@@ -1,0 +1,39 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: socket-server
+  namespace: prometheus
+  labels:
+    app: socket-server
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: socket-server
+  template:
+    metadata:
+      labels:
+        app: socket-server
+    spec:
+      containers:
+        - name: socket-server
+          image: prometheus/socket-server:latest
+          ports:
+            - containerPort: 4001
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi
+          envFrom:
+            - configMapRef:
+                name: app-config
+            - secretRef:
+                name: app-secrets
+          readinessProbe:
+            tcpSocket:
+              port: 4001
+            initialDelaySeconds: 5
+            periodSeconds: 10

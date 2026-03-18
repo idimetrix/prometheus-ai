@@ -1,0 +1,16 @@
+{
+  "name": "@prometheus/types",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "clean": "rm -rf dist .turbo"
+  },
+  "devDependencies": {
+    "@prometheus/config-typescript": "workspace:*",
+    "typescript": "^5.7.0"
+  }
+}

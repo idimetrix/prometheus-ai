@@ -1,0 +1,41 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: queue-worker
+  namespace: prometheus
+  labels:
+    app: queue-worker
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: queue-worker
+  template:
+    metadata:
+      labels:
+        app: queue-worker
+    spec:
+      containers:
+        - name: queue-worker
+          image: prometheus/queue-worker:latest
+          resources:
+            requests:
+              cpu: 500m
+              memory: 1.5Gi
+            limits:
+              cpu: "1"
+              memory: 2Gi
+          envFrom:
+            - configMapRef:
+                name: app-config
+            - secretRef:
+                name: app-secrets
+          readinessProbe:
+            exec:
+              command: ["node", "-e", "process.exit(0)"]
+            periodSeconds: 30
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
