@@ -62,9 +62,7 @@ export const options = {
 };
 
 // ─── Config ──────────────────────────────────────────────────────
-// biome-ignore lint/correctness/noUndeclaredVariables: k6 global
 const BASE_URL = __ENV.API_URL || "http://localhost:4000";
-// biome-ignore lint/correctness/noUndeclaredVariables: k6 global
 const AUTH_TOKEN = __ENV.AUTH_TOKEN || "";
 
 const headers = {
@@ -133,7 +131,6 @@ export default function () {
     if (Math.random() < 0.1) {
       group("Submit Task", () => {
         const payload = JSON.stringify({
-          // biome-ignore lint/correctness/noUndeclaredVariables: k6 globals
           sessionId: `load-test-${__VU}-${__ITER}`,
           title: "Load test task",
           mode: "ask",

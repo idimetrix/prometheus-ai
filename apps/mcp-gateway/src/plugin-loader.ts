@@ -108,18 +108,17 @@ export class MCPPluginLoader {
   ): Promise<void> {
     const registry = this.registry;
     const lifecycle: PluginLifecycle = {
-      // biome-ignore lint/suspicious/useAwait: interface requires Promise return
-      async activate(_context: PluginContext): Promise<void> {
+      activate(_context: PluginContext): Promise<void> {
         registerFn(registry);
+        return Promise.resolve();
       },
-      // biome-ignore lint/suspicious/useAwait: interface requires Promise return
-      async deactivate(_context: PluginContext): Promise<void> {
+      deactivate(_context: PluginContext): Promise<void> {
         registry.unregisterAdapter(manifest.id);
+        return Promise.resolve();
       },
-      // biome-ignore lint/suspicious/useAwait: interface requires Promise return
-      async healthCheck(_context: PluginContext): Promise<boolean> {
+      healthCheck(_context: PluginContext): Promise<boolean> {
         const health = registry.getAdapterHealth(manifest.id);
-        return health?.healthy ?? true;
+        return Promise.resolve(health?.healthy ?? true);
       },
     };
 

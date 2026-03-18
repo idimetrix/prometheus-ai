@@ -49,7 +49,6 @@ export class PlannerProtocol {
     };
   }
 
-  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: complex but well-structured logic
   createFromBlueprint(blueprint: Blueprint): SprintPlan {
     const workstreams = blueprint.parallelWorkstreams;
 

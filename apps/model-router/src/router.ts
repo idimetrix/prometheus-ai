@@ -506,7 +506,6 @@ export class ModelRouterService {
 
       const self = this;
 
-      // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: complex but well-structured logic
       async function* iterate(): AsyncIterable<StreamChunk> {
         try {
           for await (const chunk of stream) {

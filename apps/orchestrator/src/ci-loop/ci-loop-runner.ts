@@ -39,7 +39,6 @@ export class CILoopRunner {
     this.maxIterations = maxIterations;
   }
 
-  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: complex but well-structured logic
   async run(
     agentLoop: AgentLoop,
     testCommand = "pnpm test"

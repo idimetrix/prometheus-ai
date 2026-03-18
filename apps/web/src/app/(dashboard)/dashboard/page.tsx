@@ -62,7 +62,6 @@ function ProjectCardSkeleton() {
 
 /* ─── Main Dashboard Page ──────────────────────────────────────────── */
 
-// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: complex but well-structured logic
 export default function DashboardPage() {
   const { creditBalance, activeAgents, setStats } = useDashboardStore();
 

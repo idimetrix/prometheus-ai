@@ -120,8 +120,7 @@ export const agentMetaTools: AgentToolDefinition[] = [
     zodSchema: askUserSchema,
     permissionLevel: "read",
     creditCost: 0,
-    // biome-ignore lint/suspicious/useAwait: interface requires Promise return
-    execute: async (input, ctx) => {
+    execute: (input, ctx) => {
       const parsed = askUserSchema.parse(input);
 
       // This tool works by publishing an event to the session channel.
@@ -129,7 +128,7 @@ export const agentMetaTools: AgentToolDefinition[] = [
       // When the user responds via the web UI, the response is injected back.
       // The actual blocking is handled by the BaseAgent.run() loop.
       // Returning a special marker output that the run loop recognizes.
-      return {
+      return Promise.resolve({
         success: true,
         output: "__ASK_USER_PENDING__",
         metadata: {
@@ -139,7 +138,7 @@ export const agentMetaTools: AgentToolDefinition[] = [
           context: parsed.context ?? "",
           sessionId: ctx.sessionId,
         },
-      };
+      });
     },
   },
   {
@@ -186,13 +185,12 @@ export const agentMetaTools: AgentToolDefinition[] = [
     zodSchema: spawnAgentSchema,
     permissionLevel: "admin",
     creditCost: 0,
-    // biome-ignore lint/suspicious/useAwait: interface requires Promise return
-    execute: async (input, ctx) => {
+    execute: (input, ctx) => {
       const parsed = spawnAgentSchema.parse(input);
 
       // Signal to the orchestrator to spawn a new agent.
       // The run loop publishes this as a fleet event.
-      return {
+      return Promise.resolve({
         success: true,
         output: "__SPAWN_AGENT__",
         metadata: {
@@ -204,7 +202,7 @@ export const agentMetaTools: AgentToolDefinition[] = [
           parentSessionId: ctx.sessionId,
           projectId: ctx.projectId,
         },
-      };
+      });
     },
   },
   {
@@ -225,11 +223,10 @@ export const agentMetaTools: AgentToolDefinition[] = [
     zodSchema: killAgentSchema,
     permissionLevel: "admin",
     creditCost: 0,
-    // biome-ignore lint/suspicious/useAwait: interface requires Promise return
-    execute: async (input, ctx) => {
+    execute: (input, ctx) => {
       const parsed = killAgentSchema.parse(input);
 
-      return {
+      return Promise.resolve({
         success: true,
         output: "__KILL_AGENT__",
         metadata: {
@@ -238,7 +235,7 @@ export const agentMetaTools: AgentToolDefinition[] = [
           reason: parsed.reason,
           sessionId: ctx.sessionId,
         },
-      };
+      });
     },
   },
   {

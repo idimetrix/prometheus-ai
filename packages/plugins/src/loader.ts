@@ -18,22 +18,21 @@ const pluginStorage = new Map<string, Map<string, string>>();
 
 function getPluginStorage(pluginId: string) {
   return {
-    // biome-ignore lint/suspicious/useAwait: interface requires Promise return
-    async get(key: string): Promise<string | null> {
-      return pluginStorage.get(pluginId)?.get(key) ?? null;
+    get(key: string): Promise<string | null> {
+      return Promise.resolve(pluginStorage.get(pluginId)?.get(key) ?? null);
     },
-    // biome-ignore lint/suspicious/useAwait: interface requires Promise return
-    async set(key: string, value: string): Promise<void> {
+    set(key: string, value: string): Promise<void> {
       let store = pluginStorage.get(pluginId);
       if (!store) {
         store = new Map();
         pluginStorage.set(pluginId, store);
       }
       store.set(key, value);
+      return Promise.resolve();
     },
-    // biome-ignore lint/suspicious/useAwait: interface requires Promise return
-    async delete(key: string): Promise<void> {
+    delete(key: string): Promise<void> {
       pluginStorage.get(pluginId)?.delete(key);
+      return Promise.resolve();
     },
   };
 }

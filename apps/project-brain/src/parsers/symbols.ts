@@ -189,7 +189,6 @@ export class SymbolStore {
   /**
    * Search for symbols by name across all files in a project.
    */
-  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: complex but well-structured logic
   async searchSymbol(
     projectId: string,
     symbolName: string

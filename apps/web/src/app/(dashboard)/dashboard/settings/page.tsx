@@ -45,7 +45,6 @@ const MODEL_PROVIDERS = [
   },
 ];
 
-// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: inherent domain complexity
 export default function SettingsPage() {
   const [activeTab, setActiveTab] = useState<TabId>("general");
   const [newKeyName, setNewKeyName] = useState("");

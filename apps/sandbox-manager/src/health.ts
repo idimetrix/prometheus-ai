@@ -44,7 +44,6 @@ export function createHealthChecker(
   containerManager: ContainerManager,
   pool: SandboxPool
 ) {
-  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: complex but well-structured logic
   return async (): Promise<HealthStatus> => {
     const poolStats = pool.getStats();
 

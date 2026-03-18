@@ -456,7 +456,6 @@ export async function routeAndComplete(
  * Route a request and execute it with streaming.
  * Automatically handles fallback on failure.
  */
-// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: complex but well-structured logic
 export async function routeAndStream(
   request: RouteRequest
 ): Promise<{ result: StreamCompletionResult; route: ResolvedRoute }> {

@@ -21,7 +21,6 @@ interface ActionEntry {
   timestamp: string;
 }
 
-// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: complex but well-structured logic
 function classifyEvent(event: SessionEvent): ActionEntry {
   const data = event.data ?? {};
   let phase: StepPhase = "unknown";

@@ -325,7 +325,6 @@ export abstract class BaseAgent {
   // Main execution loop
   // ---------------------------------------------------------------------------
 
-  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: complex but well-structured logic
   async run(task: string): Promise<AgentExecutionResult> {
     if (!this.context) {
       throw new Error("Agent not initialized. Call initialize() first.");

@@ -33,7 +33,6 @@ export function useSSEStream(sessionId: string | null) {
   });
 
   const processEvent = useCallback(
-    // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: inherent domain complexity
     function processEvent(type: string, data: Record<string, unknown>) {
       switch (type) {
         case "agent_output":

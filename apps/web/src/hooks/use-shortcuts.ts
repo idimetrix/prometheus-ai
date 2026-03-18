@@ -91,7 +91,6 @@ export function useShortcuts(additionalShortcuts: ShortcutAction[] = []) {
     allShortcuts.current = [...DEFAULT_SHORTCUTS, ...additionalShortcuts];
   }, [additionalShortcuts]);
 
-  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: complex but well-structured logic
   const handleKeyDown = useCallback((e: KeyboardEvent) => {
     for (const shortcut of allShortcuts.current) {
       const metaMatch = shortcut.meta ? e.metaKey || e.ctrlKey : true;

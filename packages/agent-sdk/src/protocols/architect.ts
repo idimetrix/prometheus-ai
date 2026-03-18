@@ -196,7 +196,6 @@ export class ArchitectProtocol {
     return workstreams;
   }
 
-  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: complex but well-structured logic
   generateBlueprintMarkdown(): string {
     const bp = this.blueprint;
     const sections: string[] = [];

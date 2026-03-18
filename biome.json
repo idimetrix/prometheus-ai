@@ -34,61 +34,34 @@
       "react": "recommended"
     },
     "rules": {
-      "performance": {
-        "useTopLevelRegex": "warn",
-        "noBarrelFile": "off",
-        "noNamespaceImport": "warn"
-      },
-      "a11y": {
-        "noSvgWithoutTitle": "warn",
-        "useButtonType": "warn",
-        "noLabelWithoutControl": "warn",
-        "noStaticElementInteractions": "warn",
-        "noNoninteractiveElementInteractions": "warn",
-        "useKeyWithClickEvents": "warn"
-      },
       "suspicious": {
         "noExplicitAny": "warn",
-        "useAwait": "warn",
         "noArrayIndexKey": "off",
-        "noEmptyBlockStatements": "warn",
-        "noAssignInExpressions": "warn",
-        "noEvolvingTypes": "warn",
-        "noImplicitAnyLet": "warn",
-        "noAlert": "warn",
-        "noBitwiseOperators": "warn",
-        "noControlCharactersInRegex": "warn",
-        "useIterableCallbackReturn": "warn",
-        "noNonNullAssertedOptionalChain": "warn",
         "noUnknownAtRules": "off"
       },
-      "correctness": {
-        "noUnusedVariables": "warn",
-        "noUndeclaredVariables": "warn",
-        "noUnusedFunctionParameters": "warn",
-        "noInvalidUseBeforeDeclaration": "warn",
-        "useImageSize": "warn",
-        "useExhaustiveDependencies": "warn"
-      },
-      "security": {
-        "noDangerouslySetInnerHtml": "warn"
+      "performance": {
+        "noBarrelFile": "off"
       },
       "style": {
-        "noNonNullAssertion": "warn",
-        "noNestedTernary": "warn",
-        "noParameterProperties": "off",
-        "noExportedImports": "warn",
-        "useForOf": "warn",
-        "useDefaultSwitchClause": "warn",
-        "useCollapsedIf": "warn",
-        "useFilenamingConvention": "warn"
+        "noParameterProperties": "off"
       },
       "complexity": {
-        "noExcessiveCognitiveComplexity": "warn",
-        "noForEach": "warn"
+        "noExcessiveCognitiveComplexity": "off"
       }
     }
   },
+  "overrides": [
+    {
+      "includes": ["infra/scripts/load-tests/**"],
+      "linter": {
+        "rules": {
+          "correctness": {
+            "noUndeclaredVariables": "off"
+          }
+        }
+      }
+    }
+  ],
   "assist": {
     "actions": {
       "source": {

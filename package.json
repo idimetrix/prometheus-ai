@@ -47,7 +47,8 @@
       "@clerk/shared",
       "cpu-features",
       "protobufjs",
-      "ssh2"
+      "ssh2",
+      "turbo"
     ],
     "overrides": {
       "ioredis": "5.9.3"

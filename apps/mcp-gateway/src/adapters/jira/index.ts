@@ -421,7 +421,6 @@ export function registerJiraAdapter(registry: ToolRegistry): void {
       },
       requiresAuth: true,
     },
-    // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: complex but well-structured logic
     async (input, credentials) => {
       const creds = extractJiraCredentials(credentials);
       if ("success" in creds) {

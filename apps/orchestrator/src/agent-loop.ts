@@ -301,7 +301,6 @@ export class AgentLoop {
    * Core agent loop: send messages to LLM, parse tool calls, execute
    * them, and repeat until the agent completes or hits the iteration limit.
    */
-  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: complex but well-structured logic
   private async runAgentLoop(
     agent: BaseAgent,
     _context: AgentContext,

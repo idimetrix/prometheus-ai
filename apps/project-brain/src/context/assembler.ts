@@ -270,8 +270,6 @@ export class ContextAssembler {
 
     return parts.join("\n");
   }
-
-  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: complex but well-structured logic
   private buildGraphContext(
     graphResults: GraphQueryResult,
     dependencies: GraphNode[],

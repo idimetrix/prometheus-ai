@@ -64,7 +64,6 @@ interface DiffLine {
 
 const _HUNK_HEADER_RE = /@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/;
 
-// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: diff parsing requires branching logic
 function parseDiffLines(diff: string): DiffLine[] {
   const raw = diff.split("\n");
   const result: DiffLine[] = [];

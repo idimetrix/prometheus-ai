@@ -68,7 +68,6 @@ export interface CustomAgentSpec {
  * This is a lightweight parser that handles the specific YAML subset
  * used by agent specs (no need for a full YAML library).
  */
-// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: complex but well-structured logic
 export function parseAgentSpec(yamlContent: string): CustomAgentSpec {
   const lines = yamlContent.split("\n");
   const result: Record<string, unknown> = {};

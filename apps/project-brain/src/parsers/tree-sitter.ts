@@ -70,7 +70,6 @@ export function parseTypeScript(
   return symbols;
 }
 
-// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: complex but well-structured logic
 function visitNode(
   node: ts.Node,
   symbols: SymbolTable,
@@ -252,7 +251,6 @@ function extractArrowFunction(
     endLine: getEndLineNumber(decl, sourceFile),
   };
 }
-// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: inherent domain complexity
 function extractClass(
   node: ts.ClassDeclaration,
   sourceFile: ts.SourceFile

@@ -127,7 +127,6 @@ Rules:
     return "Complete sprint tasks";
   }
 
-  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: complex but well-structured logic
   private extractTasks(output: string): SprintPlan["tasks"] {
     const tasks: SprintPlan["tasks"] = [];
     TASK_HEADER_RE.lastIndex = 0;

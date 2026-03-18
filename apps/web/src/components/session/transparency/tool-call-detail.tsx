@@ -13,7 +13,6 @@ interface ToolCall {
   toolName: string;
 }
 
-// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: complex but well-structured logic
 function extractToolCalls(
   events: Array<{
     id: string;

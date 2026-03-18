@@ -252,7 +252,6 @@ export class KnowledgeGraphLayer {
    * This provides rich context: "What files/functions/classes are related
    * to this file within 2-3 hops?"
    */
-  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: complex but well-structured logic
   async traverseFromNode(
     projectId: string,
     startNodeId: string,
@@ -831,7 +830,6 @@ export class KnowledgeGraphLayer {
   /**
    * Extract method names from a class body starting at a given index.
    */
-  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: complex but well-structured logic
   private extractClassMethods(content: string, startIdx: number): string[] {
     const methods: string[] = [];
     let braceDepth = 0;
@@ -909,7 +907,6 @@ export class KnowledgeGraphLayer {
    * Extract function-to-function call relationships within a file.
    * For each function, scan its body for calls to other known functions.
    */
-  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: complex but well-structured logic
   private extractFunctionCalls(
     content: string,
     knownFunctionNames: string[]

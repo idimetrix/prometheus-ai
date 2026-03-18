@@ -583,7 +583,6 @@ class DockerClient {
     }
   }
 
-  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: complex but well-structured logic
   async createContainer(
     config: Record<string, unknown>
   ): Promise<{ Id: string }> {

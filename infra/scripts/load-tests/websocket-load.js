@@ -40,13 +40,10 @@ export const options = {
   },
 };
 
-// biome-ignore lint/correctness/noUndeclaredVariables: k6 global
 const WS_URL = __ENV.WS_URL || "ws://localhost:4001";
-// biome-ignore lint/correctness/noUndeclaredVariables: k6 global
 const AUTH_TOKEN = __ENV.AUTH_TOKEN || "";
 
 export default function () {
-  // biome-ignore lint/correctness/noUndeclaredVariables: k6 global
   const sessionId = `load-test-session-${__VU % 5}`; // 5 shared sessions
   const url = `${WS_URL}/sessions`;
   const params = AUTH_TOKEN

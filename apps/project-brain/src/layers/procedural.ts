@@ -286,7 +286,6 @@ export class ProceduralLayer {
    * Find procedures that match a task description by similarity.
    * Uses keyword matching against stored task patterns and procedure names/descriptions.
    */
-  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: complex but well-structured logic
   async findRelevantProcedures(
     projectId: string,
     taskDescription: string,

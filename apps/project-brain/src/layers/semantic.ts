@@ -349,7 +349,6 @@ export class SemanticLayer {
    * Split code by top-level declarations (functions, classes, exports).
    * Each chunk is at most MAX_CHUNK_CHARS characters.
    */
-  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: complex but well-structured logic
   private chunkByDeclarations(content: string): string[] {
     const lines = content.split("\n");
     const chunks: string[] = [];

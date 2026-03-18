@@ -52,7 +52,6 @@ export class FailureAnalyzer {
    * Analyze test output and return structured failure analyses.
    * Deduplicates by test name to avoid re-analyzing the same failure.
    */
-  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: complex but well-structured logic
   analyze(testOutput: string): FailureAnalysis[] {
     const failures: FailureAnalysis[] = [];
     const seen = new Set<string>();
