@@ -1,8 +1,9 @@
 import { serve } from "@hono/node-server";
 import { trpcServer } from "@hono/trpc-server";
 import type { AuthContext } from "@prometheus/auth";
-import { db } from "@prometheus/db";
+import { db, modelUsageLogs } from "@prometheus/db";
 import { createLogger } from "@prometheus/logger";
+import { generateId } from "@prometheus/utils";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import {
@@ -132,6 +133,34 @@ app.route("/api/sse", sseApp);
 // ---------------------------------------------------------------------------
 app.route("/webhooks/stripe", stripeWebhookApp);
 app.route("/webhooks/clerk", clerkWebhookApp);
+
+// ---------------------------------------------------------------------------
+// Internal: model usage logging (called by model-router, fire-and-forget)
+// ---------------------------------------------------------------------------
+app.post("/internal/model-usage", async (c) => {
+  try {
+    const body = await c.req.json();
+    if (!(body.orgId && body.modelKey && body.provider && body.slot)) {
+      return c.json({ error: "Missing required fields" }, 400);
+    }
+    await db.insert(modelUsageLogs).values({
+      id: generateId("mlog"),
+      orgId: body.orgId,
+      sessionId: body.sessionId ?? null,
+      modelKey: body.modelKey,
+      provider: body.provider,
+      slot: body.slot,
+      promptTokens: body.promptTokens ?? 0,
+      completionTokens: body.completionTokens ?? 0,
+      totalTokens: body.totalTokens ?? 0,
+      costUsd: body.costUsd ?? 0,
+    });
+    return c.json({ ok: true }, 201);
+  } catch (err) {
+    logger.error({ err }, "Failed to log model usage");
+    return c.json({ error: "Internal error" }, 500);
+  }
+});
 
 // ---------------------------------------------------------------------------
 // tRPC — with API key auth context injection

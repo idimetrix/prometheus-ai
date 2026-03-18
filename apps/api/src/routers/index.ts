@@ -6,6 +6,7 @@ import { brainRouter } from "./brain";
 import { fleetRouter } from "./fleet";
 import { healthRouter } from "./health";
 import { integrationsRouter } from "./integrations";
+import { pluginsRouter } from "./plugins";
 import { projectsRouter } from "./projects";
 import { queueRouter } from "./queue";
 import { sessionsRouter } from "./sessions";
@@ -27,6 +28,7 @@ export const appRouter = router({
   user: userRouter,
   integrations: integrationsRouter,
   apiKeys: apiKeysRouter,
+  plugins: pluginsRouter,
 });
 
 export type AppRouter = typeof appRouter;

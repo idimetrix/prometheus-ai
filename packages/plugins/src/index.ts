@@ -1,7 +1,12 @@
 export { PluginManager } from "./core";
 export { PluginLoader } from "./loader";
+export type {
+  PermissionScope,
+  PluginPermission,
+  SandboxConfig,
+} from "./sandbox";
+export { PluginSandbox } from "./sandbox";
 export { DATA_PIPELINE_SKILL_PACK } from "./skill-packs/data-pipeline";
-
 // Skill packs
 export { ECOMMERCE_SKILL_PACK } from "./skill-packs/ecommerce";
 export { MOBILE_SKILL_PACK } from "./skill-packs/mobile";

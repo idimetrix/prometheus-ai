@@ -1,5 +1,6 @@
 import { createLogger } from "@prometheus/logger";
 import type { AgentLoop } from "../agent-loop";
+import { MixtureOfAgents } from "../moa/parallel-generator";
 
 const logger = createLogger("orchestrator:architecture");
 
@@ -41,17 +42,36 @@ export class ArchitecturePhase {
   async execute(
     agentLoop: AgentLoop,
     srs: string,
-    preset?: string
+    preset?: string,
+    useMoA = false
   ): Promise<ArchitectureResult> {
-    logger.info({ preset }, "Starting Architecture phase");
+    logger.info({ preset, useMoA }, "Starting Architecture phase");
 
-    const result = await agentLoop.executeTask(
-      this.buildArchitectPrompt(srs, preset),
-      "architect"
-    );
+    let output: string;
+
+    if (useMoA) {
+      const moa = new MixtureOfAgents();
+      const moaResult = await moa.generate(
+        this.buildArchitectPrompt(srs, preset)
+      );
+      output = moaResult.synthesized;
+      logger.info(
+        {
+          models: moaResult.responses.length,
+          selectedModel: moaResult.selectedModel,
+        },
+        "MoA architecture generation complete"
+      );
+    } else {
+      const result = await agentLoop.executeTask(
+        this.buildArchitectPrompt(srs, preset),
+        "architect"
+      );
+      output = result.output;
+    }
 
     // Parse the blueprint output into structured sections
-    const parsed = this.parseBlueprint(result.output);
+    const parsed = this.parseBlueprint(output);
 
     logger.info(
       {

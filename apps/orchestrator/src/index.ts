@@ -298,6 +298,12 @@ export {
   type BlueprintViolation as OrcBlueprintViolation,
 } from "./blueprint-enforcer";
 export { CheckpointManager } from "./checkpoint";
+// Phase 7: CI-Loop enhancements
+export { FiveWhyDebugger } from "./ci-loop/five-why-debugger";
+export { FuzzTesting } from "./ci-loop/fuzz-testing";
+export { LivingRequirementsTracker } from "./ci-loop/living-requirements";
+export { PropertyTesting } from "./ci-loop/property-testing";
+export { SystemicAnalyzer } from "./ci-loop/systemic-analyzer";
 // Phase 9 exports
 export {
   type ConfidenceResult,
@@ -305,8 +311,31 @@ export {
   type IterationSignals,
 } from "./confidence";
 export { ContextManager } from "./context-manager";
+// Phase 7: Session continuity
+export { SessionMemory } from "./continuity/session-memory";
 export { CreditTracker } from "./credit-tracker";
+// Phase 2: Decision logging
+export { DecisionLogger } from "./decision-logger";
 export { FleetManager } from "./fleet-manager";
+// Phase 7: Guardian
+export { BusinessLogicGuardian } from "./guardian/business-logic-guardian";
+export { MixtureOfAgents } from "./moa/parallel-generator";
+// Phase 7: MoA
+export { MoAVoting } from "./moa/voting";
+// Phase 2: Mode handlers
+export { getModeHandler } from "./modes";
+export type { ModeHandler, ModeHandlerParams, ModeResult } from "./modes/types";
+// Phase 2: Patterns
+export { AmbiguityResolver } from "./patterns/ambiguity-resolver";
+export { GeneratorEvaluator } from "./patterns/generator-evaluator";
+export { SpecFirst } from "./patterns/spec-first";
+export { AuditPhase } from "./phases/audit";
+export { IntegrationPhase } from "./phases/integration";
+// Phase 7: Pipeline phases
+export { PhaseGate } from "./phases/phase-gate";
+
+// Phase 7: Planning
+export { SeniorPlanner } from "./planning/senior-planner";
 export { SessionManager } from "./session-manager";
 export { TakeoverManager } from "./takeover";
 export { TaskRouter } from "./task-router";

@@ -15,7 +15,7 @@ import {
 } from "@prometheus/db";
 import { createLogger } from "@prometheus/logger";
 import { TRPCError } from "@trpc/server";
-import { and, desc, eq, gte, lt, sql } from "drizzle-orm";
+import { and, desc, eq, gte, lt, type SQL, sql } from "drizzle-orm";
 import { z } from "zod";
 import { protectedProcedure, router } from "../trpc";
 
@@ -491,6 +491,172 @@ export const billingRouter = router({
         taskCount: Number(row?.count ?? 0),
         creditsUsed: Number(creditData?.consumed ?? 0),
         byModel: modelMap,
+      };
+    }),
+
+  // ---------------------------------------------------------------------------
+  // Checkout session (with billing period and custom URLs)
+  // ---------------------------------------------------------------------------
+  createCheckoutSession: protectedProcedure
+    .input(
+      z.object({
+        planTier: z.enum(["starter", "pro", "team", "studio"]),
+        billingPeriod: z.enum(["monthly", "annual"]).default("monthly"),
+        successUrl: z.string().url(),
+        cancelUrl: z.string().url(),
+      })
+    )
+    .mutation(async ({ input, ctx }) => {
+      const plan = PRICING_TIERS[input.planTier];
+      if (!plan?.stripePriceId) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "Plan not available for self-service checkout",
+        });
+      }
+
+      const org = await ctx.db.query.organizations.findFirst({
+        where: eq(organizations.id, ctx.orgId),
+        columns: { stripeCustomerId: true },
+      });
+
+      if (!org?.stripeCustomerId) {
+        throw new TRPCError({
+          code: "PRECONDITION_FAILED",
+          message: "Stripe customer not configured. Please contact support.",
+        });
+      }
+
+      const checkoutUrl = await stripe.createCheckoutSession({
+        customerId: org.stripeCustomerId,
+        priceId: plan.stripePriceId,
+        successUrl: input.successUrl,
+        cancelUrl: input.cancelUrl,
+        mode: "subscription",
+        metadata: {
+          orgId: ctx.orgId,
+          planTier: input.planTier,
+          billingPeriod: input.billingPeriod,
+        },
+      });
+
+      logger.info(
+        {
+          orgId: ctx.orgId,
+          planTier: input.planTier,
+          billingPeriod: input.billingPeriod,
+        },
+        "Checkout session created"
+      );
+      return { url: checkoutUrl };
+    }),
+
+  // ---------------------------------------------------------------------------
+  // Current plan (convenience endpoint)
+  // ---------------------------------------------------------------------------
+  getCurrentPlan: protectedProcedure.query(async ({ ctx }) => {
+    const org = await ctx.db.query.organizations.findFirst({
+      where: eq(organizations.id, ctx.orgId),
+      columns: { planTier: true },
+    });
+
+    const tier = org?.planTier ?? "hobby";
+    const plan = PRICING_TIERS[tier];
+
+    const sub = await ctx.db.query.subscriptions.findFirst({
+      where: and(
+        eq(subscriptions.orgId, ctx.orgId),
+        eq(subscriptions.status, "active")
+      ),
+    });
+
+    const balance = await ctx.db.query.creditBalances.findFirst({
+      where: eq(creditBalances.orgId, ctx.orgId),
+    });
+
+    // Credits consumed this period
+    const periodStart =
+      sub?.currentPeriodStart ?? new Date(Date.now() - 30 * 86_400_000);
+    const [creditData] = await ctx.db
+      .select({
+        consumed: sql<number>`COALESCE(SUM(ABS(${creditTransactions.amount})), 0)`,
+      })
+      .from(creditTransactions)
+      .where(
+        and(
+          eq(creditTransactions.orgId, ctx.orgId),
+          eq(creditTransactions.type, "consumption"),
+          gte(creditTransactions.createdAt, periodStart)
+        )
+      );
+
+    const creditsUsed = Number(creditData?.consumed ?? 0);
+    const _creditsTotal = plan?.creditsIncluded ?? 50;
+
+    return {
+      tier,
+      status: sub?.status ?? (tier === "hobby" ? "active" : "incomplete"),
+      currentPeriodEnd:
+        sub?.currentPeriodEnd ?? new Date(Date.now() + 30 * 86_400_000),
+      creditsRemaining: Math.max(
+        0,
+        (balance?.balance ?? 0) - (balance?.reserved ?? 0)
+      ),
+      creditsUsed,
+    };
+  }),
+
+  // ---------------------------------------------------------------------------
+  // Usage history (grouped by day/week/month)
+  // ---------------------------------------------------------------------------
+  getUsageHistory: protectedProcedure
+    .input(
+      z.object({
+        startDate: z.string().optional(),
+        endDate: z.string().optional(),
+        groupBy: z.enum(["day", "week", "month"]).default("day"),
+      })
+    )
+    .query(async ({ input, ctx }) => {
+      const start = input.startDate
+        ? new Date(input.startDate)
+        : new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+      const end = input.endDate ? new Date(input.endDate) : new Date();
+
+      let truncFn: SQL;
+      if (input.groupBy === "day") {
+        truncFn = sql`date_trunc('day', ${creditTransactions.createdAt})`;
+      } else if (input.groupBy === "week") {
+        truncFn = sql`date_trunc('week', ${creditTransactions.createdAt})`;
+      } else {
+        truncFn = sql`date_trunc('month', ${creditTransactions.createdAt})`;
+      }
+
+      const usage = await ctx.db
+        .select({
+          period: truncFn.as("period"),
+          totalCredits: sql<number>`COALESCE(SUM(ABS(${creditTransactions.amount})), 0)`,
+          count: sql<number>`COUNT(*)`,
+        })
+        .from(creditTransactions)
+        .where(
+          and(
+            eq(creditTransactions.orgId, ctx.orgId),
+            eq(creditTransactions.type, "consumption"),
+            gte(creditTransactions.createdAt, start),
+            lt(creditTransactions.createdAt, end)
+          )
+        )
+        .groupBy(truncFn)
+        .orderBy(truncFn);
+
+      return {
+        usage: usage.map((row) => ({
+          period: String(row.period),
+          credits: Number(row.totalCredits),
+          transactions: Number(row.count),
+        })),
+        period: input.groupBy,
       };
     }),
 

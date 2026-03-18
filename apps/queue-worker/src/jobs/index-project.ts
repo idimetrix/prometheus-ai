@@ -97,6 +97,25 @@ export async function processIndexProject(
     }
   }
 
+  // Extract conventions from indexed files
+  try {
+    const conventionResponse = await fetch(`${BRAIN_URL}/conventions/extract`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        projectId,
+        files: filePaths.slice(0, 50), // Sample first 50 files for conventions
+      }),
+      signal: AbortSignal.timeout(30_000),
+    });
+
+    if (conventionResponse.ok) {
+      logger.info({ projectId }, "Conventions extracted from indexed files");
+    }
+  } catch (err) {
+    logger.warn({ projectId, err }, "Convention extraction failed, continuing");
+  }
+
   // Publish indexing progress to Redis for real-time UI updates
   try {
     await publisher.publishFleetEvent(orgId, {

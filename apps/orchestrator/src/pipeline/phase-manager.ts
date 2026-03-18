@@ -1,6 +1,8 @@
 import { createLogger } from "@prometheus/logger";
 import type { AgentLoop } from "../agent-loop";
 import { type CILoopResult, CILoopRunner } from "../ci-loop/ci-loop-runner";
+import { FleetManager } from "../fleet-manager";
+import type { SchedulableTask } from "../parallel/scheduler";
 import {
   ArchitecturePhase,
   type ArchitectureResult,
@@ -37,8 +39,14 @@ export class PhaseManager {
   private readonly architecture = new ArchitecturePhase();
   private readonly planning = new PlanningPhase();
   private readonly ciLoop = new CILoopRunner();
+  private readonly orgId: string;
+  private readonly userId: string;
+  private readonly planTier: string;
 
-  constructor() {
+  constructor(params: { orgId: string; userId: string; planTier: string }) {
+    this.orgId = params.orgId;
+    this.userId = params.userId;
+    this.planTier = params.planTier;
     this.state = {
       currentPhase: "discovery",
       completedPhases: [],
@@ -99,8 +107,37 @@ export class PhaseManager {
       // Phase 5: Parallel Build
       this.state.currentPhase = "parallel_build";
       logger.info("Phase 5: Parallel Build");
-      for (const task of plan.tasks) {
-        await agentLoop.executeTask(task.description, task.agentRole);
+
+      const schedulableTasks: SchedulableTask[] = plan.tasks.map(
+        (task, idx) => ({
+          id: task.id ?? `task_${idx}`,
+          title: task.description,
+          agentRole: task.agentRole,
+          dependencies: task.dependencies ?? [],
+          effort: task.effort ?? "medium",
+        })
+      );
+
+      const fleet = new FleetManager({
+        sessionId: agentLoop.getSessionId(),
+        projectId: agentLoop.getSessionId(),
+        orgId: this.orgId,
+        userId: this.userId,
+        planTier: this.planTier,
+      });
+
+      const fleetResults = await fleet.executeTasks(
+        schedulableTasks,
+        archResult.blueprint
+      );
+
+      // Check for fleet failures
+      const failures = fleetResults.filter((r) => !r.success);
+      if (failures.length > 0) {
+        logger.warn(
+          { failures: failures.length, total: fleetResults.length },
+          "Some parallel build tasks failed"
+        );
       }
       this.state.completedPhases.push("parallel_build");
 

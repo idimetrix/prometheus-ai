@@ -1,0 +1,53 @@
+{
+  "dashboard": {
+    "title": "Prometheus - Queue Health",
+    "uid": "queue-health",
+    "panels": [
+      {
+        "title": "Queue Depth by Priority",
+        "type": "timeseries",
+        "targets": [
+          {
+            "expr": "bull_queue_waiting{queue=~\"tasks:.*\"}",
+            "legendFormat": "{{queue}} waiting"
+          },
+          {
+            "expr": "bull_queue_active{queue=~\"tasks:.*\"}",
+            "legendFormat": "{{queue}} active"
+          }
+        ],
+        "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 }
+      },
+      {
+        "title": "Processing Rate (tasks/min)",
+        "type": "timeseries",
+        "targets": [
+          {
+            "expr": "rate(bull_queue_completed_total[5m]) * 60",
+            "legendFormat": "{{queue}}"
+          }
+        ],
+        "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 }
+      },
+      {
+        "title": "Failed Jobs (DLQ)",
+        "type": "stat",
+        "targets": [
+          { "expr": "bull_queue_failed_total", "legendFormat": "{{queue}}" }
+        ],
+        "gridPos": { "h": 4, "w": 6, "x": 0, "y": 8 }
+      },
+      {
+        "title": "Job Duration (p95)",
+        "type": "timeseries",
+        "targets": [
+          {
+            "expr": "histogram_quantile(0.95, bull_queue_duration_bucket)",
+            "legendFormat": "p95"
+          }
+        ],
+        "gridPos": { "h": 8, "w": 12, "x": 0, "y": 12 }
+      }
+    ]
+  }
+}

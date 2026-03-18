@@ -1,0 +1,49 @@
+{
+  "dashboard": {
+    "title": "Prometheus - Billing & Credits",
+    "uid": "billing-credits",
+    "panels": [
+      {
+        "title": "Credit Consumption Rate",
+        "type": "timeseries",
+        "targets": [
+          {
+            "expr": "rate(prometheus_credits_consumed_total[1h])",
+            "legendFormat": "{{org}}"
+          }
+        ],
+        "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 }
+      },
+      {
+        "title": "Revenue by Tier",
+        "type": "piechart",
+        "targets": [
+          {
+            "expr": "prometheus_subscriptions_active",
+            "legendFormat": "{{tier}}"
+          }
+        ],
+        "gridPos": { "h": 8, "w": 6, "x": 12, "y": 0 }
+      },
+      {
+        "title": "Credit Balance Distribution",
+        "type": "timeseries",
+        "targets": [
+          { "expr": "prometheus_credit_balance", "legendFormat": "{{org}}" }
+        ],
+        "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 }
+      },
+      {
+        "title": "Burn Rate (credits/day)",
+        "type": "stat",
+        "targets": [
+          {
+            "expr": "rate(prometheus_credits_consumed_total[24h]) * 86400",
+            "legendFormat": "daily"
+          }
+        ],
+        "gridPos": { "h": 4, "w": 6, "x": 12, "y": 8 }
+      }
+    ]
+  }
+}

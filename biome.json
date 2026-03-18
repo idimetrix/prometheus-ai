@@ -21,7 +21,8 @@
       "!**/coverage",
       "!**/*.min.js",
       "!**/.claude",
-      "!**/.agents"
+      "!**/.agents",
+      "!**/src/components/ui"
     ]
   },
   "formatter": {
@@ -29,11 +30,8 @@
     "indentWidth": 2
   },
   "linter": {
-    "domains": {
-      "next": "recommended",
-      "react": "recommended"
-    },
     "rules": {
+      "recommended": true,
       "suspicious": {
         "noExplicitAny": "warn",
         "noArrayIndexKey": "off",
@@ -48,6 +46,17 @@
       "complexity": {
         "noExcessiveCognitiveComplexity": "off"
       }
+    },
+    "domains": {
+      "next": "recommended",
+      "react": "recommended"
+    }
+  },
+  "assist": {
+    "actions": {
+      "source": {
+        "organizeImports": "on"
+      }
     }
   },
   "overrides": [
@@ -61,12 +70,5 @@
         }
       }
     }
-  ],
-  "assist": {
-    "actions": {
-      "source": {
-        "organizeImports": "on"
-      }
-    }
-  }
+  ]
 }

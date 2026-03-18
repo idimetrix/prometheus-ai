@@ -4,43 +4,52 @@ on:
   pull_request:
     branches: [main, develop]
   push:
-    branches: [main, develop]
+    branches: [main]
 
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
-env:
-  TURBO_TOKEN: ${{ secrets.TURBO_TOKEN }}
-  TURBO_TEAM: ${{ vars.TURBO_TEAM }}
-
 jobs:
-  lint-and-typecheck:
+  lint:
+    name: Lint & Format
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
         with:
-          version: 10
+          version: 9
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - name: Lint
-        run: pnpm turbo lint --cache-dir=.turbo
-      - name: Typecheck
-        run: pnpm turbo typecheck --cache-dir=.turbo
+      - run: pnpm check
+
+  typecheck:
+    name: TypeScript Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
 
   test:
+    name: Tests
     runs-on: ubuntu-latest
-    needs: lint-and-typecheck
     services:
       postgres:
         image: pgvector/pgvector:pg16
         env:
-          POSTGRES_USER: test
-          POSTGRES_PASSWORD: test
+          POSTGRES_USER: prometheus
+          POSTGRES_PASSWORD: prometheus
           POSTGRES_DB: prometheus_test
         ports:
           - 5432:5432
@@ -50,7 +59,7 @@ jobs:
           --health-timeout 5s
           --health-retries 5
       redis:
-        image: valkey/valkey:8-alpine
+        image: redis:7-alpine
         ports:
           - 6379:6379
         options: >-
@@ -58,51 +67,49 @@ jobs:
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
+    env:
+      DATABASE_URL: postgresql://prometheus:prometheus@localhost:5432/prometheus_test
+      REDIS_URL: redis://localhost:6379
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
         with:
-          version: 10
+          version: 9
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - name: Run tests
-        run: pnpm turbo test --cache-dir=.turbo
-        env:
-          DATABASE_URL: postgresql://test:test@localhost:5432/prometheus_test
-          REDIS_URL: redis://localhost:6379
-          CLERK_SECRET_KEY: sk_test_placeholder
-          ENCRYPTION_KEY: "0000000000000000000000000000000000000000000000000000000000000000"
-      - name: Upload coverage
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: coverage-report
-          path: "**/coverage/"
-          retention-days: 7
+      - run: pnpm db:push
+      - run: pnpm test
 
   build:
+    name: Build
     runs-on: ubuntu-latest
-    needs: test
+    needs: [typecheck]
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
         with:
-          version: 10
+          version: 9
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - name: Build all packages
-        run: pnpm turbo build --cache-dir=.turbo
-      - name: Upload build artifacts
-        uses: actions/upload-artifact@v4
+      - run: pnpm build
+
+  security:
+    name: Security Scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
         with:
-          name: build-output
-          path: |
-            apps/*/dist/
-            packages/*/dist/
-          retention-days: 1
+          version: 9
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm audit --audit-level=high || true

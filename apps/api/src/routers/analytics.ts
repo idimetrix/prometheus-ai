@@ -2,6 +2,7 @@ import {
   agents,
   creditTransactions,
   modelUsage,
+  modelUsageLogs,
   projects,
   sessions,
   tasks,
@@ -462,6 +463,79 @@ export const analyticsRouter = router({
           requests: Number(r.requests),
           tokens: Number(r.tokens),
           cost: Number(r.cost),
+        })),
+      };
+    }),
+
+  // ---------------------------------------------------------------------------
+  // Model usage from model_usage_logs (detailed, from model-router logging)
+  // ---------------------------------------------------------------------------
+  modelUsageBySlot: protectedProcedure
+    .input(
+      z.object({
+        startDate: z.string().optional(),
+        endDate: z.string().optional(),
+        groupBy: z.enum(["model", "provider", "slot", "day"]).default("model"),
+      })
+    )
+    .query(async ({ ctx, input }) => {
+      const since = input.startDate
+        ? new Date(input.startDate)
+        : new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+      const until = input.endDate ? new Date(input.endDate) : new Date();
+
+      const conditions = [
+        eq(modelUsageLogs.orgId, ctx.orgId),
+        gte(modelUsageLogs.createdAt, since),
+        sql`${modelUsageLogs.createdAt} <= ${until}`,
+      ];
+
+      const groupByMap = {
+        model: {
+          groupCol: modelUsageLogs.modelKey,
+          selectKey: { key: modelUsageLogs.modelKey },
+        },
+        provider: {
+          groupCol: modelUsageLogs.provider,
+          selectKey: { key: modelUsageLogs.provider },
+        },
+        slot: {
+          groupCol: modelUsageLogs.slot,
+          selectKey: { key: modelUsageLogs.slot },
+        },
+        day: {
+          groupCol: sql`date_trunc('day', ${modelUsageLogs.createdAt})`,
+          selectKey: {
+            key: sql<string>`date_trunc('day', ${modelUsageLogs.createdAt})`,
+          },
+        },
+      };
+
+      const { groupCol, selectKey } = groupByMap[input.groupBy];
+
+      const results = await ctx.db
+        .select({
+          ...selectKey,
+          requests: sql<number>`COUNT(*)`,
+          promptTokens: sql<number>`COALESCE(SUM(${modelUsageLogs.promptTokens}), 0)`,
+          completionTokens: sql<number>`COALESCE(SUM(${modelUsageLogs.completionTokens}), 0)`,
+          totalTokens: sql<number>`COALESCE(SUM(${modelUsageLogs.totalTokens}), 0)`,
+          costUsd: sql<number>`COALESCE(SUM(${modelUsageLogs.costUsd}), 0)`,
+        })
+        .from(modelUsageLogs)
+        .where(and(...conditions))
+        .groupBy(groupCol)
+        .orderBy(desc(sql`COALESCE(SUM(${modelUsageLogs.costUsd}), 0)`));
+
+      return {
+        groupBy: input.groupBy,
+        data: results.map((r) => ({
+          key: String(r.key),
+          requests: Number(r.requests),
+          promptTokens: Number(r.promptTokens),
+          completionTokens: Number(r.completionTokens),
+          totalTokens: Number(r.totalTokens),
+          costUsd: Number(r.costUsd),
         })),
       };
     }),

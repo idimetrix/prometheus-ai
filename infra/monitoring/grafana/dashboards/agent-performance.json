@@ -1,0 +1,63 @@
+{
+  "dashboard": {
+    "title": "Prometheus - Agent Performance",
+    "uid": "agent-performance",
+    "panels": [
+      {
+        "title": "Active Sessions",
+        "type": "stat",
+        "targets": [
+          {
+            "expr": "prometheus_orchestrator_active_sessions",
+            "legendFormat": "sessions"
+          }
+        ],
+        "gridPos": { "h": 4, "w": 6, "x": 0, "y": 0 }
+      },
+      {
+        "title": "Agent Success Rate by Role",
+        "type": "timeseries",
+        "targets": [
+          {
+            "expr": "rate(prometheus_agent_success_total[5m]) / rate(prometheus_agent_total[5m])",
+            "legendFormat": "{{role}}"
+          }
+        ],
+        "gridPos": { "h": 8, "w": 12, "x": 0, "y": 4 }
+      },
+      {
+        "title": "Agent Duration by Role (p95)",
+        "type": "timeseries",
+        "targets": [
+          {
+            "expr": "histogram_quantile(0.95, prometheus_agent_duration_seconds_bucket)",
+            "legendFormat": "{{role}}"
+          }
+        ],
+        "gridPos": { "h": 8, "w": 12, "x": 12, "y": 4 }
+      },
+      {
+        "title": "CI Loop Pass Rate",
+        "type": "gauge",
+        "targets": [
+          {
+            "expr": "prometheus_ci_loop_pass_rate",
+            "legendFormat": "pass rate"
+          }
+        ],
+        "gridPos": { "h": 6, "w": 6, "x": 0, "y": 12 }
+      },
+      {
+        "title": "Confidence Score Distribution",
+        "type": "timeseries",
+        "targets": [
+          {
+            "expr": "prometheus_agent_confidence_score",
+            "legendFormat": "{{role}}"
+          }
+        ],
+        "gridPos": { "h": 8, "w": 12, "x": 6, "y": 12 }
+      }
+    ]
+  }
+}

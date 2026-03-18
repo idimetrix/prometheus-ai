@@ -27,6 +27,7 @@ export const sessionEventTypeSchema = z.enum([
   "reasoning",
   "terminal_output",
   "browser_screenshot",
+  "pr_created",
 ]);
 
 // ---------- Create / Update ----------
@@ -82,6 +83,79 @@ export const sessionEventSchema = z.object({
   timestamp: z.string().datetime(),
 });
 
+/**
+ * Discriminated union variant for strongly-typed session events.
+ */
+export const sessionEventDiscriminatedSchema = z.discriminatedUnion("type", [
+  z.object({
+    type: z.literal("agent_output"),
+    data: z
+      .object({ content: z.string(), agentRole: z.string() })
+      .passthrough(),
+  }),
+  z.object({
+    type: z.literal("file_change"),
+    data: z
+      .object({ tool: z.string(), filePath: z.string(), agentRole: z.string() })
+      .passthrough(),
+  }),
+  z.object({
+    type: z.literal("plan_update"),
+    data: z.object({ phase: z.string(), status: z.string() }).passthrough(),
+  }),
+  z.object({
+    type: z.literal("task_status"),
+    data: z.object({ taskId: z.string(), status: z.string() }).passthrough(),
+  }),
+  z.object({
+    type: z.literal("credit_update"),
+    data: z.object({ creditsConsumed: z.number() }).passthrough(),
+  }),
+  z.object({
+    type: z.literal("checkpoint"),
+    data: z.object({ event: z.string() }).passthrough(),
+  }),
+  z.object({
+    type: z.literal("error"),
+    data: z.record(z.string(), z.unknown()),
+  }),
+  z.object({
+    type: z.literal("reasoning"),
+    data: z.object({ content: z.string() }).passthrough(),
+  }),
+  z.object({
+    type: z.literal("terminal_output"),
+    data: z.object({
+      command: z.string(),
+      output: z.string(),
+      success: z.boolean(),
+    }),
+  }),
+  z.object({
+    type: z.literal("browser_screenshot"),
+    data: z
+      .object({ url: z.string(), screenshotUrl: z.string() })
+      .passthrough(),
+  }),
+  z.object({
+    type: z.literal("pr_created"),
+    data: z
+      .object({ prUrl: z.string(), prNumber: z.number(), title: z.string() })
+      .passthrough(),
+  }),
+  z.object({
+    type: z.literal("queue_position"),
+    data: z.object({ position: z.number() }).passthrough(),
+  }),
+]);
+
+// ---------- Checkpoint approval ----------
+export const approveCheckpointSchema = z.object({
+  sessionId: z.string().min(1),
+  checkpointId: z.string().min(1),
+  data: z.record(z.string(), z.unknown()).optional(),
+});
+
 // ---------- List / Query ----------
 export const listSessionsSchema = z.object({
   projectId: z.string().min(1).optional(),
@@ -117,10 +191,14 @@ export type UpdateSessionInput = z.infer<typeof updateSessionSchema>;
 export type SessionActionInput = z.infer<typeof sessionActionSchema>;
 export type SendMessageInput = z.infer<typeof sendMessageSchema>;
 export type ApprovePlanInput = z.infer<typeof approvePlanSchema>;
+export type ApproveCheckpointInput = z.infer<typeof approveCheckpointSchema>;
 export type ResumeSessionInput = z.infer<typeof resumeSessionSchema>;
 export type PauseSessionInput = z.infer<typeof pauseSessionSchema>;
 export type CancelSessionInput = z.infer<typeof cancelSessionSchema>;
 export type SessionEventInput = z.infer<typeof sessionEventSchema>;
+export type SessionEventDiscriminatedInput = z.infer<
+  typeof sessionEventDiscriminatedSchema
+>;
 export type ListSessionsInput = z.infer<typeof listSessionsSchema>;
 export type GetSessionInput = z.infer<typeof getSessionSchema>;
 export type SessionOutput = z.infer<typeof sessionOutputSchema>;

@@ -403,6 +403,21 @@ export class ModelRouterService {
         "Completion succeeded"
       );
 
+      // Fire-and-forget model usage logging
+      this.logModelUsage({
+        orgId: request.options?.orgId,
+        sessionId: request.options?.taskId,
+        modelKey,
+        provider: config.provider,
+        slot: request.slot,
+        promptTokens,
+        completionTokens,
+        totalTokens,
+        costUsd,
+      }).catch(() => {
+        /* fire-and-forget */
+      });
+
       return {
         id: response.id ?? generateId("cmpl"),
         model: modelKey,
@@ -547,6 +562,23 @@ export class ModelRouterService {
               /* fire-and-forget */
             });
 
+          // Fire-and-forget model usage logging
+          self
+            .logModelUsage({
+              orgId: request.options?.orgId,
+              sessionId: request.options?.taskId,
+              modelKey,
+              provider: config?.provider ?? modelKey,
+              slot: request.slot,
+              promptTokens,
+              completionTokens,
+              totalTokens,
+              costUsd,
+            })
+            .catch(() => {
+              /* fire-and-forget */
+            });
+
           self.logger.info(
             {
               model: modelKey,
@@ -591,6 +623,31 @@ export class ModelRouterService {
       );
       return null;
     }
+  }
+
+  /**
+   * Log model usage to the API for persistent tracking.
+   * Fire-and-forget: errors are silently ignored to avoid
+   * impacting the LLM response path.
+   */
+  private async logModelUsage(usage: {
+    orgId?: string;
+    sessionId?: string;
+    modelKey: string;
+    provider: string;
+    slot: string;
+    promptTokens: number;
+    completionTokens: number;
+    totalTokens: number;
+    costUsd: number;
+  }): Promise<void> {
+    const apiUrl = process.env.API_URL ?? "http://localhost:4000";
+    await fetch(`${apiUrl}/internal/model-usage`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(usage),
+      signal: AbortSignal.timeout(5000),
+    });
   }
 
   /**

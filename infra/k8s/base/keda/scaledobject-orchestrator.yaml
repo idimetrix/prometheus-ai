@@ -1,0 +1,70 @@
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: orchestrator-scaler
+  labels:
+    app: orchestrator
+spec:
+  scaleTargetRef:
+    name: orchestrator
+  pollingInterval: 15
+  cooldownPeriod: 120
+  idleReplicaCount: 1
+  minReplicaCount: 1
+  maxReplicaCount: 10
+  triggers:
+    - type: prometheus
+      metadata:
+        serverAddress: http://prometheus:9090
+        metricName: active_sessions
+        query: sum(prometheus_orchestrator_active_sessions)
+        threshold: "5"
+---
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: sandbox-manager-scaler
+  labels:
+    app: sandbox-manager
+spec:
+  scaleTargetRef:
+    name: sandbox-manager
+  pollingInterval: 15
+  cooldownPeriod: 60
+  idleReplicaCount: 1
+  minReplicaCount: 1
+  maxReplicaCount: 20
+  triggers:
+    - type: prometheus
+      metadata:
+        serverAddress: http://prometheus:9090
+        metricName: active_sandboxes
+        query: sum(prometheus_sandbox_active_count)
+        threshold: "3"
+---
+apiVersion: keda.sh/v1alpha1
+kind: ScaledJob
+metadata:
+  name: embeddings-scaler
+  labels:
+    app: embeddings
+spec:
+  jobTargetRef:
+    parallelism: 1
+    completions: 1
+    template:
+      spec:
+        containers:
+          - name: embeddings-worker
+            image: ghcr.io/prometheus/queue-worker:latest
+            command: ["node", "dist/jobs/generate-embeddings.js"]
+        restartPolicy: Never
+  pollingInterval: 30
+  minReplicaCount: 0
+  maxReplicaCount: 5
+  triggers:
+    - type: redis
+      metadata:
+        address: redis:6379
+        listName: bull:embeddings:waiting
+        listLength: "10"

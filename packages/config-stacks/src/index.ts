@@ -12,3 +12,10 @@ export {
   RUST_AXUM_PRESET,
   type TechStackPresetExtended,
 } from "./presets/index";
+export {
+  aiMlSkillPack,
+  devopsSkillPack,
+  fintechSkillPack,
+  healthcareSkillPack,
+  SKILL_PACKS,
+} from "./skill-packs/index";

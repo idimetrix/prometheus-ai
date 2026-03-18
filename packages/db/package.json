@@ -16,7 +16,7 @@
     "db:check": "drizzle-kit check",
     "db:drop": "drizzle-kit drop",
     "db:reset": "drizzle-kit push --force-reset",
-    "db:fresh": "pnpm db:reset && pnpm db:seed",
+    "db:fresh": "pnpm db:drop && rm -rf drizzle && drizzle-kit push --force && pnpm db:seed",
     "db:setup": "pnpm db:generate && pnpm db:migrate",
     "typecheck": "tsc --noEmit",
     "clean": "rm -rf dist .turbo"

@@ -1,83 +1,14 @@
-import type { AuthContext } from "@prometheus/auth";
-import { getAuthContext, hasOrgRole } from "@prometheus/auth";
-import type { Database } from "@prometheus/db";
-import { db, users } from "@prometheus/db";
+import { hasOrgRole } from "@prometheus/auth";
 import { createLogger } from "@prometheus/logger";
-import { generateId } from "@prometheus/utils";
 import { initTRPC, TRPCError } from "@trpc/server";
-import type { FetchCreateContextFnOptions } from "@trpc/server/adapters/fetch";
-import { eq } from "drizzle-orm";
 import superjson from "superjson";
 import { ZodError } from "zod";
+import type { Context, ProtectedContext } from "./context";
+
+export type { Context, ProtectedContext } from "./context";
+export { createContext } from "./context";
 
 const logger = createLogger("trpc");
-
-export interface Context {
-  /** Set when authenticated via API key instead of Clerk JWT */
-  apiKeyId: string | null;
-  auth: AuthContext | null;
-  db: Database;
-}
-
-export interface ProtectedContext {
-  apiKeyId: string | null;
-  auth: AuthContext;
-  db: Database;
-  orgId: string;
-}
-
-export async function createContext(
-  opts: FetchCreateContextFnOptions
-): Promise<Context> {
-  const authHeader = opts.req.headers.get("authorization");
-  if (!authHeader?.startsWith("Bearer ")) {
-    return { auth: null, db, apiKeyId: null };
-  }
-
-  const token = authHeader.slice(7);
-
-  // API keys start with "pk_live_" — they are handled by the api-key-auth
-  // middleware which attaches auth to the Hono context. The tRPC context
-  // factory will read those values from c.get() when wired up. For now,
-  // attempt Clerk JWT verification.
-  if (token.startsWith("pk_live_")) {
-    // API key auth is handled by Hono middleware; return null here and let
-    // the middleware-injected context take over.
-    return { auth: null, db, apiKeyId: null };
-  }
-
-  const auth = await getAuthContext(token);
-  if (!auth) {
-    return { auth: null, db, apiKeyId: null };
-  }
-
-  // Auto-create user record in DB if it doesn't exist yet.
-  // Clerk webhook (clerk.ts) handles the full profile sync; this is a
-  // fallback so that the user row exists before any query references it.
-  const existing = await db.query.users.findFirst({
-    where: eq(users.clerkId, auth.userId),
-  });
-
-  if (!existing) {
-    try {
-      await db
-        .insert(users)
-        .values({
-          id: generateId(),
-          clerkId: auth.userId,
-          email: `${auth.userId}@pending.clerk`,
-          name: null,
-          avatarUrl: null,
-        })
-        .onConflictDoNothing();
-    } catch (err) {
-      // Race condition: another request may have created the row.
-      logger.warn({ err }, "User auto-creation fallback failed (likely race)");
-    }
-  }
-
-  return { auth, db, apiKeyId: null };
-}
 
 const t = initTRPC.context<Context>().create({
   transformer: superjson,

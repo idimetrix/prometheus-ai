@@ -36,6 +36,7 @@ export {
   truncate,
   unique,
 } from "./helpers";
+export { HttpClient, HttpClientError } from "./http-client";
 export { generateId } from "./id";
 export type { RetryOptions } from "./retry";
 export { retry } from "./retry";

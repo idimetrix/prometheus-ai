@@ -27,6 +27,8 @@ export interface AgentToolDefinition {
   inputSchema: Record<string, unknown>;
   name: string;
   permissionLevel: "read" | "write" | "execute" | "admin";
+  /** Risk level for this tool. High-risk tools require checkpoint approval. */
+  riskLevel?: "low" | "medium" | "high" | "critical";
   /** Zod schema for runtime input validation. */
   zodSchema: z.ZodType<Record<string, unknown>>;
 }

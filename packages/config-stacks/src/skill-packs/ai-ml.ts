@@ -1,0 +1,25 @@
+export const aiMlSkillPack = {
+  id: "ai-ml",
+  name: "AI/ML Engineering",
+  description: "ML pipelines, model serving, experiment tracking",
+  domains: ["machine-learning", "data-science", "nlp", "computer-vision"],
+  knowledge: [
+    "Use experiment tracking (MLflow/W&B) for all model training runs",
+    "Version datasets alongside model versions for reproducibility",
+    "Implement A/B testing framework for model comparisons in production",
+    "Use feature stores for consistent feature computation (train/serve parity)",
+    "Model serving: use ONNX or TensorRT for inference optimization",
+    "Implement model monitoring: data drift, prediction drift, feature drift",
+    "Use batch inference for non-real-time predictions, online for real-time",
+    "Implement graceful model fallback (shadow mode, canary, rollback)",
+    "Store model artifacts in versioned object storage (S3/MinIO)",
+    "Implement rate limiting and cost tracking for LLM API calls",
+    "Use structured evaluation benchmarks for LLM quality assessment",
+    "Cache LLM responses with semantic similarity matching for cost reduction",
+  ],
+  conventions: {
+    naming: { models: "model-{task}-{version} (e.g., model-sentiment-v2)" },
+    validation: "Validate model inputs match expected schema before inference",
+    errorHandling: "Return confidence scores with all predictions",
+  },
+};

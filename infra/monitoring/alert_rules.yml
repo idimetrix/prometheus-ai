@@ -154,3 +154,111 @@ groups:
         annotations:
           summary: "Redis memory usage high"
           description: "Redis is using more than 85% of max configured memory."
+
+  # ─── Agent & Orchestrator ────────────────────────────────────────
+  - name: agent_health
+    rules:
+      - alert: AgentHighFailureRate
+        expr: |
+          sum(rate(prometheus_agent_task_failures_total[5m])) by (agent)
+          / sum(rate(prometheus_agent_task_total[5m])) by (agent)
+          > 0.1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High agent failure rate for {{ $labels.agent }}"
+          description: "Agent {{ $labels.agent }} has >10% failure rate (current: {{ $value | humanizePercentage }})."
+
+      - alert: AgentCriticalFailureRate
+        expr: |
+          sum(rate(prometheus_agent_task_failures_total[5m])) by (agent)
+          / sum(rate(prometheus_agent_task_total[5m])) by (agent)
+          > 0.3
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Critical agent failure rate for {{ $labels.agent }}"
+          description: "Agent {{ $labels.agent }} has >30% failure rate (current: {{ $value | humanizePercentage }})."
+
+  # ─── Sandbox Health ──────────────────────────────────────────────
+  - name: sandbox_health
+    rules:
+      - alert: SandboxTimeoutRate
+        expr: |
+          sum(rate(prometheus_sandbox_timeout_total[5m]))
+          / sum(rate(prometheus_sandbox_requests_total[5m]))
+          > 0.1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High sandbox timeout rate"
+          description: "Sandbox timeout rate is above 10% (current: {{ $value | humanizePercentage }})."
+
+      - alert: SandboxPoolExhausted
+        expr: prometheus_sandbox_available_count == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Sandbox pool exhausted"
+          description: "No available sandboxes in the pool for more than 2 minutes."
+
+  # ─── Model Router ───────────────────────────────────────────────
+  - name: model_router_health
+    rules:
+      - alert: ModelRouterHighFailureRate
+        expr: |
+          sum(rate(prometheus_model_router_errors_total[5m]))
+          / sum(rate(prometheus_model_router_requests_total[5m]))
+          > 0.05
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High model router failure rate"
+          description: "Model router error rate is above 5% (current: {{ $value | humanizePercentage }})."
+
+      - alert: ModelRouterAllProvidersDown
+        expr: sum(prometheus_model_router_provider_up) == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "All model providers are down"
+          description: "No model providers are available. All AI operations will fail."
+
+      - alert: ModelRouterHighLatency
+        expr: |
+          histogram_quantile(0.95, sum(rate(prometheus_model_router_request_duration_seconds_bucket[5m])) by (le, provider))
+          > 30
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High model router latency for {{ $labels.provider }}"
+          description: "Provider {{ $labels.provider }} p95 latency exceeds 30 seconds."
+
+  # ─── Credit Depletion ──────────────────────────────────────────
+  - name: credit_depletion
+    rules:
+      - alert: CreditDepletionWarning
+        expr: |
+          predict_linear(prometheus_org_credits_remaining[1h], 3600) < 0
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Credits depleting rapidly for org {{ $labels.org_id }}"
+          description: "At current burn rate, org {{ $labels.org_id }} will exhaust credits within 1 hour."
+
+      - alert: CreditsDepleted
+        expr: prometheus_org_credits_remaining <= 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Credits depleted for org {{ $labels.org_id }}"
+          description: "Organization {{ $labels.org_id }} has no credits remaining. Operations will be blocked."

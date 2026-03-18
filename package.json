@@ -6,9 +6,9 @@
     "build": "turbo run build",
     "test": "turbo run test",
     "typecheck": "turbo run typecheck",
-    "lint": "biome lint .",
+    "lint": "biome check",
     "format": "ultracite fix --diagnostic-level=error",
-    "unsafe": "biome check --fix --unsafe && biome format --fix .",
+    "unsafe": "ultracite fix --unsafe",
     "check": "ultracite check",
     "fix": "ultracite fix",
     "clean": "turbo run clean && rm -rf node_modules .turbo",
@@ -26,7 +26,7 @@
     "db:setup": "pnpm db:generate && pnpm db:migrate"
   },
   "devDependencies": {
-    "turbo": "^2.8.18",
+    "turbo": "^2.8.19",
     "typescript": "^5.9.3",
     "@biomejs/biome": "^2.4.8",
     "ultracite": "^7.3.2",

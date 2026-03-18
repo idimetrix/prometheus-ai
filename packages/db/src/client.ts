@@ -30,6 +30,23 @@ const client = postgres(connectionString, {
 export const db = drizzle(client, { schema });
 export type Database = typeof db;
 
+// Read replica for analytics/list queries — falls back to primary when not configured
+const readReplicaUrl = process.env.DATABASE_READ_REPLICA_URL;
+export const dbReadOnly: Database = readReplicaUrl
+  ? drizzle(
+      postgres(readReplicaUrl, {
+        max: poolSize,
+        idle_timeout: idleTimeout,
+        connect_timeout: connectTimeout,
+        prepare: true,
+        onnotice: () => {
+          /* suppress notice messages */
+        },
+      }),
+      { schema }
+    )
+  : db;
+
 /**
  * Get a raw SQL client for administrative queries (e.g., EXPLAIN ANALYZE).
  * Not for normal application use — use `db` with Drizzle ORM instead.

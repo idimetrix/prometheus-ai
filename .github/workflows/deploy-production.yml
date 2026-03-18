@@ -1,43 +1,31 @@
 name: Deploy Production
 
 on:
-  push:
-    branches: [main]
-
-concurrency:
-  group: deploy-production
-  cancel-in-progress: false
-
-env:
-  REGISTRY: ghcr.io
-  IMAGE_PREFIX: ghcr.io/${{ github.repository }}
-  TURBO_TOKEN: ${{ secrets.TURBO_TOKEN }}
-  TURBO_TEAM: ${{ vars.TURBO_TEAM }}
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Type "deploy" to confirm production deployment'
+        required: true
 
 jobs:
-  ci:
-    uses: ./.github/workflows/ci.yml
-    secrets: inherit
-
-  build-and-push:
+  validate:
+    name: Validate
     runs-on: ubuntu-latest
-    needs: ci
+    steps:
+      - name: Confirm deployment
+        env:
+          CONFIRM_INPUT: ${{ github.event.inputs.confirm }}
+        run: |
+          if [ "$CONFIRM_INPUT" != "deploy" ]; then
+            echo "Deployment not confirmed. Input was: $CONFIRM_INPUT"
+            exit 1
+          fi
+
+  deploy:
+    name: Deploy to Production
+    needs: [validate]
+    runs-on: ubuntu-latest
     environment: production
-    permissions:
-      packages: write
-      contents: read
-    strategy:
-      matrix:
-        service:
-          - web
-          - api
-          - queue-worker
-          - socket-server
-          - orchestrator
-          - project-brain
-          - model-router
-          - mcp-gateway
-          - sandbox-manager
     steps:
       - uses: actions/checkout@v4
 
@@ -51,53 +39,41 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Docker metadata
-        id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: ${{ env.IMAGE_PREFIX }}/${{ matrix.service }}
-          tags: |
-            type=sha,prefix=
-            type=raw,value=latest
-
-      - name: Build and push
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: infra/docker/Dockerfile.${{ matrix.service }}
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          cache-from: type=gha,scope=${{ matrix.service }}
-          cache-to: type=gha,mode=max,scope=${{ matrix.service }}
-          build-args: |
-            SERVICE=${{ matrix.service }}
-
-  deploy:
-    runs-on: ubuntu-latest
-    needs: build-and-push
-    environment: production
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up kubectl
-        uses: azure/setup-kubectl@v4
-
-      - name: Configure kubeconfig
+      - name: Build and push images
         run: |
-          mkdir -p ~/.kube
-          echo "${{ secrets.KUBECONFIG }}" | base64 -d > ~/.kube/config
+          VERSION=$(git rev-parse --short HEAD)
+          SERVICES="api web orchestrator project-brain model-router mcp-gateway sandbox-manager queue-worker socket-server"
+          for svc in $SERVICES; do
+            docker build -f infra/docker/Dockerfile.$svc -t ghcr.io/${{ github.repository }}/$svc:$VERSION -t ghcr.io/${{ github.repository }}/$svc:latest .
+            docker push ghcr.io/${{ github.repository }}/$svc:$VERSION
+            docker push ghcr.io/${{ github.repository }}/$svc:latest
+          done
 
       - name: Deploy to production
+        env:
+          SSH_KEY: ${{ secrets.PRODUCTION_SSH_KEY }}
+          PRODUCTION_HOST: ${{ secrets.PRODUCTION_HOST }}
         run: |
-          chmod +x infra/scripts/deploy.sh
-          bash infra/scripts/deploy.sh production ${{ github.sha }}
+          mkdir -p ~/.ssh
+          echo "$SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh -o StrictHostKeyChecking=no -i ~/.ssh/deploy_key deploy@"$PRODUCTION_HOST" \
+            "cd /opt/prometheus && ./infra/scripts/deploy.sh production"
 
-      - name: Verify deployment health
+      - name: Smoke tests
         run: |
-          chmod +x infra/scripts/healthcheck.sh
-          bash infra/scripts/healthcheck.sh --k8s production
+          sleep 60
+          curl -sf https://prometheus.dev/api/health || exit 1
 
-      - name: Notify on failure
+      - name: Notify success
+        if: success()
+        run: echo "Production deployment successful"
+
+      - name: Auto-rollback on failure
         if: failure()
+        env:
+          SSH_KEY: ${{ secrets.PRODUCTION_SSH_KEY }}
+          PRODUCTION_HOST: ${{ secrets.PRODUCTION_HOST }}
         run: |
-          echo "::error::Production deployment failed for commit ${{ github.sha }}"
+          ssh -o StrictHostKeyChecking=no -i ~/.ssh/deploy_key deploy@"$PRODUCTION_HOST" \
+            "cd /opt/prometheus && ./infra/scripts/rollback.sh production"

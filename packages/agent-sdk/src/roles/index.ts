@@ -5,6 +5,7 @@ import { BackendCoderAgent } from "./backend-coder";
 import { CiLoopAgent } from "./ci-loop";
 import { DeployEngineerAgent } from "./deploy-engineer";
 import { DiscoveryAgent } from "./discovery";
+import { DocumentationSpecialistAgent } from "./documentation-specialist";
 import { FrontendCoderAgent } from "./frontend-coder";
 import { IntegrationCoderAgent } from "./integration-coder";
 import { OrchestratorAgent } from "./orchestrator";
@@ -203,6 +204,23 @@ export const AGENT_ROLES: Record<string, AgentRoleConfig> = {
       "read_brain",
     ],
     create: () => new DeployEngineerAgent(),
+  },
+  documentation_specialist: {
+    role: "documentation_specialist",
+    displayName: "Documentation Specialist",
+    description: "Documentation generation, API references, guides, changelogs",
+    preferredModel: "gemini/gemini-2.5-flash",
+    tools: [
+      "file_read",
+      "file_write",
+      "file_list",
+      "search_files",
+      "search_content",
+      "read_blueprint",
+      "read_brain",
+      "terminal_exec",
+    ],
+    create: () => new DocumentationSpecialistAgent(),
   },
 };
 

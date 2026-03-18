@@ -1,5 +1,11 @@
 export { createRedisConnection, redis } from "./connection";
 export { QueueEvents } from "./events";
+export {
+  getConcurrencyForTier,
+  routeTaskToQueue,
+  TIER_CONCURRENCY,
+  TIER_PRIORITY,
+} from "./priority";
 export { EventPublisher, type SessionEvent } from "./pub-sub";
 export {
   ALL_QUEUES,

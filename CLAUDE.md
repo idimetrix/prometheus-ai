@@ -18,11 +18,11 @@ pnpm build        # Build all packages
 pnpm typecheck    # TypeScript check all packages
 pnpm test         # Run all tests
 pnpm test --filter=@prometheus/api    # Test specific package
-pnpm lint         # Biome lint (read-only)
+pnpm lint         # Biome check (lint + format, read-only)
 pnpm format       # Format with Ultracite (error-level)
 pnpm check        # Ultracite read-only check (format + lint)
 pnpm fix          # Ultracite fix (format + lint fix)
-pnpm unsafe       # Biome check + format with unsafe auto-fixes
+pnpm unsafe       # Ultracite fix with unsafe auto-fixes
 pnpm db:push      # Push DB schema changes (dev)
 pnpm db:migrate   # Run DB migrations (prod)
 pnpm db:generate  # Generate Drizzle migrations
@@ -72,3 +72,26 @@ pnpm dev              # Start development
 - RLS via org_id on all tenant-scoped queries — see `drizzle-rls-patterns` skill
 - tRPC + Hono patterns — see `trpc-hono-patterns` skill
 - Full architecture map — see `prometheus-stack` skill
+
+## Ultracite Code Standards
+
+### Core Principles
+
+- **Type Safety:** Use explicit types, avoid `any` (warn-level). Prefer `unknown` + type guards over `any`. Always type function parameters and return values for public APIs.
+- **Async/Await:** Always use async/await over raw promises. Handle errors with try/catch, never swallow errors silently.
+- **React/JSX:** Use functional components with hooks. Prefer named exports. Use `React.FC` sparingly — prefer explicit prop types.
+- **Error Handling:** Throw typed errors (`TRPCError`, custom error classes). Log with `@prometheus/logger`. Never expose internal errors to clients in production.
+
+### CI/CD Verification Checklist
+
+Before pushing or creating a PR, verify:
+1. `pnpm unsafe` — lint and format pass with auto-fixes applied
+2. `pnpm typecheck` — no TypeScript errors across all packages
+3. `pnpm test` — all tests pass
+4. `pnpm build` — build succeeds without errors
+
+### Git Workflow
+
+- Branch naming: `claude/issue-NUMBER` for Claude AI branches, `feat/description` / `fix/description` for manual work
+- Use conventional commits: `feat:`, `fix:`, `refactor:`, `chore:`, `docs:`, `test:`
+- PRs should pass all CI checks before merge

@@ -55,6 +55,7 @@ export class AgentLoop {
   private consecutiveFailures = 0;
   private totalCreditsConsumed = 0;
   private lastConfidence: ConfidenceResult | null = null;
+  private activeAgent: BaseAgent | null = null;
 
   constructor(
     sessionId: string,
@@ -90,6 +91,10 @@ export class AgentLoop {
 
   getIterations(): LoopIteration[] {
     return [...this.iterations];
+  }
+
+  getActiveAgent(): BaseAgent | null {
+    return this.activeAgent;
   }
 
   /**
@@ -165,6 +170,7 @@ export class AgentLoop {
       ci_loop: "fastLoop",
       security_auditor: "think",
       deploy_engineer: "default",
+      documentation_specialist: "longContext",
     };
     return slotMap[agentRole] ?? "default";
   }
@@ -201,6 +207,7 @@ export class AgentLoop {
 
     const agent = roleConfig.create();
     agent.initialize(context);
+    this.activeAgent = agent;
 
     // Inject project context into the task description if available
     let enrichedDescription = taskDescription;
@@ -250,6 +257,7 @@ export class AgentLoop {
       iteration.result = result;
       this.iterations.push(iteration);
       this.status = "idle";
+      this.activeAgent = null;
 
       // Publish completion event
       await this.eventPublisher.publishSessionEvent(this.sessionId, {
@@ -284,6 +292,7 @@ export class AgentLoop {
       };
       this.iterations.push(iteration);
       this.status = "idle";
+      this.activeAgent = null;
 
       // Publish error event
       await this.eventPublisher.publishSessionEvent(this.sessionId, {
@@ -536,6 +545,42 @@ export class AgentLoop {
           }
         }
 
+        // Risk gating: detect destructive commands
+        if (
+          toolName === "terminal_exec" &&
+          toolArgs.command &&
+          this.isDestructiveCommand(String(toolArgs.command))
+        ) {
+          this.logger.warn(
+            { command: toolArgs.command, agentRole },
+            "Destructive command detected, requesting approval"
+          );
+
+          // Publish checkpoint event for approval
+          await this.eventPublisher.publishSessionEvent(this.sessionId, {
+            type: QueueEvents.CHECKPOINT,
+            data: {
+              event: "destructive_command_blocked",
+              command: toolArgs.command,
+              agentRole,
+              reason:
+                "This command was detected as potentially destructive and requires approval.",
+            },
+            agentRole,
+            timestamp: new Date().toISOString(),
+          });
+
+          agent.addToolResult(
+            tc.id,
+            JSON.stringify({
+              success: false,
+              error:
+                "Destructive command blocked: This operation requires human approval. The command has been flagged for review.",
+            })
+          );
+          continue;
+        }
+
         const toolDef = TOOL_REGISTRY[toolName];
         if (!toolDef) {
           agent.addToolResult(
@@ -746,6 +791,29 @@ export class AgentLoop {
       message: reason,
       data: { sessionId: this.sessionId, agentRole },
     });
+  }
+
+  /** Patterns that indicate destructive or dangerous operations. */
+  private static readonly DESTRUCTIVE_PATTERNS = [
+    /\brm\s+(-rf?|--recursive)\b/,
+    /\brm\s+-[a-zA-Z]*f[a-zA-Z]*\b/,
+    /\bDROP\s+(TABLE|DATABASE|SCHEMA)\b/i,
+    /\bTRUNCATE\s+TABLE\b/i,
+    /\bgit\s+push\s+--force\b/,
+    /\bgit\s+push\s+-f\b/,
+    /\bgit\s+reset\s+--hard\b/,
+    /\bgit\s+clean\s+-[a-zA-Z]*f/,
+    /\bDELETE\s+FROM\s+\S+\s*(;|\s*$)/i,
+    /\bformat\s+[cC]:/,
+    /\bsudo\s+rm\b/,
+    /\bchmod\s+777\b/,
+    /\bchown\s+-R\s+/,
+  ];
+
+  private isDestructiveCommand(command: string): boolean {
+    return AgentLoop.DESTRUCTIVE_PATTERNS.some((pattern) =>
+      pattern.test(command)
+    );
   }
 
   private parseToolArgs(argsStr: string): Record<string, unknown> {

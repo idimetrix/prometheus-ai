@@ -2,13 +2,16 @@ import { serve } from "@hono/node-server";
 import { createLogger } from "@prometheus/logger";
 import { Hono } from "hono";
 import { ConventionExtractor } from "./analyzers/convention-extractor";
+import { BlueprintAutoUpdater } from "./blueprint/auto-updater";
 import { BlueprintEnforcer } from "./blueprint/enforcer";
 import { ContextAssembler } from "./context/assembler";
 import { FileIndexer } from "./indexing/file-indexer";
+import { DomainKnowledgeLayer } from "./layers/domain-knowledge";
 import { EpisodicLayer } from "./layers/episodic";
 import { KnowledgeGraphLayer } from "./layers/knowledge-graph";
 import { ProceduralLayer } from "./layers/procedural";
 import { SemanticLayer } from "./layers/semantic";
+import { SessionPersistence } from "./layers/session-persistence";
 import { WorkingMemoryLayer } from "./layers/working-memory";
 // Phase 9 imports
 import {
@@ -531,6 +534,89 @@ app.post("/procedural/prune", async (c) => {
   const body = await c.req.json();
   const pruned = await procedural.pruneIneffective(body.projectId);
   return c.json({ success: true, pruned });
+});
+
+// ---- Blueprint Auto-Update ----
+
+app.post("/blueprint/propose-update", async (c) => {
+  const body = await c.req.json();
+  const updater = new BlueprintAutoUpdater();
+  const result = await updater.proposeUpdate(body.projectId, body.sessionId, {
+    section: body.section,
+    change: body.change,
+    reasoning: body.reasoning,
+    sourceAgent: body.sourceAgent,
+    riskLevel: body.riskLevel ?? "low",
+  });
+  return c.json(result);
+});
+
+app.get("/blueprint/versions/:projectId", async (c) => {
+  const projectId = c.req.param("projectId");
+  const updater = new BlueprintAutoUpdater();
+  const versions = await updater.getVersionHistory(projectId);
+  return c.json({ versions });
+});
+
+// ---- Session Persistence ----
+
+const sessionPersistence = new SessionPersistence(workingMemory, episodic);
+
+app.post("/sessions/:sessionId/persist", async (c) => {
+  const sessionId = c.req.param("sessionId");
+  const body = await c.req.json();
+  const result = await sessionPersistence.onSessionEnd(
+    sessionId,
+    body.projectId,
+    body.summary
+  );
+  return c.json(result);
+});
+
+app.post("/sessions/:sessionId/load-prior", async (c) => {
+  const sessionId = c.req.param("sessionId");
+  const body = await c.req.json();
+  const result = await sessionPersistence.onSessionStart(
+    sessionId,
+    body.projectId
+  );
+  return c.json(result);
+});
+
+// ---- Domain Knowledge ----
+
+const domainKnowledge = new DomainKnowledgeLayer();
+
+app.post("/domain-knowledge/seed", async (c) => {
+  const body = await c.req.json();
+  const count = domainKnowledge.seedFromTechStack(
+    body.projectId,
+    body.techStack
+  );
+  return c.json({ success: true, seeded: count });
+});
+
+app.post("/domain-knowledge/contribute", async (c) => {
+  const body = await c.req.json();
+  const entry = domainKnowledge.contribute(body.projectId, {
+    category: body.category,
+    topic: body.topic,
+    content: body.content,
+    framework: body.framework,
+    tags: body.tags ?? [],
+    contributedBy: body.contributedBy,
+  });
+  return c.json({ success: true, entry });
+});
+
+app.post("/domain-knowledge/query", async (c) => {
+  const body = await c.req.json();
+  const results = domainKnowledge.query(
+    body.projectId,
+    body.query,
+    body.limit ?? 5
+  );
+  return c.json({ results });
 });
 
 // ---- Error handling ----

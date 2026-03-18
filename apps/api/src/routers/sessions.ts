@@ -439,6 +439,7 @@ export const sessionsRouter = router({
               "reasoning",
               "terminal_output",
               "browser_screenshot",
+              "pr_created",
             ])
           )
           .optional(),
@@ -728,6 +729,123 @@ export const sessionsRouter = router({
         "Session taken over by user"
       );
       return { success: true };
+    }),
+
+  // ─── Approve Checkpoint ─────────────────────────────────────────────
+  approve: protectedProcedure
+    .input(
+      z.object({
+        sessionId: z.string().min(1, "Session ID is required"),
+        checkpointId: z.string().min(1, "Checkpoint ID is required"),
+        data: z.record(z.string(), z.unknown()).optional(),
+      })
+    )
+    .mutation(async ({ input, ctx }) => {
+      await verifySessionAccess(ctx.db, input.sessionId, ctx.orgId);
+
+      const response = await fetch(
+        `${ORCHESTRATOR_URL}/checkpoints/${input.checkpointId}/respond`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            action: "approve",
+            data: input.data,
+            userId: ctx.auth.userId,
+          }),
+        }
+      );
+
+      if (!response.ok) {
+        logger.error(
+          {
+            sessionId: input.sessionId,
+            checkpointId: input.checkpointId,
+            status: response.status,
+          },
+          "Failed to approve checkpoint via orchestrator"
+        );
+        throw new TRPCError({
+          code: "INTERNAL_SERVER_ERROR",
+          message: "Failed to approve checkpoint",
+        });
+      }
+
+      await ctx.db.insert(sessionEvents).values({
+        id: generateId("evt"),
+        sessionId: input.sessionId,
+        type: "checkpoint",
+        data: {
+          action: "approved",
+          checkpointId: input.checkpointId,
+          userId: ctx.auth.userId,
+        },
+      });
+
+      logger.info(
+        { sessionId: input.sessionId, checkpointId: input.checkpointId },
+        "Checkpoint approved"
+      );
+      return { approved: response.ok };
+    }),
+
+  // ─── Reject Checkpoint ─────────────────────────────────────────────
+  reject: protectedProcedure
+    .input(
+      z.object({
+        sessionId: z.string().min(1, "Session ID is required"),
+        checkpointId: z.string().min(1, "Checkpoint ID is required"),
+        reason: z.string().max(2000).optional(),
+      })
+    )
+    .mutation(async ({ input, ctx }) => {
+      await verifySessionAccess(ctx.db, input.sessionId, ctx.orgId);
+
+      const response = await fetch(
+        `${ORCHESTRATOR_URL}/checkpoints/${input.checkpointId}/respond`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            action: "reject",
+            message: input.reason,
+            userId: ctx.auth.userId,
+          }),
+        }
+      );
+
+      if (!response.ok) {
+        logger.error(
+          {
+            sessionId: input.sessionId,
+            checkpointId: input.checkpointId,
+            status: response.status,
+          },
+          "Failed to reject checkpoint via orchestrator"
+        );
+        throw new TRPCError({
+          code: "INTERNAL_SERVER_ERROR",
+          message: "Failed to reject checkpoint",
+        });
+      }
+
+      await ctx.db.insert(sessionEvents).values({
+        id: generateId("evt"),
+        sessionId: input.sessionId,
+        type: "checkpoint",
+        data: {
+          action: "rejected",
+          checkpointId: input.checkpointId,
+          userId: ctx.auth.userId,
+          reason: input.reason ?? null,
+        },
+      });
+
+      logger.info(
+        { sessionId: input.sessionId, checkpointId: input.checkpointId },
+        "Checkpoint rejected"
+      );
+      return { rejected: response.ok };
     }),
 
   // ─── Release Session (Return Control to Agent) ───────────────────────

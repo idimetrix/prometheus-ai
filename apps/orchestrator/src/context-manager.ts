@@ -269,6 +269,73 @@ export class ContextManager {
   }
 
   /**
+   * Assemble full 5-layer context via Project Brain's ContextAssembler.
+   * Scales token budget by model context window.
+   */
+  async assembleFullContext(params: {
+    taskDescription: string;
+    agentRole: string;
+    modelSlot?: string;
+  }): Promise<{
+    global: string;
+    taskSpecific: string;
+    session: string;
+    tools: string;
+    totalTokensEstimate: number;
+  } | null> {
+    // Scale token budget by slot
+    const slotBudgets: Record<string, number> = {
+      longContext: 32_000,
+      default: 14_000,
+      fastLoop: 8000,
+      think: 14_000,
+      review: 14_000,
+      premium: 24_000,
+      background: 6000,
+      vision: 10_000,
+    };
+    const maxTokens =
+      slotBudgets[params.modelSlot ?? "default"] ?? this.tokenBudget;
+
+    try {
+      const response = await fetch(`${PROJECT_BRAIN_URL}/context/assemble`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          projectId: this.projectId,
+          sessionId: this.sessionId,
+          taskDescription: params.taskDescription,
+          agentRole: params.agentRole,
+          maxTokens,
+        }),
+        signal: AbortSignal.timeout(10_000),
+      });
+
+      if (!response.ok) {
+        logger.warn(
+          { status: response.status },
+          "Full context assembly failed, falling back to basic context"
+        );
+        return null;
+      }
+
+      return (await response.json()) as {
+        global: string;
+        taskSpecific: string;
+        session: string;
+        tools: string;
+        totalTokensEstimate: number;
+      };
+    } catch (error) {
+      logger.warn(
+        { error: String(error) },
+        "Project Brain context assembly unavailable"
+      );
+      return null;
+    }
+  }
+
+  /**
    * Summarize conversation history to compress context.
    * Called when approaching context window limits.
    */

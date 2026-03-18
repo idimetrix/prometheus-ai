@@ -20,6 +20,13 @@ export {
   type TaskMode,
   taskModeSchema,
 } from "./products";
+export {
+  checkQuota,
+  getQuotasForPlan,
+  isFeatureAvailable,
+  PLAN_QUOTAS,
+  type PlanQuotas,
+} from "./quotas";
 export { RateLimiter } from "./rate-limiter";
 export { StripeService } from "./stripe";
 export type { UsageRecord } from "./usage-tracker";
