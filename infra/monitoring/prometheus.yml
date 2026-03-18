@@ -1,0 +1,99 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  scrape_timeout: 10s
+
+# Alert rules
+rule_files:
+  - "alert_rules.yml"
+
+# Alertmanager configuration
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets:
+            - "alertmanager:9093"
+
+scrape_configs:
+  # Prometheus self-monitoring
+  - job_name: "prometheus"
+    static_configs:
+      - targets: ["localhost:9090"]
+
+  # ─── Prometheus Platform Services ─────────────────────────────
+
+  - job_name: "api"
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["api:4000"]
+    scrape_interval: 10s
+
+  - job_name: "orchestrator"
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["orchestrator:4002"]
+
+  - job_name: "project-brain"
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["project-brain:4003"]
+
+  - job_name: "model-router"
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["model-router:4004"]
+
+  - job_name: "mcp-gateway"
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["mcp-gateway:4005"]
+
+  - job_name: "sandbox-manager"
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["sandbox-manager:4006"]
+
+  - job_name: "socket-server"
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["socket-server:4001"]
+
+  - job_name: "queue-worker"
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["queue-worker:4010"]
+
+  # ─── Health check probing (via blackbox exporter, optional) ───
+
+  - job_name: "health-checks"
+    metrics_path: /probe
+    params:
+      module: [http_2xx]
+    static_configs:
+      - targets:
+          - "http://api:4000/health"
+          - "http://model-router:4004/health"
+          - "http://project-brain:4003/health"
+          - "http://mcp-gateway:4005/health"
+          - "http://sandbox-manager:4006/health"
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: "blackbox-exporter:9115"
+
+  # ─── Infrastructure ───────────────────────────────────────────
+
+  - job_name: "node-exporter"
+    static_configs:
+      - targets: ["node-exporter:9100"]
+
+  - job_name: "postgres-exporter"
+    static_configs:
+      - targets: ["postgres-exporter:9187"]
+
+  - job_name: "redis-exporter"
+    static_configs:
+      - targets: ["redis-exporter:9121"]

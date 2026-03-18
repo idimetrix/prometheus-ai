@@ -1,0 +1,51 @@
+# Uptime Kuma — Status Page & Monitoring
+# Deploy alongside Prometheus services for uptime monitoring.
+#
+# Access at: http://localhost:3001 (or status.prometheus.dev in production)
+#
+# Setup:
+#   cd infra/monitoring/uptime-kuma
+#   docker compose up -d
+#   Open http://localhost:3001 and create admin account
+#   Add monitors for each service (see monitors list below)
+
+services:
+  uptime-kuma:
+    image: louislam/uptime-kuma:1
+    container_name: prometheus-uptime-kuma
+    restart: unless-stopped
+    ports:
+      - "3001:3001"
+    volumes:
+      - uptime-kuma-data:/app/data
+    environment:
+      - NODE_ENV=production
+    healthcheck:
+      test: ["CMD-SHELL", "node -e 'fetch(\"http://localhost:3001\").then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))'"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+volumes:
+  uptime-kuma-data:
+    name: prometheus-uptime-kuma-data
+
+# ─── Monitors to Configure ────────────────────────────────────────
+#
+# After setup, add these HTTP monitors:
+#
+# | Name              | URL                             | Interval | Expected |
+# |-------------------|---------------------------------|----------|----------|
+# | Web (Frontend)    | http://web:3000                 | 60s      | 200      |
+# | API (Backend)     | http://api:4000/health          | 30s      | 200      |
+# | Socket Server     | http://socket-server:4001       | 60s      | any      |
+# | Orchestrator      | http://orchestrator:4002/health | 60s      | 200      |
+# | Project Brain     | http://project-brain:4003/health| 60s      | 200      |
+# | Model Router      | http://model-router:4004/health | 60s      | 200      |
+# | MCP Gateway       | http://mcp-gateway:4005/health  | 60s      | 200      |
+# | Sandbox Manager   | http://sandbox-manager:4006/health| 60s    | 200      |
+# | PostgreSQL        | postgres://postgres:5432        | 60s      | TCP      |
+# | Redis             | redis://redis:6379              | 60s      | TCP      |
+#
+# Status page: Create a public status page at /status
+# Notifications: Configure Slack webhook for alerts

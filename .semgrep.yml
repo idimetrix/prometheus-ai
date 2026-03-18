@@ -1,0 +1,53 @@
+# Semgrep rules for Prometheus
+# Run: semgrep --config .semgrep.yml
+
+rules:
+  # Prevent raw SQL queries (must use Drizzle ORM)
+  - id: no-raw-sql
+    patterns:
+      - pattern-either:
+          - pattern: $DB.execute($SQL)
+          - pattern: $CLIENT.query($SQL)
+          - pattern: sql.raw(...)
+    message: "Use Drizzle ORM instead of raw SQL queries"
+    languages: [typescript, javascript]
+    severity: ERROR
+
+  # Ensure orgId filtering on database queries
+  - id: require-org-filter
+    pattern: |
+      db.select().from($TABLE).where(eq($TABLE.id, $ID))
+    message: "Consider adding orgId filter for RLS compliance"
+    languages: [typescript]
+    severity: WARNING
+
+  # Prevent console.log in production code
+  - id: no-console-log
+    pattern: console.log(...)
+    paths:
+      include:
+        - apps/*/src/**
+        - packages/*/src/**
+      exclude:
+        - "**/__tests__/**"
+        - "**/seed.ts"
+        - "**/migrate.ts"
+    message: "Use @prometheus/logger instead of console.log"
+    languages: [typescript, javascript]
+    severity: WARNING
+
+  # Prevent storing secrets in plaintext
+  - id: no-plaintext-secrets
+    pattern-either:
+      - pattern: |
+          { ..., apiKey: $VALUE, ... }
+      - pattern: |
+          { ..., secretKey: $VALUE, ... }
+      - pattern: |
+          { ..., password: $VALUE, ... }
+    paths:
+      include:
+        - packages/db/src/schema/**
+    message: "Secrets must be encrypted before storage. Use @prometheus/utils encrypt()"
+    languages: [typescript]
+    severity: WARNING

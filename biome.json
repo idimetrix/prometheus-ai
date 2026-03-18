@@ -1,0 +1,90 @@
+{
+  "$schema": "https://biomejs.dev/schemas/2.4.8/schema.json",
+  "extends": ["ultracite/biome/core"],
+  "vcs": {
+    "enabled": true,
+    "clientKind": "git",
+    "useIgnoreFile": true
+  },
+  "files": {
+    "ignoreUnknown": true,
+    "includes": [
+      "!**/node_modules",
+      "!**/dist",
+      "!**/.next",
+      "!**/.turbo",
+      "!**/drizzle",
+      "!**/coverage",
+      "!**/*.min.js",
+      "!**/.claude",
+      "!**/.agents"
+    ]
+  },
+  "formatter": {
+    "indentStyle": "space",
+    "indentWidth": 2
+  },
+  "linter": {
+    "rules": {
+      "performance": {
+        "useTopLevelRegex": "warn",
+        "noBarrelFile": "off",
+        "noNamespaceImport": "warn"
+      },
+      "a11y": {
+        "noSvgWithoutTitle": "warn",
+        "useButtonType": "warn",
+        "noLabelWithoutControl": "warn",
+        "noStaticElementInteractions": "warn",
+        "noNoninteractiveElementInteractions": "warn",
+        "useKeyWithClickEvents": "warn"
+      },
+      "suspicious": {
+        "noExplicitAny": "warn",
+        "useAwait": "warn",
+        "noArrayIndexKey": "warn",
+        "noEmptyBlockStatements": "warn",
+        "noAssignInExpressions": "warn",
+        "noEvolvingTypes": "warn",
+        "noImplicitAnyLet": "warn",
+        "noAlert": "warn",
+        "noBitwiseOperators": "warn",
+        "noControlCharactersInRegex": "warn",
+        "useIterableCallbackReturn": "warn",
+        "noNonNullAssertedOptionalChain": "warn"
+      },
+      "correctness": {
+        "noUnusedVariables": "warn",
+        "noUndeclaredVariables": "warn",
+        "noUnusedFunctionParameters": "warn",
+        "noInvalidUseBeforeDeclaration": "warn",
+        "useImageSize": "warn",
+        "useExhaustiveDependencies": "warn"
+      },
+      "security": {
+        "noDangerouslySetInnerHtml": "warn"
+      },
+      "style": {
+        "noNonNullAssertion": "warn",
+        "noNestedTernary": "warn",
+        "noParameterProperties": "off",
+        "noExportedImports": "warn",
+        "useForOf": "warn",
+        "useDefaultSwitchClause": "warn",
+        "useCollapsedIf": "warn",
+        "useFilenamingConvention": "warn"
+      },
+      "complexity": {
+        "noExcessiveCognitiveComplexity": "warn",
+        "noForEach": "warn"
+      }
+    }
+  },
+  "assist": {
+    "actions": {
+      "source": {
+        "organizeImports": "on"
+      }
+    }
+  }
+}

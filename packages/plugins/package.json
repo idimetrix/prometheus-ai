@@ -1,0 +1,22 @@
+{
+  "name": "@prometheus/plugins",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "clean": "rm -rf dist .turbo"
+  },
+  "dependencies": {
+    "@prometheus/logger": "workspace:*",
+    "@prometheus/utils": "workspace:*"
+  },
+  "devDependencies": {
+    "@prometheus/config-typescript": "workspace:*",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.0"
+  }
+}

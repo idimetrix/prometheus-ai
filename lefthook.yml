@@ -1,0 +1,11 @@
+pre-commit:
+  commands:
+    ultracite:
+      glob: "*.{js,ts,tsx,jsx,json,css}"
+      run: npx ultracite fix {staged_files}
+      stage_fixed: true
+
+pre-push:
+  commands:
+    typecheck:
+      run: pnpm typecheck
