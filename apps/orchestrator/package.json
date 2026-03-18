@@ -7,13 +7,14 @@
     "dev": "tsx watch src/index.ts",
     "build": "tsup src/index.ts --format esm",
     "start": "node dist/index.js",
+    "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "clean": "rm -rf dist .turbo"
   },
   "dependencies": {
     "hono": "^4.7.0",
     "@hono/node-server": "^1.14.0",
-    "drizzle-orm": "^0.38.0",
+    "drizzle-orm": "^0.39.0",
     "@prometheus/db": "workspace:*",
     "@prometheus/types": "workspace:*",
     "@prometheus/queue": "workspace:*",

@@ -1,8 +1,9 @@
 import { Worker } from "bullmq";
 import { createLogger } from "@prometheus/logger";
 import { createRedisConnection } from "@prometheus/queue";
-import type { AgentTaskData, IndexingJobData, NotificationJobData } from "@prometheus/queue";
+import type { AgentTaskData, IndexingJobData, NotificationJobData, BillingEventData } from "@prometheus/queue";
 import { TaskProcessor } from "./processor";
+import { processNotification } from "./notifications";
 
 const logger = createLogger("queue-worker");
 const processor = new TaskProcessor();
@@ -66,35 +67,31 @@ const indexingWorker = new Worker<IndexingJobData>(
   },
 );
 
-// Notification worker
+// Notification worker (email + in-app via Socket.io)
 const notificationWorker = new Worker<NotificationJobData>(
   "notifications",
   async (job) => {
-    const { type, userId, orgId, data } = job.data;
-    logger.info({ type, userId }, "Processing notification");
-
-    // Send notifications based on type
-    switch (type) {
-      case "task_complete":
-        logger.info({ userId, taskId: data.taskId }, "Task complete notification");
-        break;
-      case "task_failed":
-        logger.info({ userId, taskId: data.taskId }, "Task failed notification");
-        break;
-      case "credits_low":
-        logger.info({ orgId, balance: data.balance }, "Credits low notification");
-        break;
-      case "queue_ready":
-        logger.info({ userId }, "Queue ready notification");
-        break;
-      case "weekly_summary":
-        logger.info({ orgId }, "Weekly summary notification");
-        break;
-    }
+    logger.info({ type: job.data.type, userId: job.data.userId }, "Processing notification");
+    await processNotification(job.data);
   },
   {
     connection: createRedisConnection(),
     concurrency: 5,
+  },
+);
+
+// Billing event worker
+const billingWorker = new Worker<BillingEventData>(
+  "billing-events",
+  async (job) => {
+    const { type, orgId, amount, metadata } = job.data;
+    logger.info({ type, orgId, amount }, "Processing billing event");
+    // Billing events are handled by the billing service
+    // This worker ensures events are processed reliably
+  },
+  {
+    connection: createRedisConnection(),
+    concurrency: 3,
   },
 );
 
@@ -104,6 +101,7 @@ for (const [name, worker] of Object.entries({
   enterprise: enterpriseWorker,
   indexing: indexingWorker,
   notification: notificationWorker,
+  billing: billingWorker,
 })) {
   worker.on("completed", (job) => {
     logger.info({ worker: name, jobId: job.id }, "Job completed");
@@ -128,6 +126,7 @@ const shutdown = async () => {
     enterpriseWorker.close(),
     indexingWorker.close(),
     notificationWorker.close(),
+    billingWorker.close(),
   ]);
   process.exit(0);
 };

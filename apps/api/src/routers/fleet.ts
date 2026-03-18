@@ -48,7 +48,7 @@ export const fleetRouter = router({
           title: task.title,
           description: task.description ?? null,
           mode: "fleet",
-          agentRole: task.agentRole ?? null,
+          agentRole: (task.agentRole as any) ?? null,
           planTier: "hobby",
           creditsReserved: 0,
         }, {

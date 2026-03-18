@@ -16,33 +16,50 @@ export interface SearchResult {
   chunkIndex: number;
 }
 
+const OLLAMA_URL = process.env.OLLAMA_BASE_URL ?? "http://localhost:11434";
+const EMBEDDING_MODEL = process.env.EMBEDDING_MODEL ?? "nomic-embed-text";
+const EMBEDDING_DIMENSIONS = 768;
+
 /**
- * Generate a simple numeric hash-based pseudo-embedding.
- * This is a deterministic fallback; for production use, call a real embedding model.
- *
- * TODO: Replace with real embedding call to Ollama nomic-embed-text or OpenAI:
- *   const response = await fetch(EMBEDDING_ENDPOINT, {
- *     method: "POST",
- *     body: JSON.stringify({ model: "nomic-embed-text", prompt: text }),
- *   });
- *   return (await response.json()).embedding; // number[768]
+ * Generate an embedding vector for the given text.
+ * Tries Ollama nomic-embed-text first, falls back to deterministic hash.
  */
-function hashEmbedding(text: string, dimensions: number = 768): number[] {
+async function generateEmbedding(text: string): Promise<number[]> {
+  try {
+    const response = await fetch(`${OLLAMA_URL}/api/embeddings`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ model: EMBEDDING_MODEL, prompt: text }),
+      signal: AbortSignal.timeout(30000),
+    });
+
+    if (response.ok) {
+      const data = await response.json() as { embedding: number[] };
+      if (data.embedding?.length > 0) {
+        return data.embedding;
+      }
+    }
+  } catch {
+    // Ollama not available, fall back to hash embedding
+  }
+
+  return hashEmbedding(text);
+}
+
+/** Deterministic fallback embedding using SHA-256 hashing */
+function hashEmbedding(text: string, dimensions: number = EMBEDDING_DIMENSIONS): number[] {
   const embedding: number[] = new Array(dimensions);
-  // Use multiple sha256 hashes to fill the vector
   let seed = text;
   let offset = 0;
   while (offset < dimensions) {
     const hash = crypto.createHash("sha256").update(seed).digest();
     for (let i = 0; i < hash.length && offset < dimensions; i += 4) {
-      // Convert 4 bytes to a float in [-1, 1]
       const val = hash.readInt32BE(i) / 2147483647;
       embedding[offset] = val;
       offset++;
     }
     seed = hash.toString("hex");
   }
-  // Normalize to unit length
   const norm = Math.sqrt(embedding.reduce((sum, v) => sum + v * v, 0));
   if (norm > 0) {
     for (let i = 0; i < dimensions; i++) {
@@ -77,7 +94,7 @@ export class SemanticLayer {
     // Insert new chunks with embeddings
     for (let i = 0; i < chunks.length; i++) {
       const chunk = chunks[i]!;
-      const embedding = hashEmbedding(chunk);
+      const embedding = await generateEmbedding(chunk);
 
       await db.insert(codeEmbeddings).values({
         id: generateId("emb"),
@@ -118,7 +135,7 @@ export class SemanticLayer {
 
   async search(projectId: string, query: string, limit: number = 10): Promise<SearchResult[]> {
     // Try pgvector cosine similarity search first
-    const queryEmbedding = hashEmbedding(query);
+    const queryEmbedding = await generateEmbedding(query);
 
     try {
       const vectorResults = await db
@@ -180,7 +197,7 @@ export class SemanticLayer {
 
     // Use the first chunk's content as a representative query
     const representativeContent = fileChunks[0]!.content;
-    const embedding = hashEmbedding(representativeContent);
+    const embedding = await generateEmbedding(representativeContent);
 
     try {
       const results = await db

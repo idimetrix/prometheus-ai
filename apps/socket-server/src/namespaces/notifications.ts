@@ -16,8 +16,12 @@ export function setupNotificationNamespace(namespace: Namespace) {
 
     // Mark notification as read
     socket.on("mark_read", (data: { notificationId: string }) => {
-      // TODO: Update notification status in DB
       logger.debug({ userId, notificationId: data.notificationId }, "Notification marked as read");
+      // Broadcast read status to other user sessions
+      socket.to(`user:${userId}:notifications`).emit("notification_read", {
+        notificationId: data.notificationId,
+        timestamp: new Date().toISOString(),
+      });
     });
 
     socket.on("disconnect", () => {

@@ -24,7 +24,8 @@
     "@prometheus/types": "workspace:*",
     "@prometheus/queue": "workspace:*",
     "@prometheus/logger": "workspace:*",
-    "@prometheus/utils": "workspace:*"
+    "@prometheus/utils": "workspace:*",
+    "drizzle-orm": "^0.39.0"
   },
   "devDependencies": {
     "@prometheus/config-typescript": "workspace:*",

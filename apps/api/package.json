@@ -3,10 +3,13 @@
   "version": "0.0.1",
   "private": true,
   "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "build": "tsup src/index.ts --format esm --dts",
     "start": "node dist/index.js",
+    "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "clean": "rm -rf dist .turbo"
   },
@@ -19,10 +22,13 @@
     "zod": "^3.24.0",
     "@prometheus/db": "workspace:*",
     "@prometheus/auth": "workspace:*",
+    "@prometheus/billing": "workspace:*",
     "@prometheus/types": "workspace:*",
     "@prometheus/validators": "workspace:*",
     "@prometheus/logger": "workspace:*",
-    "@prometheus/queue": "workspace:*"
+    "@prometheus/queue": "workspace:*",
+    "@prometheus/utils": "workspace:*",
+    "drizzle-orm": "^0.39.0"
   },
   "devDependencies": {
     "@prometheus/config-typescript": "workspace:*",

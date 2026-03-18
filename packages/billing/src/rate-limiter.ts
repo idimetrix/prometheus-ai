@@ -1,6 +1,6 @@
 import { createLogger } from "@prometheus/logger";
 import { createRedisConnection } from "@prometheus/queue";
-import type IORedis from "ioredis";
+type IORedis = ReturnType<typeof createRedisConnection>;
 
 const logger = createLogger("billing:rate-limiter");
 
@@ -30,7 +30,7 @@ export class RateLimiter {
     remaining: number;
     resetAt: Date;
   }> {
-    const limits = TIER_LIMITS[planTier] ?? TIER_LIMITS.hobby;
+    const limits: TierLimits = TIER_LIMITS[planTier] ?? { maxTasksPerDay: 5, maxConcurrentAgents: 1 };
 
     if (limits.maxTasksPerDay === Infinity) {
       return { allowed: true, remaining: Infinity, resetAt: new Date() };
@@ -74,7 +74,7 @@ export class RateLimiter {
   }
 
   async checkConcurrency(orgId: string, planTier: string, currentActive: number): Promise<boolean> {
-    const limits = TIER_LIMITS[planTier] ?? TIER_LIMITS.hobby;
+    const limits: TierLimits = TIER_LIMITS[planTier] ?? { maxTasksPerDay: 5, maxConcurrentAgents: 1 };
     return currentActive < limits.maxConcurrentAgents;
   }
 

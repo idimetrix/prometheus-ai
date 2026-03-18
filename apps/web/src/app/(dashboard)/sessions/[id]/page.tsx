@@ -251,11 +251,11 @@ function CodeDiffPanel() {
               <div key={i} className="rounded-lg border border-zinc-800 bg-zinc-950">
                 <div className="border-b border-zinc-800 px-3 py-1.5">
                   <span className="font-mono text-[10px] text-zinc-400">
-                    {diff.data?.filePath ?? `Change ${i + 1}`}
+                    {String(diff.data?.filePath ?? `Change ${i + 1}`)}
                   </span>
                 </div>
                 <pre className="overflow-auto p-3 text-[11px] leading-relaxed">
-                  {(diff.data?.diff ?? diff.data?.content ?? "")
+                  {String(diff.data?.diff ?? diff.data?.content ?? "")
                     .split("\n")
                     .map((line: string, j: number) => (
                       <div

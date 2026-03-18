@@ -101,9 +101,9 @@ export default function ProjectsPage() {
               >
                 <div className="flex items-center justify-between">
                   <span
-                    className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${badge.color}`}
+                    className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${badge?.color}`}
                   >
-                    {badge.label}
+                    {badge?.label}
                   </span>
                   <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                     <Link

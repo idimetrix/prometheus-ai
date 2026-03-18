@@ -190,23 +190,23 @@ export class CILoopProtocol {
     // Vitest/Jest format: Tests: X passed, Y failed, Z total
     const testSummary = output.match(/Tests:\s*(\d+)\s*passed.*?(\d+)\s*failed.*?(\d+)\s*total/i);
     if (testSummary) {
-      result.passedTests = parseInt(testSummary[1], 10);
-      result.failedTests = parseInt(testSummary[2], 10);
-      result.totalTests = parseInt(testSummary[3], 10);
+      result.passedTests = parseInt(testSummary[1]!, 10);
+      result.failedTests = parseInt(testSummary[2]!, 10);
+      result.totalTests = parseInt(testSummary[3]!, 10);
     }
 
     // Alternative: X passing, Y failing
     const altSummary = output.match(/(\d+)\s*passing.*?(\d+)\s*failing/i);
     if (altSummary && result.totalTests === 0) {
-      result.passedTests = parseInt(altSummary[1], 10);
-      result.failedTests = parseInt(altSummary[2], 10);
+      result.passedTests = parseInt(altSummary[1]!, 10);
+      result.failedTests = parseInt(altSummary[2]!, 10);
       result.totalTests = result.passedTests + result.failedTests;
     }
 
     // Duration
     const durationMatch = output.match(/Duration:\s*([\d.]+)\s*s/i) || output.match(/Time:\s*([\d.]+)\s*s/i);
     if (durationMatch) {
-      result.duration = parseFloat(durationMatch[1]);
+      result.duration = parseFloat(durationMatch[1]!);
     }
 
     // Extract individual failures
@@ -215,7 +215,7 @@ export class CILoopProtocol {
       const lines = block.trim().split("\n");
       if (lines.length > 0) {
         result.failures.push({
-          testName: lines[0].trim(),
+          testName: lines[0]!.trim(),
           testFile: "",
           error: lines.slice(1, 5).join("\n").trim(),
           stackTrace: lines.slice(5).join("\n").trim(),
@@ -272,10 +272,10 @@ export class CILoopProtocol {
     );
 
     // Check if all 3 have the same failure signature
-    const first = failureSets[0];
+    const first = failureSets[0]!;
     return failureSets.every((s) => {
-      if (s.size !== first.size) return false;
-      for (const item of first) {
+      if (s.size !== first!.size) return false;
+      for (const item of first!) {
         if (!s.has(item)) return false;
       }
       return true;

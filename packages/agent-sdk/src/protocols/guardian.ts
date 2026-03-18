@@ -66,7 +66,7 @@ export class BusinessLogicGuardian {
     // Extract tech stack from blueprint
     const techStackMatch = blueprintContent.match(/## Tech Stack\n([\s\S]*?)(?=\n##|$)/);
     if (techStackMatch) {
-      const lines = techStackMatch[1].split("\n").filter((l) => l.startsWith("- **"));
+      const lines = techStackMatch[1]!.split("\n").filter((l) => l.startsWith("- **"));
       rules.techStack = lines.map((l) => l.replace(/- \*\*.*?\*\*:\s*/, "").trim());
     }
 

@@ -117,7 +117,7 @@ export const sessionsRouter = router({
 
       return {
         sessions: items,
-        nextCursor: hasMore ? items[items.length - 1].id : null,
+        nextCursor: hasMore ? items[items.length - 1]!.id : null,
       };
     }),
 

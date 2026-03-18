@@ -27,7 +27,7 @@ stripeWebhookApp.post("/", async (c) => {
 
     switch (event.type) {
       case "checkout.session.completed": {
-        const session = event.data.object as Record<string, unknown>;
+        const session = event.data.object as unknown as Record<string, unknown>;
         const orgId = (session.metadata as Record<string, string>)?.orgId;
         const planTier = (session.metadata as Record<string, string>)?.planTier;
         const creditsAmount = (session.metadata as Record<string, string>)?.credits;
@@ -71,7 +71,7 @@ stripeWebhookApp.post("/", async (c) => {
 
       case "customer.subscription.created":
       case "customer.subscription.updated": {
-        const sub = event.data.object as Record<string, unknown>;
+        const sub = event.data.object as unknown as Record<string, unknown>;
         const customerId = sub.customer as string;
 
         const org = await db.query.organizations.findFirst({
@@ -86,7 +86,7 @@ stripeWebhookApp.post("/", async (c) => {
       }
 
       case "customer.subscription.deleted": {
-        const sub = event.data.object as Record<string, unknown>;
+        const sub = event.data.object as unknown as Record<string, unknown>;
         const customerId = sub.customer as string;
 
         const org = await db.query.organizations.findFirst({
@@ -104,7 +104,7 @@ stripeWebhookApp.post("/", async (c) => {
       }
 
       case "invoice.paid": {
-        const invoice = event.data.object as Record<string, unknown>;
+        const invoice = event.data.object as unknown as Record<string, unknown>;
         const customerId = invoice.customer as string;
 
         const org = await db.query.organizations.findFirst({
@@ -141,7 +141,7 @@ stripeWebhookApp.post("/", async (c) => {
       }
 
       case "invoice.payment_failed": {
-        const invoice = event.data.object as Record<string, unknown>;
+        const invoice = event.data.object as unknown as Record<string, unknown>;
         const customerId = invoice.customer as string;
 
         const org = await db.query.organizations.findFirst({

@@ -41,7 +41,7 @@ export class WorkingMemoryLayer {
     const values = await redis.mget(...keys);
     for (let i = 0; i < keys.length; i++) {
       const shortKey = keys[i]!.slice(prefix.length);
-      const raw = values[i];
+      const raw = values[i] ?? null;
       if (raw !== null) {
         try {
           result[shortKey] = JSON.parse(raw);

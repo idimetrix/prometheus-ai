@@ -20,7 +20,7 @@ export const tasksRouter = router({
       }
 
       const id = generateId("task");
-      const [task] = await ctx.db.insert(tasks).values({
+      const created = await ctx.db.insert(tasks).values({
         id,
         sessionId: input.sessionId,
         projectId: session.projectId,
@@ -29,6 +29,7 @@ export const tasksRouter = router({
         status: "queued",
         priority: 50,
       }).returning();
+      const task = created[0]!;
 
       // Add to queue
       const job = await agentTaskQueue.add("agent-task", {

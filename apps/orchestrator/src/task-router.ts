@@ -182,6 +182,17 @@ export class TaskRouter {
           break;
         }
 
+        case "watch": {
+          // Watch mode: agent monitors file changes and provides suggestions
+          const watchResult = await agentLoop.executeTask(
+            `Watch mode: Monitor this project and provide real-time suggestions for:\n${taskDescription}\n\nWatch for file changes, catch bugs, suggest improvements, and flag potential issues. Operate as a pair programming assistant.`,
+            "ci_loop",
+          );
+          results.push(watchResult);
+          totalCreditsConsumed += agentLoop.getCreditsConsumed();
+          break;
+        }
+
         default: {
           // If a specific agent role was requested, run it directly
           if (agentRole) {
@@ -303,6 +314,8 @@ Instructions:
       filesChanged: [],
       tokensUsed: { input: 0, output: 0 },
       toolCalls: 0,
+      steps: 0,
+      creditsConsumed: 0,
     });
     await this.publishPhaseUpdate("discovery", "completed");
 
@@ -316,6 +329,8 @@ Instructions:
       filesChanged: [],
       tokensUsed: { input: 0, output: 0 },
       toolCalls: 0,
+      steps: 0,
+      creditsConsumed: 0,
     });
     await this.publishPhaseUpdate("architecture", "completed");
 
@@ -329,6 +344,8 @@ Instructions:
       filesChanged: [],
       tokensUsed: { input: 0, output: 0 },
       toolCalls: 0,
+      steps: 0,
+      creditsConsumed: 0,
     });
     await this.publishPhaseUpdate("planning", "completed");
 
@@ -375,6 +392,8 @@ Instructions:
       filesChanged: [],
       tokensUsed: { input: 0, output: 0 },
       toolCalls: 0,
+      steps: 0,
+      creditsConsumed: 0,
     });
     await this.publishPhaseUpdate("discovery", "completed");
 
@@ -388,6 +407,8 @@ Instructions:
       filesChanged: [],
       tokensUsed: { input: 0, output: 0 },
       toolCalls: 0,
+      steps: 0,
+      creditsConsumed: 0,
     });
     await this.publishPhaseUpdate("architecture", "completed");
 
@@ -401,6 +422,8 @@ Instructions:
       filesChanged: [],
       tokensUsed: { input: 0, output: 0 },
       toolCalls: 0,
+      steps: 0,
+      creditsConsumed: 0,
     });
     await this.publishPhaseUpdate("planning", "completed");
 
@@ -429,6 +452,8 @@ Instructions:
       filesChanged: [],
       tokensUsed: { input: 0, output: 0 },
       toolCalls: 0,
+      steps: 0,
+      creditsConsumed: 0,
     });
     await this.publishPhaseUpdate("ci_loop", ciResult.passed ? "completed" : "failed");
 
@@ -512,6 +537,8 @@ Instructions:
               filesChanged: [],
               tokensUsed: { input: 0, output: 0 },
               toolCalls: 0,
+              steps: 0,
+              creditsConsumed: 0,
               error: settled.reason instanceof Error ? settled.reason.message : String(settled.reason),
             });
           }
@@ -629,7 +656,7 @@ Instructions:
   }
 
   private matchesRequirements(desc: string): boolean {
-    return /\b(requirements?|user stor|acceptance criteria|scope|srs|discover|elicit|interview)\b/.test(desc);
+    return /\b(requirements?|user stor(?:y|ies)?|acceptance criteria|scope|srs|discover|elicit|interview)\b/.test(desc);
   }
 
   private matchesArchitecture(desc: string): boolean {
@@ -649,7 +676,7 @@ Instructions:
   }
 
   private matchesTesting(desc: string): boolean {
-    return /\b(test|spec|coverage|vitest|playwright|e2e|unit test|integration test|assert|expect)\b/.test(desc);
+    return /\b(tests?|specs?|coverage|vitest|playwright|e2e|unit tests?|integration tests?|assert|expect)\b/.test(desc);
   }
 
   private matchesSecurity(desc: string): boolean {

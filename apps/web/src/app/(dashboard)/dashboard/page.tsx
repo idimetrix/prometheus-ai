@@ -23,7 +23,7 @@ export default function DashboardPage() {
   const balanceQuery = trpc.billing.getBalance.useQuery(undefined, {
     retry: false,
   });
-  const overviewQuery = trpc.analytics.overview.useQuery(
+  const overviewQuery = trpc.stats.overview.useQuery(
     { days: 1 },
     { retry: false },
   );

@@ -123,7 +123,7 @@ export const billingRouter = router({
       const appUrl = process.env.APP_URL ?? "http://localhost:3000";
       const checkoutUrl = await stripe.createCheckoutSession({
         customerId: org.stripeCustomerId,
-        priceId: priceMap[input.amount],
+        priceId: priceMap[input.amount] ?? "",
         successUrl: `${appUrl}/settings?credits=success`,
         cancelUrl: `${appUrl}/settings?credits=cancelled`,
         mode: "payment",
@@ -162,7 +162,7 @@ export const billingRouter = router({
 
       return {
         transactions: items,
-        nextCursor: hasMore ? items[items.length - 1].id : null,
+        nextCursor: hasMore ? items[items.length - 1]!.id : null,
       };
     }),
 

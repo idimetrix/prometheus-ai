@@ -10,6 +10,7 @@
     "db:push": "turbo run db:push --filter=@prometheus/db",
     "db:migrate": "turbo run db:migrate --filter=@prometheus/db",
     "db:generate": "turbo run db:generate --filter=@prometheus/db",
+    "db:seed": "turbo run db:seed --filter=@prometheus/db",
     "format": "prettier --write \"**/*.{ts,tsx,js,jsx,json,md}\"",
     "clean": "turbo run clean && rm -rf node_modules"
   },

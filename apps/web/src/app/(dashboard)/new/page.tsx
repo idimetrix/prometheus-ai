@@ -91,7 +91,7 @@ export default function NewTaskPage() {
         prompt: prompt.trim(),
         mode,
       });
-      router.push(`/dashboard/sessions/${session.id}`);
+      router.push(`/dashboard/sessions/${session!.id}`);
     } catch (err) {
       console.error("Failed to create session:", err);
       setIsSubmitting(false);

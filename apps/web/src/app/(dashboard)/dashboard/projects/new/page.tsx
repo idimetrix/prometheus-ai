@@ -36,7 +36,7 @@ export default function NewProjectPage() {
         techStackPreset: preset,
         repoUrl: repoUrl.trim() || undefined,
       });
-      router.push(`/dashboard/projects/${project.id}/brain`);
+      router.push(`/dashboard/projects/${project!.id}/brain`);
     } catch (err) {
       console.error("Failed to create project:", err);
       setIsCreating(false);

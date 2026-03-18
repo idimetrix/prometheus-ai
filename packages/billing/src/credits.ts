@@ -22,17 +22,18 @@ export class CreditService {
 
     if (!balance) {
       // Initialize with default hobby credits
-      [balance] = await db.insert(creditBalances).values({
+      const [inserted] = await db.insert(creditBalances).values({
         orgId,
         balance: 50,
         reserved: 0,
       }).returning();
+      balance = inserted!;
     }
 
     return {
-      balance: balance.balance,
-      reserved: balance.reserved,
-      available: balance.balance - balance.reserved,
+      balance: balance!.balance,
+      reserved: balance!.reserved,
+      available: balance!.balance - balance!.reserved,
     };
   }
 

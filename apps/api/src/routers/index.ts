@@ -19,7 +19,7 @@ export const appRouter = router({
   projects: projectsRouter,
   queue: queueRouter,
   billing: billingRouter,
-  analytics: analyticsRouter,
+  stats: analyticsRouter,
   settings: settingsRouter,
   brain: brainRouter,
   fleet: fleetRouter,

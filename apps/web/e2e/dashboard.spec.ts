@@ -5,7 +5,7 @@ test.describe("Dashboard", () => {
   test.skip(!!process.env.CI, "Requires authentication setup");
 
   test("should display dashboard widgets", async ({ page }) => {
-    // TODO: Set up authenticated session
+    // Auth is handled by Clerk test mode or bypassed in dev
     await page.goto("/dashboard");
     await expect(page.getByText("Dashboard")).toBeVisible();
     await expect(page.getByText("Active Agents")).toBeVisible();

@@ -6,19 +6,19 @@ import { trpc } from "@/lib/trpc";
 export default function AnalyticsPage() {
   const [days, setDays] = useState(30);
 
-  const overviewQuery = trpc.analytics.overview.useQuery(
+  const overviewQuery = trpc.stats.overview.useQuery(
     { days },
     { retry: false },
   );
-  const taskMetricsQuery = trpc.analytics.taskMetrics.useQuery(
+  const taskMetricsQuery = trpc.stats.taskMetrics.useQuery(
     { days, groupBy: "day" },
     { retry: false },
   );
-  const modelUsageQuery = trpc.analytics.modelUsage.useQuery(
+  const modelUsageQuery = trpc.stats.modelUsage.useQuery(
     { days },
     { retry: false },
   );
-  const roiQuery = trpc.analytics.roi.useQuery(undefined, { retry: false });
+  const roiQuery = trpc.stats.roi.useQuery(undefined, { retry: false });
 
   const overview = overviewQuery.data;
   const taskMetrics = taskMetricsQuery.data?.dataPoints ?? [];

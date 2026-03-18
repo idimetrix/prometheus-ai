@@ -6,7 +6,7 @@ import superjson from "superjson";
 import { useState, type ReactNode } from "react";
 import type { AppRouter } from "@prometheus/api";
 
-export const trpc = createTRPCReact<AppRouter>();
+export const trpc: ReturnType<typeof createTRPCReact<AppRouter>> = createTRPCReact<AppRouter>();
 
 function getBaseUrl() {
   if (typeof window !== "undefined") {

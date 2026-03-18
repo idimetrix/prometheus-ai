@@ -102,12 +102,13 @@ export class AgentLoop {
     }
   }
 
-  private createContext(brainContext: ProjectBrainContext): AgentContext {
+  private createContext(brainContext: ProjectBrainContext, agentRole: string = "orchestrator"): AgentContext {
     return {
       sessionId: this.sessionId,
       projectId: this.projectId,
       orgId: this.orgId,
       userId: this.userId,
+      agentRole: agentRole as any,
       blueprintContent: brainContext.blueprintContent,
       projectContext: brainContext.projectSummary,
     };
@@ -226,7 +227,7 @@ export class AgentLoop {
         output: "",
         filesChanged: [],
         tokensUsed: { input: 0, output: 0 },
-        toolCalls: 0,
+        toolCalls: 0, steps: 0, creditsConsumed: 0,
         error: errorMessage,
       };
       this.iterations.push(iteration);
@@ -240,7 +241,7 @@ export class AgentLoop {
         timestamp: new Date().toISOString(),
       });
 
-      return iteration.result;
+      return iteration.result!;
     }
   }
 
@@ -323,7 +324,7 @@ export class AgentLoop {
             output: lastOutput,
             filesChanged: Array.from(filesChanged),
             tokensUsed: { input: totalInputTokens, output: totalOutputTokens },
-            toolCalls: totalToolCalls,
+            toolCalls: totalToolCalls, steps: 0, creditsConsumed: 0,
             error: `Blocked after ${consecutiveErrors} consecutive LLM failures`,
           };
         }
@@ -468,7 +469,7 @@ export class AgentLoop {
               output: lastOutput,
               filesChanged: Array.from(filesChanged),
               tokensUsed: { input: totalInputTokens, output: totalOutputTokens },
-              toolCalls: totalToolCalls,
+              toolCalls: totalToolCalls, steps: 0, creditsConsumed: 0,
               error: `Blocked: ${toolName} failed ${this.consecutiveFailures} consecutive times`,
             };
           }
@@ -481,7 +482,7 @@ export class AgentLoop {
       output: lastOutput,
       filesChanged: Array.from(filesChanged),
       tokensUsed: { input: totalInputTokens, output: totalOutputTokens },
-      toolCalls: totalToolCalls,
+      toolCalls: totalToolCalls, steps: 0, creditsConsumed: 0,
     };
   }
 

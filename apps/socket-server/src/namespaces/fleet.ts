@@ -34,9 +34,9 @@ export function setupFleetNamespace(namespace: Namespace) {
 
         socket.emit("fleet_status", {
           activeAgents: activeAgents.length,
-          queuedTasks: activeTasks.filter((t) => t.status === "queued").length,
-          runningTasks: activeTasks.filter((t) => t.status === "running").length,
-          agents: activeAgents.map((a) => ({
+          queuedTasks: activeTasks.filter((t: any) => t.status === "queued").length,
+          runningTasks: activeTasks.filter((t: any) => t.status === "running").length,
+          agents: activeAgents.map((a: any) => ({
             id: a.id,
             role: a.role,
             status: a.status,
@@ -46,7 +46,7 @@ export function setupFleetNamespace(namespace: Namespace) {
             stepsCompleted: a.stepsCompleted,
             startedAt: a.startedAt.toISOString(),
           })),
-          tasks: activeTasks.map((t) => ({
+          tasks: activeTasks.map((t: any) => ({
             id: t.id,
             title: t.title,
             status: t.status,

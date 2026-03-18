@@ -177,9 +177,9 @@ export default function FleetPage() {
                       {agent.role}
                     </span>
                     <div className="flex items-center gap-1.5">
-                      <span className={`h-2 w-2 rounded-full ${statusInfo.color}`} />
+                      <span className={`h-2 w-2 rounded-full ${statusInfo?.color ?? "bg-zinc-500"}`} />
                       <span className="text-[10px] text-zinc-500">
-                        {statusInfo.label}
+                        {statusInfo?.label ?? "unknown"}
                       </span>
                     </div>
                   </div>
@@ -219,7 +219,7 @@ export default function FleetPage() {
                     .filter(
                       (t) =>
                         t.agentRole === agent.role &&
-                        (t.status === "running" || t.status === "in_progress"),
+                        (t.status === "running" || t.status === ("in_progress" as string)),
                     )
                     .slice(0, 1)
                     .map((task) => (
@@ -291,7 +291,7 @@ export default function FleetPage() {
                             ? "text-green-400"
                             : task.status === "failed"
                               ? "text-red-400"
-                              : task.status === "running" || task.status === "in_progress"
+                              : task.status === "running" || task.status === ("in_progress" as string)
                                 ? "text-violet-400"
                                 : "text-zinc-500"
                         }`}
