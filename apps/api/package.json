@@ -27,6 +27,7 @@
     "@prometheus/validators": "workspace:*",
     "@prometheus/logger": "workspace:*",
     "@prometheus/queue": "workspace:*",
+    "@prometheus/telemetry": "workspace:*",
     "@prometheus/utils": "workspace:*",
     "@sentry/node": "^10.44.0",
     "drizzle-orm": "^0.45.1"

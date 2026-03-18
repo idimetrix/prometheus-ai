@@ -15,9 +15,9 @@ const MEMORY_TYPES = [
 export default function BrainPage({
   params,
 }: {
-  params: Promise<{ id: string }>;
+  params: Promise<{ projectId: string }>;
 }) {
-  const { id: projectId } = use(params);
+  const { projectId } = use(params);
   const [searchQuery, setSearchQuery] = useState("");
   const [chatMessages, setChatMessages] = useState<
     Array<{ role: "user" | "assistant"; content: string }>

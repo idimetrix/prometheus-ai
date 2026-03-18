@@ -17,9 +17,10 @@
     "@prometheus/ai": "workspace:*",
     "@prometheus/queue": "workspace:*",
     "@prometheus/logger": "workspace:*",
+    "@prometheus/telemetry": "workspace:*",
     "@prometheus/types": "workspace:*",
     "@prometheus/utils": "workspace:*",
-    "ioredis": "^5.10.0"
+    "ioredis": "5.9.3"
   },
   "devDependencies": {
     "@prometheus/config-typescript": "workspace:*",

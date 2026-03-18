@@ -619,6 +619,15 @@ app.post("/domain-knowledge/query", async (c) => {
   return c.json({ results });
 });
 
+// ---- Prometheus Metrics ----
+
+app.get("/metrics", async (c) => {
+  const { metricsRegistry } = await import("@prometheus/telemetry");
+  return c.text(metricsRegistry.render(), 200, {
+    "Content-Type": "text/plain; charset=utf-8",
+  });
+});
+
 // ---- Error handling ----
 
 app.onError((err, c) => {

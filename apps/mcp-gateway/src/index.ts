@@ -3,11 +3,15 @@ import { createLogger } from "@prometheus/logger";
 import { decrypt, encrypt } from "@prometheus/utils";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
+import { registerConfluenceAdapter } from "./adapters/confluence";
+import { registerDatadogAdapter } from "./adapters/datadog";
+import { registerDockerHubAdapter } from "./adapters/docker-hub";
 import { registerFigmaAdapter } from "./adapters/figma";
 import { registerGitHubAdapter } from "./adapters/github";
 import { registerGitLabAdapter } from "./adapters/gitlab";
 import { registerJiraAdapter } from "./adapters/jira";
 import { registerLinearAdapter } from "./adapters/linear";
+import { registerSentryAdapter } from "./adapters/sentry";
 import { registerSlackAdapter } from "./adapters/slack";
 import { registerVercelAdapter } from "./adapters/vercel";
 import { ToolRegistry } from "./registry";
@@ -26,6 +30,38 @@ registerJiraAdapter(registry);
 registerSlackAdapter(registry);
 registerVercelAdapter(registry);
 registerFigmaAdapter(registry);
+
+// Credential-based adapters — available for hot-loading via the plugin system.
+// These require explicit credentials at registration time. When credentials are
+// provided (e.g. via environment variables or the credential store), uncomment
+// the corresponding registration call.
+if (process.env.CONFLUENCE_TOKEN && process.env.CONFLUENCE_CLOUD_ID) {
+  registerConfluenceAdapter(registry, {
+    token: process.env.CONFLUENCE_TOKEN,
+    cloudId: process.env.CONFLUENCE_CLOUD_ID,
+  });
+}
+
+if (process.env.DATADOG_API_KEY && process.env.DATADOG_APP_KEY) {
+  registerDatadogAdapter(registry, {
+    apiKey: process.env.DATADOG_API_KEY,
+    appKey: process.env.DATADOG_APP_KEY,
+  });
+}
+
+if (process.env.SENTRY_TOKEN && process.env.SENTRY_ORG) {
+  registerSentryAdapter(registry, {
+    token: process.env.SENTRY_TOKEN,
+    org: process.env.SENTRY_ORG,
+  });
+}
+
+if (process.env.DOCKERHUB_TOKEN && process.env.DOCKERHUB_NAMESPACE) {
+  registerDockerHubAdapter(registry, {
+    token: process.env.DOCKERHUB_TOKEN,
+    namespace: process.env.DOCKERHUB_NAMESPACE,
+  });
+}
 
 // Start health checks (every 5 minutes)
 registry.startHealthChecks(5 * 60 * 1000);

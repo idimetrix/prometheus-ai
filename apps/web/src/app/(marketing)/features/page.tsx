@@ -1,3 +1,4 @@
+import type { Route } from "next";
 import Link from "next/link";
 
 const FEATURE_SECTIONS = [
@@ -150,7 +151,7 @@ export default function FeaturesPage() {
           <div className="mt-6 flex justify-center gap-4">
             <Link
               className="rounded-xl bg-violet-600 px-8 py-3.5 font-semibold text-sm text-white transition-colors hover:bg-violet-700"
-              href="/sign-up"
+              href={"/sign-up" as Route}
             >
               Get Started Free
             </Link>

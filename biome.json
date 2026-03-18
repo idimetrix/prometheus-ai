@@ -33,8 +33,8 @@
     "rules": {
       "recommended": true,
       "suspicious": {
-        "noExplicitAny": "warn",
-        "noArrayIndexKey": "off",
+        "noExplicitAny": "error",
+        "noArrayIndexKey": "warn",
         "noUnknownAtRules": "off"
       },
       "performance": {
@@ -44,7 +44,12 @@
         "noParameterProperties": "off"
       },
       "complexity": {
-        "noExcessiveCognitiveComplexity": "off"
+        "noExcessiveCognitiveComplexity": {
+          "level": "warn",
+          "options": {
+            "maxAllowedComplexity": 25
+          }
+        }
       }
     },
     "domains": {

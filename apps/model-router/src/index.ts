@@ -335,6 +335,15 @@ app.get("/v1/byo/providers", (c) => {
   return c.json({ data: providers });
 });
 
+// ─── Prometheus Metrics ──────────────────────────────────────
+
+app.get("/metrics", async (c) => {
+  const { metricsRegistry } = await import("@prometheus/telemetry");
+  return c.text(metricsRegistry.render(), 200, {
+    "Content-Type": "text/plain; charset=utf-8",
+  });
+});
+
 // ─── Start Server ───────────────────────────────────────────────
 
 const port = Number(process.env.MODEL_ROUTER_PORT ?? 4004);

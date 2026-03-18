@@ -12,9 +12,9 @@ import {
 } from "../enums";
 
 describe("AgentRole", () => {
-  it("has all 12 specialist agent roles", () => {
+  it("has all 13 specialist agent roles", () => {
     const roles = Object.values(AgentRole);
-    expect(roles).toHaveLength(12);
+    expect(roles).toHaveLength(13);
     expect(roles).toContain("orchestrator");
     expect(roles).toContain("discovery");
     expect(roles).toContain("architect");
@@ -27,6 +27,7 @@ describe("AgentRole", () => {
     expect(roles).toContain("ci_loop");
     expect(roles).toContain("security_auditor");
     expect(roles).toContain("deploy_engineer");
+    expect(roles).toContain("documentation_specialist");
   });
 
   it("has unique values for every key", () => {

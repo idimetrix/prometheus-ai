@@ -21,6 +21,7 @@
     "@prometheus/ai": "workspace:*",
     "@prometheus/agent-sdk": "workspace:*",
     "@prometheus/logger": "workspace:*",
+    "@prometheus/telemetry": "workspace:*",
     "@prometheus/utils": "workspace:*"
   },
   "devDependencies": {

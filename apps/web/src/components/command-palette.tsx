@@ -1,5 +1,6 @@
 "use client";
 
+import type { Route } from "next";
 import { useRouter } from "next/navigation";
 import type { JSX } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -178,7 +179,7 @@ export function CommandPalette() {
         label: "Go to Sessions",
         category: "navigate",
         icon: "session",
-        handler: () => router.push("/dashboard/sessions"),
+        handler: () => router.push("/dashboard/sessions" as Route),
       },
       {
         id: "nav-settings",

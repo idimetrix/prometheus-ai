@@ -1,4 +1,5 @@
 "use client";
+import type { Route } from "next";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { trpc } from "@/lib/trpc";
@@ -66,7 +67,7 @@ export default function NewProjectPage() {
         techStackPreset: preset,
         repoUrl: repoUrl.trim() || undefined,
       });
-      router.push(`/dashboard/projects/${project?.id}/brain`);
+      router.push(`/dashboard/projects/${project?.id}/brain` as Route);
     } catch (err) {
       console.error("Failed to create project:", err);
       setIsCreating(false);

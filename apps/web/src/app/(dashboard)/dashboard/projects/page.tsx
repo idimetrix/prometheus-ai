@@ -1,5 +1,6 @@
 "use client";
 
+import type { Route } from "next";
 import Link from "next/link";
 import { useState } from "react";
 import { trpc } from "@/lib/trpc";
@@ -138,7 +139,7 @@ export default function ProjectsPage() {
                   <div className="flex items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100">
                     <Link
                       className="rounded p-1 text-zinc-500 hover:bg-zinc-800 hover:text-zinc-300"
-                      href={`/dashboard/projects/${project.id}/brain`}
+                      href={`/dashboard/projects/${project.id}/brain` as Route}
                       title="Project Brain"
                     >
                       <svg
@@ -203,7 +204,7 @@ export default function ProjectsPage() {
                 <div className="mt-3 flex gap-2">
                   <Link
                     className="flex-1 rounded-lg border border-zinc-800 bg-zinc-950 py-1.5 text-center text-xs text-zinc-400 hover:border-zinc-700 hover:text-zinc-200"
-                    href={`/dashboard/projects/${project.id}/brain`}
+                    href={`/dashboard/projects/${project.id}/brain` as Route}
                   >
                     Brain
                   </Link>

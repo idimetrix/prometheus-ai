@@ -7,9 +7,7 @@ const nextConfig: NextConfig = {
     "@prometheus/validators",
     "@prometheus/api",
   ],
-  experimental: {
-    typedRoutes: true,
-  },
+  typedRoutes: true,
 };
 
 export default nextConfig;

@@ -18,10 +18,11 @@
     "@prometheus/ai": "workspace:*",
     "@prometheus/queue": "workspace:*",
     "@prometheus/logger": "workspace:*",
+    "@prometheus/telemetry": "workspace:*",
     "@prometheus/types": "workspace:*",
     "@prometheus/utils": "workspace:*",
     "drizzle-orm": "^0.45.1",
-    "ioredis": "5.10.0"
+    "ioredis": "5.9.3"
   },
   "devDependencies": {
     "@prometheus/config-typescript": "workspace:*",

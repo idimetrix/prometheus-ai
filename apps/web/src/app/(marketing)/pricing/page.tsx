@@ -1,5 +1,6 @@
 "use client";
 
+import type { Route } from "next";
 import Link from "next/link";
 import { useState } from "react";
 
@@ -183,7 +184,7 @@ export default function PricingPage() {
                     ? "bg-violet-600 text-white hover:bg-violet-700"
                     : "border border-zinc-700 text-zinc-300 hover:bg-zinc-800"
                 }`}
-                href={tier.price === null ? "/about" : "/sign-up"}
+                href={(tier.price === null ? "/about" : "/sign-up") as Route}
               >
                 {tier.cta}
               </Link>

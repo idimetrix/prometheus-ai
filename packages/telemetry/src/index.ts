@@ -7,6 +7,7 @@ import {
 
 export type { Span, SpanOptions } from "@opentelemetry/api";
 export { context, SpanStatusCode, trace } from "@opentelemetry/api";
+export { metrics, metricsRegistry } from "./metrics";
 
 export interface TelemetryConfig {
   /** Whether to enable auto-instrumentation of HTTP, DB, Redis, etc. (default: true) */

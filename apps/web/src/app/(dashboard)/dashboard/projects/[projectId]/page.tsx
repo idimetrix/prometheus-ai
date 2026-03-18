@@ -1,5 +1,6 @@
 "use client";
 
+import type { Route } from "next";
 import Link from "next/link";
 import { use } from "react";
 import { trpc } from "@/lib/trpc";
@@ -65,7 +66,7 @@ export default function ProjectDetailPage({
         <div className="flex gap-3">
           <Link
             className="rounded-lg border border-zinc-700 bg-zinc-900 px-4 py-2 font-medium text-sm text-zinc-300 hover:bg-zinc-800"
-            href={`/dashboard/projects/${projectId}/brain`}
+            href={`/dashboard/projects/${projectId}/brain` as Route}
           >
             Project Brain
           </Link>
@@ -114,7 +115,7 @@ export default function ProjectDetailPage({
             sessions.map((session) => (
               <Link
                 className="flex items-center justify-between rounded-xl border border-zinc-800 bg-zinc-900/30 p-4 transition-colors hover:border-zinc-700"
-                href={`/dashboard/sessions/${session.id}`}
+                href={`/dashboard/sessions/${session.id}` as Route}
                 key={session.id}
               >
                 <div className="flex items-center gap-3">

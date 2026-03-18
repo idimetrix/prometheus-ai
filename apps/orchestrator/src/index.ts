@@ -284,6 +284,16 @@ app.post("/sessions/:id/release", async (c) => {
   }
 });
 
+// ─── Prometheus Metrics ──────────────────────────────────────
+
+app.get("/metrics", async (c) => {
+  const { metricsRegistry, metrics } = await import("@prometheus/telemetry");
+  metrics.activeSessions.set({}, sessionManager.getActiveSessionCount());
+  return c.text(metricsRegistry.render(), 200, {
+    "Content-Type": "text/plain; charset=utf-8",
+  });
+});
+
 // ─── Start Server ───────────────────────────────────────────────
 
 const port = Number(process.env.ORCHESTRATOR_PORT ?? 4002);

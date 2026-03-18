@@ -18,10 +18,10 @@ vi.mock("@prometheus/db", () => ({
 }));
 
 vi.mock("@prometheus/queue", () => ({
-  EventPublisher: vi.fn().mockImplementation(() => ({
-    publishSessionEvent: vi.fn().mockResolvedValue(undefined),
-    publishNotification: vi.fn().mockResolvedValue(undefined),
-  })),
+  EventPublisher: class {
+    publishSessionEvent = vi.fn().mockResolvedValue(undefined);
+    publishNotification = vi.fn().mockResolvedValue(undefined);
+  },
   QueueEvents: {
     AGENT_STATUS: "agent_status",
     AGENT_OUTPUT: "agent_output",

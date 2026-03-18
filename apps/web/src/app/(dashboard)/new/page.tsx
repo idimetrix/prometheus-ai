@@ -1,5 +1,6 @@
 "use client";
 
+import type { Route } from "next";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { trpc } from "@/lib/trpc";
@@ -154,7 +155,7 @@ export default function NewTaskPage() {
         prompt: prompt.trim(),
         mode,
       });
-      router.push(`/dashboard/sessions/${session?.id}`);
+      router.push(`/dashboard/sessions/${session?.id}` as Route);
     } catch (err) {
       console.error("Failed to create session:", err);
       setIsSubmitting(false);
