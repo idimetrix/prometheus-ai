@@ -7,6 +7,10 @@ import { queueRouter } from "./queue";
 import { billingRouter } from "./billing";
 import { analyticsRouter } from "./analytics";
 import { settingsRouter } from "./settings";
+import { brainRouter } from "./brain";
+import { fleetRouter } from "./fleet";
+import { userRouter } from "./user";
+import { integrationsRouter } from "./integrations";
 
 export const appRouter = router({
   health: healthRouter,
@@ -17,6 +21,10 @@ export const appRouter = router({
   billing: billingRouter,
   analytics: analyticsRouter,
   settings: settingsRouter,
+  brain: brainRouter,
+  fleet: fleetRouter,
+  user: userRouter,
+  integrations: integrationsRouter,
 });
 
 export type AppRouter = typeof appRouter;

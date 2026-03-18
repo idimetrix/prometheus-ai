@@ -3,6 +3,8 @@ import { fileTools } from "./file";
 import { terminalTools } from "./terminal";
 import { gitTools } from "./git";
 import { searchTools } from "./search";
+import { browserTools } from "./browser";
+import { agentMetaTools } from "./agent-tools";
 
 export const TOOL_REGISTRY: Record<string, AgentToolDefinition> = {};
 
@@ -16,3 +18,150 @@ registerTools(fileTools);
 registerTools(terminalTools);
 registerTools(gitTools);
 registerTools(searchTools);
+registerTools(browserTools);
+registerTools(agentMetaTools);
+
+/**
+ * ToolRegistry class for programmatic tool management.
+ * Provides methods to register, resolve, and execute tools with validation.
+ */
+export class ToolRegistry {
+  private tools: Map<string, AgentToolDefinition> = new Map();
+
+  constructor(initialTools?: AgentToolDefinition[]) {
+    if (initialTools) {
+      for (const tool of initialTools) {
+        this.tools.set(tool.name, tool);
+      }
+    }
+  }
+
+  /**
+   * Register a new tool definition.
+   */
+  register(tool: AgentToolDefinition): void {
+    this.tools.set(tool.name, tool);
+  }
+
+  /**
+   * Register multiple tools at once.
+   */
+  registerAll(tools: AgentToolDefinition[]): void {
+    for (const tool of tools) {
+      this.tools.set(tool.name, tool);
+    }
+  }
+
+  /**
+   * Resolve a tool by name. Returns undefined if not found.
+   */
+  resolve(name: string): AgentToolDefinition | undefined {
+    return this.tools.get(name);
+  }
+
+  /**
+   * Resolve multiple tools by name. Skips unknown names.
+   */
+  resolveMany(names: string[]): AgentToolDefinition[] {
+    const result: AgentToolDefinition[] = [];
+    for (const name of names) {
+      const tool = this.tools.get(name);
+      if (tool) result.push(tool);
+    }
+    return result;
+  }
+
+  /**
+   * Execute a tool by name with the given input and context.
+   * Validates that the tool exists and that required inputs are present.
+   */
+  async execute(
+    name: string,
+    input: Record<string, unknown>,
+    ctx: import("./types").ToolExecutionContext,
+  ): Promise<import("./types").ToolResult> {
+    const tool = this.tools.get(name);
+    if (!tool) {
+      return {
+        success: false,
+        output: "",
+        error: `Unknown tool: ${name}. Available tools: ${[...this.tools.keys()].join(", ")}`,
+      };
+    }
+
+    // Validate required fields from the JSON Schema
+    const schema = tool.inputSchema as {
+      required?: string[];
+      properties?: Record<string, unknown>;
+    };
+    if (schema.required) {
+      for (const field of schema.required) {
+        if (input[field] === undefined || input[field] === null) {
+          return {
+            success: false,
+            output: "",
+            error: `Missing required parameter '${field}' for tool '${name}'`,
+          };
+        }
+      }
+    }
+
+    try {
+      return await tool.execute(input, ctx);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return {
+        success: false,
+        output: "",
+        error: `Tool '${name}' threw an error: ${message}`,
+      };
+    }
+  }
+
+  /**
+   * Get all registered tool names.
+   */
+  getNames(): string[] {
+    return [...this.tools.keys()];
+  }
+
+  /**
+   * Get all registered tool definitions.
+   */
+  getAll(): AgentToolDefinition[] {
+    return [...this.tools.values()];
+  }
+
+  /**
+   * Get tool definitions formatted for OpenAI function calling.
+   */
+  getOpenAIToolDefs(): Array<{
+    type: "function";
+    function: { name: string; description: string; parameters: Record<string, unknown> };
+  }> {
+    return this.getAll().map((tool) => ({
+      type: "function" as const,
+      function: {
+        name: tool.name,
+        description: tool.description,
+        parameters: tool.inputSchema,
+      },
+    }));
+  }
+
+  /**
+   * Create a scoped registry containing only the specified tools.
+   */
+  scoped(toolNames: string[]): ToolRegistry {
+    return new ToolRegistry(this.resolveMany(toolNames));
+  }
+
+  get size(): number {
+    return this.tools.size;
+  }
+}
+
+/**
+ * Global default registry pre-populated with all built-in tools.
+ */
+export const globalRegistry = new ToolRegistry(Object.values(TOOL_REGISTRY));

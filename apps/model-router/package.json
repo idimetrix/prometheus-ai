@@ -16,7 +16,8 @@
     "@prometheus/ai": "workspace:*",
     "@prometheus/queue": "workspace:*",
     "@prometheus/logger": "workspace:*",
-    "@prometheus/types": "workspace:*"
+    "@prometheus/types": "workspace:*",
+    "@prometheus/utils": "workspace:*"
   },
   "devDependencies": {
     "@prometheus/config-typescript": "workspace:*",

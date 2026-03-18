@@ -14,10 +14,14 @@
     "@prometheus/types": "workspace:*",
     "@prometheus/ai": "workspace:*",
     "@prometheus/logger": "workspace:*",
+    "@prometheus/queue": "workspace:*",
+    "@prometheus/utils": "workspace:*",
+    "openai": "^4.77.0",
     "zod": "^3.24.0"
   },
   "devDependencies": {
     "@prometheus/config-typescript": "workspace:*",
-    "typescript": "^5.7.0"
+    "typescript": "^5.7.0",
+    "vitest": "^3.0.0"
   }
 }

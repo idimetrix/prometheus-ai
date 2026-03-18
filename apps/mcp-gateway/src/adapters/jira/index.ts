@@ -1,41 +1,297 @@
-import type { ToolRegistry } from "../../registry";
+import { createLogger } from "@prometheus/logger";
+import type { ToolRegistry, MCPToolResult } from "../../registry";
+
+const logger = createLogger("mcp-gateway:jira");
+
+async function jiraFetch(
+  path: string,
+  credentials: { baseUrl: string; email: string; token: string },
+  options: { method?: string; body?: unknown } = {}
+): Promise<{ status: number; data: unknown }> {
+  const url = `${credentials.baseUrl}/rest/api/3${path}`;
+  const auth = Buffer.from(`${credentials.email}:${credentials.token}`).toString("base64");
+
+  const headers: Record<string, string> = {
+    Authorization: `Basic ${auth}`,
+    Accept: "application/json",
+    "User-Agent": "Prometheus-MCP-Gateway/1.0",
+  };
+
+  if (options.body) {
+    headers["Content-Type"] = "application/json";
+  }
+
+  const response = await fetch(url, {
+    method: options.method ?? "GET",
+    headers,
+    body: options.body ? JSON.stringify(options.body) : undefined,
+  });
+
+  const contentType = response.headers.get("content-type") ?? "";
+  const data = contentType.includes("json") ? await response.json() : await response.text();
+
+  return { status: response.status, data };
+}
+
+function extractJiraCredentials(credentials?: Record<string, string>): MCPToolResult | { baseUrl: string; email: string; token: string } {
+  const baseUrl = credentials?.jira_base_url;
+  const email = credentials?.jira_email;
+  const token = credentials?.jira_token;
+
+  if (!baseUrl || !email || !token) {
+    return {
+      success: false,
+      error: "Jira credentials required: jira_base_url, jira_email, jira_token",
+    };
+  }
+
+  // Normalize base URL (remove trailing slash)
+  return { baseUrl: baseUrl.replace(/\/+$/, ""), email, token };
+}
 
 export function registerJiraAdapter(registry: ToolRegistry): void {
+  // ---- list_issues ----
   registry.register(
     {
-      name: "jira_create_ticket",
+      name: "jira_list_issues",
       adapter: "jira",
-      description: "Create a Jira ticket",
+      description: "Search for Jira issues using JQL",
       inputSchema: {
         type: "object",
         properties: {
-          projectKey: { type: "string" }, summary: { type: "string" },
-          description: { type: "string" }, issueType: { type: "string" },
-          priority: { type: "string" },
+          projectKey: { type: "string", description: "Jira project key (e.g., 'PROJ')" },
+          jql: { type: "string", description: "JQL query (overrides projectKey filter)" },
+          status: { type: "string", description: "Filter by status name" },
+          maxResults: { type: "number" },
+          startAt: { type: "number" },
+        },
+        required: ["projectKey"],
+      },
+      requiresAuth: true,
+    },
+    async (input, credentials) => {
+      const creds = extractJiraCredentials(credentials);
+      if ("success" in creds) return creds;
+
+      const { projectKey, jql, status, maxResults, startAt } = input as {
+        projectKey: string; jql?: string; status?: string;
+        maxResults?: number; startAt?: number;
+      };
+
+      let query = jql;
+      if (!query) {
+        const parts = [`project = "${projectKey}"`];
+        if (status) parts.push(`status = "${status}"`);
+        parts.push("ORDER BY updated DESC");
+        query = parts.join(" AND ");
+      }
+
+      const params = new URLSearchParams({
+        jql: query,
+        maxResults: String(maxResults ?? 25),
+        startAt: String(startAt ?? 0),
+        fields: "summary,status,assignee,priority,issuetype,created,updated,labels",
+      });
+
+      const { status: httpStatus, data } = await jiraFetch(`/search?${params.toString()}`, creds);
+
+      if (httpStatus !== 200) {
+        return { success: false, error: `Jira API error (${httpStatus}): ${JSON.stringify(data)}` };
+      }
+
+      const searchResult = data as Record<string, unknown>;
+      const issues = ((searchResult.issues as any[]) ?? []).map((issue) => ({
+        key: issue.key,
+        summary: issue.fields?.summary,
+        status: issue.fields?.status?.name,
+        assignee: issue.fields?.assignee?.displayName ?? null,
+        priority: issue.fields?.priority?.name,
+        issueType: issue.fields?.issuetype?.name,
+        labels: issue.fields?.labels ?? [],
+        created: issue.fields?.created,
+        updated: issue.fields?.updated,
+        url: `${creds.baseUrl}/browse/${issue.key}`,
+      }));
+
+      return {
+        success: true,
+        data: {
+          issues,
+          total: searchResult.total,
+          count: issues.length,
+        },
+      };
+    }
+  );
+
+  // ---- create_issue ----
+  registry.register(
+    {
+      name: "jira_create_issue",
+      adapter: "jira",
+      description: "Create a new Jira issue",
+      inputSchema: {
+        type: "object",
+        properties: {
+          projectKey: { type: "string" },
+          summary: { type: "string" },
+          description: { type: "string" },
+          issueType: { type: "string", description: "Issue type name (e.g., Task, Bug, Story)" },
+          priority: { type: "string", description: "Priority name (e.g., High, Medium, Low)" },
+          assigneeAccountId: { type: "string" },
+          labels: { type: "array", items: { type: "string" } },
         },
         required: ["projectKey", "summary", "issueType"],
       },
       requiresAuth: true,
     },
     async (input, credentials) => {
-      return { success: true, data: { ticket_key: "", ticket_url: "" } };
+      const creds = extractJiraCredentials(credentials);
+      if ("success" in creds) return creds;
+
+      const { projectKey, summary, description, issueType, priority, assigneeAccountId, labels } = input as {
+        projectKey: string; summary: string; description?: string;
+        issueType: string; priority?: string; assigneeAccountId?: string;
+        labels?: string[];
+      };
+
+      const fields: Record<string, unknown> = {
+        project: { key: projectKey },
+        summary,
+        issuetype: { name: issueType },
+      };
+
+      if (description) {
+        // Jira Cloud uses Atlassian Document Format (ADF) for descriptions
+        fields.description = {
+          type: "doc",
+          version: 1,
+          content: [
+            {
+              type: "paragraph",
+              content: [{ type: "text", text: description }],
+            },
+          ],
+        };
+      }
+
+      if (priority) fields.priority = { name: priority };
+      if (assigneeAccountId) fields.assignee = { accountId: assigneeAccountId };
+      if (labels?.length) fields.labels = labels;
+
+      const { status, data } = await jiraFetch("/issue", creds, {
+        method: "POST",
+        body: { fields },
+      });
+
+      if (status !== 201) {
+        return { success: false, error: `Failed to create issue (${status}): ${JSON.stringify(data)}` };
+      }
+
+      const created = data as Record<string, unknown>;
+      return {
+        success: true,
+        data: {
+          key: created.key,
+          id: created.id,
+          url: `${creds.baseUrl}/browse/${created.key}`,
+        },
+      };
     }
   );
 
+  // ---- update_issue (transition) ----
   registry.register(
     {
-      name: "jira_transition_ticket",
+      name: "jira_update_issue",
       adapter: "jira",
-      description: "Transition a Jira ticket to a new status",
+      description: "Update a Jira issue or transition it to a new status",
       inputSchema: {
         type: "object",
-        properties: { ticketKey: { type: "string" }, transitionId: { type: "string" } },
-        required: ["ticketKey", "transitionId"],
+        properties: {
+          issueKey: { type: "string", description: "Issue key (e.g., PROJ-123)" },
+          summary: { type: "string" },
+          description: { type: "string" },
+          transitionId: { type: "string", description: "Transition ID to change status (use jira_list_transitions to find IDs)" },
+          assigneeAccountId: { type: "string" },
+          labels: { type: "array", items: { type: "string" } },
+          comment: { type: "string", description: "Add a comment to the issue" },
+        },
+        required: ["issueKey"],
       },
       requiresAuth: true,
     },
     async (input, credentials) => {
-      return { success: true, data: { transitioned: true } };
+      const creds = extractJiraCredentials(credentials);
+      if ("success" in creds) return creds;
+
+      const { issueKey, summary, description, transitionId, assigneeAccountId, labels, comment } = input as {
+        issueKey: string; summary?: string; description?: string;
+        transitionId?: string; assigneeAccountId?: string;
+        labels?: string[]; comment?: string;
+      };
+
+      // Update fields if provided
+      const fieldsToUpdate: Record<string, unknown> = {};
+      if (summary) fieldsToUpdate.summary = summary;
+      if (assigneeAccountId) fieldsToUpdate.assignee = { accountId: assigneeAccountId };
+      if (labels) fieldsToUpdate.labels = labels;
+      if (description) {
+        fieldsToUpdate.description = {
+          type: "doc",
+          version: 1,
+          content: [{ type: "paragraph", content: [{ type: "text", text: description }] }],
+        };
+      }
+
+      if (Object.keys(fieldsToUpdate).length > 0) {
+        const { status } = await jiraFetch(`/issue/${issueKey}`, creds, {
+          method: "PUT",
+          body: { fields: fieldsToUpdate },
+        });
+        if (status !== 204 && status !== 200) {
+          return { success: false, error: `Failed to update issue fields (${status})` };
+        }
+      }
+
+      // Perform transition if requested
+      if (transitionId) {
+        const { status } = await jiraFetch(`/issue/${issueKey}/transitions`, creds, {
+          method: "POST",
+          body: { transition: { id: transitionId } },
+        });
+        if (status !== 204 && status !== 200) {
+          return { success: false, error: `Failed to transition issue (${status})` };
+        }
+      }
+
+      // Add comment if provided
+      if (comment) {
+        const { status } = await jiraFetch(`/issue/${issueKey}/comment`, creds, {
+          method: "POST",
+          body: {
+            body: {
+              type: "doc",
+              version: 1,
+              content: [{ type: "paragraph", content: [{ type: "text", text: comment }] }],
+            },
+          },
+        });
+        if (status !== 201 && status !== 200) {
+          return { success: false, error: `Failed to add comment (${status})` };
+        }
+      }
+
+      return {
+        success: true,
+        data: {
+          key: issueKey,
+          updated: true,
+          transitioned: !!transitionId,
+          commented: !!comment,
+          url: `${creds.baseUrl}/browse/${issueKey}`,
+        },
+      };
     }
   );
 }

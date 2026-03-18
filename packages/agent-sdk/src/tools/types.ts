@@ -5,6 +5,8 @@ export interface ToolExecutionContext {
   projectId: string;
   sandboxId: string;
   workDir: string;
+  orgId?: string;
+  userId?: string;
 }
 
 export interface ToolResult {
@@ -19,5 +21,6 @@ export interface AgentToolDefinition {
   description: string;
   inputSchema: Record<string, unknown>;
   permissionLevel: "read" | "write" | "execute" | "admin";
+  creditCost: number;
   execute: (input: Record<string, unknown>, ctx: ToolExecutionContext) => Promise<ToolResult>;
 }

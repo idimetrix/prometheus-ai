@@ -32,6 +32,16 @@ export const notificationQueue = new Queue<NotificationJobData>("notifications",
   },
 });
 
+export const enterpriseTaskQueue = new Queue<AgentTaskData>("enterprise-tasks", {
+  connection: redis,
+  defaultJobOptions: {
+    attempts: 3,
+    backoff: { type: "exponential", delay: 5000 },
+    removeOnComplete: { count: 1000 },
+    removeOnFail: { count: 5000 },
+  },
+});
+
 export const billingQueue = new Queue<BillingEventData>("billing-events", {
   connection: redis,
   defaultJobOptions: {

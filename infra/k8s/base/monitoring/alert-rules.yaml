@@ -83,3 +83,45 @@ spec:
             severity: critical
           annotations:
             summary: "Credit ledger imbalance detected"
+
+        - alert: PostgreSQLConnectionsHigh
+          expr: pg_stat_activity_count > 150
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "PostgreSQL connections above 150"
+
+        - alert: RedisMemoryHigh
+          expr: redis_memory_used_bytes / redis_memory_max_bytes > 0.85
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Redis memory usage above 85%"
+
+        - alert: QueueDepthCritical
+          expr: bullmq_queue_waiting{queue="agent-tasks"} > 30
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Agent task queue depth exceeds 30"
+
+    - name: business-metrics
+      rules:
+        - alert: LowSessionThroughput
+          expr: rate(sessions_created_total[1h]) < 0.1
+          for: 2h
+          labels:
+            severity: info
+          annotations:
+            summary: "Session creation rate below normal"
+
+        - alert: HighCreditBurnRate
+          expr: rate(credits_consumed_total[1h]) > 100
+          for: 30m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Credit consumption rate unusually high"

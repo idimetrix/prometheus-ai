@@ -1,15 +1,30 @@
-import { BaseAgent, type AgentContext } from "../base-agent";
-import { resolveTools } from "../base-agent";
+import { BaseAgent, type AgentContext, resolveTools } from "../base-agent";
 
 export class FrontendCoderAgent extends BaseAgent {
   constructor() {
-    const toolNames = ["file_read", "file_write", "file_edit", "file_list", "terminal_exec", "search_files", "search_content", "git_status", "git_diff"];
+    const toolNames = [
+      "file_read", "file_write", "file_edit", "file_list", "file_delete",
+      "terminal_exec", "search_files", "search_content",
+      "git_status", "git_diff",
+      "read_blueprint", "read_brain",
+      "browser_open",
+    ];
     const tools = resolveTools(toolNames);
     super("frontend_coder", tools);
   }
 
   getPreferredModel(): string {
     return "ollama/qwen3-coder-next";
+  }
+
+  getAllowedTools(): string[] {
+    return [
+      "file_read", "file_write", "file_edit", "file_list", "file_delete",
+      "terminal_exec", "search_files", "search_content",
+      "git_status", "git_diff",
+      "read_blueprint", "read_brain",
+      "browser_open",
+    ];
   }
 
   getSystemPrompt(context: AgentContext): string {
@@ -27,6 +42,14 @@ You implement frontend code: React components, Next.js pages, UI layouts, stylin
 - React Query + tRPC for server state
 - Socket.io client for real-time
 
+## Workflow:
+1. Read the Blueprint (read_blueprint) for conventions and tech stack
+2. Read existing code context (read_brain, search_content)
+3. Plan the implementation
+4. Write the code (file_write, file_edit)
+5. Verify with browser_open if possible
+6. Check for issues (git_diff)
+
 ## Rules:
 - Follow the Blueprint.md tech stack and conventions
 - Use Server Components by default, Client Components only when needed
@@ -37,6 +60,8 @@ You implement frontend code: React components, Next.js pages, UI layouts, stylin
 - Co-locate components with their pages
 - Use Zustand stores for cross-component state
 - Use React Query/tRPC hooks for server data
+- Add "use client" directive only when using hooks, event handlers, or browser APIs
+- Export components as named exports, not default exports
 ${context.blueprintContent ? `\n## Blueprint:\n${context.blueprintContent}` : ""}
 
 Session: ${context.sessionId}

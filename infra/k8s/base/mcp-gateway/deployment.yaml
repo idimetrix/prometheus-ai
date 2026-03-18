@@ -1,0 +1,52 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mcp-gateway
+  namespace: prometheus
+  labels:
+    app: mcp-gateway
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mcp-gateway
+  template:
+    metadata:
+      labels:
+        app: mcp-gateway
+    spec:
+      containers:
+        - name: mcp-gateway
+          image: ghcr.io/prometheus/mcp-gateway:latest
+          ports:
+            - containerPort: 4005
+          envFrom:
+            - configMapRef:
+                name: prometheus-config
+            - secretRef:
+                name: prometheus-secrets
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "100m"
+            limits:
+              memory: "512Mi"
+              cpu: "250m"
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 4005
+            initialDelaySeconds: 10
+            periodSeconds: 30
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mcp-gateway
+  namespace: prometheus
+spec:
+  selector:
+    app: mcp-gateway
+  ports:
+    - port: 4005
+      targetPort: 4005

@@ -1,10 +1,11 @@
 import type { Metadata } from "next";
-import { ClerkProvider } from "@clerk/nextjs";
+import { Providers } from "./providers";
 import "./globals.css";
 
 export const metadata: Metadata = {
   title: "PROMETHEUS - AI Engineering Platform",
-  description: "The AI engineering platform that builds your entire project from requirements to production deployment.",
+  description:
+    "The AI engineering platform that builds your entire project from requirements to production deployment.",
 };
 
 export default function RootLayout({
@@ -13,12 +14,10 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <ClerkProvider>
-      <html lang="en" suppressHydrationWarning>
-        <body className="min-h-screen bg-background font-sans antialiased">
-          {children}
-        </body>
-      </html>
-    </ClerkProvider>
+    <html lang="en" className="dark" suppressHydrationWarning>
+      <body className="min-h-screen bg-zinc-950 text-zinc-100 font-sans antialiased">
+        <Providers>{children}</Providers>
+      </body>
+    </html>
   );
 }

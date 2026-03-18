@@ -1,0 +1,67 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: sandbox-manager
+  namespace: prometheus
+  labels:
+    app: sandbox-manager
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: sandbox-manager
+  template:
+    metadata:
+      labels:
+        app: sandbox-manager
+    spec:
+      containers:
+        - name: sandbox-manager
+          image: ghcr.io/prometheus/sandbox-manager:latest
+          ports:
+            - containerPort: 4006
+          envFrom:
+            - configMapRef:
+                name: prometheus-config
+            - secretRef:
+                name: prometheus-secrets
+          volumeMounts:
+            - name: sandbox-workspace
+              mountPath: /sandboxes
+            - name: docker-socket
+              mountPath: /var/run/docker.sock
+          resources:
+            requests:
+              memory: "512Mi"
+              cpu: "250m"
+            limits:
+              memory: "4Gi"
+              cpu: "2000m"
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 4006
+            initialDelaySeconds: 10
+            periodSeconds: 30
+          securityContext:
+            runAsUser: 1001
+      volumes:
+        - name: sandbox-workspace
+          emptyDir:
+            sizeLimit: 10Gi
+        - name: docker-socket
+          hostPath:
+            path: /var/run/docker.sock
+            type: Socket
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: sandbox-manager
+  namespace: prometheus
+spec:
+  selector:
+    app: sandbox-manager
+  ports:
+    - port: 4006
+      targetPort: 4006

@@ -15,9 +15,19 @@ export interface DiscoveryResult {
   }>;
   outOfScope: string[];
   risks: string[];
+  clarificationsNeeded: string[];
 }
 
+/**
+ * DiscoveryPhase runs the Discovery agent using the 5-question framework
+ * to generate a complete Software Requirements Specification. If the
+ * confidence score is below 0.8, it iterates up to 3 times, each time
+ * requesting additional clarification from the model.
+ */
 export class DiscoveryPhase {
+  private readonly maxAttempts = 3;
+  private readonly confidenceThreshold = 0.8;
+
   private readonly questions = [
     "WHO are the users? What roles and permissions exist?",
     "WHAT features and functionality are needed?",
@@ -29,37 +39,232 @@ export class DiscoveryPhase {
   async execute(agentLoop: AgentLoop, initialPrompt: string): Promise<DiscoveryResult> {
     logger.info("Starting Discovery phase");
 
-    // Run discovery agent with the 5-question framework
-    const result = await agentLoop.executeTask(
-      `Analyze the following project request and generate a complete Software Requirements Specification (SRS).
+    let lastResult: DiscoveryResult | null = null;
+    let attempt = 0;
+    let accumulatedContext = "";
+
+    while (attempt < this.maxAttempts) {
+      attempt++;
+      logger.info({ attempt, maxAttempts: this.maxAttempts }, "Discovery iteration");
+
+      const prompt = this.buildDiscoveryPrompt(initialPrompt, lastResult, accumulatedContext, attempt);
+
+      const result = await agentLoop.executeTask(prompt, "discovery");
+
+      // Parse the SRS from the agent output
+      const parsed = this.parseSRS(result.output);
+
+      logger.info({
+        attempt,
+        confidence: parsed.confidenceScore,
+        requirementsCount: parsed.requirements.length,
+        risksCount: parsed.risks.length,
+      }, "Discovery iteration complete");
+
+      // Check confidence threshold
+      if (this.shouldProceed(parsed)) {
+        logger.info({ confidence: parsed.confidenceScore }, "Discovery confidence met, proceeding");
+        return parsed;
+      }
+
+      // Not confident enough, accumulate context for next iteration
+      lastResult = parsed;
+      if (parsed.clarificationsNeeded.length > 0) {
+        accumulatedContext += `\n\nPrevious attempt identified these gaps:\n${parsed.clarificationsNeeded.map((c, i) => `${i + 1}. ${c}`).join("\n")}`;
+      }
+
+      logger.info({
+        confidence: parsed.confidenceScore,
+        threshold: this.confidenceThreshold,
+        clarifications: parsed.clarificationsNeeded.length,
+      }, "Discovery confidence below threshold, iterating");
+    }
+
+    // After max attempts, return the best result we have
+    logger.warn({
+      attempts: attempt,
+      finalConfidence: lastResult?.confidenceScore ?? 0,
+    }, "Discovery reached max attempts, returning best result");
+
+    return lastResult ?? {
+      srs: "",
+      confidenceScore: 0,
+      requirements: [],
+      outOfScope: [],
+      risks: [],
+      clarificationsNeeded: ["Could not generate SRS after max attempts"],
+    };
+  }
+
+  private buildDiscoveryPrompt(
+    initialPrompt: string,
+    previousResult: DiscoveryResult | null,
+    accumulatedContext: string,
+    attempt: number,
+  ): string {
+    let prompt = `Analyze the following project request and generate a complete Software Requirements Specification (SRS).
 
 Use the 5-Question Framework:
 ${this.questions.map((q, i) => `${i + 1}. ${q}`).join("\n")}
 
 Project Request:
-${initialPrompt}
+${initialPrompt}`;
 
-Output a structured SRS with:
-- Requirements list with IDs, priorities, and acceptance criteria
-- Out-of-scope items
-- Risk assessment
-- Confidence score (0.0 - 1.0)
+    if (previousResult && attempt > 1) {
+      prompt += `
 
-If confidence < 0.8, list what additional information is needed.`,
-      "discovery"
-    );
+--- Previous Analysis (attempt ${attempt - 1}) ---
+The previous analysis had a confidence score of ${previousResult.confidenceScore}.
+${previousResult.clarificationsNeeded.length > 0 ? `\nGaps identified:\n${previousResult.clarificationsNeeded.map((c) => `- ${c}`).join("\n")}` : ""}
 
-    // Parse the SRS from the agent output (simplified)
+Please address these gaps and improve the SRS. Use your best judgment to fill in missing details based on common patterns and best practices.`;
+    }
+
+    if (accumulatedContext) {
+      prompt += `\n\nAdditional Context:${accumulatedContext}`;
+    }
+
+    prompt += `
+
+IMPORTANT: Your output MUST include these clearly labeled sections:
+
+## CONFIDENCE_SCORE: <number between 0.0 and 1.0>
+
+## REQUIREMENTS
+For each requirement:
+- REQ-<number>: <title>
+  - Description: <description>
+  - Priority: <critical|high|medium|low>
+  - Acceptance Criteria:
+    - <criterion 1>
+    - <criterion 2>
+
+## OUT_OF_SCOPE
+- <item 1>
+- <item 2>
+
+## RISKS
+- <risk 1>
+- <risk 2>
+
+## CLARIFICATIONS_NEEDED
+- <question 1> (leave empty if confidence >= 0.8)
+
+Generate the most complete SRS possible. If you are uncertain about specific details, state your assumptions clearly and assign a confidence score reflecting your certainty.`;
+
+    return prompt;
+  }
+
+  /**
+   * Parse the agent's output into a structured DiscoveryResult.
+   * Uses section headers and regex patterns to extract data.
+   */
+  private parseSRS(output: string): DiscoveryResult {
+    const confidenceScore = this.extractConfidence(output);
+    const requirements = this.extractRequirements(output);
+    const outOfScope = this.extractListSection(output, "OUT_OF_SCOPE");
+    const risks = this.extractListSection(output, "RISKS");
+    const clarificationsNeeded = this.extractListSection(output, "CLARIFICATIONS_NEEDED");
+
     return {
-      srs: result.output,
-      confidenceScore: 0.85,
-      requirements: [],
-      outOfScope: [],
-      risks: [],
+      srs: output,
+      confidenceScore,
+      requirements,
+      outOfScope,
+      risks,
+      clarificationsNeeded,
     };
   }
 
+  private extractConfidence(output: string): number {
+    // Look for CONFIDENCE_SCORE: X.X pattern
+    const match = output.match(/CONFIDENCE_SCORE:\s*([\d.]+)/i);
+    if (match?.[1]) {
+      const score = parseFloat(match[1]);
+      if (!isNaN(score) && score >= 0 && score <= 1) return score;
+    }
+
+    // Fallback: look for "confidence" mentions with numbers
+    const fallback = output.match(/confidence[:\s]+(?:is\s+)?(?:approximately\s+)?([\d.]+)/i);
+    if (fallback?.[1]) {
+      const score = parseFloat(fallback[1]);
+      if (!isNaN(score) && score >= 0 && score <= 1) return score;
+    }
+
+    // Heuristic: if the output is substantial and has requirements, give it 0.7
+    if (output.length > 500 && output.includes("REQ-")) return 0.7;
+    if (output.length > 200) return 0.5;
+    return 0.3;
+  }
+
+  private extractRequirements(output: string): DiscoveryResult["requirements"] {
+    const requirements: DiscoveryResult["requirements"] = [];
+    // Match REQ-N: Title pattern
+    const reqRegex = /REQ-(\d+):\s*(.+?)(?:\n|$)/g;
+    let match;
+    let currentIndex = 0;
+
+    while ((match = reqRegex.exec(output)) !== null) {
+      const id = `REQ-${match[1]}`;
+      const title = match[2]?.trim() ?? "";
+
+      // Extract description between this requirement and the next one or section
+      const startPos = match.index + match[0].length;
+      const nextReq = output.indexOf("REQ-", startPos);
+      const nextSection = output.indexOf("## ", startPos);
+      const endPos = Math.min(
+        nextReq > -1 ? nextReq : output.length,
+        nextSection > -1 ? nextSection : output.length,
+      );
+      const block = output.slice(startPos, endPos);
+
+      // Extract description
+      const descMatch = block.match(/Description:\s*(.+?)(?=\n\s*-|\n\s*Priority|\n\s*Acceptance|$)/is);
+      const description = descMatch?.[1]?.trim() ?? title;
+
+      // Extract priority
+      const prioMatch = block.match(/Priority:\s*(critical|high|medium|low)/i);
+      const priority = (prioMatch?.[1]?.toLowerCase() ?? "medium") as "critical" | "high" | "medium" | "low";
+
+      // Extract acceptance criteria
+      const acSection = block.match(/Acceptance Criteria:([\s\S]*?)(?=\n\s*REQ-|\n##|$)/i);
+      const acceptanceCriteria: string[] = [];
+      if (acSection?.[1]) {
+        const lines = acSection[1].split("\n");
+        for (const line of lines) {
+          const criterion = line.replace(/^\s*[-*]\s*/, "").trim();
+          if (criterion.length > 0) {
+            acceptanceCriteria.push(criterion);
+          }
+        }
+      }
+
+      requirements.push({ id, title, description, priority, acceptanceCriteria });
+      currentIndex++;
+    }
+
+    return requirements;
+  }
+
+  private extractListSection(output: string, sectionName: string): string[] {
+    const items: string[] = [];
+    const sectionRegex = new RegExp(`##\\s*${sectionName}[\\s\\S]*?(?=##|$)`, "i");
+    const sectionMatch = output.match(sectionRegex);
+
+    if (sectionMatch?.[0]) {
+      const lines = sectionMatch[0].split("\n").slice(1); // skip header
+      for (const line of lines) {
+        const item = line.replace(/^\s*[-*]\s*/, "").trim();
+        if (item.length > 0 && !item.startsWith("##")) {
+          items.push(item);
+        }
+      }
+    }
+
+    return items;
+  }
+
   shouldProceed(result: DiscoveryResult): boolean {
-    return result.confidenceScore >= 0.8;
+    return result.confidenceScore >= this.confidenceThreshold;
   }
 }

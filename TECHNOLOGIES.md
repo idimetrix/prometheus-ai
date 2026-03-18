@@ -52,6 +52,18 @@
 30. [Development Tools](#30-development-tools)
 31. [LLM Models (Free / Open Source)](#31-llm-models-free--open-source)
 32. [Testing](#32-testing)
+33. [Prompt Engineering & LLM Evaluation](#33-prompt-engineering--llm-evaluation)
+34. [Agent Evaluation & Benchmarking](#34-agent-evaluation--benchmarking)
+35. [Web Crawling & Data Extraction](#35-web-crawling--data-extraction)
+36. [Secrets Management](#36-secrets-management)
+37. [Status Pages & Uptime](#37-status-pages--uptime)
+38. [Security Scanning & Compliance](#38-security-scanning--compliance)
+39. [Feature Flags & Experimentation](#39-feature-flags--experimentation)
+40. [Documentation & API Reference](#40-documentation--api-reference)
+41. [Desktop & CLI](#41-desktop--cli)
+42. [Analytics & Tracking](#42-analytics--tracking)
+43. [Mobile & PWA](#43-mobile--pwa)
+44. [Accessibility & i18n](#44-accessibility--i18n)
 
 ---
 
@@ -195,6 +207,161 @@
 - **Why**: Quick diff rendering for PR previews. Lighter alternative if CodeMirror merge is overkill for read-only diffs
 - **Status**: `OPTIONAL`
 
+### react-markdown — `MUST USE` — `PLANNED`
+- **Version**: ^9.0.0
+- **License**: MIT
+- **GitHub**: 13K+ stars
+- **What**: React component for rendering Markdown with remark/rehype plugin ecosystem
+- **Why**: Renders all LLM markdown output in the agent session UI — chat messages, explanations, task summaries. Supports GFM (tables, checkboxes), syntax highlighting via rehype-highlight, and custom component overrides for shadcn integration
+- **Alternatives**: @mdx-js/react (heavier, for interactive content)
+- **Status**: `PLANNED` — Sprint 2
+
+### MDX — `SHOULD USE` — `PLANNED`
+- **Version**: ^3.0.0
+- **License**: MIT
+- **GitHub**: 18K+ stars
+- **What**: Markdown with JSX support — embed React components inside Markdown documents
+- **Why**: Interactive documentation, agent-generated tutorials with embedded code playgrounds, and rich task descriptions that include live UI components
+- **Alternatives**: react-markdown (simpler, non-interactive)
+- **Status**: `PLANNED`
+
+### Shiki — `SHOULD USE` — `PLANNED`
+- **Version**: ^1.0.0
+- **License**: MIT
+- **GitHub**: 10K+ stars
+- **What**: VS Code-quality syntax highlighter using TextMate grammars. Supports 200+ languages
+- **Why**: Syntax highlighting in agent code output, diff views, and code blocks. Uses the same grammars as VS Code so highlighting is pixel-perfect. Better accuracy than Prism.js or highlight.js
+- **Alternatives**: Prism.js, highlight.js
+- **Status**: `PLANNED`
+
+### xterm.js — `MUST USE` — `PLANNED`
+- **Version**: ^5.5.0
+- **License**: MIT
+- **GitHub**: 18K+ stars
+- **What**: Full-featured terminal emulator for the browser. Used by VS Code, Hyper, and Theia
+- **Why**: Powers the web terminal in agent session UI. Renders real-time shell output from sandbox containers with full ANSI color support, cursor positioning, and scroll-back. Essential for the live terminal experience
+- **Alternatives**: None at this quality level
+- **Status**: `PLANNED` — Sprint 2
+
+### Sonner — `MUST USE` — `PLANNED`
+- **Version**: ^1.7.0
+- **License**: MIT
+- **GitHub**: 9K+ stars
+- **What**: Opinionated toast notification component for React
+- **Why**: Toast notifications throughout APEX — task complete, PR created, credit low, errors. Part of the shadcn/ui ecosystem (shadcn ships a Sonner wrapper). Beautiful defaults, stacking, swipe-to-dismiss
+- **Alternatives**: react-hot-toast
+- **Status**: `PLANNED` — Sprint 1
+
+### react-hook-form — `SHOULD USE` — `PLANNED`
+- **Version**: ^7.54.0
+- **License**: MIT
+- **GitHub**: 42K+ stars
+- **What**: Performant, flexible form library with minimal re-renders
+- **Why**: All forms in APEX — settings, project creation, API key management, team invites. Native Zod integration via @hookform/resolvers for type-safe validation. Works with shadcn form components
+- **Alternatives**: Formik (heavier), TanStack Form
+- **Status**: `PLANNED`
+
+### date-fns — `SHOULD USE` — `PLANNED`
+- **Version**: ^4.0.0
+- **License**: MIT
+- **GitHub**: 35K+ stars
+- **What**: Modern JavaScript date utility library. Tree-shakeable, immutable
+- **Why**: Date formatting throughout APEX — "2 hours ago", session durations, billing periods, sprint dates. Tree-shakeable so only used functions are bundled. Smaller than Moment.js or Day.js in practice
+- **Alternatives**: Day.js, Temporal API (future)
+- **Status**: `PLANNED`
+
+### SVGR — `SHOULD USE` — `PLANNED`
+- **Version**: ^8.1.0
+- **License**: MIT
+- **GitHub**: 11K+ stars
+- **What**: Transform SVGs into React components. CLI, webpack, and Vite plugin
+- **Why**: Convert agent status icons, provider logos, and UI illustrations into type-safe React components. Automatic optimization with SVGO
+- **Status**: `PLANNED`
+
+### TanStack Virtual — `SHOULD USE` — `PLANNED`
+- **Version**: ^3.0.0
+- **License**: MIT
+- **GitHub**: 5K+ stars
+- **What**: Headless UI for virtualizing large lists, tables, and grids
+- **Why**: Virtualized rendering for agent terminal output (thousands of lines), task history lists, and log viewers. Prevents DOM bloat and maintains 60fps even with 100K+ rows
+- **Alternatives**: react-virtuoso (more features, heavier)
+- **Status**: `PLANNED`
+
+### react-virtuoso — `CAN USE` — `OPTIONAL`
+- **Version**: ^4.12.0
+- **License**: MIT
+- **GitHub**: 5K+ stars
+- **What**: React component for rendering large data sets with variable item sizes, grouped mode, and reverse scrolling
+- **Why**: Alternative to TanStack Virtual with built-in support for chat-style reverse scrolling (newest at bottom). Useful for agent chat UI if variable-height messages cause issues with TanStack Virtual
+- **Status**: `OPTIONAL`
+
+### react-complex-tree — `SHOULD USE` — `PLANNED`
+- **Version**: ^2.4.0
+- **License**: MIT
+- **GitHub**: 1K+ stars
+- **What**: Accessible tree view with drag-and-drop, keyboard navigation, rename, multi-select, and search
+- **Why**: File explorer tree in the agent session UI. Shows sandbox filesystem, allows navigation, supports drag-and-drop for file organization. More full-featured than building custom tree with Radix
+- **Alternatives**: Custom implementation with Radix Accordion
+- **Status**: `PLANNED`
+
+### dnd-kit — `SHOULD USE` — `PLANNED`
+- **Version**: ^6.1.0
+- **License**: MIT
+- **GitHub**: 13K+ stars
+- **What**: Modern drag-and-drop toolkit for React. Modular, accessible, performant
+- **Why**: Drag-and-drop for task boards, agent queue reordering, dashboard panel arrangement. Built for accessibility (keyboard + screen reader support). Modular architecture keeps bundle small
+- **Alternatives**: pragmatic-drag-and-drop (Atlassian)
+- **Status**: `PLANNED`
+
+### pragmatic-drag-and-drop — `CAN USE` — `OPTIONAL`
+- **Version**: ^1.0.0
+- **License**: Apache-2.0
+- **GitHub**: 10K+ stars
+- **What**: Drag-and-drop library by Atlassian. Framework-agnostic, tiny core (4.7KB)
+- **Why**: Alternative to dnd-kit. Smaller bundle, used in production by Atlassian (Jira, Confluence). Better for complex multi-container drag scenarios
+- **Status**: `OPTIONAL`
+
+### Mermaid — `SHOULD USE` — `PLANNED`
+- **Version**: ^11.0.0
+- **License**: MIT
+- **GitHub**: 73K+ stars
+- **What**: Generate diagrams and flowcharts from text (Markdown-like syntax)
+- **Why**: Render agent-generated architecture diagrams, flowcharts, and sequence diagrams in chat output. Agents can output Mermaid syntax and it renders as interactive diagrams in the session UI
+- **Alternatives**: PlantUML (heavier, Java-based)
+- **Status**: `PLANNED`
+
+### assistant-ui — `SHOULD USE` — `PLANNED`
+- **Version**: ^0.7.0
+- **License**: MIT
+- **GitHub**: 3K+ stars
+- **What**: React components for building AI chat interfaces — thread, message, composer, branch navigation
+- **Why**: Pre-built AI chat UI components that integrate with Vercel AI SDK. Thread management, message branching, and streaming out of the box. Reduces custom chat UI code significantly
+- **Alternatives**: Custom implementation with Vercel AI SDK hooks
+- **Status**: `PLANNED`
+
+### react-diff-viewer-continued — `SHOULD USE` — `PLANNED`
+- **Version**: ^4.0.0
+- **License**: MIT
+- **GitHub**: 1K+ stars
+- **What**: Side-by-side and unified diff viewer React component with syntax highlighting
+- **Why**: Display code diffs in agent session UI — before/after file changes, PR preview diffs. Simpler and lighter than CodeMirror merge for read-only diff display. Supports syntax highlighting and line-level commenting
+- **Alternatives**: diff2html, CodeMirror merge
+- **Status**: `PLANNED`
+
+### tokenx — `CAN USE` — `OPTIONAL`
+- **Version**: Latest
+- **License**: MIT
+- **What**: Token counting and visualization library for LLM context windows
+- **Why**: Show users token consumption in real-time during agent sessions. Visualize how much of the context window is used. Helps with credit estimation
+- **Status**: `OPTIONAL`
+
+### llm-ui — `CAN USE` — `OPTIONAL`
+- **Version**: Latest
+- **License**: MIT
+- **What**: React components for rendering streaming LLM output with smooth animations
+- **Why**: Alternative to raw react-markdown for streaming agent output. Handles partial markdown rendering during streaming without layout shifts
+- **Status**: `OPTIONAL`
+
 ---
 
 ## 3. State Management & Data Fetching
@@ -225,6 +392,47 @@
 - **Alternatives**: GraphQL, REST + Zodios
 - **Status**: `IN USE` — `apps/api` + `apps/web`
 
+### TanStack DB — `CAN USE` — `OPTIONAL`
+- **Version**: ^0.1.0 (early alpha)
+- **License**: MIT
+- **GitHub**: 2K+ stars
+- **What**: Client-side reactive database with automatic sync, optimistic updates, and live queries
+- **Why**: Future replacement for manual React Query cache management. Provides a local-first reactive data layer that automatically syncs with the server. Still early but aligns with our TanStack stack
+- **Status**: `OPTIONAL` — evaluate when stable
+
+### Y.js — `CAN USE` — `OPTIONAL`
+- **Version**: ^13.6.0
+- **License**: MIT
+- **GitHub**: 17K+ stars
+- **What**: CRDT framework for building collaborative applications. Supports shared types (Text, Array, Map, XML)
+- **Why**: Real-time collaborative editing if we add Watch Mode (multiple users editing the same file in browser). Powers Google Docs-style collaboration. Works with CodeMirror 6 via y-codemirror.next
+- **Alternatives**: Automerge
+- **Status**: `OPTIONAL` — Watch Mode feature
+
+### Automerge — `CAN USE` — `OPTIONAL`
+- **Version**: ^2.0.0
+- **License**: MIT
+- **GitHub**: 4K+ stars
+- **What**: CRDT library for building local-first collaborative applications. JSON-compatible data model
+- **Why**: Alternative to Y.js for collaborative features. Better for structured data (JSON documents) vs Y.js which is better for text. Good for syncing project settings, task lists across clients
+- **Status**: `OPTIONAL`
+
+### ElectricSQL — `CAN USE` — `OPTIONAL`
+- **Version**: Latest
+- **License**: Apache-2.0
+- **GitHub**: 7K+ stars
+- **What**: Local-first sync framework. Syncs PostgreSQL data to client-side SQLite
+- **Why**: Local-first architecture for APEX — works offline, syncs when connected. Could power offline agent task management and local project brain cache
+- **Status**: `OPTIONAL` — future local-first initiative
+
+### PowerSync — `CAN USE` — `OPTIONAL`
+- **Version**: Latest
+- **License**: Apache-2.0
+- **GitHub**: 2K+ stars
+- **What**: Managed Postgres-to-SQLite sync with conflict resolution
+- **Why**: Simpler alternative to ElectricSQL for local-first sync. Managed service reduces operational overhead. Good for mobile/PWA offline support
+- **Status**: `OPTIONAL`
+
 ---
 
 ## 4. Real-Time Communication
@@ -243,6 +451,23 @@
 - **What**: Unidirectional server→client streaming over HTTP
 - **Why**: Primary transport for agent output streaming (terminal output, file changes, plan updates). SSE is stateless, works through any HTTP proxy, and is simpler than WebSockets for one-way data. Agent Orchestrator → Redis Pub/Sub → SSE → Browser
 - **Status**: `PLANNED` — Sprint 2
+
+### Novu — `SHOULD USE` — `PLANNED`
+- **Version**: ^2.0.0
+- **License**: MIT
+- **GitHub**: 36K+ stars
+- **What**: Open source notification infrastructure — in-app, email, push, SMS, chat via unified API
+- **Why**: Unified notification layer for APEX. In-app notification center (bell icon), email digests, Slack/Discord notifications — all through one API. User notification preferences, digest/batching, and template management. Replaces building custom notification logic per channel
+- **Alternatives**: Custom per-channel implementation
+- **Status**: `PLANNED` — Sprint 5
+
+### PartyKit — `CAN USE` — `OPTIONAL`
+- **Version**: Latest
+- **License**: MIT
+- **GitHub**: 4K+ stars
+- **What**: Real-time multiplayer infrastructure using Cloudflare Durable Objects
+- **Why**: Alternative real-time backend for collaborative features. Each agent session could be a "party" with multiplayer state. Simpler than self-hosted Socket.io for certain use cases. Edge-native
+- **Status**: `OPTIONAL`
 
 ### Liveblocks — `CAN USE` — `OPTIONAL`
 - **Version**: Latest
@@ -334,7 +559,7 @@
 - **Version**: @neondatabase/serverless ^0.9.0
 - **License**: Apache-2.0
 - **What**: Serverless PostgreSQL with auto-scaling, branching, and connection pooling
-- **Why**: Production database. Serverless scaling (pay per query), database branching for staging/preview, built-in pgvector support. $50/month at launch tier
+- **Why**: Production database. Serverless scaling (pay per query), database branching for staging/preview environments (instant copy of production DB for each PR), built-in pgvector support. $50/month at launch tier. Branching is a killer feature — each preview deployment gets its own isolated database branch with no data copying overhead
 - **Alternatives**: Supabase, PlanetScale (MySQL), CockroachDB
 - **Status**: `PLANNED` — production deployment
 
@@ -344,6 +569,37 @@
 - **What**: Lightweight connection pooler for PostgreSQL
 - **Why**: Limits DB connections to 20-30 at peak (vs hundreds from microservices). Essential when running multiple services against one database
 - **Status**: `PLANNED` — or use Neon's built-in pooling
+
+### pg_stat_statements — `SHOULD USE` — `PLANNED`
+- **Version**: Built into PostgreSQL 16
+- **License**: PostgreSQL License
+- **What**: PostgreSQL extension that tracks execution statistics of all SQL statements
+- **Why**: Query performance monitoring — identify slow queries, track execution counts, measure mean/max execution time. Essential for optimizing Drizzle ORM queries in production. Zero overhead when enabled
+- **Status**: `PLANNED`
+
+### pg_cron — `CAN USE` — `OPTIONAL`
+- **Version**: Latest
+- **License**: PostgreSQL License
+- **GitHub**: 3K+ stars
+- **What**: PostgreSQL extension for running scheduled jobs (cron) directly inside the database
+- **Why**: Schedule database maintenance tasks — vacuum, partition pruning, stale session cleanup, credit reset — without external cron infrastructure. Simpler than BullMQ for periodic DB-only tasks
+- **Status**: `OPTIONAL`
+
+### TimescaleDB — `CAN USE` — `OPTIONAL`
+- **Version**: Latest
+- **License**: Apache-2.0
+- **GitHub**: 18K+ stars
+- **What**: PostgreSQL extension for time-series data with automatic partitioning (hypertables) and continuous aggregates
+- **Why**: If we need efficient storage and querying of time-series metrics — agent session durations over time, credit consumption trends, LLM latency history. Auto-partitions by time, compresses old data
+- **Status**: `OPTIONAL` — evaluate for analytics workload
+
+### PgCat — `CAN USE` — `OPTIONAL`
+- **Version**: Latest
+- **License**: MIT
+- **GitHub**: 3K+ stars
+- **What**: PostgreSQL connection pooler with load balancing, sharding support, and query routing
+- **Why**: Alternative to pgBouncer with additional features — query-level load balancing across read replicas, automatic sharding, and health checks. Better for multi-database setups at scale
+- **Status**: `OPTIONAL` — evaluate vs pgBouncer at scale
 
 ---
 
@@ -370,6 +626,22 @@
 - **What**: Serverless Redis with per-request pricing, REST API, and global replication
 - **Why**: Production Redis replacement. ~$30/month at usage tier. Includes Upstash Ratelimit for API rate limiting. No server management
 - **Status**: `PLANNED` — production deployment
+
+### Dragonfly — `CAN USE` — `OPTIONAL`
+- **Version**: Latest
+- **License**: BSL 1.1
+- **GitHub**: 26K+ stars
+- **What**: Modern in-memory data store, fully compatible with Redis/Memcached APIs. Multi-threaded, 25x throughput
+- **Why**: Drop-in Redis replacement with dramatically better performance — 25x throughput on same hardware. Multi-threaded (Redis is single-threaded). Evaluate if Redis/Valkey becomes a bottleneck at scale (10K+ concurrent agent sessions)
+- **Status**: `OPTIONAL` — performance optimization path
+
+### NATS — `CAN USE` — `OPTIONAL`
+- **Version**: Latest
+- **License**: Apache-2.0
+- **GitHub**: 16K+ stars
+- **What**: Cloud-native messaging system with pub/sub, request/reply, and JetStream (persistent streams)
+- **Why**: Alternative to Redis Pub/Sub for inter-service messaging. JetStream provides persistent message streams with replay, exactly-once delivery. Better for event sourcing patterns (agent session events). Lower latency than Redis Pub/Sub at high throughput
+- **Status**: `OPTIONAL` — evaluate for event-driven architecture
 
 ---
 
@@ -428,6 +700,55 @@
 - **Alternatives**: CrewAI, AutoGen
 - **Status**: `PLANNED`
 
+### Mastra — `SHOULD USE` — `PLANNED`
+- **Version**: ^0.5.0
+- **License**: MIT
+- **GitHub**: 22K+ stars
+- **What**: TypeScript-native AI agent framework with built-in tool calling, RAG, workflows, and memory. First-class Vercel AI SDK integration
+- **Why**: TypeScript-native alternative to LangGraph (Python). Built for our stack — works with Hono, tRPC, Zod. Agentic workflows with branching, parallel execution, and human-in-the-loop. Growing rapidly (22K stars in months)
+- **Alternatives**: LangGraph (Python-first), CrewAI
+- **Status**: `PLANNED`
+
+### Claude Agent SDK — `SHOULD USE` — `PLANNED`
+- **Version**: Latest
+- **License**: MIT
+- **What**: TypeScript SDK for building Claude Code-style agents. Powers Claude Code itself. Agentic loop with tool use, streaming, and multi-turn conversations
+- **Why**: Build custom agents that behave like Claude Code — autonomous coding, file editing, command execution. Official Anthropic SDK for agent development. Native support for Claude's extended thinking and tool use patterns
+- **Alternatives**: Vercel AI SDK (more general), Mastra
+- **Status**: `PLANNED`
+
+### Google ADK (Agent Development Kit) — `CAN USE` — `OPTIONAL`
+- **Version**: Latest
+- **License**: Apache-2.0
+- **GitHub**: 5K+ stars
+- **What**: Google's framework for building AI agents with Gemini. Multi-agent orchestration, tool use, and memory
+- **Why**: If we expand Gemini integration beyond the longContext/webSearch routes. Native Gemini function calling, grounding with Google Search, and code execution sandbox
+- **Status**: `OPTIONAL`
+
+### OpenAI Agents SDK — `CAN USE` — `OPTIONAL`
+- **Version**: Latest
+- **License**: MIT
+- **GitHub**: 15K+ stars
+- **What**: OpenAI's framework for building multi-agent systems with handoffs, guardrails, and tracing
+- **Why**: If we add OpenAI models as a routing option. Built-in agent handoff patterns (specialist → generalist), input/output guardrails. Good reference architecture for multi-agent design
+- **Status**: `OPTIONAL`
+
+### Agno — `CAN USE` — `OPTIONAL`
+- **Version**: Latest
+- **License**: MIT
+- **GitHub**: 20K+ stars
+- **What**: Lightweight, model-agnostic agent framework. Minimal abstractions, maximum control
+- **Why**: Alternative to heavier frameworks (LangGraph, CrewAI) when we need simple agent loops without complex orchestration. Good for single-purpose specialist agents in the fleet
+- **Status**: `OPTIONAL`
+
+### SmolAgents — `CAN USE` — `OPTIONAL`
+- **Version**: Latest
+- **License**: Apache-2.0
+- **GitHub**: 3K+ stars (part of HuggingFace)
+- **What**: Minimalist agent framework by HuggingFace. Code-first agents that write and execute Python
+- **Why**: Tiny footprint, open source. Good for lightweight code execution agents. Reference implementation for code-as-action agent patterns
+- **Status**: `OPTIONAL`
+
 ### SWE-agent — `CAN USE` — `OPTIONAL`
 - **Version**: Latest
 - **License**: MIT
@@ -453,11 +774,11 @@
 - **Status**: `OPTIONAL`
 
 ### AutoGen (Microsoft) — `CAN USE` — `OPTIONAL`
-- **Version**: Latest
+- **Version**: Latest (maintenance mode — merged into Microsoft Agent Framework, Oct 2025)
 - **License**: MIT
 - **GitHub**: 38K+ stars
-- **What**: Multi-agent conversation framework by Microsoft Research
-- **Why**: Strong multi-agent conversation patterns. Good for collaborative agent discussions (e.g., architect agent + coder agent + reviewer agent)
+- **What**: Multi-agent conversation framework by Microsoft Research. **Note**: AutoGen has been merged into the broader Microsoft Agent Framework as of October 2025 and is now in maintenance mode. New projects should evaluate Microsoft Agent Framework or AG2 (the community fork) instead
+- **Why**: Strong multi-agent conversation patterns. Good for collaborative agent discussions (e.g., architect agent + coder agent + reviewer agent). Consider AG2 fork for active development
 - **Status**: `OPTIONAL`
 
 ### AgentProtocol — `CAN USE` — `OPTIONAL`
@@ -654,6 +975,23 @@
 - **Why**: If agents need to process non-code documents (specs, designs, documentation) as part of task context
 - **Status**: `OPTIONAL`
 
+### Zoekt — `SHOULD USE` — `PLANNED`
+- **Version**: Latest
+- **License**: Apache-2.0
+- **GitHub**: 2K+ stars
+- **What**: Fast text search engine designed for source code. Trigram-based indexing for instant regex search across large codebases. Used by Sourcegraph
+- **Why**: Powers code search in Project Brain. Instant regex search across entire repositories — faster than grep for indexed codebases. Agents can find relevant code across thousands of files in milliseconds. Complements tree-sitter (structural) with fast text search
+- **Alternatives**: ripgrep (no index, per-query), Sourcegraph (hosted)
+- **Status**: `PLANNED` — Sprint 3
+
+### LSP Integration — `SHOULD USE` — `PLANNED`
+- **Version**: N/A (protocol standard)
+- **License**: N/A
+- **What**: Language Server Protocol — standardized protocol for code intelligence (go-to-definition, find references, hover info, diagnostics)
+- **Why**: Gives agents IDE-level code understanding — jump to definitions, find all usages of a function, get type information. Run language servers (TypeScript, Python, Go, Rust) inside sandbox containers to provide agents with the same code intelligence developers get in their IDE
+- **Alternatives**: tree-sitter (lighter, no type info), CodeQL (heavier, security-focused)
+- **Status**: `PLANNED`
+
 ---
 
 ## 14. Knowledge Graph
@@ -814,6 +1152,15 @@
 - **What**: Development environment manager with sub-90ms cold starts
 - **Why**: Alternative sandbox approach. Docker-based with extremely fast cold starts. Weaker isolation than gVisor/Firecracker but faster startup
 - **Status**: `OPTIONAL`
+
+### Wasmtime — `CAN USE` — `OPTIONAL`
+- **Version**: Latest
+- **License**: Apache-2.0
+- **GitHub**: 15K+ stars
+- **What**: Standalone WebAssembly runtime by the Bytecode Alliance. Fast, secure, standards-compliant
+- **Why**: Lightweight sandbox alternative for specific workloads — run untrusted code as WASM modules with fine-grained capability-based security. Sub-millisecond cold starts. Could sandbox agent tool execution (file operations, network calls) without full container overhead. Emerging ecosystem for server-side WASM
+- **Alternatives**: Wasmer, WasmEdge
+- **Status**: `OPTIONAL` — evaluate for lightweight sandboxing
 
 ---
 
@@ -1065,6 +1412,47 @@
 - **Why**: Production log aggregation. Integrates natively with Grafana for unified metrics + logs dashboard. Label-based indexing (efficient, cost-effective)
 - **Status**: `PLANNED`
 
+### Grafana Tempo — `SHOULD USE` — `PLANNED`
+- **Version**: Latest
+- **License**: AGPL-3.0
+- **GitHub**: 4K+ stars
+- **What**: Distributed tracing backend by Grafana Labs. Stores and queries traces from OpenTelemetry
+- **Why**: Trace every agent session end-to-end — from API request through orchestrator, model router, sandbox, back to client. Identify latency bottlenecks across microservices. Native Grafana integration for trace → log correlation
+- **Alternatives**: Jaeger (heavier, self-managed)
+- **Status**: `PLANNED`
+
+### Pyroscope — `CAN USE` — `OPTIONAL`
+- **Version**: Latest
+- **License**: AGPL-3.0
+- **GitHub**: 10K+ stars
+- **What**: Continuous profiling platform by Grafana Labs. CPU, memory, and allocation profiling
+- **Why**: Profile Node.js services in production — find memory leaks, CPU hotspots, and slow code paths. Integrates with Grafana for unified observability (metrics + logs + traces + profiles). Essential for optimizing agent session throughput
+- **Status**: `OPTIONAL`
+
+### Netdata — `CAN USE` — `OPTIONAL`
+- **Version**: Latest
+- **License**: GPL-3.0
+- **GitHub**: 72K+ stars
+- **What**: Real-time infrastructure monitoring with per-second granularity. Zero-config agent
+- **Why**: Quick-start monitoring before full Prometheus/Grafana setup. Monitors every server and container with zero configuration. 1-second granularity. Auto-detects anomalies. Good for development and staging environments
+- **Status**: `OPTIONAL`
+
+### Pyrra — `CAN USE` — `OPTIONAL`
+- **Version**: Latest
+- **License**: Apache-2.0
+- **GitHub**: 1K+ stars
+- **What**: SLO (Service Level Objective) management with Prometheus. Define, track, and alert on error budgets
+- **Why**: Define SLOs for APEX — "99.5% of agent sessions complete without errors", "p95 API latency < 200ms". Track error budgets over time. Alert before SLO is breached
+- **Status**: `OPTIONAL`
+
+### Alertmanager — `SHOULD USE` — `PLANNED`
+- **Version**: Latest
+- **License**: Apache-2.0
+- **GitHub**: 7K+ stars
+- **What**: Alert routing, grouping, and notification for Prometheus alerts. Supports PagerDuty, Slack, email, webhooks
+- **Why**: Route Prometheus alerts to the right channels — critical alerts to PagerDuty, warnings to Slack, info to email. Deduplication, silencing, inhibition. Required complement to Prometheus for production alerting
+- **Status**: `PLANNED`
+
 ---
 
 ## 25. CI/CD & Build
@@ -1145,8 +1533,8 @@
 ### Cloudflare — `MUST USE` — `PLANNED`
 - **Version**: N/A
 - **License**: Proprietary (generous free tier)
-- **What**: CDN, DDoS protection, DNS, Workers (edge compute)
-- **Why**: Free DDoS protection, edge caching for static assets, DNS management, SSL. Workers for edge logic (auth checks, rate limiting). R2 for object storage (zero egress)
+- **What**: CDN, DDoS protection, DNS, Workers (edge compute), Image Resizing, R2 storage
+- **Why**: Free DDoS protection, edge caching for static assets, DNS management, SSL. Workers for edge logic (auth checks, rate limiting, A/B routing). Image Resizing for user avatars and project thumbnails (transform on-the-fly, cache at edge). R2 for object storage (zero egress). Workers + KV for edge-cached session tokens and feature flags
 - **Status**: `PLANNED`
 
 ---
@@ -1176,6 +1564,73 @@
 - **What**: Modern reverse proxy and ingress controller with auto-discovery, SSL, and load balancing
 - **Why**: Kubernetes ingress controller. Automatic service discovery, Let's Encrypt SSL, WebSocket support, middleware (rate limiting, auth). Lighter than NGINX for our use case
 - **Status**: `PLANNED` — 3K+ users
+
+### Argo CD — `SHOULD USE` — `PLANNED`
+- **Version**: Latest
+- **License**: Apache-2.0
+- **GitHub**: 22K+ stars
+- **What**: Declarative GitOps continuous delivery for Kubernetes. Git as single source of truth for cluster state
+- **Why**: GitOps deployment model — push to `infra/k8s/` and Argo CD automatically syncs cluster state. Visual dashboard shows deployment status, drift detection, and rollback history. Essential for managing multiple environments (staging, production, EU) at scale
+- **Alternatives**: Flux CD (lighter, no UI)
+- **Status**: `PLANNED` — 3K+ users
+
+### Flux CD — `CAN USE` — `OPTIONAL`
+- **Version**: Latest
+- **License**: Apache-2.0
+- **GitHub**: 6K+ stars
+- **What**: GitOps toolkit for Kubernetes. Lightweight, composable, CNCF graduated project
+- **Why**: Lighter alternative to Argo CD. Better for teams that prefer CLI-first workflows over dashboards. Modular architecture — use only the components you need. Better multi-tenancy support
+- **Status**: `OPTIONAL`
+
+### Cilium — `SHOULD USE` — `PLANNED`
+- **Version**: Latest
+- **License**: Apache-2.0
+- **GitHub**: 21K+ stars
+- **What**: eBPF-based networking, observability, and security for Kubernetes. Replaces kube-proxy
+- **Why**: Network security for agent sandboxes — enforce network policies at the kernel level via eBPF. Prevent sandbox containers from accessing other pods or external services they shouldn't. Built-in observability (Hubble) shows all network flows. CNCF graduated
+- **Alternatives**: Calico
+- **Status**: `PLANNED` — 3K+ users (security hardening)
+
+### Linkerd — `CAN USE` — `OPTIONAL`
+- **Version**: Latest
+- **License**: Apache-2.0
+- **GitHub**: 11K+ stars
+- **What**: Ultralight service mesh for Kubernetes. mTLS, traffic management, observability
+- **Why**: Automatic mTLS between all services (zero-trust networking). Traffic splitting for canary deployments. Per-route metrics and retries. Lighter than Istio — written in Rust
+- **Status**: `OPTIONAL` — evaluate for zero-trust networking
+
+### cert-manager — `SHOULD USE` — `PLANNED`
+- **Version**: Latest
+- **License**: Apache-2.0
+- **GitHub**: 15.5K+ stars
+- **What**: Automated TLS certificate management for Kubernetes. Let's Encrypt integration, automatic renewal
+- **Why**: Automatic SSL/TLS for all services in k3s. Provisions and renews Let's Encrypt certificates without manual intervention. Required for HTTPS on all endpoints. Works with Traefik ingress
+- **Status**: `PLANNED` — 3K+ users
+
+### Kyverno — `CAN USE` — `OPTIONAL`
+- **Version**: Latest
+- **License**: Apache-2.0
+- **GitHub**: 6K+ stars
+- **What**: Kubernetes-native policy engine. Validate, mutate, and generate configurations using policies written in YAML
+- **Why**: Enforce security policies on sandbox pods — ensure all containers use approved base images, have resource limits set, run as non-root, and have network policies applied. No new language to learn (policies are YAML, not Rego like OPA)
+- **Alternatives**: OPA/Gatekeeper
+- **Status**: `OPTIONAL`
+
+### Velero — `SHOULD USE` — `PLANNED`
+- **Version**: Latest
+- **License**: Apache-2.0
+- **GitHub**: 10K+ stars
+- **What**: Backup and disaster recovery for Kubernetes resources and persistent volumes
+- **Why**: Backup all Kubernetes resources and persistent volumes (PostgreSQL data, Redis snapshots). Schedule daily backups to R2/S3. Disaster recovery — restore entire cluster state. Required for production reliability
+- **Status**: `PLANNED` — 3K+ users
+
+### OpenCost — `CAN USE` — `OPTIONAL`
+- **Version**: Latest
+- **License**: Apache-2.0
+- **GitHub**: 5K+ stars
+- **What**: Real-time Kubernetes cost monitoring. Breaks down costs by namespace, deployment, pod, and label
+- **Why**: Track infrastructure costs per customer/team — attribute sandbox compute costs to specific organizations. Monitor cost trends, set budgets, and alert on anomalies. Integrates with Prometheus and Grafana
+- **Status**: `OPTIONAL`
 
 ---
 
@@ -1392,20 +1847,490 @@
 
 ---
 
+## 33. Prompt Engineering & LLM Evaluation
+
+### Promptfoo — `SHOULD USE` — `PLANNED`
+- **Version**: Latest
+- **License**: MIT
+- **GitHub**: 12.8K+ stars
+- **What**: LLM evaluation framework. Test prompts against multiple models with assertions, grading, and regression detection
+- **Why**: Systematically evaluate and improve agent prompts. Test prompt changes against a suite of coding tasks before deploying. Compare models side-by-side (is DeepSeek V3 still the best default?). CI integration to catch prompt regressions. Essential for maintaining agent quality as we iterate
+- **Alternatives**: Braintrust, Humanloop
+- **Status**: `PLANNED`
+
+### Langfuse — `SHOULD USE` — `PLANNED`
+- **Version**: Latest
+- **License**: MIT
+- **GitHub**: 20K+ stars
+- **What**: Open source LLM observability — traces, evaluations, prompt management, cost tracking. Self-hostable
+- **Why**: Trace every LLM call across the agent pipeline — see the full chain of prompts, model responses, tool calls, and latencies. Track cost per session/user. A/B test prompt versions. Integrates with Vercel AI SDK and LangChain. Self-hosted for data privacy
+- **Alternatives**: LangSmith (proprietary), Helicone (simpler)
+- **Status**: `PLANNED`
+
+### DeepEval — `SHOULD USE` — `PLANNED`
+- **Version**: Latest
+- **License**: Apache-2.0
+- **GitHub**: 4K+ stars
+- **What**: LLM evaluation framework with 14+ metrics (faithfulness, relevancy, hallucination, bias, toxicity)
+- **Why**: Automated quality checks on agent output — detect hallucinated code, irrelevant responses, and toxic content. Unit test-style assertions for LLM outputs. Integrates with Pytest/Vitest for CI
+- **Status**: `PLANNED`
+
+### NeMo Guardrails — `SHOULD USE` — `PLANNED`
+- **Version**: Latest
+- **License**: Apache-2.0
+- **GitHub**: 5K+ stars
+- **What**: NVIDIA's toolkit for adding programmable guardrails to LLM applications. Input/output filtering, topic control, hallucination detection
+- **Why**: Safety layer for agent actions — prevent agents from executing dangerous commands (rm -rf /), making unauthorized API calls, or generating harmful code. Define allowed/blocked action patterns in a Colang configuration. Essential for enterprise trust
+- **Status**: `PLANNED`
+
+### Instructor — `SHOULD USE` — `PLANNED`
+- **Version**: ^1.6.0 (TypeScript)
+- **License**: MIT
+- **GitHub**: 9K+ stars
+- **What**: Structured output extraction from LLMs using Zod/Pydantic schemas. Automatic validation and retry
+- **Why**: Extract structured data from LLM responses — agent task plans, code review results, PR metadata. Native Zod integration for TypeScript. Automatic retry on validation failure. Works with any LLM provider. Lighter than LangChain for structured extraction
+- **Alternatives**: Outlines, BAML
+- **Status**: `PLANNED`
+
+### BAML — `CAN USE` — `OPTIONAL`
+- **Version**: Latest
+- **License**: Apache-2.0
+- **GitHub**: 3K+ stars
+- **What**: Domain-specific language for structured LLM output. Compile-time type safety for LLM functions
+- **Why**: Alternative to Instructor/Zod for defining structured LLM outputs. Generates type-safe clients from BAML schemas. Better for complex nested outputs and multi-step extraction. Compile-time guarantees reduce runtime errors
+- **Status**: `OPTIONAL`
+
+---
+
+## 34. Agent Evaluation & Benchmarking
+
+### SWE-bench — `CAN USE` — `OPTIONAL`
+- **Version**: Latest
+- **License**: MIT
+- **GitHub**: 2K+ stars
+- **What**: Benchmark for evaluating AI coding agents on real-world GitHub issues. 2,294 tasks from 12 popular Python repositories
+- **Why**: Measure APEX agent quality objectively — track our SWE-bench score over time as we improve the agent. Compare against competitors (Devin, Cursor, Copilot). Use SWE-bench Lite (300 tasks) for quick evaluation. Target: >40% resolution rate for competitive positioning
+- **Status**: `OPTIONAL` — benchmarking initiative
+
+---
+
+## 35. Web Crawling & Data Extraction
+
+### Firecrawl — `SHOULD USE` — `PLANNED`
+- **Version**: Latest
+- **License**: AGPL-3.0
+- **GitHub**: 70K+ stars
+- **What**: Web crawling and scraping API that returns clean markdown/structured data. Handles JavaScript rendering, anti-bot, and rate limiting
+- **Why**: Agent can crawl documentation sites, API references, and Stack Overflow answers to gather context for coding tasks. Returns clean markdown (not raw HTML) — perfect for LLM consumption. Used for: "read the docs for library X", "find examples of Y"
+- **Alternatives**: Crawl4AI, Playwright (manual)
+- **Status**: `PLANNED`
+
+### Crawl4AI — `CAN USE` — `OPTIONAL`
+- **Version**: Latest
+- **License**: Apache-2.0
+- **GitHub**: 40K+ stars
+- **What**: Open source, LLM-friendly web crawler. Returns structured data optimized for RAG pipelines
+- **Why**: Self-hosted alternative to Firecrawl. Better for bulk crawling (entire documentation sites for Project Brain indexing). Async, parallel crawling. Outputs markdown, structured JSON, or screenshots
+- **Status**: `OPTIONAL`
+
+---
+
+## 36. Secrets Management
+
+### Infisical — `SHOULD USE` — `PLANNED`
+- **Version**: Latest
+- **License**: MIT
+- **GitHub**: 25K+ stars
+- **What**: Open source secrets management platform. Environment variables, API keys, certificates. Self-hostable
+- **Why**: Centralized secrets management for all 9 microservices. Replace .env files with encrypted, versioned, audited secrets. Secret rotation, access policies, and audit logs. SDK integrates directly with Node.js. Essential for production security and SOC2 compliance
+- **Alternatives**: HashiCorp Vault (heavier), Doppler (proprietary)
+- **Status**: `PLANNED`
+
+### External Secrets Operator — `SHOULD USE` — `PLANNED`
+- **Version**: Latest
+- **License**: Apache-2.0
+- **GitHub**: 4.5K+ stars
+- **What**: Kubernetes operator that syncs secrets from external providers (Infisical, AWS Secrets Manager, Vault) into k8s Secrets
+- **Why**: Bridge between Infisical (or any secrets provider) and Kubernetes. Automatically syncs secrets into k8s pods without baking them into container images. Required for secure k3s deployment at scale
+- **Status**: `PLANNED` — 3K+ users (with k3s)
+
+### SOPS — `CAN USE` — `OPTIONAL`
+- **Version**: Latest
+- **License**: MPL-2.0
+- **GitHub**: 17K+ stars
+- **What**: Secrets OPerationS — encrypt/decrypt files using AWS KMS, GCP KMS, Azure Key Vault, or age/PGP
+- **Why**: Encrypt secrets in Git — commit encrypted .env files or k8s secrets to the repo safely. Simpler than Infisical for small teams. Works with age for local encryption (no cloud dependency)
+- **Status**: `OPTIONAL`
+
+---
+
+## 37. Status Pages & Uptime
+
+### OpenStatus — `SHOULD USE` — `PLANNED`
+- **Version**: Latest
+- **License**: AGPL-3.0
+- **GitHub**: 8.3K+ stars
+- **What**: Open source status page and monitoring. Beautiful UI, incident management, status subscribers
+- **Why**: Public status page for APEX (status.apex.dev). Shows uptime for all services, incident history, and scheduled maintenance. Subscribers get notified of outages. Built with Next.js — fits our stack
+- **Alternatives**: Cachet, Statuspage.io (proprietary)
+- **Status**: `PLANNED`
+
+### Gatus — `CAN USE` — `OPTIONAL`
+- **Version**: Latest
+- **License**: Apache-2.0
+- **GitHub**: 7K+ stars
+- **What**: Health dashboard and automated health checks. Supports HTTP, TCP, DNS, ICMP, and more
+- **Why**: Lightweight uptime monitoring with alerting. Define health checks for all endpoints in YAML. Supports conditions (response time < 200ms, status code 200). Alerts via Slack, PagerDuty, email
+- **Status**: `OPTIONAL`
+
+### Uptime Kuma — `SHOULD USE` — `PLANNED`
+- **Version**: Latest
+- **License**: MIT
+- **GitHub**: 84K+ stars
+- **What**: Self-hosted uptime monitoring tool with beautiful UI. HTTP, TCP, DNS, Docker, and game server monitoring
+- **Why**: Internal uptime monitoring dashboard. Monitor all 9 services, database, Redis, and external dependencies. Beautiful UI for the team. 84K stars — most popular self-hosted monitoring tool. Notification integrations (Slack, Discord, email, PagerDuty)
+- **Alternatives**: Gatus (lighter), Checkly (managed)
+- **Status**: `PLANNED`
+
+---
+
+## 38. Security Scanning & Compliance
+
+### Trivy — `SHOULD USE` — `PLANNED`
+- **Version**: Latest
+- **License**: Apache-2.0
+- **GitHub**: 32K+ stars
+- **What**: Comprehensive security scanner — container images, filesystems, IaC, Kubernetes, SBOM. By Aqua Security
+- **Why**: Scan sandbox Docker images for vulnerabilities before deployment. Scan IaC (Dockerfiles, k8s manifests) for misconfigurations. Generate SBOMs for compliance. Runs in CI/CD (GitHub Actions). Single tool for multiple security scan types
+- **Alternatives**: Grype + Syft (modular alternative)
+- **Status**: `PLANNED` — Sprint 6
+
+### Grype — `CAN USE` — `OPTIONAL`
+- **Version**: Latest
+- **License**: Apache-2.0
+- **GitHub**: 9K+ stars
+- **What**: Vulnerability scanner for container images and filesystems. By Anchore
+- **Why**: Lightweight alternative to Trivy focused purely on vulnerability scanning. Faster scanning, smaller footprint. Pairs with Syft for SBOM generation
+- **Status**: `OPTIONAL`
+
+### Gitleaks — `SHOULD USE` — `PLANNED`
+- **Version**: Latest
+- **License**: MIT
+- **GitHub**: 24.4K+ stars
+- **What**: Secret detection tool for git repositories. Pre-commit hook and CI scanning
+- **Why**: Prevent API keys, passwords, and tokens from being committed to the repo. Pre-commit hook catches secrets before they reach GitHub. CI scanning catches anything that slips through. Essential — agent-generated code might accidentally include secrets from sandbox environment
+- **Alternatives**: TruffleHog (more features)
+- **Status**: `PLANNED` — Sprint 1 (pre-commit)
+
+### TruffleHog — `SHOULD USE` — `PLANNED`
+- **Version**: Latest
+- **License**: AGPL-3.0
+- **GitHub**: 24.5K+ stars
+- **What**: Secret scanning tool that finds credentials in git history, filesystems, and cloud services. Verifies secrets are live
+- **Why**: Deep secret scanning — scans entire git history (not just current state). Verifies if discovered secrets are still active. Scans user repositories before agent processes them (prevent credential exposure). Broader detection than Gitleaks (3000+ detectors)
+- **Status**: `PLANNED` — Sprint 6
+
+### Syft — `CAN USE` — `OPTIONAL`
+- **Version**: Latest
+- **License**: Apache-2.0
+- **GitHub**: 6K+ stars
+- **What**: SBOM (Software Bill of Materials) generator for container images and filesystems. By Anchore
+- **Why**: Generate SBOMs for compliance (SOC2, enterprise customers). Pairs with Grype for vulnerability scanning. Output formats: SPDX, CycloneDX
+- **Status**: `OPTIONAL`
+
+### Falco — `SHOULD USE` — `PLANNED`
+- **Version**: Latest
+- **License**: Apache-2.0
+- **GitHub**: 11.7K+ stars
+- **What**: Cloud-native runtime security. Detects threats in containers, Kubernetes, and cloud. CNCF graduated project
+- **Why**: Runtime security monitoring for agent sandbox containers. Detect suspicious behavior — shell spawning, file access outside /workspace, network connections to unexpected hosts, privilege escalation attempts. Alert and kill containers exhibiting malicious behavior. Critical for running untrusted code
+- **Status**: `PLANNED` — Sprint 6
+
+---
+
+## 39. Feature Flags & Experimentation
+
+### GrowthBook — `SHOULD USE` — `PLANNED`
+- **Version**: Latest
+- **License**: MIT
+- **GitHub**: 6K+ stars
+- **What**: Open source feature flags and A/B testing platform. Self-hostable. Bayesian statistics engine
+- **Why**: Feature flags for gradual rollouts — new agent capabilities, UI changes, model routing updates. A/B test different prompts, models, or UI layouts. SDK integrates with Next.js and Hono. Self-hosted for data privacy. Targeting by organization, plan tier, or user segment
+- **Alternatives**: Unleash, Flagsmith, LaunchDarkly (proprietary)
+- **Status**: `PLANNED`
+
+### Unleash — `CAN USE` — `OPTIONAL`
+- **Version**: Latest
+- **License**: Apache-2.0
+- **GitHub**: 11K+ stars
+- **What**: Enterprise feature flag management with SDKs for 30+ languages. Self-hostable
+- **Why**: Alternative to GrowthBook with more enterprise features — audit log, change requests, scheduled flags. Larger community and more mature. Better for enterprise customers who need approval workflows for flag changes
+- **Status**: `OPTIONAL`
+
+### Flagsmith — `CAN USE` — `OPTIONAL`
+- **Version**: Latest
+- **License**: BSD-3
+- **GitHub**: 5K+ stars
+- **What**: Feature flags with remote config. Supports segments, multivariate flags, and change history
+- **Why**: Simpler alternative to GrowthBook/Unleash. Remote configuration lets us change model routing weights, credit limits, and UI copy without deployments. Good for small teams who need flags without the complexity
+- **Status**: `OPTIONAL`
+
+---
+
+## 40. Documentation & API Reference
+
+### Docusaurus — `SHOULD USE` — `PLANNED`
+- **Version**: ^3.0.0
+- **License**: MIT
+- **GitHub**: 61.8K+ stars
+- **What**: Documentation framework by Meta. MDX-based, versioned, searchable, i18n support
+- **Why**: APEX public documentation site (docs.apex.dev). User guides, API reference, agent capabilities, integration docs. Versioned docs for different APEX releases. Built-in search. MDX for interactive examples. Massive ecosystem (61K+ stars)
+- **Alternatives**: Nextra, Mintlify (proprietary), Fumadocs
+- **Status**: `PLANNED`
+
+### Scalar — `SHOULD USE` — `PLANNED`
+- **Version**: Latest
+- **License**: MIT
+- **GitHub**: 8K+ stars
+- **What**: Beautiful API documentation from OpenAPI specs. Interactive API playground, code examples in 20+ languages
+- **Why**: API reference for the APEX public API (tRPC exports OpenAPI via trpc-openapi). Developers can explore and test API endpoints directly in the browser. Auto-generated from our tRPC router definitions. Modern alternative to Swagger UI
+- **Alternatives**: Swagger UI, Redoc
+- **Status**: `PLANNED`
+
+### Fumadocs — `CAN USE` — `OPTIONAL`
+- **Version**: Latest
+- **License**: MIT
+- **GitHub**: 3K+ stars
+- **What**: Next.js documentation framework. MDX, full-text search, API reference generation
+- **Why**: Alternative to Docusaurus that runs on Next.js — same framework as APEX. Could serve docs from the same deployment. TypeScript-native, Tailwind-styled. Better integration with our existing stack
+- **Status**: `OPTIONAL`
+
+---
+
+## 41. Desktop & CLI
+
+### Tauri 2.0 — `CAN USE` — `OPTIONAL`
+- **Version**: ^2.0.0
+- **License**: MIT / Apache-2.0
+- **GitHub**: 88K+ stars
+- **What**: Build native desktop apps using web technologies. Rust core, tiny bundles (~600KB), native OS integration
+- **Why**: APEX desktop app for offline/local agent execution. Access local filesystem, run Docker containers, use local LLMs — all from a native app. 10x smaller than Electron. Deep OS integration (system tray, native menus, file associations)
+- **Alternatives**: Electron (larger, more mature ecosystem)
+- **Status**: `OPTIONAL` — future desktop initiative
+
+### Electron — `CAN USE` — `OPTIONAL`
+- **Version**: Latest
+- **License**: MIT
+- **GitHub**: 115K+ stars
+- **What**: Cross-platform desktop apps with web technologies. Used by VS Code, Slack, Discord
+- **Why**: Alternative to Tauri with a more mature ecosystem. Larger bundle size but better compatibility. VS Code is built on Electron, proving it works for developer tools at scale
+- **Status**: `OPTIONAL`
+
+### Ink 5 — `SHOULD USE` — `PLANNED`
+- **Version**: ^5.0.0
+- **License**: MIT
+- **GitHub**: 27K+ stars
+- **What**: React for CLIs — build interactive command-line apps using React components and hooks
+- **Why**: Build the APEX CLI tool with React component model. Interactive task creation, real-time agent status, streaming output — all in the terminal. Same mental model as our web frontend. Used by Vercel CLI, Gatsby, Prisma
+- **Alternatives**: Blessed (lower-level), Clack (simpler)
+- **Status**: `PLANNED`
+
+### Commander.js — `SHOULD USE` — `PLANNED`
+- **Version**: ^12.0.0
+- **License**: MIT
+- **GitHub**: 27K+ stars
+- **What**: Complete CLI framework — command parsing, help generation, subcommands, options
+- **Why**: Foundation for the APEX CLI (`apex run`, `apex status`, `apex config`). Automatic help text generation, argument validation, subcommand routing. Pairs with Ink for the interactive UI layer
+- **Alternatives**: yargs, oclif
+- **Status**: `PLANNED`
+
+### oclif — `CAN USE` — `OPTIONAL`
+- **Version**: Latest
+- **License**: MIT
+- **GitHub**: 9K+ stars
+- **What**: CLI framework by Salesforce. Plugin system, auto-docs, testing utilities
+- **Why**: Alternative to Commander.js for larger CLIs. Built-in plugin system (users can extend the APEX CLI). Auto-generates man pages and markdown docs. Better for CLIs that need to be extensible
+- **Status**: `OPTIONAL`
+
+### VS Code Extension API — `SHOULD USE` — `PLANNED`
+- **Version**: Latest
+- **License**: MIT
+- **What**: Build extensions for VS Code — the most popular code editor (75%+ market share among developers)
+- **Why**: APEX VS Code extension — trigger agent tasks, view session output, browse diffs, approve PRs — all without leaving the editor. Captures the audience where they already work. Extension marketplace distribution. WebSocket connection to APEX backend
+- **Status**: `PLANNED`
+
+### JetBrains Plugin SDK — `CAN USE` — `OPTIONAL`
+- **Version**: Latest
+- **License**: Apache-2.0
+- **What**: Build plugins for IntelliJ IDEA, WebStorm, PyCharm, and other JetBrains IDEs
+- **Why**: JetBrains IDEs have significant market share (30%+) especially among Java/Kotlin and Python developers. APEX plugin for JetBrains — same functionality as VS Code extension for the other major IDE ecosystem
+- **Status**: `OPTIONAL` — after VS Code extension
+
+---
+
+## 42. Analytics & Tracking
+
+### PostHog — `SHOULD USE` — `PLANNED`
+- **Version**: Latest
+- **License**: MIT
+- **GitHub**: 25K+ stars
+- **What**: All-in-one product analytics — event tracking, funnels, feature flags, session replay, A/B testing. Self-hostable
+- **Why**: Understand how users use APEX — which features are popular, where users drop off, what task types are most common. Funnels: sign up → first task → first PR → paid plan. Session replay for UX debugging. Self-hosted for data privacy. Replaces 3-4 separate tools
+- **Alternatives**: Mixpanel (proprietary), Amplitude (proprietary)
+- **Status**: `PLANNED`
+
+### Umami — `CAN USE` — `OPTIONAL`
+- **Version**: Latest
+- **License**: MIT
+- **GitHub**: 24K+ stars
+- **What**: Simple, privacy-focused web analytics. Self-hosted, no cookies, GDPR compliant
+- **Why**: Lightweight alternative to PostHog for basic web analytics. No cookie banners needed. Page views, referrers, device stats. Good for the marketing site (apex.dev) where full product analytics isn't needed
+- **Alternatives**: Plausible
+- **Status**: `OPTIONAL`
+
+### Plausible — `CAN USE` — `OPTIONAL`
+- **Version**: Latest
+- **License**: AGPL-3.0
+- **GitHub**: 21K+ stars
+- **What**: Privacy-friendly web analytics. Lightweight (<1KB script), no cookies, EU-hosted option
+- **Why**: Alternative to Umami. Even lighter script (<1KB vs Umami's ~2KB). EU-hosted cloud option for GDPR. Simple dashboard for marketing metrics
+- **Status**: `OPTIONAL`
+
+### OpenPanel — `CAN USE` — `OPTIONAL`
+- **Version**: Latest
+- **License**: MIT
+- **GitHub**: 3K+ stars
+- **What**: Open source alternative to Mixpanel. Event analytics, funnels, retention, user profiles
+- **Why**: If PostHog is too heavy, OpenPanel provides focused event analytics. Better funnels and retention analysis than Umami/Plausible. Good middle ground between simple analytics and full PostHog
+- **Status**: `OPTIONAL`
+
+### rrweb — `SHOULD USE` — `PLANNED`
+- **Version**: ^2.0.0
+- **License**: MIT
+- **GitHub**: 17K+ stars
+- **What**: Record and replay web sessions. Captures DOM mutations, mouse movement, scrolling, and network requests
+- **Why**: Session replay for debugging user-reported issues. See exactly what the user saw when they report a bug. Replay agent session UIs to understand UX problems. Integrates with Sentry and PostHog. Smaller and more focused than full PostHog session replay
+- **Status**: `PLANNED`
+
+### OpenReplay — `CAN USE` — `OPTIONAL`
+- **Version**: Latest
+- **License**: ELv2
+- **GitHub**: 10K+ stars
+- **What**: Self-hosted session replay and product analytics. Co-browsing, error tracking, performance monitoring
+- **Why**: Full-featured alternative to rrweb + Sentry. Self-hosted session replay with integrated error tracking. Co-browsing feature lets support team see user's screen live. Good for enterprise customers requiring self-hosted analytics
+- **Status**: `OPTIONAL`
+
+---
+
+## 43. Mobile & PWA
+
+### React Native + Expo — `CAN USE` — `OPTIONAL`
+- **Version**: Expo SDK 52+, React Native 0.76+
+- **License**: MIT
+- **GitHub**: 120K+ stars (RN) + 36K+ (Expo)
+- **What**: Build native mobile apps using React. Expo simplifies development with managed workflow, OTA updates, and build service
+- **Why**: APEX mobile app — monitor agent sessions, approve PRs, view notifications on the go. Share React components and business logic with web app. Expo's EAS Build and OTA updates enable rapid iteration. Push notifications for task completion
+- **Alternatives**: Flutter (Dart, different ecosystem)
+- **Status**: `OPTIONAL` — future mobile initiative
+
+### Serwist — `SHOULD USE` — `PLANNED`
+- **Version**: Latest
+- **License**: MIT
+- **GitHub**: 1K+ stars
+- **What**: Progressive Web App (PWA) toolkit for Next.js. Service workers, caching strategies, offline support. Successor to next-pwa
+- **Why**: Make APEX installable as a PWA — works offline, push notifications, app-like experience on mobile. Service worker caches static assets and API responses. Background sync for offline task creation. Faster than building a native mobile app
+- **Alternatives**: @vite-pwa/nuxt (Vite-based)
+- **Status**: `PLANNED`
+
+### expo-notifications — `CAN USE` — `OPTIONAL`
+- **Version**: Latest
+- **License**: MIT
+- **What**: Push notification support for Expo/React Native apps
+- **Why**: If we build a native mobile app, push notifications for task completion, PR approvals, credit alerts. Works on both iOS and Android
+- **Status**: `OPTIONAL` — with React Native + Expo
+
+---
+
+## 44. Accessibility & i18n
+
+### next-intl — `SHOULD USE` — `PLANNED`
+- **Version**: ^3.0.0
+- **License**: MIT
+- **GitHub**: 3K+ stars
+- **What**: Internationalization for Next.js App Router. ICU message format, server components support, type-safe
+- **Why**: i18n support for APEX — English first, then Japanese, German, French, Spanish for international markets. Server component support means translations don't bloat client bundle. Type-safe message keys prevent missing translations. Works with App Router
+- **Alternatives**: i18next + react-i18next (more general)
+- **Status**: `PLANNED`
+
+### i18next — `CAN USE` — `OPTIONAL`
+- **Version**: Latest
+- **License**: MIT
+- **GitHub**: 8K+ stars
+- **What**: Internationalization framework for JavaScript. Framework-agnostic, plugin ecosystem, lazy loading
+- **Why**: Alternative to next-intl for i18n. Larger ecosystem and more plugins. Better if we need i18n outside Next.js (CLI, emails, error messages). react-i18next adapter for React components
+- **Status**: `OPTIONAL`
+
+### axe-core — `SHOULD USE` — `PLANNED`
+- **Version**: Latest
+- **License**: MPL-2.0
+- **GitHub**: 6K+ stars
+- **What**: Accessibility testing engine. WCAG 2.1 compliance checks on rendered HTML
+- **Why**: Automated accessibility testing in CI. Ensures APEX UI meets WCAG 2.1 AA standards — keyboard navigation, screen reader support, color contrast, ARIA attributes. Integrates with Playwright for E2E accessibility testing. Required for enterprise/government customers
+- **Alternatives**: pa11y
+- **Status**: `PLANNED`
+
+### vitest-axe — `CAN USE` — `OPTIONAL`
+- **Version**: Latest
+- **License**: MIT
+- **What**: Custom Vitest matchers for axe-core accessibility testing. `expect(element).toHaveNoViolations()`
+- **Why**: Unit-level accessibility testing — test individual shadcn components for a11y violations in Vitest. Catches accessibility issues earlier than E2E tests with axe-core + Playwright
+- **Status**: `OPTIONAL`
+
+---
+
+## 5a. Image & Media Processing
+
+### Sharp — `SHOULD USE` — `PLANNED`
+- **Version**: ^0.33.0
+- **License**: Apache-2.0
+- **GitHub**: 30K+ stars
+- **What**: High-performance Node.js image processing. Resize, crop, convert, optimize images using libvips
+- **Why**: Process user avatars, project thumbnails, and agent-captured screenshots. Optimize images before storing in R2/MinIO. Generate responsive image sizes. 10-100x faster than ImageMagick. Used by Next.js Image component under the hood
+- **Alternatives**: Jimp (pure JS, slower)
+- **Status**: `PLANNED`
+
+### @unpic/react — `CAN USE` — `OPTIONAL`
+- **Version**: Latest
+- **License**: MIT
+- **GitHub**: 2K+ stars
+- **What**: Universal image component for React. Responsive, lazy-loaded, CDN-optimized. Works with any image CDN
+- **Why**: Optimized image rendering in APEX UI — user avatars, screenshots, project icons. Automatic srcset generation, lazy loading, blur-up placeholders. Works with Cloudflare Image Resizing or any CDN
+- **Status**: `OPTIONAL`
+
+### @react-pdf/renderer — `CAN USE` — `OPTIONAL`
+- **Version**: Latest
+- **License**: MIT
+- **GitHub**: 15K+ stars
+- **What**: Generate PDF documents using React components. Server-side or client-side rendering
+- **Why**: Generate PDF reports — agent session summaries, billing invoices, audit logs for enterprise customers. React component model makes complex layouts easy. Type-safe with TypeScript
+- **Status**: `OPTIONAL` — enterprise reporting
+
+---
+
 ## Technology Count Summary
 
 | Classification | Count |
 |---------------|-------|
-| **MUST USE** | 48 |
-| **SHOULD USE** | 39 |
-| **CAN USE** | 38 |
-| **Total Technologies** | **125** |
+| **MUST USE** | 51 |
+| **SHOULD USE** | 84 |
+| **CAN USE** | 106 |
+| **Total Technologies** | **241** |
 
 | Status | Count |
 |--------|-------|
 | **IN USE** (already in codebase) | 28 |
-| **PLANNED** (scheduled for implementation) | 68 |
-| **OPTIONAL** (evaluate when needed) | 29 |
+| **PLANNED** (scheduled for implementation) | 135 |
+| **OPTIONAL** (evaluate when needed) | 78 |
 
 ---
 
@@ -1416,12 +2341,15 @@
 │                        CLIENTS                                   │
 │  Next.js 15 + shadcn/ui + AI Elements + Tailwind v4 + Zustand  │
 │  React Query + tRPC Client + Socket.io Client + Framer Motion   │
+│  xterm.js + react-markdown + Shiki + Mermaid + assistant-ui     │
+│  Sonner + react-hook-form + dnd-kit + TanStack Virtual          │
 └────────────────────┬────────────────────────────────────────────┘
                      │ SSE / WebSocket / tRPC
 ┌────────────────────┴────────────────────────────────────────────┐
 │                     API LAYER                                    │
 │  Hono + tRPC Server + Clerk Auth + Zod Validation               │
-│  Upstash Ratelimit + Stripe Webhooks + Cloudflare CDN           │
+│  Upstash Ratelimit + Stripe Webhooks + Cloudflare CDN/Workers   │
+│  GrowthBook (feature flags) + Novu (notifications)              │
 └──┬──────────┬──────────┬──────────┬──────────┬─────────────────┘
    │          │          │          │          │
 ┌──┴──┐  ┌───┴──┐  ┌───┴───┐  ┌──┴──┐  ┌───┴────┐
@@ -1431,13 +2359,14 @@
 │Hands│  │Docker│  │claude │  │tree-│  │GitHub  │
 │Lang │  │+gVis │  │-code- │  │sitter│ │Linear  │
 │Graph│  │or    │  │router │  │Cognee│ │Jira    │
-│     │  │      │  │LiteLLM│  │pgvec│  │Slack   │
+│Mastr│  │Wasm  │  │LiteLLM│  │Zoekt│  │Slack   │
+│a    │  │time  │  │       │  │LSP  │  │        │
 └──┬──┘  └──┬───┘  └──┬────┘  └──┬──┘  └───┬────┘
    │        │         │          │          │
 ┌──┴────────┴─────────┴──────────┴──────────┴─────────────────────┐
 │                     DATA LAYER                                    │
 │  PostgreSQL 16 + pgvector │ Redis/Valkey │ MinIO/R2 │ Memgraph  │
-│  Drizzle ORM │ BullMQ │ Mem0 │ Letta │ Meilisearch             │
+│  Drizzle ORM │ BullMQ │ Mem0 │ Letta │ Meilisearch │ Infisical │
 └─────────────────────────────────────────────────────────────────┘
                      │
 ┌────────────────────┴────────────────────────────────────────────┐
@@ -1447,10 +2376,24 @@
 └─────────────────────────────────────────────────────────────────┘
                      │
 ┌────────────────────┴────────────────────────────────────────────┐
+│                     AI QUALITY LAYER                              │
+│  Promptfoo │ Langfuse │ DeepEval │ NeMo Guardrails │ Instructor│
+└─────────────────────────────────────────────────────────────────┘
+                     │
+┌────────────────────┴────────────────────────────────────────────┐
 │                     INFRASTRUCTURE                               │
 │  Fly.io │ Hetzner │ Cloudflare │ GitHub Actions │ Docker        │
-│  k3s + KEDA + Traefik (at scale)                                │
-│  OpenTelemetry + Prometheus + Grafana + Sentry + Pino + Loki    │
+│  k3s + KEDA + Traefik + Argo CD + Cilium + cert-manager (scale)│
+│  OpenTelemetry + Prometheus + Grafana + Sentry + Pino + Loki   │
+│  Grafana Tempo + Alertmanager │ Uptime Kuma + OpenStatus        │
+│  Trivy + Gitleaks + TruffleHog + Falco (security)              │
+│  Velero (backup) │ GrowthBook (flags) │ PostHog (analytics)     │
+└─────────────────────────────────────────────────────────────────┘
+                     │
+┌────────────────────┴────────────────────────────────────────────┐
+│                     DEVELOPER EXPERIENCE                         │
+│  VS Code Extension │ Ink CLI │ Docusaurus │ Scalar API Docs     │
+│  Serwist (PWA) │ next-intl (i18n) │ axe-core (a11y)            │
 └─────────────────────────────────────────────────────────────────┘
 ```
 

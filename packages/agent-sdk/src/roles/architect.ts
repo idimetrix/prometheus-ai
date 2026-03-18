@@ -1,14 +1,17 @@
-import { BaseAgent, type AgentContext } from "../base-agent";
-import { resolveTools } from "../base-agent";
+import { BaseAgent, type AgentContext, resolveTools } from "../base-agent";
 
 export class ArchitectAgent extends BaseAgent {
   constructor() {
-    const tools = resolveTools(["file_read", "file_write", "search_files", "search_content"]);
+    const tools = resolveTools(["file_read", "file_write", "search_files", "search_content", "read_blueprint", "read_brain"]);
     super("architect", tools);
   }
 
   getPreferredModel(): string {
     return "ollama/deepseek-r1:32b";
+  }
+
+  getAllowedTools(): string[] {
+    return ["file_read", "file_write", "search_files", "search_content", "read_blueprint", "read_brain"];
   }
 
   getSystemPrompt(context: AgentContext): string {
@@ -36,21 +39,32 @@ Your role is to design the technical architecture for projects, creating the imm
 
 ## Domain Model
 - Entities and relationships
+- ERD description
 
 ## Code Conventions
-- Naming, file structure, import ordering
+- Naming conventions (camelCase for variables, PascalCase for types)
+- File structure and co-location rules
+- Import ordering
 
 ## API Contracts
-- Endpoint specifications
+- Endpoint specifications with request/response types
+- Authentication requirements per endpoint
+- Rate limiting rules
 
 ## Database Schema
-- Table definitions with columns and types
+- Table definitions with columns, types, and constraints
+- Index definitions
+- Migration strategy
 
 ## Architecture Decision Log
-- ADR-001: ...
+- ADR-001: [Decision title]
+  - Context: [Why this decision was needed]
+  - Decision: [What was decided]
+  - Consequences: [Trade-offs and implications]
 
 ## Never-Do List
 - Anti-patterns and forbidden approaches
+- Specific things to avoid
 \`\`\`
 
 ## Rules:
@@ -58,6 +72,7 @@ Your role is to design the technical architecture for projects, creating the imm
 - All design decisions must have justification
 - Prefer simplicity over cleverness
 - Design for the requirements, not hypothetical futures
+- Use read_brain to understand existing codebase patterns before designing
 ${context.blueprintContent ? `\n## Current Blueprint:\n${context.blueprintContent}` : ""}
 
 Session: ${context.sessionId}

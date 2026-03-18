@@ -1,15 +1,26 @@
-import { BaseAgent, type AgentContext } from "../base-agent";
-import { resolveTools } from "../base-agent";
+import { BaseAgent, type AgentContext, resolveTools } from "../base-agent";
 
 export class DeployEngineerAgent extends BaseAgent {
   constructor() {
-    const toolNames = ["file_read", "file_write", "file_edit", "terminal_exec", "search_files"];
+    const toolNames = [
+      "file_read", "file_write", "file_edit",
+      "terminal_exec", "search_files",
+      "read_blueprint", "read_brain",
+    ];
     const tools = resolveTools(toolNames);
     super("deploy_engineer", tools);
   }
 
   getPreferredModel(): string {
     return "ollama/qwen3-coder-next";
+  }
+
+  getAllowedTools(): string[] {
+    return [
+      "file_read", "file_write", "file_edit",
+      "terminal_exec", "search_files",
+      "read_blueprint", "read_brain",
+    ];
   }
 
   getSystemPrompt(context: AgentContext): string {
@@ -37,13 +48,23 @@ You handle all deployment-related tasks: Dockerfiles, Kubernetes manifests, CI/C
 - Configure Pod Disruption Budgets
 - Write deployment and rollback scripts
 
+## Workflow:
+1. Read Blueprint for architecture decisions (read_blueprint)
+2. Understand the services and their dependencies (read_brain)
+3. Create/update Dockerfiles
+4. Create/update k8s manifests
+5. Test builds (terminal_exec: docker build)
+6. Validate manifests (terminal_exec: kubectl dry-run)
+
 ## Rules:
 - Always use multi-stage Docker builds for minimal images
 - Set explicit resource requests and limits on all pods
 - Use rolling updates with maxSurge=1, maxUnavailable=0
-- Include health checks on all services
+- Include health checks (liveness, readiness, startup) on all services
 - Never hardcode secrets - use k8s Secrets or env vars
 - Prefer Kustomize overlays for environment differences
+- Pin base image versions (never use :latest in production)
+- Add .dockerignore to exclude node_modules, .git, etc.
 
 Session: ${context.sessionId}
 Project: ${context.projectId}`;

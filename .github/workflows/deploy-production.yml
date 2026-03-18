@@ -4,10 +4,17 @@ on:
   push:
     branches: [main]
 
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
 jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
     environment: production
+    permissions:
+      packages: write
+      contents: read
     steps:
       - uses: actions/checkout@v4
 
@@ -24,18 +31,25 @@ jobs:
       - run: pnpm turbo typecheck
       - run: pnpm turbo build
 
-      - name: Build Docker images
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push Docker images
         run: |
-          for service in web api queue-worker socket-server; do
-            docker build -f "infra/docker/Dockerfile.${service}" \
+          SERVICES="web api queue-worker socket-server orchestrator project-brain model-router mcp-gateway sandbox-manager"
+          for service in $SERVICES; do
+            DOCKERFILE="infra/docker/Dockerfile.${service}"
+            if [ ! -f "$DOCKERFILE" ]; then
+              DOCKERFILE="infra/docker/Dockerfile.api"
+            fi
+            docker build -f "$DOCKERFILE" \
+              --build-arg SERVICE="${service}" \
               -t "ghcr.io/${{ github.repository }}/${service}:${{ github.sha }}" \
               -t "ghcr.io/${{ github.repository }}/${service}:latest" .
-          done
-
-      - name: Push to GHCR
-        run: |
-          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u $ --password-stdin
-          for service in web api queue-worker socket-server; do
             docker push "ghcr.io/${{ github.repository }}/${service}:${{ github.sha }}"
             docker push "ghcr.io/${{ github.repository }}/${service}:latest"
           done

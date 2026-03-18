@@ -1,27 +1,46 @@
 import { z } from "zod";
 import { router, protectedProcedure, publicProcedure } from "../trpc";
+import { agentTaskQueue } from "@prometheus/queue";
 
 export const queueRouter = router({
   position: protectedProcedure
     .input(z.object({ taskId: z.string() }))
     .query(async ({ input }) => {
-      // TODO: Get queue position from BullMQ
+      const job = await agentTaskQueue.getJob(input.taskId);
+      if (!job) {
+        return { taskId: input.taskId, position: -1, estimatedWaitSeconds: 0, totalInQueue: 0 };
+      }
+
+      const waiting = await agentTaskQueue.getWaitingCount();
+      const active = await agentTaskQueue.getActiveCount();
+
+      // Estimate position based on job state
+      const state = await job.getState();
+      let position = 0;
+      if (state === "waiting") {
+        const waitingJobs = await agentTaskQueue.getWaiting(0, 100);
+        position = waitingJobs.findIndex((j) => j.id === input.taskId) + 1;
+      } else if (state === "active") {
+        position = 0;
+      }
+
       return {
         taskId: input.taskId,
-        position: 0,
-        estimatedWaitSeconds: 0,
-        totalInQueue: 0,
+        position,
+        estimatedWaitSeconds: position * 60,
+        totalInQueue: waiting + active,
       };
     }),
 
   stats: publicProcedure.query(async () => {
-    // TODO: Get queue stats from BullMQ
-    return {
-      waiting: 0,
-      active: 0,
-      completed: 0,
-      failed: 0,
-      delayed: 0,
-    };
+    const [waiting, active, completed, failed, delayed] = await Promise.all([
+      agentTaskQueue.getWaitingCount(),
+      agentTaskQueue.getActiveCount(),
+      agentTaskQueue.getCompletedCount(),
+      agentTaskQueue.getFailedCount(),
+      agentTaskQueue.getDelayedCount(),
+    ]);
+
+    return { waiting, active, completed, failed, delayed };
   }),
 });

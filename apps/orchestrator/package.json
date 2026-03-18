@@ -11,6 +11,9 @@
     "clean": "rm -rf dist .turbo"
   },
   "dependencies": {
+    "hono": "^4.7.0",
+    "@hono/node-server": "^1.14.0",
+    "drizzle-orm": "^0.38.0",
     "@prometheus/db": "workspace:*",
     "@prometheus/types": "workspace:*",
     "@prometheus/queue": "workspace:*",

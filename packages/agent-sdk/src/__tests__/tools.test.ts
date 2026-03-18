@@ -30,6 +30,19 @@ describe("TOOL_REGISTRY", () => {
     expect(TOOL_REGISTRY).toHaveProperty("search_semantic");
   });
 
+  it("should have browser tools registered", () => {
+    expect(TOOL_REGISTRY).toHaveProperty("browser_open");
+    expect(TOOL_REGISTRY).toHaveProperty("browser_screenshot");
+  });
+
+  it("should have agent meta tools registered", () => {
+    expect(TOOL_REGISTRY).toHaveProperty("ask_user");
+    expect(TOOL_REGISTRY).toHaveProperty("spawn_agent");
+    expect(TOOL_REGISTRY).toHaveProperty("kill_agent");
+    expect(TOOL_REGISTRY).toHaveProperty("read_blueprint");
+    expect(TOOL_REGISTRY).toHaveProperty("read_brain");
+  });
+
   it("should have valid tool definitions", () => {
     for (const [name, tool] of Object.entries(TOOL_REGISTRY)) {
       expect(tool.name).toBe(name);
@@ -37,10 +50,13 @@ describe("TOOL_REGISTRY", () => {
       expect(tool.inputSchema).toBeTruthy();
       expect(typeof tool.execute).toBe("function");
       expect(["read", "write", "execute", "admin"]).toContain(tool.permissionLevel);
+      expect(typeof tool.creditCost).toBe("number");
+      expect(tool.creditCost).toBeGreaterThanOrEqual(0);
     }
   });
 
-  it("should have 16 total tools", () => {
-    expect(Object.keys(TOOL_REGISTRY)).toHaveLength(16);
+  it("should have 23 total tools", () => {
+    // 5 file + 2 terminal + 6 git + 3 search + 2 browser + 5 agent meta = 23
+    expect(Object.keys(TOOL_REGISTRY)).toHaveLength(23);
   });
 });

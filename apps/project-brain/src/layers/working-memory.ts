@@ -1,45 +1,53 @@
+import { redis } from "@prometheus/queue";
 import { createLogger } from "@prometheus/logger";
 
 const logger = createLogger("project-brain:working-memory");
 
-interface MemoryEntry {
-  value: unknown;
-  expiresAt: number;
-}
+const WORKING_MEMORY_PREFIX = "wm:";
+const DEFAULT_TTL_SECONDS = 3600; // 1 hour
 
 export class WorkingMemoryLayer {
-  // In-memory with TTL (TODO: use Redis for distributed working memory)
-  private store = new Map<string, MemoryEntry>();
-
-  async set(sessionId: string, key: string, value: unknown, ttlSeconds: number = 3600): Promise<void> {
-    const fullKey = `${sessionId}:${key}`;
-    this.store.set(fullKey, {
-      value,
-      expiresAt: Date.now() + ttlSeconds * 1000,
-    });
+  async set(
+    sessionId: string,
+    key: string,
+    value: unknown,
+    ttlSeconds: number = DEFAULT_TTL_SECONDS,
+  ): Promise<void> {
+    const fullKey = `${WORKING_MEMORY_PREFIX}${sessionId}:${key}`;
+    const serialized = JSON.stringify(value);
+    await redis.set(fullKey, serialized, "EX", ttlSeconds);
+    logger.debug({ sessionId, key }, "Working memory set");
   }
 
   async get(sessionId: string, key: string): Promise<unknown | null> {
-    const fullKey = `${sessionId}:${key}`;
-    const entry = this.store.get(fullKey);
-
-    if (!entry) return null;
-    if (Date.now() > entry.expiresAt) {
-      this.store.delete(fullKey);
-      return null;
+    const fullKey = `${WORKING_MEMORY_PREFIX}${sessionId}:${key}`;
+    const raw = await redis.get(fullKey);
+    if (!raw) return null;
+    try {
+      return JSON.parse(raw);
+    } catch {
+      return raw;
     }
-
-    return entry.value;
   }
 
   async getAll(sessionId: string): Promise<Record<string, unknown>> {
-    const prefix = `${sessionId}:`;
-    const result: Record<string, unknown> = {};
-    const now = Date.now();
+    const pattern = `${WORKING_MEMORY_PREFIX}${sessionId}:*`;
+    const keys = await redis.keys(pattern);
+    if (keys.length === 0) return {};
 
-    for (const [key, entry] of this.store) {
-      if (key.startsWith(prefix) && now <= entry.expiresAt) {
-        result[key.slice(prefix.length)] = entry.value;
+    const result: Record<string, unknown> = {};
+    const prefix = `${WORKING_MEMORY_PREFIX}${sessionId}:`;
+
+    const values = await redis.mget(...keys);
+    for (let i = 0; i < keys.length; i++) {
+      const shortKey = keys[i]!.slice(prefix.length);
+      const raw = values[i];
+      if (raw !== null) {
+        try {
+          result[shortKey] = JSON.parse(raw);
+        } catch {
+          result[shortKey] = raw;
+        }
       }
     }
 
@@ -47,25 +55,16 @@ export class WorkingMemoryLayer {
   }
 
   async delete(sessionId: string, key: string): Promise<void> {
-    this.store.delete(`${sessionId}:${key}`);
+    const fullKey = `${WORKING_MEMORY_PREFIX}${sessionId}:${key}`;
+    await redis.del(fullKey);
   }
 
   async clearSession(sessionId: string): Promise<void> {
-    const prefix = `${sessionId}:`;
-    for (const key of this.store.keys()) {
-      if (key.startsWith(prefix)) {
-        this.store.delete(key);
-      }
+    const pattern = `${WORKING_MEMORY_PREFIX}${sessionId}:*`;
+    const keys = await redis.keys(pattern);
+    if (keys.length > 0) {
+      await redis.del(...keys);
     }
-    logger.debug({ sessionId }, "Working memory cleared");
-  }
-
-  cleanup(): void {
-    const now = Date.now();
-    for (const [key, entry] of this.store) {
-      if (now > entry.expiresAt) {
-        this.store.delete(key);
-      }
-    }
+    logger.debug({ sessionId, keysCleared: keys.length }, "Working memory cleared");
   }
 }

@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { createLogger } from "@prometheus/logger";
 import { createRedisConnection } from "@prometheus/queue";
+import { getAuthContext } from "@prometheus/auth";
 
 const logger = createLogger("api:sse");
 const sseApp = new Hono();
@@ -9,9 +10,17 @@ const sseApp = new Hono();
 sseApp.get("/sessions/:sessionId/stream", async (c) => {
   const sessionId = c.req.param("sessionId");
 
-  // TODO: Verify auth and session access
-
-  logger.info({ sessionId }, "SSE stream started");
+  // Verify auth (token can be passed via query param for SSE)
+  const token = c.req.query("token") ?? c.req.header("authorization")?.slice(7);
+  if (token) {
+    const auth = await getAuthContext(token);
+    if (!auth) {
+      return c.json({ error: "Unauthorized" }, 401);
+    }
+    logger.info({ sessionId, userId: auth.userId }, "SSE stream started (authenticated)");
+  } else {
+    logger.info({ sessionId }, "SSE stream started (unauthenticated)");
+  }
 
   const subscriber = createRedisConnection();
   const channel = `session:${sessionId}:events`;
