@@ -208,6 +208,7 @@ export function FleetMode({ sessionId }: FleetModeProps) {
                       <button
                         className="flex-1 rounded-lg border border-zinc-800 bg-zinc-950 py-1.5 text-[10px] text-zinc-400 transition-colors hover:border-yellow-800/50 hover:text-yellow-400"
                         onClick={() => handlePauseAgent(agent.id)}
+                        type="button"
                       >
                         Pause
                       </button>
@@ -217,6 +218,7 @@ export function FleetMode({ sessionId }: FleetModeProps) {
                       <button
                         className="flex-1 rounded-lg border border-zinc-800 bg-zinc-950 py-1.5 text-[10px] text-zinc-400 transition-colors hover:border-green-800/50 hover:text-green-400"
                         onClick={() => handleResumeAgent(agent.id)}
+                        type="button"
                       >
                         Resume
                       </button>
@@ -226,6 +228,7 @@ export function FleetMode({ sessionId }: FleetModeProps) {
                         <button
                           className="flex-1 rounded-lg border border-zinc-800 bg-zinc-950 py-1.5 text-[10px] text-zinc-400 transition-colors hover:border-red-800/50 hover:text-red-400"
                           onClick={() => handleStopAgent(agent.id)}
+                          type="button"
                         >
                           Stop
                         </button>
@@ -248,16 +251,21 @@ export function FleetMode({ sessionId }: FleetModeProps) {
             {tasks.map((task, i) => (
               <div className="flex shrink-0 items-center" key={task.id}>
                 <div
-                  className={`rounded-lg border px-3 py-1.5 text-[10px] ${
-                    task.status === "completed"
-                      ? "border-green-500/30 bg-green-500/10 text-green-400"
-                      : task.status === "running" ||
-                          task.status === ("in_progress" as string)
-                        ? "border-violet-500/30 bg-violet-500/10 text-violet-400"
-                        : task.status === "failed"
-                          ? "border-red-500/30 bg-red-500/10 text-red-400"
-                          : "border-zinc-800 bg-zinc-950 text-zinc-500"
-                  }`}
+                  className={`rounded-lg border px-3 py-1.5 text-[10px] ${(() => {
+                    if (task.status === "completed") {
+                      return "border-green-500/30 bg-green-500/10 text-green-400";
+                    }
+                    if (
+                      task.status === "running" ||
+                      task.status === ("in_progress" as string)
+                    ) {
+                      return "border-violet-500/30 bg-violet-500/10 text-violet-400";
+                    }
+                    if (task.status === "failed") {
+                      return "border-red-500/30 bg-red-500/10 text-red-400";
+                    }
+                    return "border-zinc-800 bg-zinc-950 text-zinc-500";
+                  })()}`}
                   title={task.title}
                 >
                   <div className="max-w-[100px] truncate font-medium">
@@ -269,6 +277,7 @@ export function FleetMode({ sessionId }: FleetModeProps) {
                 </div>
                 {i < tasks.length - 1 && (
                   <svg
+                    aria-hidden="true"
                     className="mx-0.5 h-3 w-4 shrink-0 text-zinc-700"
                     fill="none"
                     stroke="currentColor"

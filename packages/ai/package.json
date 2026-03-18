@@ -7,14 +7,16 @@
   "types": "./src/index.ts",
   "scripts": {
     "typecheck": "tsc --noEmit",
+    "test": "vitest run",
     "clean": "rm -rf dist .turbo"
   },
   "dependencies": {
-    "openai": "^4.85.0"
+    "openai": "^6.32.0"
   },
   "devDependencies": {
     "@prometheus/config-typescript": "workspace:*",
     "@prometheus/types": "workspace:*",
-    "typescript": "^5.7.0"
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.0"
   }
 }

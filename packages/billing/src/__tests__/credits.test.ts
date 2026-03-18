@@ -1,25 +1,52 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // ── Mocks ────────────────────────────────────────────────────────────────────
 
 const mockFindFirst = vi.fn();
-const mockInsertValues = vi.fn().mockReturnValue({ returning: vi.fn().mockResolvedValue([]) });
+const mockFindMany = vi.fn().mockResolvedValue([]);
+
+// Build a chainable mock for insert().values().onConflictDoNothing().returning()
+const mockReturning = vi.fn().mockResolvedValue([]);
+const mockOnConflictDoNothing = vi
+  .fn()
+  .mockReturnValue({ returning: mockReturning });
+const mockInsertValues = vi.fn().mockReturnValue({
+  returning: mockReturning,
+  onConflictDoNothing: mockOnConflictDoNothing,
+});
 const mockInsert = vi.fn().mockReturnValue({ values: mockInsertValues });
-const mockUpdateSet = vi.fn().mockReturnValue({ where: vi.fn().mockResolvedValue(undefined) });
+
+// Build a chainable mock for update().set().where().returning()
+const mockUpdateReturning = vi.fn().mockResolvedValue([]);
+const mockUpdateWhere = vi.fn().mockReturnValue({
+  returning: mockUpdateReturning,
+});
+const mockUpdateSet = vi.fn().mockReturnValue({ where: mockUpdateWhere });
 const mockUpdate = vi.fn().mockReturnValue({ set: mockUpdateSet });
 
 vi.mock("@prometheus/db", () => ({
   db: {
     query: {
       creditBalances: { findFirst: (...args: any[]) => mockFindFirst(...args) },
-      creditReservations: { findFirst: (...args: any[]) => mockFindFirst(...args) },
+      creditReservations: {
+        findFirst: (...args: any[]) => mockFindFirst(...args),
+        findMany: (...args: any[]) => mockFindMany(...args),
+      },
+      creditTransactions: {
+        findMany: (...args: any[]) => mockFindMany(...args),
+      },
     },
     insert: (...args: any[]) => mockInsert(...args),
     update: (...args: any[]) => mockUpdate(...args),
   },
   creditBalances: { orgId: "orgId", balance: "balance", reserved: "reserved" },
-  creditTransactions: {},
-  creditReservations: { id: "id", orgId: "orgId", status: "status" },
+  creditTransactions: { orgId: "orgId", createdAt: "createdAt" },
+  creditReservations: {
+    id: "id",
+    orgId: "orgId",
+    status: "status",
+    expiresAt: "expiresAt",
+  },
 }));
 
 vi.mock("@prometheus/utils", () => ({
@@ -43,6 +70,20 @@ describe("CreditService", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     service = new CreditService();
+
+    // Reset default mock implementations after clearAllMocks
+    mockInsertValues.mockReturnValue({
+      returning: mockReturning,
+      onConflictDoNothing: mockOnConflictDoNothing,
+    });
+    mockOnConflictDoNothing.mockReturnValue({ returning: mockReturning });
+    mockReturning.mockResolvedValue([]);
+    mockInsert.mockReturnValue({ values: mockInsertValues });
+
+    mockUpdateReturning.mockResolvedValue([]);
+    mockUpdateWhere.mockReturnValue({ returning: mockUpdateReturning });
+    mockUpdateSet.mockReturnValue({ where: mockUpdateWhere });
+    mockUpdate.mockReturnValue({ set: mockUpdateSet });
   });
 
   // ── getBalance ───────────────────────────────────────────────────────────
@@ -57,21 +98,16 @@ describe("CreditService", () => {
     });
 
     it("initializes balance with 50 credits when missing", async () => {
-      mockFindFirst.mockResolvedValueOnce(null); // no balance
-      mockInsertValues.mockReturnValueOnce({
-        returning: vi.fn().mockResolvedValue([{ balance: 50, reserved: 0 }]),
-      });
-
-      // The getBalance call will insert and get back the default
-      // We need to mock the insert().values().returning() chain properly
-      const mockReturning = vi.fn().mockResolvedValue([{ balance: 50, reserved: 0 }]);
-      mockInsert.mockReturnValueOnce({
-        values: vi.fn().mockReturnValue({ returning: mockReturning }),
-      });
+      mockFindFirst.mockResolvedValueOnce(null); // no balance found
+      mockReturning.mockResolvedValueOnce([
+        { orgId: "org_new", balance: 50, reserved: 0 },
+      ]);
 
       const result = await service.getBalance("org_new");
-      // After initialization the balance should be 50
       expect(mockInsert).toHaveBeenCalled();
+      expect(result.balance).toBe(50);
+      expect(result.reserved).toBe(0);
+      expect(result.available).toBe(50);
     });
 
     it("returns zero available when fully reserved", async () => {
@@ -84,39 +120,57 @@ describe("CreditService", () => {
   // ── reserveCredits ───────────────────────────────────────────────────────
 
   describe("reserveCredits", () => {
-    it("creates reservation and returns reservation ID", async () => {
-      // getBalance call inside reserveCredits
+    it("creates reservation and returns reservation result", async () => {
+      // getBalance call inside reserveCredits (ensure row exists)
       mockFindFirst.mockResolvedValueOnce({ balance: 100, reserved: 10 });
+      // Atomic update returns the updated row
+      mockUpdateReturning.mockResolvedValueOnce([
+        { orgId: "org_1", balance: 100, reserved: 30 },
+      ]);
 
-      const reservationId = await service.reserveCredits("org_1", "task_1", 20);
-      expect(reservationId).toBe("res_mock123");
+      const result = await service.reserveCredits("org_1", "task_1", 20);
+      expect(result.reservationId).toBe("res_mock123");
+      expect(result.amount).toBe(20);
       expect(mockInsert).toHaveBeenCalled(); // reservation insert
       expect(mockUpdate).toHaveBeenCalled(); // reserved amount update
     });
 
     it("updates reserved amount on credit balance", async () => {
       mockFindFirst.mockResolvedValueOnce({ balance: 100, reserved: 0 });
+      mockUpdateReturning.mockResolvedValueOnce([
+        { orgId: "org_1", balance: 100, reserved: 30 },
+      ]);
       await service.reserveCredits("org_1", "task_1", 30);
       expect(mockUpdate).toHaveBeenCalled();
     });
 
     it("rejects when insufficient available credits", async () => {
       mockFindFirst.mockResolvedValueOnce({ balance: 20, reserved: 15 });
-      // available = 5
+      // Atomic update returns empty (WHERE clause didn't match)
+      mockUpdateReturning.mockResolvedValueOnce([]);
+      // getBalance for error message
+      mockFindFirst.mockResolvedValueOnce({ balance: 20, reserved: 15 });
+
       await expect(
-        service.reserveCredits("org_1", "task_1", 10),
+        service.reserveCredits("org_1", "task_1", 10)
       ).rejects.toThrow("Insufficient credits: need 10, have 5");
     });
 
     it("rejects when fully reserved", async () => {
       mockFindFirst.mockResolvedValueOnce({ balance: 50, reserved: 50 });
+      mockUpdateReturning.mockResolvedValueOnce([]);
+      mockFindFirst.mockResolvedValueOnce({ balance: 50, reserved: 50 });
+
       await expect(
-        service.reserveCredits("org_1", "task_1", 1),
+        service.reserveCredits("org_1", "task_1", 1)
       ).rejects.toThrow("Insufficient credits");
     });
 
     it("sets expiry to 2 hours from now", async () => {
       mockFindFirst.mockResolvedValueOnce({ balance: 100, reserved: 0 });
+      mockUpdateReturning.mockResolvedValueOnce([
+        { orgId: "org_1", balance: 100, reserved: 5 },
+      ]);
       await service.reserveCredits("org_1", "task_1", 5);
       // Verify insert was called with values including expiresAt
       expect(mockInsert).toHaveBeenCalled();
@@ -147,10 +201,27 @@ describe("CreditService", () => {
       expect(mockInsert).toHaveBeenCalled();
     });
 
+    it("issues partial refund when actualCost < reserved", async () => {
+      mockFindFirst.mockResolvedValueOnce({
+        id: "res_1",
+        orgId: "org_1",
+        taskId: "task_1",
+        amount: 25,
+        status: "active",
+      });
+      // getBalance after deduction
+      mockFindFirst.mockResolvedValueOnce({ balance: 85, reserved: 0 });
+
+      await service.commitReservation("res_1", 10); // actual = 10, reserved = 25
+
+      // Should insert 2 transaction records: consumption + refund
+      expect(mockInsert).toHaveBeenCalledTimes(2);
+    });
+
     it("throws when reservation not found", async () => {
       mockFindFirst.mockResolvedValueOnce(null);
       await expect(
-        service.commitReservation("res_nonexistent"),
+        service.commitReservation("res_nonexistent")
       ).rejects.toThrow("not found or not active");
     });
 
@@ -161,9 +232,9 @@ describe("CreditService", () => {
         amount: 10,
         orgId: "org_1",
       });
-      await expect(
-        service.commitReservation("res_1"),
-      ).rejects.toThrow("not found or not active");
+      await expect(service.commitReservation("res_1")).rejects.toThrow(
+        "not found or not active"
+      );
     });
   });
 
@@ -218,10 +289,10 @@ describe("CreditService", () => {
 
   describe("consumeCredits", () => {
     it("deducts from balance and creates transaction", async () => {
-      // getBalance first (check available)
-      mockFindFirst.mockResolvedValueOnce({ balance: 100, reserved: 0 });
-      // getBalance second (for newBalance in transaction)
-      mockFindFirst.mockResolvedValueOnce({ balance: 90, reserved: 0 });
+      // Atomic update returns the updated row
+      mockUpdateReturning.mockResolvedValueOnce([
+        { orgId: "org_1", balance: 90, reserved: 0 },
+      ]);
 
       await service.consumeCredits({
         orgId: "org_1",
@@ -236,21 +307,23 @@ describe("CreditService", () => {
     });
 
     it("rejects when insufficient credits", async () => {
-      mockFindFirst.mockResolvedValueOnce({ balance: 5, reserved: 3 });
-      // available = 2
+      // Atomic update returns empty (WHERE clause didn't match)
+      mockUpdateReturning.mockResolvedValueOnce([]);
+
       await expect(
         service.consumeCredits({
           orgId: "org_1",
           amount: 10,
           type: "consumption",
           description: "Task execution",
-        }),
+        })
       ).rejects.toThrow("Insufficient credits for consumption");
     });
 
     it("records correct negative amount in transaction", async () => {
-      mockFindFirst.mockResolvedValueOnce({ balance: 50, reserved: 0 });
-      mockFindFirst.mockResolvedValueOnce({ balance: 45, reserved: 0 });
+      mockUpdateReturning.mockResolvedValueOnce([
+        { orgId: "org_1", balance: 45, reserved: 0 },
+      ]);
 
       await service.consumeCredits({
         orgId: "org_1",
@@ -276,24 +349,29 @@ describe("CreditService", () => {
       expect(cost).toBe(10);
     });
 
-    it("returns 5 for simple task mode", async () => {
-      const cost = await service.estimateTaskCost("task", "simple");
+    it("returns 5 for simple mode", async () => {
+      const cost = await service.estimateTaskCost("simple");
       expect(cost).toBe(5);
     });
 
-    it("returns 25 for medium task mode", async () => {
-      const cost = await service.estimateTaskCost("task", "medium");
+    it("returns 25 for medium mode", async () => {
+      const cost = await service.estimateTaskCost("medium");
       expect(cost).toBe(25);
     });
 
-    it("returns 75 for complex task mode", async () => {
-      const cost = await service.estimateTaskCost("task", "complex");
+    it("returns 75 for complex mode", async () => {
+      const cost = await service.estimateTaskCost("complex");
       expect(cost).toBe(75);
     });
 
-    it("defaults to 25 for unknown complexity", async () => {
-      const cost = await service.estimateTaskCost("task", "unknown" as any);
+    it("defaults to 25 for unknown mode with no complexity", async () => {
+      const cost = await service.estimateTaskCost("unknown");
       expect(cost).toBe(25);
+    });
+
+    it("falls back to complexity when mode is unknown", async () => {
+      const cost = await service.estimateTaskCost("task", "simple");
+      expect(cost).toBe(5);
     });
   });
 
@@ -301,6 +379,8 @@ describe("CreditService", () => {
 
   describe("addCredits", () => {
     it("increases balance and creates transaction", async () => {
+      // getBalance (ensure row exists)
+      mockFindFirst.mockResolvedValueOnce({ balance: 50, reserved: 0 });
       // getBalance after add (for balanceAfter)
       mockFindFirst.mockResolvedValueOnce({ balance: 150, reserved: 0 });
 
@@ -320,12 +400,50 @@ describe("CreditService", () => {
 
   describe("refundCredits", () => {
     it("adds credits with refund type", async () => {
+      mockFindFirst.mockResolvedValueOnce({ balance: 50, reserved: 0 });
       mockFindFirst.mockResolvedValueOnce({ balance: 60, reserved: 0 });
 
       await service.refundCredits("org_1", "task_1", 10, "Task failed");
 
       expect(mockUpdate).toHaveBeenCalled();
       expect(mockInsert).toHaveBeenCalled();
+    });
+  });
+
+  // ── hasEnoughCredits ───────────────────────────────────────────────────
+
+  describe("hasEnoughCredits", () => {
+    it("returns true when enough credits available", async () => {
+      mockFindFirst.mockResolvedValueOnce({ balance: 100, reserved: 20 });
+      const result = await service.hasEnoughCredits("org_1", 50);
+      expect(result).toBe(true);
+    });
+
+    it("returns false when insufficient credits", async () => {
+      mockFindFirst.mockResolvedValueOnce({ balance: 30, reserved: 20 });
+      const result = await service.hasEnoughCredits("org_1", 15);
+      expect(result).toBe(false);
+    });
+  });
+
+  // ── grantMonthlyCredits ────────────────────────────────────────────────
+
+  describe("grantMonthlyCredits", () => {
+    it("grants credits for starter plan", async () => {
+      // getBalance (ensure row exists)
+      mockFindFirst.mockResolvedValueOnce({ balance: 0, reserved: 0 });
+      // getBalance after add
+      mockFindFirst.mockResolvedValueOnce({ balance: 500, reserved: 0 });
+
+      await service.grantMonthlyCredits("org_1", "starter");
+
+      expect(mockUpdate).toHaveBeenCalled();
+      expect(mockInsert).toHaveBeenCalled();
+    });
+
+    it("does not grant for enterprise plan (null credits)", async () => {
+      await service.grantMonthlyCredits("org_1", "enterprise");
+      expect(mockUpdate).not.toHaveBeenCalled();
     });
   });
 });

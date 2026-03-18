@@ -13,13 +13,14 @@ interface TerminalOutputProps {
 function parseAnsi(text: string): Array<{ text: string; className: string }> {
   const segments: Array<{ text: string; className: string }> = [];
   // Match ANSI escape sequences
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: intentional ANSI escape sequence matching
   const ansiRegex = /\x1b\[([0-9;]*)m/g;
 
   let lastIndex = 0;
   let currentClass = "text-zinc-300";
-  let match: RegExpExecArray | null;
+  let match: RegExpExecArray | null = ansiRegex.exec(text);
 
-  while ((match = ansiRegex.exec(text)) !== null) {
+  while (match !== null) {
     // Push text before this escape sequence
     if (match.index > lastIndex) {
       segments.push({
@@ -55,10 +56,13 @@ function parseAnsi(text: string): Array<{ text: string; className: string }> {
         case 90:
           currentClass = "text-zinc-500";
           break;
+        default:
+          break;
       }
     }
 
     lastIndex = match.index + match[0].length;
+    match = ansiRegex.exec(text);
   }
 
   // Push remaining text
@@ -96,8 +100,8 @@ export function TerminalOutput({ event }: TerminalOutputProps) {
         </div>
       )}
       <div className="whitespace-pre-wrap text-[11px] leading-relaxed">
-        {segments.map((seg, i) => (
-          <span className={seg.className} key={i}>
+        {segments.map((seg, segIdx) => (
+          <span className={seg.className} key={`seg-${segIdx}`}>
             {seg.text}
           </span>
         ))}

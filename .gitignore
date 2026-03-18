@@ -36,5 +36,14 @@ pnpm-debug.log*
 # Docker
 docker-compose.override.yml
 
+# Secrets
+infra/secrets/age-key.txt
+infra/secrets/production.yaml
+infra/secrets/staging.yaml
+infra/secrets/dev.yaml
+
+# Load test results
+*-test-results.json
+
 # Misc
 *.tsbuildinfo

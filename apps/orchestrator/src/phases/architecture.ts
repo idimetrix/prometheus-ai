@@ -3,12 +3,24 @@ import type { AgentLoop } from "../agent-loop";
 
 const logger = createLogger("orchestrator:architecture");
 
+const TECH_STACK_LINE_RE = /[-*]?\s*([^:]+):\s*(.+)/;
+const ADR_HEADER_RE = /ADR-(\d+):\s*(.+?)(?:\n|$)/g;
+const ADR_DECISION_RE =
+  /Decision:\s*([\s\S]*?)(?=\n\s*(?:Reasoning|Context|Alternatives|ADR-)|$)/i;
+const ADR_REASONING_RE =
+  /Reasoning:\s*([\s\S]*?)(?=\n\s*(?:Decision|Context|Alternatives|ADR-)|$)/i;
+
 export interface ArchitectureResult {
-  blueprint: string;
-  techStack: Record<string, string>;
-  dbSchema: string;
+  adrs: Array<{
+    id: string;
+    title: string;
+    decision: string;
+    reasoning: string;
+  }>;
   apiContracts: string;
-  adrs: Array<{ id: string; title: string; decision: string; reasoning: string }>;
+  blueprint: string;
+  dbSchema: string;
+  techStack: Record<string, string>;
 }
 
 /**
@@ -26,8 +38,11 @@ export interface ArchitectureResult {
  * The resulting blueprint is persisted to the blueprints table.
  */
 export class ArchitecturePhase {
-
-  async execute(agentLoop: AgentLoop, srs: string, preset?: string): Promise<ArchitectureResult> {
+  async execute(
+    agentLoop: AgentLoop,
+    srs: string,
+    preset?: string
+  ): Promise<ArchitectureResult> {
     logger.info({ preset }, "Starting Architecture phase");
 
     const result = await agentLoop.executeTask(
@@ -38,12 +53,15 @@ export class ArchitecturePhase {
     // Parse the blueprint output into structured sections
     const parsed = this.parseBlueprint(result.output);
 
-    logger.info({
-      techStackEntries: Object.keys(parsed.techStack).length,
-      adrCount: parsed.adrs.length,
-      hasDomain: parsed.dbSchema.length > 0,
-      hasApi: parsed.apiContracts.length > 0,
-    }, "Architecture phase complete");
+    logger.info(
+      {
+        techStackEntries: Object.keys(parsed.techStack).length,
+        adrCount: parsed.adrs.length,
+        hasDomain: parsed.dbSchema.length > 0,
+        hasApi: parsed.apiContracts.length > 0,
+      },
+      "Architecture phase complete"
+    );
 
     // Persist blueprint to database
     await this.persistBlueprint(agentLoop, parsed);
@@ -132,12 +150,14 @@ Be specific and complete. Every section must contain real, actionable content - 
   private extractTechStack(output: string): Record<string, string> {
     const techStack: Record<string, string> = {};
     const section = this.extractSection(output, "TECH_STACK");
-    if (!section) return techStack;
+    if (!section) {
+      return techStack;
+    }
 
     const lines = section.split("\n");
     for (const line of lines) {
       // Match "- Category: Technology" or "Category: Technology"
-      const match = line.match(/[-*]?\s*([^:]+):\s*(.+)/);
+      const match = line.match(TECH_STACK_LINE_RE);
       if (match?.[1] && match?.[2]) {
         const key = match[1].trim();
         const value = match[2].trim();
@@ -154,13 +174,15 @@ Be specific and complete. Every section must contain real, actionable content - 
   private extractADRs(output: string): ArchitectureResult["adrs"] {
     const adrs: ArchitectureResult["adrs"] = [];
     const section = this.extractSection(output, "ADR");
-    if (!section) return adrs;
+    if (!section) {
+      return adrs;
+    }
 
     // Match ADR-N: Title pattern
-    const adrRegex = /ADR-(\d+):\s*(.+?)(?:\n|$)/g;
-    let match;
+    ADR_HEADER_RE.lastIndex = 0;
+    let match: RegExpExecArray | null = ADR_HEADER_RE.exec(section);
 
-    while ((match = adrRegex.exec(section)) !== null) {
+    while (match !== null) {
       const id = `ADR-${match[1]}`;
       const title = match[2]?.trim() ?? "";
 
@@ -170,8 +192,8 @@ Be specific and complete. Every section must contain real, actionable content - 
       const endPos = nextAdr > -1 ? nextAdr : section.length;
       const block = section.slice(startPos, endPos);
 
-      const decisionMatch = block.match(/Decision:\s*([\s\S]*?)(?=\n\s*(?:Reasoning|Context|Alternatives|ADR-)|$)/i);
-      const reasoningMatch = block.match(/Reasoning:\s*([\s\S]*?)(?=\n\s*(?:Decision|Context|Alternatives|ADR-)|$)/i);
+      const decisionMatch = block.match(ADR_DECISION_RE);
+      const reasoningMatch = block.match(ADR_REASONING_RE);
 
       adrs.push({
         id,
@@ -179,6 +201,7 @@ Be specific and complete. Every section must contain real, actionable content - 
         decision: decisionMatch?.[1]?.trim() ?? "",
         reasoning: reasoningMatch?.[1]?.trim() ?? "",
       });
+      match = ADR_HEADER_RE.exec(section);
     }
 
     return adrs;
@@ -190,7 +213,10 @@ Be specific and complete. Every section must contain real, actionable content - 
   private extractSection(output: string, sectionName: string): string {
     // Try matching "## N. SECTION_NAME" or "## SECTION_NAME"
     const patterns = [
-      new RegExp(`##\\s*\\d+\\.?\\s*${sectionName}[^\\n]*\\n([\\s\\S]*?)(?=##\\s*\\d+\\.?\\s*[A-Z]|$)`, "i"),
+      new RegExp(
+        `##\\s*\\d+\\.?\\s*${sectionName}[^\\n]*\\n([\\s\\S]*?)(?=##\\s*\\d+\\.?\\s*[A-Z]|$)`,
+        "i"
+      ),
       new RegExp(`##\\s*${sectionName}[^\\n]*\\n([\\s\\S]*?)(?=##|$)`, "i"),
     ];
 
@@ -207,10 +233,13 @@ Be specific and complete. Every section must contain real, actionable content - 
   /**
    * Persist the blueprint to the database for this project.
    */
-  private async persistBlueprint(agentLoop: AgentLoop, result: ArchitectureResult): Promise<void> {
+  private persistBlueprint(
+    agentLoop: AgentLoop,
+    _result: ArchitectureResult
+  ): void {
     try {
       // The agentLoop has the project context embedded
-      const iterations = agentLoop.getIterations();
+      const _iterations = agentLoop.getIterations();
       // We don't have direct access to projectId from agentLoop, but it's
       // available through the context. For now we extract from the first iteration.
       // In practice, the caller would pass projectId.

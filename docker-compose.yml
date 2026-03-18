@@ -11,10 +11,22 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U prometheus"]
-      interval: 5s
+      test: ["CMD-SHELL", "pg_isready -U prometheus -d prometheus"]
+      interval: 10s
       timeout: 5s
       retries: 5
+      start_period: 30s
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+          cpus: "2.0"
+        reservations:
+          memory: 512M
+          cpus: "0.5"
+    networks:
+      - prometheus-net
 
   pgbouncer:
     image: bitnami/pgbouncer:latest
@@ -34,19 +46,49 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -p 6432 -U prometheus"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: "0.5"
+        reservations:
+          memory: 64M
+          cpus: "0.1"
+    networks:
+      - prometheus-net
 
   redis:
     image: valkey/valkey:8-alpine
     container_name: prometheus-redis
+    command: valkey-server --appendonly yes --maxmemory 512mb --maxmemory-policy allkeys-lru
     ports:
       - "6379:6379"
     volumes:
       - redis_data:/data
     healthcheck:
       test: ["CMD", "valkey-cli", "ping"]
-      interval: 5s
+      interval: 10s
       timeout: 5s
       retries: 5
+      start_period: 10s
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: "1.0"
+        reservations:
+          memory: 128M
+          cpus: "0.25"
+    networks:
+      - prometheus-net
 
   minio:
     image: minio/minio:latest
@@ -60,21 +102,64 @@ services:
       - "9001:9001"
     volumes:
       - minio_data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: "1.0"
+        reservations:
+          memory: 256M
+          cpus: "0.25"
+    networks:
+      - prometheus-net
 
   ollama:
     image: ollama/ollama:latest
     container_name: prometheus-ollama
+    environment:
+      OLLAMA_HOST: 0.0.0.0:11434
+      OLLAMA_NUM_PARALLEL: 2
+      OLLAMA_MAX_LOADED_MODELS: 2
     ports:
       - "11434:11434"
     volumes:
       - ollama_data:/root/.ollama
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:11434/api/tags || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
     deploy:
       resources:
+        limits:
+          memory: 12G
+          cpus: "4.0"
         reservations:
           memory: 8G
+          cpus: "2.0"
+    networks:
+      - prometheus-net
 
 volumes:
   postgres_data:
+    name: prometheus-postgres-data
   redis_data:
+    name: prometheus-redis-data
   minio_data:
+    name: prometheus-minio-data
   ollama_data:
+    name: prometheus-ollama-data
+
+networks:
+  prometheus-net:
+    name: prometheus-network
+    driver: bridge

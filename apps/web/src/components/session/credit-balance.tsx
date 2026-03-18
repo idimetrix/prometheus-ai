@@ -27,6 +27,7 @@ export function CreditBalance() {
   return (
     <div className="flex items-center gap-2 rounded-full border border-zinc-800 bg-zinc-900 px-3 py-1.5">
       <svg
+        aria-hidden="true"
         className="h-3.5 w-3.5 text-yellow-500"
         fill="currentColor"
         viewBox="0 0 20 20"

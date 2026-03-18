@@ -1,5 +1,10 @@
+import type { ModelProvider } from "@prometheus/ai";
+import {
+  createLLMClient,
+  MODEL_REGISTRY,
+  PROVIDER_ENDPOINTS,
+} from "@prometheus/ai";
 import { createLogger } from "@prometheus/logger";
-import { MODEL_REGISTRY, createLLMClient } from "@prometheus/ai";
 import { generateId } from "@prometheus/utils";
 import type { RateLimitManager } from "./rate-limiter";
 
@@ -9,9 +14,9 @@ import type { RateLimitManager } from "./rate-limiter";
  * when the primary is unavailable or rate-limited.
  */
 export interface SlotConfig {
-  primary: string;
-  fallbacks: string[];
   description: string;
+  fallbacks: string[];
+  primary: string;
 }
 
 const SLOT_CONFIGS: Record<string, SlotConfig> = {
@@ -58,7 +63,6 @@ const SLOT_CONFIGS: Record<string, SlotConfig> = {
 };
 
 export interface RouteRequest {
-  slot: string;
   messages: Array<{ role: string; content: string }>;
   options?: {
     model?: string;
@@ -71,29 +75,59 @@ export interface RouteRequest {
     taskId?: string;
     userApiKeys?: Record<string, string>;
   };
+  slot: string;
 }
 
 export interface RouteResponse {
-  id: string;
-  model: string;
-  provider: string;
-  slot: string;
   choices: Array<{
     message: { role: string; content: string; tool_calls?: unknown[] };
     finish_reason: string;
   }>;
-  usage: {
-    prompt_tokens: number;
-    completion_tokens: number;
-    total_tokens: number;
-    cost_usd: number;
-  };
+  id: string;
+  model: string;
+  provider: string;
   routing: {
     primaryModel: string;
     modelUsed: string;
     wasFallback: boolean;
     attemptsCount: number;
   };
+  slot: string;
+  usage: {
+    prompt_tokens: number;
+    completion_tokens: number;
+    total_tokens: number;
+    cost_usd: number;
+  };
+}
+
+/** Stream chunk emitted during streaming responses */
+export interface StreamChunk {
+  content: string;
+  finishReason: string | null;
+}
+
+/** Result returned from routeStream */
+export interface StreamRouteResult {
+  done: Promise<{
+    usage: {
+      prompt_tokens: number;
+      completion_tokens: number;
+      total_tokens: number;
+      cost_usd: number;
+    };
+    routing: {
+      primaryModel: string;
+      modelUsed: string;
+      wasFallback: boolean;
+      attemptsCount: number;
+    };
+  }>;
+  id: string;
+  model: string;
+  provider: string;
+  slot: string;
+  stream: AsyncIterable<StreamChunk>;
 }
 
 /**
@@ -101,27 +135,31 @@ export interface RouteResponse {
  * existing /v1/chat/completions endpoint.
  */
 interface CompletionRequest {
-  model?: string;
-  messages: Array<{ role: string; content: string }>;
-  tools?: unknown[];
-  temperature?: number;
   max_tokens?: number;
+  messages: Array<{ role: string; content: string }>;
+  model?: string;
+  org_id?: string;
+  prefer_tier?: number;
   stream?: boolean;
   task_type?: string;
-  prefer_tier?: number;
-  org_id?: string;
+  temperature?: number;
+  tools?: unknown[];
   user_api_keys?: Record<string, string>;
 }
 
 interface CompletionResponse {
-  id: string;
-  model: string;
-  provider: string;
   choices: Array<{
     message: { role: string; content: string; tool_calls?: unknown[] };
     finish_reason: string;
   }>;
-  usage: { prompt_tokens: number; completion_tokens: number; total_tokens: number };
+  id: string;
+  model: string;
+  provider: string;
+  usage: {
+    prompt_tokens: number;
+    completion_tokens: number;
+    total_tokens: number;
+  };
 }
 
 /**
@@ -129,23 +167,47 @@ interface CompletionResponse {
  * endpoint and as a fallback for unspecified slots.
  */
 const TASK_TYPE_TO_SLOT: Record<string, string> = {
-  "coding": "default",
+  coding: "default",
   "codebase-analysis": "longContext",
-  "architecture": "think",
-  "planning": "think",
+  architecture: "think",
+  planning: "think",
   "quick-fix": "fastLoop",
-  "testing": "fastLoop",
-  "security": "think",
-  "review": "review",
-  "complex": "premium",
-  "vision": "vision",
-  "indexing": "background",
-  "embedding": "background",
+  testing: "fastLoop",
+  security: "think",
+  review: "review",
+  complex: "premium",
+  vision: "vision",
+  indexing: "background",
+  embedding: "background",
 };
+
+/**
+ * Track which providers are used in slot configs so we can health-check
+ * only the relevant ones.
+ */
+function getActiveProviders(): Set<ModelProvider> {
+  const providers = new Set<ModelProvider>();
+  for (const slotConfig of Object.values(SLOT_CONFIGS)) {
+    const allModels = [slotConfig.primary, ...slotConfig.fallbacks];
+    for (const modelKey of allModels) {
+      const config = MODEL_REGISTRY[modelKey];
+      if (config) {
+        providers.add(config.provider);
+      }
+    }
+  }
+  return providers;
+}
 
 export class ModelRouterService {
   private readonly logger = createLogger("model-router:service");
   private readonly rateLimiter: RateLimitManager;
+  /** Cache provider health status with TTL to avoid hammering providers */
+  private readonly providerHealthCache = new Map<
+    string,
+    { healthy: boolean; checkedAt: number }
+  >();
+  private readonly healthCacheTtlMs = 30_000; // 30 seconds
 
   constructor(rateLimiter: RateLimitManager) {
     this.rateLimiter = rateLimiter;
@@ -158,14 +220,18 @@ export class ModelRouterService {
   async route(request: RouteRequest): Promise<RouteResponse> {
     const slotConfig = SLOT_CONFIGS[request.slot];
     if (!slotConfig) {
-      throw new Error(`Unknown slot: ${request.slot}. Valid slots: ${Object.keys(SLOT_CONFIGS).join(", ")}`);
+      throw new Error(
+        `Unknown slot: ${request.slot}. Valid slots: ${Object.keys(SLOT_CONFIGS).join(", ")}`
+      );
     }
 
     // If a specific model is explicitly requested and it exists, use it directly
     const overrideModel = request.options?.model;
     if (overrideModel && MODEL_REGISTRY[overrideModel]) {
       const result = await this.tryModel(overrideModel, request, 1);
-      if (result) return result;
+      if (result) {
+        return result;
+      }
       // Fall through to slot-based routing if override fails
     }
 
@@ -182,18 +248,80 @@ export class ModelRouterService {
       }
 
       // Check rate limits
-      const canProceed = await this.rateLimiter.canMakeRequest(config.provider, modelKey);
+      const canProceed = await this.rateLimiter.canMakeRequest(
+        config.provider,
+        modelKey
+      );
       if (!canProceed) {
-        this.logger.info({ modelKey, provider: config.provider }, "Rate limited, trying fallback");
+        this.logger.info(
+          { modelKey, provider: config.provider },
+          "Rate limited, trying fallback"
+        );
         continue;
       }
 
       const result = await this.tryModel(modelKey, request, attempts);
-      if (result) return result;
+      if (result) {
+        return result;
+      }
     }
 
     throw new Error(
       `All models exhausted for slot "${request.slot}". Tried: ${candidates.join(", ")}`
+    );
+  }
+
+  /**
+   * Route a streaming completion request. Selects the model the same way
+   * as route() but returns an async iterable of chunks instead of waiting
+   * for the full response.
+   */
+  async routeStream(request: RouteRequest): Promise<StreamRouteResult> {
+    const slotConfig = SLOT_CONFIGS[request.slot];
+    if (!slotConfig) {
+      throw new Error(
+        `Unknown slot: ${request.slot}. Valid slots: ${Object.keys(SLOT_CONFIGS).join(", ")}`
+      );
+    }
+
+    // Build candidate chain
+    const overrideModel = request.options?.model;
+    const candidates: string[] = [];
+    if (overrideModel && MODEL_REGISTRY[overrideModel]) {
+      candidates.push(overrideModel);
+    }
+    candidates.push(slotConfig.primary, ...slotConfig.fallbacks);
+
+    let attempts = 0;
+
+    for (const modelKey of candidates) {
+      attempts++;
+      const config = MODEL_REGISTRY[modelKey];
+      if (!config) {
+        continue;
+      }
+
+      // Check rate limits
+      const canProceed = await this.rateLimiter.canMakeRequest(
+        config.provider,
+        modelKey
+      );
+      if (!canProceed) {
+        this.logger.info(
+          { modelKey, provider: config.provider },
+          "Rate limited, trying fallback"
+        );
+        continue;
+      }
+
+      const result = await this.tryModelStream(modelKey, request, attempts);
+      if (result) {
+        return result;
+      }
+    }
+
+    throw new Error(
+      `All models exhausted for slot "${request.slot}" (stream). Tried: ${candidates.join(", ")}`
     );
   }
 
@@ -204,12 +332,15 @@ export class ModelRouterService {
   private async tryModel(
     modelKey: string,
     request: RouteRequest,
-    attemptNumber: number,
+    attemptNumber: number
   ): Promise<RouteResponse | null> {
     const config = MODEL_REGISTRY[modelKey];
-    if (!config) return null;
+    if (!config) {
+      return null;
+    }
 
-    const slotConfig = SLOT_CONFIGS[request.slot] ?? SLOT_CONFIGS["default"]!;
+    const slotConfig = (SLOT_CONFIGS[request.slot] ??
+      SLOT_CONFIGS.default) as SlotConfig;
     const userApiKey = request.options?.userApiKeys?.[config.provider];
 
     const client = createLLMClient({
@@ -217,13 +348,16 @@ export class ModelRouterService {
       apiKey: userApiKey,
     });
 
-    this.logger.info({
-      model: modelKey,
-      provider: config.provider,
-      slot: request.slot,
-      messageCount: request.messages.length,
-      attempt: attemptNumber,
-    }, "Routing completion request");
+    this.logger.info(
+      {
+        model: modelKey,
+        provider: config.provider,
+        slot: request.slot,
+        messageCount: request.messages.length,
+        attempt: attemptNumber,
+      },
+      "Routing completion request"
+    );
 
     // Record request against rate limiter
     await this.rateLimiter.recordRequest(config.provider, modelKey);
@@ -231,8 +365,12 @@ export class ModelRouterService {
     try {
       const response = await client.chat.completions.create({
         model: config.id,
-        messages: request.messages as Parameters<typeof client.chat.completions.create>[0]["messages"],
-        tools: request.options?.tools as Parameters<typeof client.chat.completions.create>[0]["tools"],
+        messages: request.messages as Parameters<
+          typeof client.chat.completions.create
+        >[0]["messages"],
+        tools: request.options?.tools as Parameters<
+          typeof client.chat.completions.create
+        >[0]["tools"],
         temperature: request.options?.temperature ?? 0.1,
         max_tokens: request.options?.maxTokens ?? 4096,
         stream: false,
@@ -243,17 +381,27 @@ export class ModelRouterService {
       const totalTokens = promptTokens + completionTokens;
 
       // Record token usage for rate limiting
-      await this.rateLimiter.recordTokenUsage(config.provider, modelKey, promptTokens, completionTokens);
+      await this.rateLimiter.recordTokenUsage(
+        config.provider,
+        modelKey,
+        promptTokens,
+        completionTokens
+      );
 
       // Calculate cost
-      const costUsd = (promptTokens * config.costPerInputToken) + (completionTokens * config.costPerOutputToken);
+      const costUsd =
+        promptTokens * config.costPerInputToken +
+        completionTokens * config.costPerOutputToken;
 
-      this.logger.info({
-        model: modelKey,
-        promptTokens,
-        completionTokens,
-        costUsd: costUsd.toFixed(6),
-      }, "Completion succeeded");
+      this.logger.info(
+        {
+          model: modelKey,
+          promptTokens,
+          completionTokens,
+          costUsd: costUsd.toFixed(6),
+        },
+        "Completion succeeded"
+      );
 
       return {
         id: response.id ?? generateId("cmpl"),
@@ -283,16 +431,264 @@ export class ModelRouterService {
       };
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
-      this.logger.error({ model: modelKey, error: msg, attempt: attemptNumber }, "Completion request failed");
+      this.logger.error(
+        { model: modelKey, error: msg, attempt: attemptNumber },
+        "Completion request failed"
+      );
       return null;
     }
+  }
+
+  /**
+   * Attempt to start a streaming completion with a specific model.
+   * Returns null on connection/setup failure so the caller can try fallbacks.
+   */
+  private async tryModelStream(
+    modelKey: string,
+    request: RouteRequest,
+    attemptNumber: number
+  ): Promise<StreamRouteResult | null> {
+    const config = MODEL_REGISTRY[modelKey];
+    if (!config) {
+      return null;
+    }
+
+    const slotConfig = (SLOT_CONFIGS[request.slot] ??
+      SLOT_CONFIGS.default) as SlotConfig;
+    const userApiKey = request.options?.userApiKeys?.[config.provider];
+
+    const client = createLLMClient({
+      provider: config.provider,
+      apiKey: userApiKey,
+    });
+
+    this.logger.info(
+      {
+        model: modelKey,
+        provider: config.provider,
+        slot: request.slot,
+        messageCount: request.messages.length,
+        attempt: attemptNumber,
+        stream: true,
+      },
+      "Routing streaming completion request"
+    );
+
+    await this.rateLimiter.recordRequest(config.provider, modelKey);
+
+    try {
+      const stream = await client.chat.completions.create({
+        model: config.id,
+        messages: request.messages as Parameters<
+          typeof client.chat.completions.create
+        >[0]["messages"],
+        tools: request.options?.tools as Parameters<
+          typeof client.chat.completions.create
+        >[0]["tools"],
+        temperature: request.options?.temperature ?? 0.1,
+        max_tokens: request.options?.maxTokens ?? 4096,
+        stream: true,
+        stream_options: { include_usage: true },
+      });
+
+      const id = generateId("cmpl");
+      let promptTokens = 0;
+      let completionTokens = 0;
+
+      let resolveDone: (
+        value: StreamRouteResult["done"] extends Promise<infer T> ? T : never
+      ) => void;
+      const done = new Promise<
+        StreamRouteResult["done"] extends Promise<infer T> ? T : never
+      >((resolve) => {
+        resolveDone = resolve;
+      });
+
+      const self = this;
+
+      // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: complex but well-structured logic
+      async function* iterate(): AsyncIterable<StreamChunk> {
+        try {
+          for await (const chunk of stream) {
+            const choice = chunk.choices[0];
+            if (!choice) {
+              continue;
+            }
+
+            const content = choice.delta?.content ?? "";
+
+            if (chunk.usage) {
+              promptTokens = chunk.usage.prompt_tokens ?? 0;
+              completionTokens = chunk.usage.completion_tokens ?? 0;
+            }
+
+            if (content) {
+              yield { content, finishReason: choice.finish_reason ?? null };
+            }
+
+            if (choice.finish_reason) {
+              yield { content: "", finishReason: choice.finish_reason };
+            }
+          }
+        } finally {
+          const totalTokens = promptTokens + completionTokens;
+          const costUsd =
+            promptTokens * (config?.costPerInputToken ?? 0) +
+            completionTokens * (config?.costPerOutputToken ?? 0);
+
+          // Record token usage asynchronously
+          self.rateLimiter
+            .recordTokenUsage(
+              config?.provider ?? modelKey,
+              modelKey,
+              promptTokens,
+              completionTokens
+            )
+            .catch(() => {
+              /* fire-and-forget */
+            });
+
+          self.logger.info(
+            {
+              model: modelKey,
+              promptTokens,
+              completionTokens,
+              costUsd: costUsd.toFixed(6),
+              stream: true,
+            },
+            "Streaming completion finished"
+          );
+
+          resolveDone?.({
+            usage: {
+              prompt_tokens: promptTokens,
+              completion_tokens: completionTokens,
+              total_tokens: totalTokens,
+              cost_usd: costUsd,
+            },
+            routing: {
+              primaryModel: slotConfig.primary,
+              modelUsed: modelKey,
+              wasFallback: modelKey !== slotConfig.primary,
+              attemptsCount: attemptNumber,
+            },
+          });
+        }
+      }
+
+      return {
+        id,
+        model: modelKey,
+        provider: config.provider,
+        slot: request.slot,
+        stream: iterate(),
+        done,
+      };
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      this.logger.error(
+        { model: modelKey, error: msg, attempt: attemptNumber, stream: true },
+        "Streaming request failed"
+      );
+      return null;
+    }
+  }
+
+  /**
+   * Check health of all providers used in slot configs.
+   * Uses a cache to avoid hammering provider endpoints.
+   */
+  async checkProviderHealth(): Promise<Record<string, boolean>> {
+    const providers = getActiveProviders();
+    const results: Record<string, boolean> = {};
+    const now = Date.now();
+
+    const checks = Array.from(providers).map(async (provider) => {
+      // Check cache
+      const cached = this.providerHealthCache.get(provider);
+      if (cached && now - cached.checkedAt < this.healthCacheTtlMs) {
+        results[provider] = cached.healthy;
+        return;
+      }
+
+      try {
+        // For ollama, try a simple connectivity check
+        if (provider === "ollama") {
+          const resp = await fetch("http://localhost:11434/api/version", {
+            signal: AbortSignal.timeout(5000),
+          }).catch(() => null);
+          const healthy = resp?.ok ?? false;
+          results[provider] = healthy;
+          this.providerHealthCache.set(provider, { healthy, checkedAt: now });
+          return;
+        }
+
+        // For cloud providers, check if we have an API key configured
+        const envKeyMap: Record<string, string> = {
+          cerebras: "CEREBRAS_API_KEY",
+          groq: "GROQ_API_KEY",
+          gemini: "GEMINI_API_KEY",
+          openrouter: "OPENROUTER_API_KEY",
+          mistral: "MISTRAL_API_KEY",
+          deepseek: "DEEPSEEK_API_KEY",
+          anthropic: "ANTHROPIC_API_KEY",
+          openai: "OPENAI_API_KEY",
+        };
+
+        const envKey = envKeyMap[provider];
+        const hasKey = envKey ? !!process.env[envKey] : false;
+
+        if (!hasKey) {
+          results[provider] = false;
+          this.providerHealthCache.set(provider, {
+            healthy: false,
+            checkedAt: now,
+          });
+          return;
+        }
+
+        // Try to reach the provider's endpoint
+        const endpoint = PROVIDER_ENDPOINTS[provider];
+        if (endpoint) {
+          const resp = await fetch(`${endpoint}/models`, {
+            headers: {
+              Authorization: `Bearer ${process.env[envKey as string]}`,
+            },
+            signal: AbortSignal.timeout(5000),
+          }).catch(() => null);
+          const healthy =
+            resp !== null &&
+            (resp.ok || resp.status === 401 || resp.status === 403);
+          // 401/403 means endpoint is reachable but key may be bad -- still "reachable"
+          results[provider] = healthy;
+          this.providerHealthCache.set(provider, { healthy, checkedAt: now });
+        } else {
+          results[provider] = false;
+          this.providerHealthCache.set(provider, {
+            healthy: false,
+            checkedAt: now,
+          });
+        }
+      } catch {
+        results[provider] = false;
+        this.providerHealthCache.set(provider, {
+          healthy: false,
+          checkedAt: now,
+        });
+      }
+    });
+
+    await Promise.allSettled(checks);
+    return results;
   }
 
   /**
    * Legacy endpoint: route based on task_type using the old interface.
    * Maps task_type to a slot and delegates to the slot-based router.
    */
-  async routeCompletion(request: CompletionRequest): Promise<CompletionResponse> {
+  async routeCompletion(
+    request: CompletionRequest
+  ): Promise<CompletionResponse> {
     const taskType = request.task_type ?? "coding";
     const slot = TASK_TYPE_TO_SLOT[taskType] ?? "default";
 
@@ -326,7 +722,9 @@ export class ModelRouterService {
    * Estimate token count for a set of messages. Simple approximation
    * using character count / 4 (roughly 1 token per 4 chars for English).
    */
-  estimateTokenCount(messages: Array<{ role: string; content: string }>): number {
+  estimateTokenCount(
+    messages: Array<{ role: string; content: string }>
+  ): number {
     let totalChars = 0;
     for (const msg of messages) {
       totalChars += msg.content.length + msg.role.length + 4; // role + content + formatting overhead
@@ -341,7 +739,7 @@ export class ModelRouterService {
   selectSlot(tokenEstimate: number, taskType?: string): string {
     // If task type is specified, prefer its mapping
     if (taskType && TASK_TYPE_TO_SLOT[taskType]) {
-      return TASK_TYPE_TO_SLOT[taskType]!;
+      return TASK_TYPE_TO_SLOT[taskType] as string;
     }
 
     // Auto-select based on token count
@@ -358,6 +756,10 @@ export class ModelRouterService {
     tier: number;
     capabilities: string[];
     contextWindow: number;
+    costPerInputToken: number;
+    costPerOutputToken: number;
+    supportsStreaming: boolean;
+    maxOutputTokens: number | null;
   }> {
     return Object.entries(MODEL_REGISTRY).map(([key, config]) => ({
       id: key,
@@ -365,6 +767,10 @@ export class ModelRouterService {
       tier: config.tier,
       capabilities: config.capabilities,
       contextWindow: config.contextWindow,
+      costPerInputToken: config.costPerInputToken,
+      costPerOutputToken: config.costPerOutputToken,
+      supportsStreaming: config.supportsStreaming,
+      maxOutputTokens: config.maxOutputTokens,
     }));
   }
 

@@ -1,5 +1,5 @@
-import type { ToolExecutionContext, ToolResult } from "./types";
 import { exec } from "node:child_process";
+import type { ToolExecutionContext, ToolResult } from "./types";
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 const MAX_OUTPUT_BYTES = 512_000; // 500KB max output
@@ -14,22 +14,22 @@ const MAX_OUTPUT_BYTES = 512_000; // 500KB max output
 export async function execInSandbox(
   command: string,
   ctx: ToolExecutionContext,
-  timeoutMs: number = DEFAULT_TIMEOUT_MS,
+  timeoutMs: number = DEFAULT_TIMEOUT_MS
 ): Promise<ToolResult> {
   const sandboxManagerUrl = process.env.SANDBOX_MANAGER_URL;
 
   if (sandboxManagerUrl) {
-    return execRemoteSandbox(sandboxManagerUrl, command, ctx, timeoutMs);
+    return await execRemoteSandbox(sandboxManagerUrl, command, ctx, timeoutMs);
   }
 
-  return execLocalSandbox(command, ctx, timeoutMs);
+  return await execLocalSandbox(command, ctx, timeoutMs);
 }
 
 async function execRemoteSandbox(
   baseUrl: string,
   command: string,
   ctx: ToolExecutionContext,
-  timeoutMs: number,
+  timeoutMs: number
 ): Promise<ToolResult> {
   try {
     const response = await fetch(`${baseUrl}/api/exec`, {
@@ -41,7 +41,7 @@ async function execRemoteSandbox(
         workDir: ctx.workDir,
         timeoutMs,
       }),
-      signal: AbortSignal.timeout(timeoutMs + 5_000),
+      signal: AbortSignal.timeout(timeoutMs + 5000),
     });
 
     if (!response.ok) {
@@ -62,7 +62,7 @@ async function execRemoteSandbox(
     return {
       success: result.exitCode === 0,
       output: result.stdout || result.stderr,
-      error: result.exitCode !== 0 ? result.stderr : undefined,
+      error: result.exitCode === 0 ? undefined : result.stderr,
       metadata: { exitCode: result.exitCode },
     };
   } catch (err) {
@@ -78,46 +78,50 @@ async function execRemoteSandbox(
 function execLocalSandbox(
   command: string,
   ctx: ToolExecutionContext,
-  timeoutMs: number,
+  timeoutMs: number
 ): Promise<ToolResult> {
   return new Promise((resolve) => {
-    const child = exec(command, {
-      cwd: ctx.workDir,
-      timeout: timeoutMs,
-      maxBuffer: MAX_OUTPUT_BYTES,
-      env: {
-        ...process.env,
-        PROMETHEUS_SESSION_ID: ctx.sessionId,
-        PROMETHEUS_PROJECT_ID: ctx.projectId,
-        PROMETHEUS_SANDBOX_ID: ctx.sandboxId,
+    const _child = exec(
+      command,
+      {
+        cwd: ctx.workDir,
+        timeout: timeoutMs,
+        maxBuffer: MAX_OUTPUT_BYTES,
+        env: {
+          ...process.env,
+          PROMETHEUS_SESSION_ID: ctx.sessionId,
+          PROMETHEUS_PROJECT_ID: ctx.projectId,
+          PROMETHEUS_SANDBOX_ID: ctx.sandboxId,
+        },
       },
-    }, (error, stdout, stderr) => {
-      if (error) {
-        // Distinguish timeout from other errors
-        if (error.killed) {
+      (error, stdout, stderr) => {
+        if (error) {
+          // Distinguish timeout from other errors
+          if (error.killed) {
+            resolve({
+              success: false,
+              output: stdout || "",
+              error: `Command timed out after ${timeoutMs}ms`,
+              metadata: { exitCode: -1, timedOut: true },
+            });
+            return;
+          }
+
           resolve({
             success: false,
             output: stdout || "",
-            error: `Command timed out after ${timeoutMs}ms`,
-            metadata: { exitCode: -1, timedOut: true },
+            error: stderr || error.message,
+            metadata: { exitCode: error.code ?? 1 },
           });
           return;
         }
 
         resolve({
-          success: false,
-          output: stdout || "",
-          error: stderr || error.message,
-          metadata: { exitCode: error.code ?? 1 },
+          success: true,
+          output: stdout || stderr || "",
+          metadata: { exitCode: 0 },
         });
-        return;
       }
-
-      resolve({
-        success: true,
-        output: stdout || stderr || "",
-        metadata: { exitCode: 0 },
-      });
-    });
+    );
   });
 }

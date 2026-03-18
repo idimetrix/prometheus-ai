@@ -10,6 +10,10 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  TURBO_TOKEN: ${{ secrets.TURBO_TOKEN }}
+  TURBO_TEAM: ${{ vars.TURBO_TEAM }}
+
 jobs:
   lint-and-typecheck:
     runs-on: ubuntu-latest
@@ -23,8 +27,10 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - run: pnpm turbo typecheck
-      - run: pnpm turbo lint
+      - name: Lint
+        run: pnpm turbo lint --cache-dir=.turbo
+      - name: Typecheck
+        run: pnpm turbo typecheck --cache-dir=.turbo
 
   test:
     runs-on: ubuntu-latest
@@ -47,6 +53,11 @@ jobs:
         image: valkey/valkey:8-alpine
         ports:
           - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -57,12 +68,20 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - run: pnpm turbo test
+      - name: Run tests
+        run: pnpm turbo test --cache-dir=.turbo
         env:
           DATABASE_URL: postgresql://test:test@localhost:5432/prometheus_test
           REDIS_URL: redis://localhost:6379
           CLERK_SECRET_KEY: sk_test_placeholder
-          ENCRYPTION_KEY: 0000000000000000000000000000000000000000000000000000000000000000
+          ENCRYPTION_KEY: "0000000000000000000000000000000000000000000000000000000000000000"
+      - name: Upload coverage
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: "**/coverage/"
+          retention-days: 7
 
   build:
     runs-on: ubuntu-latest
@@ -77,4 +96,13 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - run: pnpm turbo build
+      - name: Build all packages
+        run: pnpm turbo build --cache-dir=.turbo
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-output
+          path: |
+            apps/*/dist/
+            packages/*/dist/
+          retention-days: 1

@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 vi.mock("@prometheus/db", () => {
   const selectChain: any = {};
@@ -9,23 +9,45 @@ vi.mock("@prometheus/db", () => {
   selectChain.groupBy = vi.fn().mockReturnValue(selectChain);
 
   const insertChain: any = {};
-  insertChain.values = vi.fn().mockReturnValue({ returning: vi.fn().mockResolvedValue([{ id: "mem_1" }]) });
+  insertChain.values = vi.fn().mockReturnValue({
+    returning: vi.fn().mockResolvedValue([{ id: "mem_1" }]),
+  });
 
   const deleteChain: any = {};
   deleteChain.where = vi.fn().mockResolvedValue(undefined);
 
   const updateChain: any = {};
-  updateChain.set = vi.fn().mockReturnValue({ where: vi.fn().mockResolvedValue(undefined) });
+  updateChain.set = vi
+    .fn()
+    .mockReturnValue({ where: vi.fn().mockResolvedValue(undefined) });
 
   return {
     db: {
       query: {
-        codeEmbeddings: { findFirst: vi.fn(), findMany: vi.fn().mockResolvedValue([]) },
-        fileIndexes: { findFirst: vi.fn(), findMany: vi.fn().mockResolvedValue([]) },
-        agentMemories: { findFirst: vi.fn(), findMany: vi.fn().mockResolvedValue([]) },
-        episodicMemories: { findFirst: vi.fn(), findMany: vi.fn().mockResolvedValue([]) },
-        proceduralMemories: { findFirst: vi.fn(), findMany: vi.fn().mockResolvedValue([]) },
-        blueprints: { findFirst: vi.fn(), findMany: vi.fn().mockResolvedValue([]) },
+        codeEmbeddings: {
+          findFirst: vi.fn(),
+          findMany: vi.fn().mockResolvedValue([]),
+        },
+        fileIndexes: {
+          findFirst: vi.fn(),
+          findMany: vi.fn().mockResolvedValue([]),
+        },
+        agentMemories: {
+          findFirst: vi.fn(),
+          findMany: vi.fn().mockResolvedValue([]),
+        },
+        episodicMemories: {
+          findFirst: vi.fn(),
+          findMany: vi.fn().mockResolvedValue([]),
+        },
+        proceduralMemories: {
+          findFirst: vi.fn(),
+          findMany: vi.fn().mockResolvedValue([]),
+        },
+        blueprints: {
+          findFirst: vi.fn(),
+          findMany: vi.fn().mockResolvedValue([]),
+        },
       },
       select: vi.fn().mockReturnValue(selectChain),
       insert: vi.fn().mockReturnValue(insertChain),
@@ -89,7 +111,8 @@ export class Greeter {
   it("chunks markdown by paragraph", async () => {
     const { SemanticLayer } = await import("../layers/semantic");
     const layer = new SemanticLayer();
-    const md = "# Title\n\nParagraph one.\n\nParagraph two.\n\nParagraph three.";
+    const md =
+      "# Title\n\nParagraph one.\n\nParagraph two.\n\nParagraph three.";
     const chunks = layer.chunkContent(md, "readme.md");
     expect(chunks.length).toBeGreaterThanOrEqual(1);
   });

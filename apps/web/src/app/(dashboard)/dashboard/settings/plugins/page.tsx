@@ -314,6 +314,7 @@ export default function PluginsPage() {
               : "border border-zinc-800 bg-zinc-900/50 text-zinc-400 hover:text-zinc-200"
           }`}
           onClick={() => setFilter("all")}
+          type="button"
         >
           All ({plugins.length})
         </button>
@@ -331,6 +332,7 @@ export default function PluginsPage() {
               }`}
               key={cat}
               onClick={() => setFilter(cat)}
+              type="button"
             >
               {CATEGORY_LABELS[cat] ?? cat} ({count})
             </button>
@@ -347,8 +349,10 @@ export default function PluginsPage() {
 
           <div className="space-y-2">
             {grouped[category]?.map((plugin) => {
-              const statusCfg =
-                STATUS_CONFIG[plugin.status] ?? STATUS_CONFIG.inactive!;
+              const statusCfg = (STATUS_CONFIG[plugin.status] ??
+                STATUS_CONFIG.inactive) as NonNullable<
+                (typeof STATUS_CONFIG)[string]
+              >;
               const isHealthy = healthResults[plugin.id] ?? true;
 
               return (
@@ -393,13 +397,12 @@ export default function PluginsPage() {
                     {/* Health indicator */}
                     <div className="flex items-center gap-1.5">
                       <span
-                        className={`h-2 w-2 rounded-full ${
-                          plugin.status === "active"
-                            ? isHealthy
-                              ? "bg-green-500"
-                              : "bg-yellow-500"
-                            : statusCfg.dotColor
-                        }`}
+                        className={`h-2 w-2 rounded-full ${(() => {
+                          if (plugin.status === "active") {
+                            return isHealthy ? "bg-green-500" : "bg-yellow-500";
+                          }
+                          return statusCfg.dotColor;
+                        })()}`}
                       />
                       <span className={`text-xs ${statusCfg.color}`}>
                         {statusCfg.label}
@@ -415,6 +418,7 @@ export default function PluginsPage() {
                       } ${togglingId === plugin.id ? "opacity-50" : ""}`}
                       disabled={togglingId === plugin.id}
                       onClick={() => handleToggle(plugin.id)}
+                      type="button"
                     >
                       <span
                         className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
@@ -446,10 +450,14 @@ export default function PluginsPage() {
         <button
           className="rounded-lg border border-zinc-700 px-4 py-2 text-sm text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200"
           onClick={() => runHealthCheck()}
+          type="button"
         >
           Run Health Checks
         </button>
-        <button className="rounded-lg bg-violet-600 px-4 py-2 font-medium text-sm text-white hover:bg-violet-700">
+        <button
+          className="rounded-lg bg-violet-600 px-4 py-2 font-medium text-sm text-white hover:bg-violet-700"
+          type="button"
+        >
           Install Plugin
         </button>
       </div>

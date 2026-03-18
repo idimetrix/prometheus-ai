@@ -4,19 +4,62 @@ namespace: prometheus-staging
 resources:
   - ../../base/namespace.yaml
   - ../../base/configmap.yaml
+  # App services
   - ../../base/web/deployment.yaml
   - ../../base/web/service.yaml
   - ../../base/api/deployment.yaml
   - ../../base/api/service.yaml
   - ../../base/socket-server/deployment.yaml
   - ../../base/socket-server/service.yaml
+  - ../../base/orchestrator/deployment.yaml
+  - ../../base/project-brain/deployment.yaml
+  - ../../base/model-router/deployment.yaml
+  - ../../base/mcp-gateway/deployment.yaml
+  - ../../base/sandbox-manager/deployment.yaml
   - ../../base/queue-worker/deployment.yaml
+  # Infrastructure
   - ../../base/redis/deployment.yaml
   - ../../base/postgres/deployment.yaml
+  # Networking
+  - ../../base/traefik/ingress.yaml
 patches:
+  # Staging: single replica for all deployments
   - patch: |-
       - op: replace
         path: /spec/replicas
         value: 1
     target:
       kind: Deployment
+  # Staging: smaller PG storage
+  - patch: |-
+      - op: replace
+        path: /spec/volumeClaimTemplates/0/spec/resources/requests/storage
+        value: 10Gi
+    target:
+      kind: StatefulSet
+      name: postgres
+  # Staging: smaller resource limits
+  - patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/limits/memory
+        value: 512Mi
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/limits/cpu
+        value: "500m"
+    target:
+      kind: Deployment
+      labelSelector: app!=sandbox-manager
+  # Staging: override domain names
+  - patch: |-
+      - op: replace
+        path: /data/CORS_ORIGIN
+        value: "https://app.staging.prometheus.dev"
+      - op: replace
+        path: /data/NEXT_PUBLIC_API_URL
+        value: "https://api.staging.prometheus.dev"
+      - op: replace
+        path: /data/NEXT_PUBLIC_SOCKET_URL
+        value: "https://ws.staging.prometheus.dev"
+    target:
+      kind: ConfigMap
+      name: app-config

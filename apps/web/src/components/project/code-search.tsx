@@ -106,7 +106,10 @@ export function CodeSearch({ projectId }: CodeSearchProps) {
 
   // Group results by file
   const grouped = results.reduce<Record<string, SearchResult[]>>((acc, r) => {
-    (acc[r.file] ??= []).push(r);
+    if (!acc[r.file]) {
+      acc[r.file] = [];
+    }
+    acc[r.file]?.push(r);
     return acc;
   }, {});
 
@@ -119,6 +122,7 @@ export function CodeSearch({ projectId }: CodeSearchProps) {
         <div className="flex items-center gap-2">
           <div className="relative flex-1">
             <svg
+              aria-hidden="true"
               className="absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2 text-zinc-600"
               fill="none"
               stroke="currentColor"
@@ -135,13 +139,15 @@ export function CodeSearch({ projectId }: CodeSearchProps) {
               className="w-full rounded-lg border border-zinc-800 bg-zinc-950 py-2 pr-3 pl-9 text-sm text-zinc-200 outline-none placeholder:text-zinc-600 focus:border-violet-500"
               onChange={(e) => setQuery(e.target.value)}
               onKeyDown={handleKeyDown}
-              placeholder={
-                isSemantic
-                  ? "Describe what you're looking for..."
-                  : isRegex
-                    ? "Enter regex pattern..."
-                    : "Search code..."
-              }
+              placeholder={(() => {
+                if (isSemantic) {
+                  return "Describe what you're looking for...";
+                }
+                if (isRegex) {
+                  return "Enter regex pattern...";
+                }
+                return "Search code...";
+              })()}
               ref={inputRef}
               value={query}
             />
@@ -150,6 +156,7 @@ export function CodeSearch({ projectId }: CodeSearchProps) {
             className="rounded-lg bg-violet-600 px-4 py-2 font-medium text-white text-xs transition-colors hover:bg-violet-700 disabled:opacity-50"
             disabled={!query.trim() || isSearching}
             onClick={handleSearch}
+            type="button"
           >
             {isSearching ? "..." : "Search"}
           </button>
@@ -220,8 +227,10 @@ export function CodeSearch({ projectId }: CodeSearchProps) {
               <button
                 className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-zinc-800/30"
                 onClick={() => toggleFile(file)}
+                type="button"
               >
                 <svg
+                  aria-hidden="true"
                   className={`h-3 w-3 shrink-0 text-zinc-600 transition-transform ${
                     expandedFiles.has(file) ? "rotate-90" : ""
                   }`}

@@ -1,21 +1,28 @@
 "use client";
-import * as React from "react";
+import { type KeyboardEvent, useRef, useState } from "react";
 import { cn } from "../lib/utils";
 
 interface PromptInputProps {
+  className?: string;
+  disabled?: boolean;
   onSubmit: (value: string) => void;
   placeholder?: string;
-  disabled?: boolean;
-  className?: string;
 }
 
-export function PromptInput({ onSubmit, placeholder = "Describe your task...", disabled = false, className }: PromptInputProps) {
-  const [value, setValue] = React.useState("");
-  const textareaRef = React.useRef<HTMLTextAreaElement>(null);
+export function PromptInput({
+  onSubmit,
+  placeholder = "Describe your task...",
+  disabled = false,
+  className,
+}: PromptInputProps) {
+  const [value, setValue] = useState("");
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   const handleSubmit = () => {
     const trimmed = value.trim();
-    if (!trimmed || disabled) return;
+    if (!trimmed || disabled) {
+      return;
+    }
     onSubmit(trimmed);
     setValue("");
     if (textareaRef.current) {
@@ -23,7 +30,7 @@ export function PromptInput({ onSubmit, placeholder = "Describe your task...", d
     }
   };
 
-  const handleKeyDown = (e: React.KeyboardEvent) => {
+  const handleKeyDown = (e: KeyboardEvent) => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       handleSubmit();
@@ -38,22 +45,28 @@ export function PromptInput({ onSubmit, placeholder = "Describe your task...", d
   };
 
   return (
-    <div className={cn("flex items-end gap-2 rounded-lg border bg-background p-2", className)}>
+    <div
+      className={cn(
+        "flex items-end gap-2 rounded-lg border bg-background p-2",
+        className
+      )}
+    >
       <textarea
-        ref={textareaRef}
-        value={value}
-        onChange={(e) => setValue(e.target.value)}
-        onKeyDown={handleKeyDown}
-        onInput={handleInput}
-        placeholder={placeholder}
+        className="max-h-[200px] min-h-[36px] flex-1 resize-none bg-transparent px-1 py-2 text-sm outline-none placeholder:text-muted-foreground"
         disabled={disabled}
+        onChange={(e) => setValue(e.target.value)}
+        onInput={handleInput}
+        onKeyDown={handleKeyDown}
+        placeholder={placeholder}
+        ref={textareaRef}
         rows={1}
-        className="flex-1 resize-none bg-transparent text-sm outline-none placeholder:text-muted-foreground min-h-[36px] max-h-[200px] py-2 px-1"
+        value={value}
       />
       <button
-        onClick={handleSubmit}
+        className="shrink-0 rounded-md bg-primary px-3 py-2 font-medium text-primary-foreground text-sm hover:bg-primary/90 disabled:pointer-events-none disabled:opacity-50"
         disabled={disabled || !value.trim()}
-        className="shrink-0 rounded-md bg-primary px-3 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50 disabled:pointer-events-none"
+        onClick={handleSubmit}
+        type="button"
       >
         Send
       </button>

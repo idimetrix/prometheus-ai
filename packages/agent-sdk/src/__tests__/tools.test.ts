@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, expect, it } from "vitest";
 import { TOOL_REGISTRY } from "../tools/registry";
 
 describe("TOOL_REGISTRY", () => {
@@ -49,7 +49,9 @@ describe("TOOL_REGISTRY", () => {
       expect(tool.description).toBeTruthy();
       expect(tool.inputSchema).toBeTruthy();
       expect(typeof tool.execute).toBe("function");
-      expect(["read", "write", "execute", "admin"]).toContain(tool.permissionLevel);
+      expect(["read", "write", "execute", "admin"]).toContain(
+        tool.permissionLevel
+      );
       expect(typeof tool.creditCost).toBe("number");
       expect(tool.creditCost).toBeGreaterThanOrEqual(0);
     }

@@ -118,6 +118,7 @@ export default function FeaturesPage() {
                     key={i}
                   >
                     <svg
+                      aria-hidden="true"
                       className="mt-0.5 h-4 w-4 shrink-0 text-green-500"
                       fill="none"
                       stroke="currentColor"

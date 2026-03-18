@@ -11,6 +11,9 @@ import {
   PROVIDER_ENV_KEYS,
 } from "../models";
 
+const HTTP_URL_RE = /^https?:\/\//;
+const API_KEY_SUFFIX_RE = /_API_KEY$/;
+
 describe("MODEL_REGISTRY", () => {
   it("contains models from all expected providers", () => {
     const providers = new Set(
@@ -75,7 +78,7 @@ describe("PROVIDER_ENDPOINTS", () => {
     );
     for (const p of providers) {
       expect(PROVIDER_ENDPOINTS[p]).toBeDefined();
-      expect(PROVIDER_ENDPOINTS[p]).toMatch(/^https?:\/\//);
+      expect(PROVIDER_ENDPOINTS[p]).toMatch(HTTP_URL_RE);
     }
   });
 });
@@ -87,7 +90,7 @@ describe("PROVIDER_ENV_KEYS", () => {
     );
     for (const p of providers) {
       expect(PROVIDER_ENV_KEYS[p]).toBeDefined();
-      expect(PROVIDER_ENV_KEYS[p]).toMatch(/_API_KEY$/);
+      expect(PROVIDER_ENV_KEYS[p]).toMatch(API_KEY_SUFFIX_RE);
     }
   });
 });
@@ -182,7 +185,9 @@ describe("estimateCost", () => {
   });
 
   it("calculates cost correctly for paid models", () => {
-    const config = MODEL_REGISTRY["anthropic/claude-sonnet-4-6"]!;
+    const config = MODEL_REGISTRY["anthropic/claude-sonnet-4-6"] as NonNullable<
+      (typeof MODEL_REGISTRY)["anthropic/claude-sonnet-4-6"]
+    >;
     const cost = estimateCost("anthropic/claude-sonnet-4-6", 1000, 500);
     const expected =
       config.costPerInputToken * 1000 + config.costPerOutputToken * 500;

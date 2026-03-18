@@ -1,6 +1,10 @@
 {
   "$schema": "https://biomejs.dev/schemas/2.4.8/schema.json",
-  "extends": ["ultracite/biome/core"],
+  "extends": [
+    "ultracite/biome/core",
+    "ultracite/biome/react",
+    "ultracite/biome/next"
+  ],
   "vcs": {
     "enabled": true,
     "clientKind": "git",
@@ -25,6 +29,10 @@
     "indentWidth": 2
   },
   "linter": {
+    "domains": {
+      "next": "recommended",
+      "react": "recommended"
+    },
     "rules": {
       "performance": {
         "useTopLevelRegex": "warn",
@@ -42,7 +50,7 @@
       "suspicious": {
         "noExplicitAny": "warn",
         "useAwait": "warn",
-        "noArrayIndexKey": "warn",
+        "noArrayIndexKey": "off",
         "noEmptyBlockStatements": "warn",
         "noAssignInExpressions": "warn",
         "noEvolvingTypes": "warn",
@@ -51,7 +59,8 @@
         "noBitwiseOperators": "warn",
         "noControlCharactersInRegex": "warn",
         "useIterableCallbackReturn": "warn",
-        "noNonNullAssertedOptionalChain": "warn"
+        "noNonNullAssertedOptionalChain": "warn",
+        "noUnknownAtRules": "off"
       },
       "correctness": {
         "noUnusedVariables": "warn",

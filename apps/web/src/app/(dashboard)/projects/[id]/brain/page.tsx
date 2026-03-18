@@ -23,31 +23,43 @@ export default function BrainPage({
     Array<{ role: "user" | "assistant"; content: string }>
   >([]);
   const [chatInput, setChatInput] = useState("");
-  const [activeTab, setActiveTab] = useState<"graph" | "ask" | "memory">("graph");
+  const [activeTab, setActiveTab] = useState<"graph" | "ask" | "memory">(
+    "graph"
+  );
   const [memoryFilter, setMemoryFilter] = useState<string>("all");
 
   const graphQuery = trpc.brain.graph.useQuery(
     { projectId, query: searchQuery || undefined },
-    { retry: false },
+    { retry: false }
   );
   const memoriesQuery = trpc.brain.getMemories.useQuery(
     {
       projectId,
-      type: memoryFilter === "all" ? undefined : memoryFilter as "semantic" | "episodic" | "procedural" | "architectural" | "convention",
+      type:
+        memoryFilter === "all"
+          ? undefined
+          : (memoryFilter as
+              | "semantic"
+              | "episodic"
+              | "procedural"
+              | "architectural"
+              | "convention"),
       limit: 50,
     },
-    { retry: false },
+    { retry: false }
   );
   const searchMutation = trpc.brain.search.useQuery(
     { projectId, query: searchQuery, limit: 20 },
-    { enabled: searchQuery.length > 2, retry: false },
+    { enabled: searchQuery.length > 2, retry: false }
   );
 
   const nodes = graphQuery.data?.nodes ?? [];
   const memories = memoriesQuery.data?.memories ?? [];
 
   function handleAsk() {
-    if (!chatInput.trim()) return;
+    if (!chatInput.trim()) {
+      return;
+    }
     setChatMessages((prev) => [
       ...prev,
       { role: "user", content: chatInput.trim() },
@@ -71,18 +83,18 @@ export default function BrainPage({
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-zinc-100">Project Brain</h1>
+          <h1 className="font-bold text-2xl text-zinc-100">Project Brain</h1>
           <p className="mt-1 text-sm text-zinc-500">
             Explore what the AI knows about your codebase
           </p>
         </div>
         <div className="flex items-center gap-2">
           <input
-            type="text"
-            value={searchQuery}
+            className="rounded-lg border border-zinc-800 bg-zinc-900 px-3 py-1.5 text-sm text-zinc-200 outline-none placeholder:text-zinc-600 focus:border-violet-500"
             onChange={(e) => setSearchQuery(e.target.value)}
             placeholder="Search codebase..."
-            className="rounded-lg border border-zinc-800 bg-zinc-900 px-3 py-1.5 text-sm text-zinc-200 outline-none placeholder:text-zinc-600 focus:border-violet-500"
+            type="text"
+            value={searchQuery}
           />
         </div>
       </div>
@@ -91,19 +103,16 @@ export default function BrainPage({
       <div className="flex gap-1 rounded-lg border border-zinc-800 bg-zinc-900/50 p-1">
         {(["graph", "ask", "memory"] as const).map((tab) => (
           <button
-            key={tab}
-            onClick={() => setActiveTab(tab)}
-            className={`flex-1 rounded-md px-3 py-1.5 text-sm font-medium transition-colors ${
+            className={`flex-1 rounded-md px-3 py-1.5 font-medium text-sm transition-colors ${
               activeTab === tab
                 ? "bg-zinc-800 text-zinc-100"
                 : "text-zinc-500 hover:text-zinc-300"
             }`}
+            key={tab}
+            onClick={() => setActiveTab(tab)}
+            type="button"
           >
-            {tab === "graph"
-              ? "File Graph"
-              : tab === "ask"
-                ? "Ask"
-                : "Memory Browser"}
+            {{ graph: "File Graph", ask: "Ask", memory: "Memory Browser" }[tab]}
           </button>
         ))}
       </div>
@@ -111,8 +120,8 @@ export default function BrainPage({
       {/* Tab content */}
       {activeTab === "graph" && (
         <div className="rounded-xl border border-zinc-800 bg-zinc-900/50">
-          <div className="border-b border-zinc-800 px-4 py-3">
-            <span className="text-sm font-medium text-zinc-300">
+          <div className="border-zinc-800 border-b px-4 py-3">
+            <span className="font-medium text-sm text-zinc-300">
               File Dependency Graph
             </span>
             <span className="ml-2 text-xs text-zinc-500">
@@ -128,11 +137,22 @@ export default function BrainPage({
               <div className="grid gap-2 md:grid-cols-2 lg:grid-cols-3">
                 {nodes.map((node) => (
                   <div
-                    key={node.id}
                     className="flex items-center gap-2 rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2"
+                    key={node.id}
                   >
-                    <svg className="h-4 w-4 shrink-0 text-zinc-500" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m2.25 0H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z" />
+                    <svg
+                      aria-hidden="true"
+                      className="h-4 w-4 shrink-0 text-zinc-500"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth={1.5}
+                      viewBox="0 0 24 24"
+                    >
+                      <path
+                        d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m2.25 0H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      />
                     </svg>
                     <div className="min-w-0 flex-1">
                       <div className="truncate font-mono text-xs text-zinc-300">
@@ -152,17 +172,17 @@ export default function BrainPage({
 
             {/* Search results */}
             {searchQuery.length > 2 && searchMutation.data && (
-              <div className="mt-4 border-t border-zinc-800 pt-4">
-                <h3 className="mb-2 text-sm font-medium text-zinc-300">
+              <div className="mt-4 border-zinc-800 border-t pt-4">
+                <h3 className="mb-2 font-medium text-sm text-zinc-300">
                   Search Results
                 </h3>
                 <div className="space-y-2">
                   {searchMutation.data.results.map((result) => (
                     <div
-                      key={result.id}
                       className="rounded-lg border border-zinc-800 bg-zinc-950 p-3"
+                      key={result.id}
                     >
-                      <div className="font-mono text-xs text-violet-400">
+                      <div className="font-mono text-violet-400 text-xs">
                         {result.filePath}
                       </div>
                       <pre className="mt-2 overflow-auto text-[11px] text-zinc-400">
@@ -189,25 +209,36 @@ export default function BrainPage({
           <div className="flex-1 overflow-auto p-4">
             {chatMessages.length === 0 ? (
               <div className="flex h-full flex-col items-center justify-center text-center">
-                <svg className="h-10 w-10 text-zinc-700" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M9.879 7.519c1.171-1.025 3.071-1.025 4.242 0 1.172 1.025 1.172 2.687 0 3.712-.203.179-.43.326-.67.442-.745.361-1.45.999-1.45 1.827v.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Zm-9 5.25h.008v.008H12v-.008Z" />
+                <svg
+                  aria-hidden="true"
+                  className="h-10 w-10 text-zinc-700"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth={1.5}
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    d="M9.879 7.519c1.171-1.025 3.071-1.025 4.242 0 1.172 1.025 1.172 2.687 0 3.712-.203.179-.43.326-.67.442-.745.361-1.45.999-1.45 1.827v.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Zm-9 5.25h.008v.008H12v-.008Z"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
                 </svg>
                 <p className="mt-3 text-sm text-zinc-400">
                   Ask questions about your codebase
                 </p>
                 <p className="mt-1 text-xs text-zinc-600">
-                  e.g. &quot;How is authentication handled?&quot; or &quot;What does the
-                  payment flow look like?&quot;
+                  e.g. &quot;How is authentication handled?&quot; or &quot;What
+                  does the payment flow look like?&quot;
                 </p>
               </div>
             ) : (
               <div className="space-y-4">
                 {chatMessages.map((msg, i) => (
                   <div
-                    key={i}
                     className={`flex ${
                       msg.role === "user" ? "justify-end" : "justify-start"
                     }`}
+                    key={i}
                   >
                     <div
                       className={`max-w-[80%] rounded-xl px-4 py-2 text-sm ${
@@ -225,20 +256,21 @@ export default function BrainPage({
           </div>
 
           {/* Chat input */}
-          <div className="border-t border-zinc-800 p-3">
+          <div className="border-zinc-800 border-t p-3">
             <div className="flex gap-2">
               <input
-                type="text"
-                value={chatInput}
+                className="flex-1 rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm text-zinc-200 outline-none placeholder:text-zinc-600 focus:border-violet-500"
                 onChange={(e) => setChatInput(e.target.value)}
                 onKeyDown={(e) => e.key === "Enter" && handleAsk()}
                 placeholder="Ask about your codebase..."
-                className="flex-1 rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm text-zinc-200 outline-none placeholder:text-zinc-600 focus:border-violet-500"
+                type="text"
+                value={chatInput}
               />
               <button
-                onClick={handleAsk}
+                className="rounded-lg bg-violet-600 px-4 py-2 font-medium text-sm text-white transition-colors hover:bg-violet-700 disabled:opacity-50"
                 disabled={!chatInput.trim()}
-                className="rounded-lg bg-violet-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-violet-700 disabled:opacity-50"
+                onClick={handleAsk}
+                type="button"
               >
                 Send
               </button>
@@ -250,16 +282,17 @@ export default function BrainPage({
       {activeTab === "memory" && (
         <div className="rounded-xl border border-zinc-800 bg-zinc-900/50">
           {/* Memory type filter */}
-          <div className="flex items-center gap-2 border-b border-zinc-800 px-4 py-3">
+          <div className="flex items-center gap-2 border-zinc-800 border-b px-4 py-3">
             {MEMORY_TYPES.map((mt) => (
               <button
-                key={mt.id}
-                onClick={() => setMemoryFilter(mt.id)}
-                className={`rounded-full px-3 py-1 text-xs font-medium transition-colors ${
+                className={`rounded-full px-3 py-1 font-medium text-xs transition-colors ${
                   memoryFilter === mt.id
                     ? "bg-violet-500/20 text-violet-400"
                     : "text-zinc-500 hover:bg-zinc-800 hover:text-zinc-300"
                 }`}
+                key={mt.id}
+                onClick={() => setMemoryFilter(mt.id)}
+                type="button"
               >
                 {mt.label}
               </button>
@@ -270,23 +303,23 @@ export default function BrainPage({
           <div className="divide-y divide-zinc-800">
             {memories.length === 0 ? (
               <div className="p-8 text-center text-sm text-zinc-500">
-                No memories stored yet. The agent learns as it works on your project.
+                No memories stored yet. The agent learns as it works on your
+                project.
               </div>
             ) : (
               memories.map((memory) => (
-                <div key={memory.id} className="px-4 py-3">
+                <div className="px-4 py-3" key={memory.id}>
                   <div className="flex items-center gap-2">
                     <span
-                      className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${
-                        memory.memoryType === "semantic"
-                          ? "bg-blue-500/10 text-blue-400"
-                          : memory.memoryType === "episodic"
-                            ? "bg-green-500/10 text-green-400"
-                            : memory.memoryType === "procedural"
-                              ? "bg-yellow-500/10 text-yellow-400"
-                              : memory.memoryType === "architectural"
-                                ? "bg-violet-500/10 text-violet-400"
-                                : "bg-zinc-800 text-zinc-400"
+                      className={`rounded-full px-2 py-0.5 font-medium text-[10px] ${
+                        (
+                          {
+                            semantic: "bg-blue-500/10 text-blue-400",
+                            episodic: "bg-green-500/10 text-green-400",
+                            procedural: "bg-yellow-500/10 text-yellow-400",
+                            architectural: "bg-violet-500/10 text-violet-400",
+                          } as Record<string, string>
+                        )[memory.memoryType] ?? "bg-zinc-800 text-zinc-400"
                       }`}
                     >
                       {memory.memoryType}
@@ -295,7 +328,7 @@ export default function BrainPage({
                       {new Date(memory.createdAt).toLocaleString()}
                     </span>
                   </div>
-                  <p className="mt-1.5 text-sm text-zinc-300 line-clamp-3">
+                  <p className="mt-1.5 line-clamp-3 text-sm text-zinc-300">
                     {memory.content}
                   </p>
                 </div>

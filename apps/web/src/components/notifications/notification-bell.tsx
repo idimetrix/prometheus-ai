@@ -27,8 +27,10 @@ export function NotificationBell() {
       <button
         className="relative flex h-8 w-8 items-center justify-center rounded-lg border border-zinc-800 bg-zinc-900 text-zinc-400 transition-colors hover:border-zinc-700 hover:text-zinc-200"
         onClick={() => setOpen(!open)}
+        type="button"
       >
         <svg
+          aria-hidden="true"
           className="h-4 w-4"
           fill="none"
           stroke="currentColor"

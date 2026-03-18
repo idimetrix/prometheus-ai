@@ -7,7 +7,9 @@ interface NotificationDropdownProps {
   onClose?: () => void;
 }
 
-export function NotificationDropdown({ onClose }: NotificationDropdownProps) {
+export function NotificationDropdown({
+  onClose: _onClose,
+}: NotificationDropdownProps) {
   const { notifications, markRead, markAllRead, removeNotification, clearAll } =
     useNotificationStore();
 
@@ -23,6 +25,7 @@ export function NotificationDropdown({ onClose }: NotificationDropdownProps) {
             <button
               className="text-[10px] text-violet-400 hover:text-violet-300"
               onClick={markAllRead}
+              type="button"
             >
               Mark all read
             </button>
@@ -31,6 +34,7 @@ export function NotificationDropdown({ onClose }: NotificationDropdownProps) {
             <button
               className="text-[10px] text-zinc-500 hover:text-zinc-400"
               onClick={clearAll}
+              type="button"
             >
               Clear
             </button>
@@ -43,6 +47,7 @@ export function NotificationDropdown({ onClose }: NotificationDropdownProps) {
         {notifications.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-8 text-zinc-600">
             <svg
+              aria-hidden="true"
               className="mb-2 h-8 w-8"
               fill="none"
               stroke="currentColor"

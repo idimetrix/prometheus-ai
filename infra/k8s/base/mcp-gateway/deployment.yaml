@@ -22,9 +22,9 @@ spec:
             - containerPort: 4005
           envFrom:
             - configMapRef:
-                name: prometheus-config
+                name: app-config
             - secretRef:
-                name: prometheus-secrets
+                name: app-secrets
           resources:
             requests:
               memory: "256Mi"
@@ -38,6 +38,17 @@ spec:
               port: 4005
             initialDelaySeconds: 10
             periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 4005
+            initialDelaySeconds: 5
+            periodSeconds: 10
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
 ---
 apiVersion: v1
 kind: Service

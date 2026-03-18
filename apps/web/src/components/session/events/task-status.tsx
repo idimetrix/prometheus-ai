@@ -24,6 +24,7 @@ function StatusIcon({ icon }: { icon: string }) {
     case "check":
       return (
         <svg
+          aria-hidden="true"
           className="h-3 w-3"
           fill="none"
           stroke="currentColor"
@@ -40,6 +41,7 @@ function StatusIcon({ icon }: { icon: string }) {
     case "x":
       return (
         <svg
+          aria-hidden="true"
           className="h-3 w-3"
           fill="none"
           stroke="currentColor"
@@ -56,6 +58,7 @@ function StatusIcon({ icon }: { icon: string }) {
     case "play":
       return (
         <svg
+          aria-hidden="true"
           className="h-3 w-3"
           fill="none"
           stroke="currentColor"
@@ -72,6 +75,7 @@ function StatusIcon({ icon }: { icon: string }) {
     case "pause":
       return (
         <svg
+          aria-hidden="true"
           className="h-3 w-3"
           fill="none"
           stroke="currentColor"
@@ -88,6 +92,7 @@ function StatusIcon({ icon }: { icon: string }) {
     case "stop":
       return (
         <svg
+          aria-hidden="true"
           className="h-3 w-3"
           fill="none"
           stroke="currentColor"
@@ -104,6 +109,7 @@ function StatusIcon({ icon }: { icon: string }) {
     default: // clock
       return (
         <svg
+          aria-hidden="true"
           className="h-3 w-3"
           fill="none"
           stroke="currentColor"
@@ -123,7 +129,9 @@ function StatusIcon({ icon }: { icon: string }) {
 export function TaskStatus({ event }: TaskStatusProps) {
   const status = (event.data.status as string) ?? "queued";
   const message = (event.data.message as string) ?? "";
-  const config = (STATUS_CONFIG[status] ?? STATUS_CONFIG.queued)!;
+  const config = (STATUS_CONFIG[status] ?? STATUS_CONFIG.queued) as NonNullable<
+    (typeof STATUS_CONFIG)[string]
+  >;
 
   return (
     <div className="flex items-center gap-2 rounded-lg border border-zinc-800 bg-zinc-900/50 px-3 py-2">

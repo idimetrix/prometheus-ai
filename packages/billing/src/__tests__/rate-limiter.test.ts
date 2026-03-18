@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // Mock Redis
 const mockGet = vi.fn().mockResolvedValue(null);
@@ -55,7 +55,7 @@ describe("RateLimiter", () => {
     expect(hobby.remaining).toBe(5);
     expect(pro.remaining).toBe(200);
     expect(enterprise.allowed).toBe(true);
-    expect(enterprise.remaining).toBe(Infinity);
+    expect(enterprise.remaining).toBe(Number.POSITIVE_INFINITY);
   });
 
   it("should check concurrency limits", async () => {

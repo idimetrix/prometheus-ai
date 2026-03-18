@@ -1,20 +1,24 @@
+import {
+  creditTransactions,
+  db,
+  modelUsage,
+  usageRollups,
+} from "@prometheus/db";
 import { createLogger } from "@prometheus/logger";
 import { generateId } from "@prometheus/utils";
-import { db } from "@prometheus/db";
-import { modelUsage, usageRollups, creditTransactions } from "@prometheus/db";
-import { eq, and, gte, lte, sql, desc } from "drizzle-orm";
+import { and, eq, gte, lte, sql } from "drizzle-orm";
 
 const logger = createLogger("billing:usage");
 
 export interface UsageRecord {
+  costUsd: number;
+  model: string;
   orgId: string;
+  provider: string;
   sessionId: string;
   taskId: string;
-  provider: string;
-  model: string;
   tokensIn: number;
   tokensOut: number;
-  costUsd: number;
 }
 
 export class UsageTracker {
@@ -31,15 +35,22 @@ export class UsageTracker {
       costUsd: record.costUsd,
     });
 
-    logger.debug({
-      orgId: record.orgId,
-      model: record.model,
-      tokens: record.tokensIn + record.tokensOut,
-      cost: record.costUsd,
-    }, "Usage recorded");
+    logger.debug(
+      {
+        orgId: record.orgId,
+        model: record.model,
+        tokens: record.tokensIn + record.tokensOut,
+        cost: record.costUsd,
+      },
+      "Usage recorded"
+    );
   }
 
-  async getUsageSummary(orgId: string, periodStart: Date, periodEnd: Date): Promise<{
+  async getUsageSummary(
+    orgId: string,
+    periodStart: Date,
+    periodEnd: Date
+  ): Promise<{
     totalTokens: number;
     totalCostUsd: number;
     taskCount: number;
@@ -53,11 +64,13 @@ export class UsageTracker {
         count: sql<number>`COUNT(DISTINCT ${modelUsage.taskId})`,
       })
       .from(modelUsage)
-      .where(and(
-        eq(modelUsage.orgId, orgId),
-        gte(modelUsage.createdAt, periodStart),
-        lte(modelUsage.createdAt, periodEnd),
-      ));
+      .where(
+        and(
+          eq(modelUsage.orgId, orgId),
+          gte(modelUsage.createdAt, periodStart),
+          lte(modelUsage.createdAt, periodEnd)
+        )
+      );
 
     const byModelRows = await db
       .select({
@@ -67,14 +80,19 @@ export class UsageTracker {
         count: sql<number>`COUNT(*)`,
       })
       .from(modelUsage)
-      .where(and(
-        eq(modelUsage.orgId, orgId),
-        gte(modelUsage.createdAt, periodStart),
-        lte(modelUsage.createdAt, periodEnd),
-      ))
+      .where(
+        and(
+          eq(modelUsage.orgId, orgId),
+          gte(modelUsage.createdAt, periodStart),
+          lte(modelUsage.createdAt, periodEnd)
+        )
+      )
       .groupBy(modelUsage.model);
 
-    const byModel: Record<string, { tokens: number; cost: number; count: number }> = {};
+    const byModel: Record<
+      string,
+      { tokens: number; cost: number; count: number }
+    > = {};
     for (const row of byModelRows) {
       byModel[row.model] = {
         tokens: Number(row.tokens),
@@ -84,14 +102,20 @@ export class UsageTracker {
     }
 
     return {
-      totalTokens: Number(summary?.totalTokensIn ?? 0) + Number(summary?.totalTokensOut ?? 0),
+      totalTokens:
+        Number(summary?.totalTokensIn ?? 0) +
+        Number(summary?.totalTokensOut ?? 0),
       totalCostUsd: Number(summary?.totalCost ?? 0),
       taskCount: Number(summary?.count ?? 0),
       byModel,
     };
   }
 
-  async calculateMargin(orgId: string, periodStart: Date, periodEnd: Date): Promise<{
+  async calculateMargin(
+    orgId: string,
+    periodStart: Date,
+    periodEnd: Date
+  ): Promise<{
     creditRevenue: number;
     actualCost: number;
     margin: number;
@@ -102,17 +126,19 @@ export class UsageTracker {
         consumed: sql<number>`COALESCE(SUM(ABS(${creditTransactions.amount})), 0)`,
       })
       .from(creditTransactions)
-      .where(and(
-        eq(creditTransactions.orgId, orgId),
-        eq(creditTransactions.type, "consumption"),
-        gte(creditTransactions.createdAt, periodStart),
-        lte(creditTransactions.createdAt, periodEnd),
-      ));
+      .where(
+        and(
+          eq(creditTransactions.orgId, orgId),
+          eq(creditTransactions.type, "consumption"),
+          gte(creditTransactions.createdAt, periodStart),
+          lte(creditTransactions.createdAt, periodEnd)
+        )
+      );
 
     const usage = await this.getUsageSummary(orgId, periodStart, periodEnd);
 
     // Each credit ≈ $0.10 in revenue
-    const creditRevenue = Number(creditData?.consumed ?? 0) * 0.10;
+    const creditRevenue = Number(creditData?.consumed ?? 0) * 0.1;
     const actualCost = usage.totalCostUsd;
     const margin = creditRevenue - actualCost;
 
@@ -120,7 +146,8 @@ export class UsageTracker {
       creditRevenue: Math.round(creditRevenue * 100) / 100,
       actualCost: Math.round(actualCost * 100) / 100,
       margin: Math.round(margin * 100) / 100,
-      marginPercent: creditRevenue > 0 ? Math.round((margin / creditRevenue) * 100) : 0,
+      marginPercent:
+        creditRevenue > 0 ? Math.round((margin / creditRevenue) * 100) : 0,
     };
   }
 
@@ -142,6 +169,9 @@ export class UsageTracker {
       costUsd: usage.totalCostUsd,
     });
 
-    logger.info({ orgId, date: date.toISOString() }, "Daily usage rollup created");
+    logger.info(
+      { orgId, date: date.toISOString() },
+      "Daily usage rollup created"
+    );
   }
 }

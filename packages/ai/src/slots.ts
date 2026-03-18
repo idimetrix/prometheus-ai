@@ -15,6 +15,13 @@ export type RoutingSlot =
   | "fastLoop"
   | "premium";
 
+const THINK_TASK_RE = /reason|plan|architect|design|debug complex/i;
+const REVIEW_TASK_RE = /review|audit|security|quality/i;
+const FAST_LOOP_TASK_RE = /fast|ci|loop|iterate|quick fix/i;
+const BACKGROUND_TASK_RE = /index|embed|background|crawl|low.?priority/i;
+const PREMIUM_TASK_RE = /premium|critical|complex|high.?stakes/i;
+const VISION_TASK_RE = /vision|screenshot|image|ui.?to.?code/i;
+
 export interface SlotConfig {
   /** Ordered model chain: primary first, then fallbacks */
   chain: string[];
@@ -193,22 +200,22 @@ export function autoDetectSlot(options: {
   if (taskType) {
     const lower = taskType.toLowerCase();
 
-    if (/reason|plan|architect|design|debug complex/i.test(lower)) {
+    if (THINK_TASK_RE.test(lower)) {
       return "think";
     }
-    if (/review|audit|security|quality/i.test(lower)) {
+    if (REVIEW_TASK_RE.test(lower)) {
       return "review";
     }
-    if (/fast|ci|loop|iterate|quick fix/i.test(lower)) {
+    if (FAST_LOOP_TASK_RE.test(lower)) {
       return "fastLoop";
     }
-    if (/index|embed|background|crawl|low.?priority/i.test(lower)) {
+    if (BACKGROUND_TASK_RE.test(lower)) {
       return "background";
     }
-    if (/premium|critical|complex|high.?stakes/i.test(lower)) {
+    if (PREMIUM_TASK_RE.test(lower)) {
       return "premium";
     }
-    if (/vision|screenshot|image|ui.?to.?code/i.test(lower)) {
+    if (VISION_TASK_RE.test(lower)) {
       return "vision";
     }
   }

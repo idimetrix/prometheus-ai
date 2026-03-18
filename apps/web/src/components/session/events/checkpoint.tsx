@@ -59,6 +59,7 @@ export function Checkpoint({
       <div className="mb-2 flex items-center gap-2">
         <div className="flex h-5 w-5 items-center justify-center rounded-full bg-yellow-500/20">
           <svg
+            aria-hidden="true"
             className="h-3 w-3 text-yellow-400"
             fill="none"
             stroke="currentColor"
@@ -114,6 +115,7 @@ export function Checkpoint({
         <div className="flex items-center gap-2">
           <div className="flex h-5 w-5 items-center justify-center rounded-full bg-green-500/20">
             <svg
+              aria-hidden="true"
               className="h-3 w-3 text-green-400"
               fill="none"
               stroke="currentColor"
@@ -134,18 +136,21 @@ export function Checkpoint({
           <button
             className="rounded-lg bg-green-600 px-3 py-1.5 font-medium text-white text-xs transition-colors hover:bg-green-700"
             onClick={handleApprove}
+            type="button"
           >
             Approve
           </button>
           <button
             className="rounded-lg border border-red-800/50 bg-red-950/50 px-3 py-1.5 font-medium text-red-400 text-xs transition-colors hover:bg-red-900/50"
             onClick={handleReject}
+            type="button"
           >
             Reject
           </button>
           <button
             className="rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-1.5 font-medium text-xs text-zinc-300 transition-colors hover:bg-zinc-700"
             onClick={handleModify}
+            type="button"
           >
             {action === "modify" ? "Submit Changes" : "Modify"}
           </button>

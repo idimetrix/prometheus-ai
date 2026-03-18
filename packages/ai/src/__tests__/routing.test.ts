@@ -78,7 +78,9 @@ describe("Rate Limit Tracking", () => {
 
   it("tracks requests against rpm limit", () => {
     const modelKey = "cerebras/qwen3-235b";
-    const config = MODEL_REGISTRY[modelKey]!;
+    const config = MODEL_REGISTRY[modelKey] as NonNullable<
+      (typeof MODEL_REGISTRY)[typeof modelKey]
+    >;
     expect(config.rpmLimit).toBe(30);
 
     // Fill up to the limit
@@ -93,7 +95,9 @@ describe("Rate Limit Tracking", () => {
 
   it("tracks token usage against tpm limit", () => {
     const modelKey = "cerebras/qwen3-235b";
-    const config = MODEL_REGISTRY[modelKey]!;
+    const config = MODEL_REGISTRY[modelKey] as NonNullable<
+      (typeof MODEL_REGISTRY)[typeof modelKey]
+    >;
     expect(config.tpmLimit).toBe(1_000_000);
 
     // Record a huge token count
@@ -122,7 +126,9 @@ describe("resolveRoute", () => {
     expect(route).not.toBeNull();
     expect(route?.fallbackPosition).toBeGreaterThan(0);
     // Should be cerebras or groq
-    expect(MODEL_REGISTRY[route?.modelKey]?.provider).not.toBe("ollama");
+    expect(
+      route?.modelKey ? MODEL_REGISTRY[route.modelKey]?.provider : undefined
+    ).not.toBe("ollama");
   });
 
   it("auto-detects vision slot when hasImages is true", () => {

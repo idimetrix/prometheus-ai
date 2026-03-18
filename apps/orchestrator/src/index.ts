@@ -1,15 +1,19 @@
 import { serve } from "@hono/node-server";
+import { createLogger } from "@prometheus/logger";
+import type { AgentMode, AgentRole } from "@prometheus/types";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
-import { createLogger } from "@prometheus/logger";
+import { CheckpointManager } from "./checkpoint";
 import { SessionManager } from "./session-manager";
+import { TakeoverManager } from "./takeover";
 import { TaskRouter } from "./task-router";
-import type { AgentMode, AgentRole } from "@prometheus/types";
 
 const logger = createLogger("orchestrator");
 
 const sessionManager = new SessionManager();
 const taskRouter = new TaskRouter(sessionManager);
+const checkpointManager = new CheckpointManager();
+const takeoverManager = new TakeoverManager();
 
 const app = new Hono();
 
@@ -54,9 +58,14 @@ app.post("/process", async (c) => {
       agentRole: AgentRole | null;
     };
 
-    if (!taskId || !sessionId || !projectId || !orgId || !userId || !title || !mode) {
+    if (
+      !(taskId && sessionId && projectId && orgId && userId && title && mode)
+    ) {
       return c.json(
-        { error: "Missing required fields: taskId, sessionId, projectId, orgId, userId, title, mode" },
+        {
+          error:
+            "Missing required fields: taskId, sessionId, projectId, orgId, userId, title, mode",
+        },
         400
       );
     }
@@ -176,7 +185,10 @@ app.get("/sessions", (c) => {
 app.post("/route", async (c) => {
   try {
     const body = await c.req.json();
-    const { description, projectContext } = body as { description: string; projectContext?: string };
+    const { description, projectContext } = body as {
+      description: string;
+      projectContext?: string;
+    };
 
     if (!description) {
       return c.json({ error: "'description' is required" }, 400);
@@ -190,14 +202,111 @@ app.post("/route", async (c) => {
   }
 });
 
+// ─── Checkpoint Response ────────────────────────────────────────
+
+app.post("/checkpoints/:id/respond", async (c) => {
+  const checkpointId = c.req.param("id");
+
+  try {
+    const body = await c.req.json();
+    const { action, data, message, userId } = body as {
+      action: "approve" | "reject" | "modify" | "input";
+      data?: Record<string, unknown>;
+      message?: string;
+      userId: string;
+    };
+
+    const resolved = checkpointManager.respondToCheckpoint(checkpointId, {
+      action,
+      data,
+      message,
+      respondedBy: userId,
+      respondedAt: new Date(),
+    });
+
+    if (!resolved) {
+      return c.json({ error: "Checkpoint not found or already resolved" }, 404);
+    }
+
+    return c.json({ status: "resolved", checkpointId });
+  } catch (error) {
+    return c.json({ error: String(error) }, 500);
+  }
+});
+
+// ─── Pending Checkpoints ────────────────────────────────────────
+
+app.get("/sessions/:id/checkpoints", (c) => {
+  const sessionId = c.req.param("id");
+  const checkpoints = checkpointManager.getPendingCheckpoints(sessionId);
+  return c.json({ checkpoints });
+});
+
+// ─── Takeover Controls ──────────────────────────────────────────
+
+app.post("/sessions/:id/takeover", async (c) => {
+  const sessionId = c.req.param("id");
+  const body = await c.req.json();
+  const { userId } = body as { userId: string };
+
+  try {
+    const session = sessionManager.getSession(sessionId);
+    if (!session) {
+      return c.json({ error: "Session not found" }, 404);
+    }
+
+    await session.agentLoop.pause();
+    await takeoverManager.takeover(sessionId, userId);
+
+    return c.json({ status: "human_control", sessionId });
+  } catch (error) {
+    return c.json({ error: String(error) }, 500);
+  }
+});
+
+app.post("/sessions/:id/release", async (c) => {
+  const sessionId = c.req.param("id");
+  const body = await c.req.json();
+  const { userId, context } = body as { userId: string; context?: string };
+
+  try {
+    const session = sessionManager.getSession(sessionId);
+    if (!session) {
+      return c.json({ error: "Session not found" }, 404);
+    }
+
+    await takeoverManager.release(sessionId, userId, context);
+    await session.agentLoop.resume();
+
+    return c.json({ status: "agent_control", sessionId });
+  } catch (error) {
+    return c.json({ error: String(error) }, 500);
+  }
+});
+
 // ─── Start Server ───────────────────────────────────────────────
 
-const port = Number(process.env.ORCHESTRATOR_PORT ?? 4003);
+const port = Number(process.env.ORCHESTRATOR_PORT ?? 4002);
 
 serve({ fetch: app.fetch, port }, () => {
   logger.info({ port }, "Orchestrator engine running");
 });
 
-export { SessionManager } from "./session-manager";
-export { TaskRouter } from "./task-router";
 export { AgentLoop } from "./agent-loop";
+export {
+  BlueprintEnforcer as OrchestratorBlueprintEnforcer,
+  type BlueprintViolation as OrcBlueprintViolation,
+} from "./blueprint-enforcer";
+export { CheckpointManager } from "./checkpoint";
+// Phase 9 exports
+export {
+  type ConfidenceResult,
+  ConfidenceScorer,
+  type IterationSignals,
+} from "./confidence";
+export { ContextManager } from "./context-manager";
+export { CreditTracker } from "./credit-tracker";
+export { FleetManager } from "./fleet-manager";
+export { SessionManager } from "./session-manager";
+export { TakeoverManager } from "./takeover";
+export { TaskRouter } from "./task-router";

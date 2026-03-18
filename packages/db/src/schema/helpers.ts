@@ -1,4 +1,6 @@
-import { timestamp } from "drizzle-orm/pg-core";
+import { generateId } from "@prometheus/utils";
+import { sql } from "drizzle-orm";
+import { text, timestamp } from "drizzle-orm/pg-core";
 
 export const timestamps = {
   createdAt: timestamp("created_at", { withTimezone: true })
@@ -7,4 +9,13 @@ export const timestamps = {
   updatedAt: timestamp("updated_at", { withTimezone: true })
     .notNull()
     .defaultNow(),
+  deletedAt: timestamp("deleted_at", { withTimezone: true }),
 };
+
+/** Standalone primary key column using generateId() */
+export const id = text("id")
+  .primaryKey()
+  .$defaultFn(() => generateId());
+
+/** SQL predicate for soft-delete filtering */
+export const notDeleted = sql`deleted_at IS NULL`;

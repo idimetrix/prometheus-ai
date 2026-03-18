@@ -5,29 +5,28 @@ import type { SoftwareRequirementsSpec } from "./discovery";
 const logger = createLogger("agent-sdk:protocol:architect");
 
 export interface Blueprint {
-  id: string;
-  projectId: string;
-  version: string;
-  techStack: TechStackDecision;
-  databaseSchema: SchemaDefinition[];
+  adrs: ArchitectureDecisionRecord[];
   apiContracts: APIContract[];
   componentTree: ComponentNode[];
-  adrs: ArchitectureDecisionRecord[];
-  parallelWorkstreams: Workstream[];
   content: string; // Full markdown content
+  databaseSchema: SchemaDefinition[];
+  id: string;
+  parallelWorkstreams: Workstream[];
+  projectId: string;
+  techStack: TechStackDecision;
+  version: string;
 }
 
 export interface TechStackDecision {
-  frontend: string[];
+  auth: string;
   backend: string[];
   database: string;
-  auth: string;
   deployment: string[];
+  frontend: string[];
   reasoning: string;
 }
 
 export interface SchemaDefinition {
-  tableName: string;
   columns: Array<{
     name: string;
     type: string;
@@ -35,47 +34,48 @@ export interface SchemaDefinition {
     references?: string;
   }>;
   indexes: string[];
+  tableName: string;
 }
 
 export interface APIContract {
-  path: string;
-  method: string;
+  auth: boolean;
   description: string;
   inputType: string;
+  method: string;
   outputType: string;
-  auth: boolean;
+  path: string;
 }
 
 export interface ComponentNode {
-  name: string;
-  type: "page" | "layout" | "component" | "hook" | "store" | "util";
   children: ComponentNode[];
   dependencies: string[];
+  name: string;
+  type: "page" | "layout" | "component" | "hook" | "store" | "util";
 }
 
 export interface ArchitectureDecisionRecord {
-  id: string;
-  title: string;
-  status: "proposed" | "accepted" | "deprecated" | "superseded";
-  context: string;
-  decision: string;
   consequences: string[];
+  context: string;
   date: string;
+  decision: string;
+  id: string;
+  status: "proposed" | "accepted" | "deprecated" | "superseded";
+  title: string;
 }
 
 export interface Workstream {
+  dependencies: string[];
+  estimatedCredits: number;
   id: string;
   name: string;
-  tasks: string[];
-  dependencies: string[];
   parallelizable: boolean;
-  estimatedCredits: number;
+  tasks: string[];
 }
 
 export class ArchitectProtocol {
-  private blueprint: Partial<Blueprint> = {};
+  private readonly blueprint: Partial<Blueprint> = {};
 
-  constructor(private projectId: string) {
+  constructor(private readonly projectId: string) {
     this.blueprint = {
       id: generateId("bp"),
       projectId,
@@ -85,8 +85,11 @@ export class ArchitectProtocol {
     };
   }
 
-  analyzeSRS(srs: SoftwareRequirementsSpec): void {
-    logger.info({ projectId: this.projectId }, "Analyzing SRS for architecture");
+  analyzeSRS(_srs: SoftwareRequirementsSpec): void {
+    logger.info(
+      { projectId: this.projectId },
+      "Analyzing SRS for architecture"
+    );
     // The LLM agent will use SRS to make decisions
     // This method sets up the context
   }
@@ -116,7 +119,9 @@ export class ArchitectProtocol {
     this.blueprint.componentTree = tree;
   }
 
-  addADR(adr: Omit<ArchitectureDecisionRecord, "id" | "status" | "date">): void {
+  addADR(
+    adr: Omit<ArchitectureDecisionRecord, "id" | "status" | "date">
+  ): void {
     this.blueprint.adrs ??= [];
     this.blueprint.adrs.push({
       id: generateId("adr"),
@@ -145,7 +150,9 @@ export class ArchitectProtocol {
       workstreams.push({
         id: generateId("ws"),
         name: "API Implementation",
-        tasks: this.blueprint.apiContracts.map((c) => `Implement ${c.method} ${c.path}`),
+        tasks: this.blueprint.apiContracts.map(
+          (c) => `Implement ${c.method} ${c.path}`
+        ),
         dependencies: ["Database & Schema"],
         parallelizable: true,
         estimatedCredits: 25,
@@ -156,7 +163,11 @@ export class ArchitectProtocol {
       workstreams.push({
         id: generateId("ws"),
         name: "Frontend Implementation",
-        tasks: ["Create layouts", "Build page components", "Wire up API client"],
+        tasks: [
+          "Create layouts",
+          "Build page components",
+          "Wire up API client",
+        ],
         dependencies: [],
         parallelizable: true,
         estimatedCredits: 25,
@@ -185,6 +196,7 @@ export class ArchitectProtocol {
     return workstreams;
   }
 
+  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: complex but well-structured logic
   generateBlueprintMarkdown(): string {
     const bp = this.blueprint;
     const sections: string[] = [];
@@ -210,7 +222,9 @@ export class ArchitectProtocol {
         sections.push("| Column | Type | Nullable |");
         sections.push("|--------|------|----------|");
         for (const col of table.columns) {
-          sections.push(`| ${col.name} | ${col.type} | ${col.nullable ? "Yes" : "No"} |`);
+          sections.push(
+            `| ${col.name} | ${col.type} | ${col.nullable ? "Yes" : "No"} |`
+          );
         }
         sections.push("");
       }
@@ -234,7 +248,7 @@ export class ArchitectProtocol {
         sections.push(`**Status:** ${adr.status} | **Date:** ${adr.date}`);
         sections.push(`**Context:** ${adr.context}`);
         sections.push(`**Decision:** ${adr.decision}`);
-        sections.push(`**Consequences:**`);
+        sections.push("**Consequences:**");
         for (const c of adr.consequences) {
           sections.push(`- ${c}`);
         }

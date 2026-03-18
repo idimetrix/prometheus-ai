@@ -1,5 +1,5 @@
 "use client";
-import * as React from "react";
+import { useMemo, useState } from "react";
 import { cn } from "../lib/utils";
 
 // ── Types ───────────────────────────────────────────────────────
@@ -62,6 +62,9 @@ interface DiffLine {
   type: "addition" | "deletion" | "context" | "hunk" | "header";
 }
 
+const _HUNK_HEADER_RE = /@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/;
+
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: diff parsing requires branching logic
 function parseDiffLines(diff: string): DiffLine[] {
   const raw = diff.split("\n");
   const result: DiffLine[] = [];
@@ -71,10 +74,10 @@ function parseDiffLines(diff: string): DiffLine[] {
   for (const line of raw) {
     if (line.startsWith("@@")) {
       // Parse hunk header: @@ -oldStart,oldCount +newStart,newCount @@
-      const hunkMatch = line.match(/@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/);
+      const hunkMatch = line.match(_HUNK_HEADER_RE);
       if (hunkMatch) {
-        oldLine = Number.parseInt(hunkMatch[1]!, 10);
-        newLine = Number.parseInt(hunkMatch[2]!, 10);
+        oldLine = Number.parseInt(hunkMatch[1] ?? "0", 10);
+        newLine = Number.parseInt(hunkMatch[2] ?? "0", 10);
       }
       result.push({
         type: "hunk",
@@ -137,11 +140,11 @@ function parseDiffLines(diff: string): DiffLine[] {
 // ── Single Diff File View ───────────────────────────────────────
 
 function DiffFileView({ file }: { file: DiffFile }) {
-  const [collapsed, setCollapsed] = React.useState(false);
-  const [copied, setCopied] = React.useState(false);
-  const lines = React.useMemo(() => parseDiffLines(file.diff), [file.diff]);
+  const [collapsed, setCollapsed] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const lines = useMemo(() => parseDiffLines(file.diff), [file.diff]);
 
-  const stats = React.useMemo(() => {
+  const stats = useMemo(() => {
     let additions = 0;
     let deletions = 0;
     for (const line of lines) {
@@ -174,8 +177,10 @@ function DiffFileView({ file }: { file: DiffFile }) {
         <button
           className="text-zinc-500 transition-colors hover:text-zinc-300"
           onClick={() => setCollapsed(!collapsed)}
+          type="button"
         >
           <svg
+            aria-hidden="true"
             className={cn(
               "h-3 w-3 transition-transform",
               collapsed ? "-rotate-90" : "rotate-0"
@@ -226,6 +231,7 @@ function DiffFileView({ file }: { file: DiffFile }) {
           <button
             className="text-[10px] text-zinc-600 transition-colors hover:text-zinc-300"
             onClick={handleCopy}
+            type="button"
           >
             {copied ? "Copied!" : "Copy"}
           </button>
@@ -269,13 +275,12 @@ function DiffFileView({ file }: { file: DiffFile }) {
                           line.type === "context" && "text-zinc-700"
                         )}
                       >
-                        {line.type === "addition"
-                          ? "+"
-                          : line.type === "deletion"
-                            ? "-"
-                            : line.type === "hunk"
-                              ? ""
-                              : " "}
+                        {(
+                          { addition: "+", deletion: "-", hunk: "" } as Record<
+                            string,
+                            string
+                          >
+                        )[line.type] ?? " "}
                       </span>
                     </td>
                     {/* Content */}
@@ -309,7 +314,7 @@ export function CodeDiff({
   activeFileIndex,
   onFileChange,
 }: CodeDiffProps) {
-  const [currentIndex, setCurrentIndex] = React.useState(0);
+  const [currentIndex, setCurrentIndex] = useState(0);
 
   const effectiveIndex = activeFileIndex ?? currentIndex;
 
@@ -335,6 +340,7 @@ export function CodeDiff({
       >
         <div className="flex items-center gap-2 border-zinc-800 border-b px-3 py-2">
           <svg
+            aria-hidden="true"
             className="h-3.5 w-3.5 text-zinc-500"
             fill="none"
             stroke="currentColor"
@@ -369,6 +375,7 @@ export function CodeDiff({
       {/* Header with navigation */}
       <div className="flex shrink-0 items-center gap-2 border-zinc-800 border-b px-3 py-2">
         <svg
+          aria-hidden="true"
           className="h-3.5 w-3.5 text-zinc-500"
           fill="none"
           stroke="currentColor"
@@ -391,8 +398,10 @@ export function CodeDiff({
                 disabled={effectiveIndex === 0}
                 onClick={navigatePrev}
                 title="Previous change"
+                type="button"
               >
                 <svg
+                  aria-hidden="true"
                   className="h-3.5 w-3.5"
                   fill="none"
                   stroke="currentColor"
@@ -414,8 +423,10 @@ export function CodeDiff({
                 disabled={effectiveIndex === files.length - 1}
                 onClick={navigateNext}
                 title="Next change"
+                type="button"
               >
                 <svg
+                  aria-hidden="true"
                   className="h-3.5 w-3.5"
                   fill="none"
                   stroke="currentColor"

@@ -1,5 +1,5 @@
-import { describe, it, expect } from "vitest";
-import { TECH_STACK_PRESETS, getPreset } from "../presets";
+import { describe, expect, it } from "vitest";
+import { getPreset, TECH_STACK_PRESETS } from "../presets";
 
 describe("TECH_STACK_PRESETS", () => {
   it("should have 9 presets", () => {
@@ -8,8 +8,15 @@ describe("TECH_STACK_PRESETS", () => {
 
   it("should have all required presets", () => {
     const required = [
-      "modern-saas", "fullstack-minimal", "django-react", "rails",
-      "go-microservices", "laravel-vue", "react-native", "rust-backend", "custom",
+      "modern-saas",
+      "fullstack-minimal",
+      "django-react",
+      "rails",
+      "go-microservices",
+      "laravel-vue",
+      "react-native",
+      "rust-backend",
+      "custom",
     ];
     for (const id of required) {
       expect(TECH_STACK_PRESETS).toHaveProperty(id);
@@ -18,7 +25,9 @@ describe("TECH_STACK_PRESETS", () => {
 
   it("should have valid preset structure", () => {
     for (const [id, preset] of Object.entries(TECH_STACK_PRESETS)) {
-      if (id === "custom") continue; // custom is allowed to have empty arrays
+      if (id === "custom") {
+        continue; // custom is allowed to have empty arrays
+      }
       expect(preset.id).toBe(id);
       expect(preset.name).toBeTruthy();
       expect(preset.description).toBeTruthy();

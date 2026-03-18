@@ -1,36 +1,107 @@
 {
   "$schema": "https://turbo.build/schema.json",
-  "globalDependencies": ["**/.env.*local"],
+  "globalDependencies": [
+    "**/.env.*local",
+    "**/.env",
+    ".env",
+    ".env.example",
+    "pnpm-lock.yaml",
+    "pnpm-workspace.yaml"
+  ],
+  "globalEnv": ["NODE_ENV", "CI", "TURBO_TOKEN", "TURBO_TEAM"],
+  "globalPassThroughEnv": ["TURBO_TOKEN", "TURBO_TEAM"],
   "ui": "tui",
   "tasks": {
     "build": {
+      "dependsOn": ["^build", "typecheck"],
+      "inputs": ["src/**", "tsconfig.json", "package.json"],
+      "outputs": [".next/**", "!.next/cache/**", "dist/**"],
+      "env": ["NODE_ENV"]
+    },
+    "typecheck": {
+      "dependsOn": [],
+      "inputs": [
+        "src/**",
+        "tsconfig.json",
+        "package.json",
+        "**/*.ts",
+        "**/*.tsx"
+      ],
+      "outputs": []
+    },
+    "test": {
       "dependsOn": ["^build"],
-      "outputs": [".next/**", "!.next/cache/**", "dist/**"]
+      "inputs": [
+        "src/**",
+        "test/**",
+        "tests/**",
+        "**/*.test.*",
+        "**/*.spec.*",
+        "vitest.config.*",
+        "package.json"
+      ],
+      "outputs": ["coverage/**"],
+      "env": ["NODE_ENV", "DATABASE_URL"]
     },
     "dev": {
+      "dependsOn": ["^build"],
       "cache": false,
       "persistent": true
     },
-    "lint": {
-      "dependsOn": ["^build"]
-    },
-    "test": {
-      "dependsOn": ["^build"]
-    },
-    "typecheck": {
-      "dependsOn": []
-    },
     "db:push": {
-      "cache": false
+      "cache": false,
+      "inputs": ["src/schema/**", "drizzle.config.*"],
+      "env": ["DATABASE_URL"]
     },
     "db:migrate": {
-      "cache": false
+      "cache": false,
+      "inputs": ["src/schema/**", "drizzle/**", "drizzle.config.*"],
+      "env": ["DATABASE_URL"]
     },
     "db:generate": {
-      "cache": false
+      "dependsOn": [],
+      "inputs": ["src/schema/**", "drizzle.config.*"],
+      "outputs": ["drizzle/**"],
+      "env": ["DATABASE_URL"]
+    },
+    "db:seed": {
+      "cache": false,
+      "dependsOn": ["db:push"],
+      "inputs": ["src/seed.*", "src/schema/**"],
+      "env": ["DATABASE_URL"]
+    },
+    "db:studio": {
+      "cache": false,
+      "persistent": true,
+      "env": ["DATABASE_URL"]
     },
     "clean": {
       "cache": false
+    },
+    "db:pull": {
+      "cache": false,
+      "env": ["DATABASE_URL"]
+    },
+    "db:check": {
+      "cache": false,
+      "inputs": ["src/schema/**", "drizzle/**", "drizzle.config.*"]
+    },
+    "db:drop": {
+      "cache": false,
+      "env": ["DATABASE_URL"]
+    },
+    "db:reset": {
+      "cache": false,
+      "env": ["DATABASE_URL"]
+    },
+    "db:fresh": {
+      "cache": false,
+      "env": ["DATABASE_URL"]
+    },
+    "db:setup": {
+      "cache": false,
+      "dependsOn": ["db:generate"],
+      "env": ["DATABASE_URL"]
     }
   }
 }

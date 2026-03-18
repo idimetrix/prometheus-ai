@@ -1,12 +1,13 @@
 import { createLogger } from "@prometheus/logger";
 import { createRedisConnection } from "@prometheus/queue";
+
 type IORedis = ReturnType<typeof createRedisConnection>;
 
-const logger = createLogger("billing:rate-limiter");
+const _logger = createLogger("billing:rate-limiter");
 
 interface TierLimits {
-  maxTasksPerDay: number;
   maxConcurrentAgents: number;
+  maxTasksPerDay: number;
 }
 
 const TIER_LIMITS: Record<string, TierLimits> = {
@@ -15,30 +16,43 @@ const TIER_LIMITS: Record<string, TierLimits> = {
   pro: { maxTasksPerDay: 200, maxConcurrentAgents: 5 },
   team: { maxTasksPerDay: 500, maxConcurrentAgents: 10 },
   studio: { maxTasksPerDay: 2000, maxConcurrentAgents: 25 },
-  enterprise: { maxTasksPerDay: Infinity, maxConcurrentAgents: Infinity },
+  enterprise: {
+    maxTasksPerDay: Number.POSITIVE_INFINITY,
+    maxConcurrentAgents: Number.POSITIVE_INFINITY,
+  },
 };
 
 export class RateLimiter {
-  private redis: IORedis;
+  private readonly redis: IORedis;
 
   constructor(redis?: IORedis) {
     this.redis = redis ?? createRedisConnection();
   }
 
-  async checkRateLimit(orgId: string, planTier: string): Promise<{
+  async checkRateLimit(
+    orgId: string,
+    planTier: string
+  ): Promise<{
     allowed: boolean;
     remaining: number;
     resetAt: Date;
   }> {
-    const limits: TierLimits = TIER_LIMITS[planTier] ?? { maxTasksPerDay: 5, maxConcurrentAgents: 1 };
+    const limits: TierLimits = TIER_LIMITS[planTier] ?? {
+      maxTasksPerDay: 5,
+      maxConcurrentAgents: 1,
+    };
 
-    if (limits.maxTasksPerDay === Infinity) {
-      return { allowed: true, remaining: Infinity, resetAt: new Date() };
+    if (limits.maxTasksPerDay === Number.POSITIVE_INFINITY) {
+      return {
+        allowed: true,
+        remaining: Number.POSITIVE_INFINITY,
+        resetAt: new Date(),
+      };
     }
 
     const key = `rate:daily:${orgId}`;
     const count = await this.redis.get(key);
-    const current = count ? parseInt(count, 10) : 0;
+    const current = count ? Number.parseInt(count, 10) : 0;
 
     // Calculate reset time (midnight UTC)
     const now = new Date();
@@ -73,8 +87,15 @@ export class RateLimiter {
     await pipe.exec();
   }
 
-  async checkConcurrency(orgId: string, planTier: string, currentActive: number): Promise<boolean> {
-    const limits: TierLimits = TIER_LIMITS[planTier] ?? { maxTasksPerDay: 5, maxConcurrentAgents: 1 };
+  checkConcurrency(
+    _orgId: string,
+    planTier: string,
+    currentActive: number
+  ): boolean {
+    const limits: TierLimits = TIER_LIMITS[planTier] ?? {
+      maxTasksPerDay: 5,
+      maxConcurrentAgents: 1,
+    };
     return currentActive < limits.maxConcurrentAgents;
   }
 
@@ -90,7 +111,7 @@ export class RateLimiter {
     return priorities[planTier] ?? 10;
   }
 
-  async getEstimatedWait(orgId: string, planTier: string): Promise<number> {
+  getEstimatedWait(_orgId: string, planTier: string): number {
     const priority = this.getPriorityForTier(planTier);
     // Rough estimate: higher priority = lower wait
     return Math.max(0, (priority - 1) * 15);

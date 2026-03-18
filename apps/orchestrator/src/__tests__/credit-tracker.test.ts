@@ -12,9 +12,9 @@ vi.mock("@prometheus/logger", () => ({
 const mockPublishSessionEvent = vi.fn().mockResolvedValue(undefined);
 
 vi.mock("@prometheus/queue", () => ({
-  EventPublisher: vi.fn().mockImplementation(() => ({
-    publishSessionEvent: (...args: any[]) => mockPublishSessionEvent(...args),
-  })),
+  EventPublisher: class {
+    publishSessionEvent = (...args: any[]) => mockPublishSessionEvent(...args);
+  },
   QueueEvents: {
     CREDIT_UPDATE: "credit:update",
   },
@@ -56,7 +56,7 @@ vi.mock("@prometheus/db", () => {
             }),
           }),
         };
-        return fn(tx);
+        return await fn(tx);
       }),
     },
     creditBalances: {

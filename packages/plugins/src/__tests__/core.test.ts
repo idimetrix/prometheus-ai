@@ -13,8 +13,12 @@ const createTestManifest = (id: string): PluginManifest => ({
 });
 
 const noopLifecycle: PluginLifecycle = {
-  activate: async () => {},
-  deactivate: async () => {},
+  activate: async () => {
+    /* no-op */
+  },
+  deactivate: async () => {
+    /* no-op */
+  },
 };
 
 describe("PluginLoader", () => {

@@ -19,6 +19,10 @@ import { createLogger } from "@prometheus/logger";
 
 const logger = createLogger("orchestrator:confidence");
 
+const CODE_BLOCK_RE = /```[\s\S]+```/;
+const JSON_BLOCK_RE = /^\s*\{[\s\S]*\}\s*$/m;
+const MARKDOWN_HEADER_RE = /^#{1,3}\s/m;
+
 export interface IterationSignals {
   /** Whether the LLM mentioned uncertainty keywords. */
   expressedUncertainty: boolean;
@@ -249,9 +253,9 @@ export class ConfidenceScorer {
 
     // Detect structured output (JSON, code blocks, markdown headers)
     const hasStructuredOutput =
-      /```[\s\S]+```/.test(output) ||
-      /^\s*\{[\s\S]*\}\s*$/m.test(output) ||
-      /^#{1,3}\s/m.test(output);
+      CODE_BLOCK_RE.test(output) ||
+      JSON_BLOCK_RE.test(output) ||
+      MARKDOWN_HEADER_RE.test(output);
 
     // Detect stale iterations (no meaningful progress)
     const isStale =

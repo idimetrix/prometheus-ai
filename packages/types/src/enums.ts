@@ -60,21 +60,24 @@ export const CreditTransactionType = {
   BONUS: "bonus",
   SUBSCRIPTION_GRANT: "subscription_grant",
 } as const;
-export type CreditTransactionType = (typeof CreditTransactionType)[keyof typeof CreditTransactionType];
+export type CreditTransactionType =
+  (typeof CreditTransactionType)[keyof typeof CreditTransactionType];
 
 export const BlueprintEnforcement = {
   STRICT: "strict",
   FLEXIBLE: "flexible",
   ADVISORY: "advisory",
 } as const;
-export type BlueprintEnforcement = (typeof BlueprintEnforcement)[keyof typeof BlueprintEnforcement];
+export type BlueprintEnforcement =
+  (typeof BlueprintEnforcement)[keyof typeof BlueprintEnforcement];
 
 export const AgentAggressiveness = {
   BALANCED: "balanced",
   FULL_AUTO: "full_auto",
   SUPERVISED: "supervised",
 } as const;
-export type AgentAggressiveness = (typeof AgentAggressiveness)[keyof typeof AgentAggressiveness];
+export type AgentAggressiveness =
+  (typeof AgentAggressiveness)[keyof typeof AgentAggressiveness];
 
 export const SessionEventType = {
   AGENT_OUTPUT: "agent_output",
@@ -88,5 +91,7 @@ export const SessionEventType = {
   REASONING: "reasoning",
   TERMINAL_OUTPUT: "terminal_output",
   BROWSER_SCREENSHOT: "browser_screenshot",
+  PR_CREATED: "pr_created",
 } as const;
-export type SessionEventType = (typeof SessionEventType)[keyof typeof SessionEventType];
+export type SessionEventType =
+  (typeof SessionEventType)[keyof typeof SessionEventType];

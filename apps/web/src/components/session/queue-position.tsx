@@ -18,6 +18,7 @@ export function QueuePosition() {
     <div className="flex items-center gap-2 rounded-full border border-zinc-800 bg-zinc-900 px-3 py-1.5">
       <div className="flex h-4 w-4 items-center justify-center">
         <svg
+          aria-hidden="true"
           className="h-3.5 w-3.5 animate-spin text-violet-400"
           fill="none"
           viewBox="0 0 24 24"

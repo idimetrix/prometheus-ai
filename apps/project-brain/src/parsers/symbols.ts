@@ -133,7 +133,7 @@ export class SymbolStore {
       await db
         .update(agentMemories)
         .set({ content })
-        .where(eq(agentMemories.id, existing[0]?.id));
+        .where(eq(agentMemories.id, (existing[0] as (typeof existing)[0]).id));
     } else {
       await db.insert(agentMemories).values({
         id: generateId("sym"),
@@ -177,7 +177,9 @@ export class SymbolStore {
     }
 
     try {
-      const json = results[0]?.content.slice(SYMBOL_PREFIX.length);
+      const json = (results[0] as (typeof results)[0]).content.slice(
+        SYMBOL_PREFIX.length
+      );
       return JSON.parse(json) as SymbolTable;
     } catch {
       return null;
@@ -187,6 +189,7 @@ export class SymbolStore {
   /**
    * Search for symbols by name across all files in a project.
    */
+  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: complex but well-structured logic
   async searchSymbol(
     projectId: string,
     symbolName: string

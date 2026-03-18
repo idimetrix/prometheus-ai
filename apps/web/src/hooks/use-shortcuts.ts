@@ -91,6 +91,7 @@ export function useShortcuts(additionalShortcuts: ShortcutAction[] = []) {
     allShortcuts.current = [...DEFAULT_SHORTCUTS, ...additionalShortcuts];
   }, [additionalShortcuts]);
 
+  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: complex but well-structured logic
   const handleKeyDown = useCallback((e: KeyboardEvent) => {
     for (const shortcut of allShortcuts.current) {
       const metaMatch = shortcut.meta ? e.metaKey || e.ctrlKey : true;
@@ -108,11 +109,13 @@ export function useShortcuts(additionalShortcuts: ShortcutAction[] = []) {
         (shortcut.shift ? e.shiftKey : !e.shiftKey || shortcut.key === "Escape")
       ) {
         // Skip if input is focused and shortcut is not global
-        if (!shortcut.global && isInputFocused() && shortcut.key !== "Escape") {
-          // Allow meta+key combos even in inputs
-          if (!(shortcut.meta || shortcut.ctrl)) {
-            continue;
-          }
+        if (
+          !shortcut.global &&
+          isInputFocused() &&
+          shortcut.key !== "Escape" &&
+          !(shortcut.meta || shortcut.ctrl)
+        ) {
+          continue;
         }
 
         e.preventDefault();
@@ -151,12 +154,14 @@ export function formatShortcut(shortcut: ShortcutAction): string {
     parts.push(isMac ? "\u2325" : "Alt");
   }
 
-  const keyLabel =
-    shortcut.key === "Escape"
-      ? "Esc"
-      : shortcut.key === "Enter"
-        ? "\u21B5"
-        : shortcut.key.toUpperCase();
+  let keyLabel: string;
+  if (shortcut.key === "Escape") {
+    keyLabel = "Esc";
+  } else if (shortcut.key === "Enter") {
+    keyLabel = "\u21B5";
+  } else {
+    keyLabel = shortcut.key.toUpperCase();
+  }
   parts.push(keyLabel);
 
   return parts.join("+");

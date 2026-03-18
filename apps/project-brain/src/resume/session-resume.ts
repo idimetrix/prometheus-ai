@@ -1,39 +1,42 @@
-import { db } from "@prometheus/db";
-import { sessions, sessionEvents, sessionMessages } from "@prometheus/db";
+import { db, sessionEvents, sessions } from "@prometheus/db";
 import { createLogger } from "@prometheus/logger";
-import { eq, desc } from "drizzle-orm";
+import { desc, eq } from "drizzle-orm";
 import type { ContextAssembler } from "../context/assembler";
-import type { WorkingMemoryLayer } from "../layers/working-memory";
 import type { EpisodicLayer } from "../layers/episodic";
+import type { WorkingMemoryLayer } from "../layers/working-memory";
 
 const logger = createLogger("project-brain:resume");
 
 export interface SessionBriefing {
-  summary: string;
-  lastActions: string[];
-  currentState: string;
-  nextSteps: string[];
   contextAssembled: boolean;
+  currentState: string;
+  lastActions: string[];
+  nextSteps: string[];
   resumeTimeMs: number;
+  summary: string;
 }
 
 export class SessionResume {
   constructor(
-    private readonly contextAssembler: ContextAssembler,
+    readonly _contextAssembler: ContextAssembler,
     private readonly workingMemory: WorkingMemoryLayer,
-    private readonly episodic: EpisodicLayer,
+    private readonly episodic: EpisodicLayer
   ) {}
 
-  async generateBriefing(sessionId: string, projectId: string): Promise<SessionBriefing> {
+  async generateBriefing(
+    sessionId: string,
+    projectId: string
+  ): Promise<SessionBriefing> {
     const startTime = Date.now();
 
     // Load session info, recent events, working memory, and episodic memories in parallel
-    const [sessionInfo, recentEvents, workingMem, recentDecisions] = await Promise.all([
-      this.loadSession(sessionId),
-      this.loadRecentEvents(sessionId, 20),
-      this.workingMemory.getAll(sessionId),
-      this.episodic.getRecent(projectId, 5),
-    ]);
+    const [sessionInfo, recentEvents, workingMem, recentDecisions] =
+      await Promise.all([
+        this.loadSession(sessionId),
+        this.loadRecentEvents(sessionId, 20),
+        this.workingMemory.getAll(sessionId),
+        this.episodic.getRecent(projectId, 5),
+      ]);
 
     // Build summary from session state
     const status = sessionInfo?.status ?? "unknown";
@@ -41,7 +44,12 @@ export class SessionResume {
 
     // Extract last actions from session events
     const lastActions = recentEvents
-      .filter((e) => e.type === "file_change" || e.type === "agent_output" || e.type === "task_status")
+      .filter(
+        (e) =>
+          e.type === "file_change" ||
+          e.type === "agent_output" ||
+          e.type === "task_status"
+      )
       .slice(0, 5)
       .map((e) => {
         const data = e.data as Record<string, unknown>;
@@ -50,7 +58,7 @@ export class SessionResume {
         }
         if (e.type === "agent_output") {
           const content = String(data.content ?? data.message ?? "");
-          return content.length > 100 ? content.slice(0, 100) + "..." : content;
+          return content.length > 100 ? `${content.slice(0, 100)}...` : content;
         }
         if (e.type === "task_status") {
           return `Task ${data.taskId ?? ""}: ${data.status ?? "updated"}`;
@@ -94,10 +102,10 @@ export class SessionResume {
     // Check for recent errors
     const errorEvents = recentEvents.filter((e) => e.type === "error");
     if (errorEvents.length > 0) {
-      const lastError = errorEvents[0]!;
+      const lastError = errorEvents[0] as (typeof errorEvents)[0];
       const errorData = lastError.data as Record<string, unknown>;
       nextSteps.push(
-        `Address error: ${errorData.message ?? errorData.error ?? "Unknown error"}`,
+        `Address error: ${errorData.message ?? errorData.error ?? "Unknown error"}`
       );
     }
 
@@ -112,7 +120,7 @@ export class SessionResume {
       status,
       mode,
       lastActions,
-      recentDecisions,
+      recentDecisions
     );
 
     const briefing: SessionBriefing = {
@@ -132,7 +140,7 @@ export class SessionResume {
         eventsLoaded: recentEvents.length,
         decisionsLoaded: recentDecisions.length,
       },
-      "Session briefing generated",
+      "Session briefing generated"
     );
 
     return briefing;
@@ -173,11 +181,11 @@ export class SessionResume {
     status: string,
     mode: string,
     lastActions: string[],
-    recentDecisions: Array<{ decision: string; outcome: string | null }>,
+    recentDecisions: Array<{ decision: string; outcome: string | null }>
   ): string {
     const parts: string[] = [
-      `# Session Resume Briefing`,
-      ``,
+      "# Session Resume Briefing",
+      "",
       `**Session:** ${sessionId}`,
       `**Project:** ${projectId}`,
       `**Status:** ${status} | **Mode:** ${mode}`,

@@ -1,24 +1,77 @@
 import { verifyToken } from "@clerk/backend";
 
-export interface AuthContext {
-  userId: string;
-  orgId: string | null;
-  orgRole: string | null;
-  sessionId: string;
+// ---------------------------------------------------------------------------
+// Role types
+// ---------------------------------------------------------------------------
+
+export const ORG_ROLES = ["owner", "admin", "member"] as const;
+export type OrgRole = (typeof ORG_ROLES)[number];
+
+const ORG_ROLE_RANK: Record<OrgRole, number> = {
+  member: 0,
+  admin: 1,
+  owner: 2,
+};
+
+/**
+ * Returns true if `userRole` meets or exceeds `requiredRole`.
+ */
+export function hasOrgRole(
+  userRole: OrgRole | string | null,
+  requiredRole: OrgRole
+): boolean {
+  if (!userRole) {
+    return false;
+  }
+  const userRank = ORG_ROLE_RANK[userRole as OrgRole] ?? -1;
+  const requiredRank = ORG_ROLE_RANK[requiredRole] ?? 0;
+  return userRank >= requiredRank;
 }
 
-export async function getAuthContext(token: string): Promise<AuthContext | null> {
+// ---------------------------------------------------------------------------
+// Auth context
+// ---------------------------------------------------------------------------
+
+export interface AuthContext {
+  orgId: string | null;
+  orgRole: OrgRole | null;
+  sessionId: string;
+  userId: string;
+}
+
+export async function getAuthContext(
+  token: string
+): Promise<AuthContext | null> {
   try {
     const secretKey = process.env.CLERK_SECRET_KEY;
-    if (!secretKey) throw new Error("CLERK_SECRET_KEY is required");
+    if (!secretKey) {
+      throw new Error("CLERK_SECRET_KEY is required");
+    }
 
-    const session = await verifyToken(token, { secretKey });
-    if (!session) return null;
+    const session = await verifyToken(token, {
+      secretKey,
+      // Accept tokens with up to 60s clock skew to avoid spurious rejections
+      clockSkewInMs: 60_000,
+    });
+    if (!session) {
+      return null;
+    }
+
+    const raw = session as Record<string, unknown>;
+    const orgRole = (raw.org_role as string | null) ?? null;
 
     return {
       userId: session.sub,
-      orgId: (session as Record<string, unknown>).org_id as string | null ?? null,
-      orgRole: (session as Record<string, unknown>).org_role as string | null ?? null,
+      orgId: (raw.org_id as string | null) ?? null,
+      orgRole: (() => {
+        if (orgRole && ORG_ROLES.includes(orgRole as OrgRole)) {
+          return orgRole as OrgRole;
+        }
+        if (orgRole) {
+          return "member" as OrgRole;
+        }
+        return null;
+      })(),
       sessionId: session.sid ?? "",
     };
   } catch {

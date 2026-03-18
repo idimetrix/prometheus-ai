@@ -21,6 +21,7 @@ interface EmptyStateProps {
 function DefaultIcon() {
   return (
     <svg
+      aria-hidden="true"
       className="h-6 w-6 text-zinc-500"
       fill="none"
       stroke="currentColor"
@@ -36,6 +37,33 @@ function DefaultIcon() {
   );
 }
 
+function ActionWrapper({
+  config,
+  variant,
+}: {
+  config: NonNullable<EmptyStateProps["action"]>;
+  variant: "primary" | "secondary";
+}) {
+  const baseClasses =
+    variant === "primary"
+      ? "rounded-lg bg-violet-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-violet-700"
+      : "rounded-lg border border-zinc-700 px-4 py-2 text-sm font-medium text-zinc-300 transition-colors hover:bg-zinc-800";
+
+  if (config.href) {
+    return (
+      <a className={baseClasses} href={config.href}>
+        {config.label}
+      </a>
+    );
+  }
+
+  return (
+    <button className={baseClasses} onClick={config.onClick} type="button">
+      {config.label}
+    </button>
+  );
+}
+
 /**
  * Empty state component for pages and sections with no data.
  * Displays an icon, title, optional description, and action button(s).
@@ -48,33 +76,6 @@ export function EmptyState({
   secondaryAction,
   className = "",
 }: EmptyStateProps) {
-  const ActionWrapper = ({
-    config,
-    variant,
-  }: {
-    config: NonNullable<EmptyStateProps["action"]>;
-    variant: "primary" | "secondary";
-  }) => {
-    const baseClasses =
-      variant === "primary"
-        ? "rounded-lg bg-violet-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-violet-700"
-        : "rounded-lg border border-zinc-700 px-4 py-2 text-sm font-medium text-zinc-300 transition-colors hover:bg-zinc-800";
-
-    if (config.href) {
-      return (
-        <a className={baseClasses} href={config.href}>
-          {config.label}
-        </a>
-      );
-    }
-
-    return (
-      <button className={baseClasses} onClick={config.onClick}>
-        {config.label}
-      </button>
-    );
-  };
-
   return (
     <div
       className={`rounded-xl border border-zinc-800 border-dashed bg-zinc-900/30 p-12 text-center ${className}`}
@@ -107,6 +108,7 @@ export function EmptyProjects() {
       description="Create your first project to get started."
       icon={
         <svg
+          aria-hidden="true"
           className="h-6 w-6 text-zinc-500"
           fill="none"
           stroke="currentColor"
@@ -132,6 +134,7 @@ export function EmptySessions() {
       description="Start a new task to see agent sessions here."
       icon={
         <svg
+          aria-hidden="true"
           className="h-6 w-6 text-zinc-500"
           fill="none"
           stroke="currentColor"
@@ -156,6 +159,7 @@ export function EmptyNotifications() {
       description="You're all caught up."
       icon={
         <svg
+          aria-hidden="true"
           className="h-6 w-6 text-zinc-500"
           fill="none"
           stroke="currentColor"
@@ -180,6 +184,7 @@ export function EmptySearchResults({ query }: { query: string }) {
       description="Try a different search term or check your filters."
       icon={
         <svg
+          aria-hidden="true"
           className="h-6 w-6 text-zinc-500"
           fill="none"
           stroke="currentColor"

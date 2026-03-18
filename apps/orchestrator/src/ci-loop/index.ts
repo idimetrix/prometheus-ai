@@ -1,2 +1,2 @@
-export { CILoopRunner, type CILoopResult } from "./ci-loop-runner";
-export { FailureAnalyzer, type FailureAnalysis } from "./failure-analyzer";
+export { type CILoopResult, CILoopRunner } from "./ci-loop-runner";
+export { type FailureAnalysis, FailureAnalyzer } from "./failure-analyzer";

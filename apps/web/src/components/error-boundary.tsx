@@ -46,6 +46,7 @@ export class ErrorBoundary extends Component<
           <div className="max-w-md text-center">
             <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-red-500/10">
               <svg
+                aria-hidden="true"
                 className="h-7 w-7 text-red-500"
                 fill="none"
                 stroke="currentColor"
@@ -69,12 +70,14 @@ export class ErrorBoundary extends Component<
               <button
                 className="rounded-lg bg-violet-600 px-4 py-2 font-medium text-sm text-white transition-colors hover:bg-violet-700"
                 onClick={this.handleRetry}
+                type="button"
               >
                 Try Again
               </button>
               <button
                 className="rounded-lg border border-zinc-700 px-4 py-2 font-medium text-sm text-zinc-300 transition-colors hover:bg-zinc-800"
                 onClick={() => window.location.reload()}
+                type="button"
               >
                 Reload Page
               </button>

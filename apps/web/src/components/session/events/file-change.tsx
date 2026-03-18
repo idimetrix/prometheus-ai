@@ -33,7 +33,9 @@ export function FileChange({ event }: FileChangeProps) {
     (event.data.status as string) ??
     "modified";
   const config = (CHANGE_TYPE_CONFIG[changeType] ??
-    CHANGE_TYPE_CONFIG.modified)!;
+    CHANGE_TYPE_CONFIG.modified) as NonNullable<
+    (typeof CHANGE_TYPE_CONFIG)[string]
+  >;
 
   const fileName = filePath.split("/").pop() ?? filePath;
   const dirPath = filePath.split("/").slice(0, -1).join("/");
@@ -41,6 +43,7 @@ export function FileChange({ event }: FileChangeProps) {
   return (
     <div className="flex items-center gap-2 rounded-lg border border-zinc-800 bg-zinc-900/50 px-3 py-2">
       <svg
+        aria-hidden="true"
         className="h-4 w-4 shrink-0 text-zinc-500"
         fill="none"
         stroke="currentColor"

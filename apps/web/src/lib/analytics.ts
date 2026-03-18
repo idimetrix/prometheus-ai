@@ -57,7 +57,9 @@ export async function initAnalytics(): Promise<void> {
           console.debug("[analytics] page", name);
         }
       },
-      reset: () => {},
+      reset: () => {
+        /* no-op in dev */
+      },
     };
     return;
   }
@@ -84,11 +86,21 @@ export async function initAnalytics(): Promise<void> {
   } catch {
     // PostHog not available — silently degrade
     client = {
-      capture: () => {},
-      identify: () => {},
-      group: () => {},
-      page: () => {},
-      reset: () => {},
+      capture: () => {
+        /* no-op */
+      },
+      identify: () => {
+        /* no-op */
+      },
+      group: () => {
+        /* no-op */
+      },
+      page: () => {
+        /* no-op */
+      },
+      reset: () => {
+        /* no-op */
+      },
     };
   }
 }

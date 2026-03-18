@@ -1,13 +1,13 @@
 export interface RetryOptions {
-  maxAttempts?: number;
-  delayMs?: number;
   backoffMultiplier?: number;
+  delayMs?: number;
+  maxAttempts?: number;
   onRetry?: (error: unknown, attempt: number) => void;
 }
 
 export async function retry<T>(
   fn: () => Promise<T>,
-  options: RetryOptions = {},
+  options: RetryOptions = {}
 ): Promise<T> {
   const {
     maxAttempts = 3,
@@ -23,10 +23,12 @@ export async function retry<T>(
       return await fn();
     } catch (error) {
       lastError = error;
-      if (attempt === maxAttempts) break;
+      if (attempt === maxAttempts) {
+        break;
+      }
       onRetry?.(error, attempt);
       await new Promise((resolve) =>
-        setTimeout(resolve, delayMs * Math.pow(backoffMultiplier, attempt - 1)),
+        setTimeout(resolve, delayMs * backoffMultiplier ** (attempt - 1))
       );
     }
   }

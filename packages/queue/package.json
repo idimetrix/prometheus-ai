@@ -11,12 +11,12 @@
     "clean": "rm -rf dist .turbo"
   },
   "dependencies": {
-    "bullmq": "^5.34.0",
-    "ioredis": "5.9.3"
+    "bullmq": "^5.71.0",
+    "ioredis": "5.10.0"
   },
   "devDependencies": {
     "@prometheus/config-typescript": "workspace:*",
     "@prometheus/types": "workspace:*",
-    "typescript": "^5.7.0"
+    "typescript": "^5.9.3"
   }
 }

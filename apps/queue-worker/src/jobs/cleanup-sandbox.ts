@@ -11,8 +11,14 @@ const SANDBOX_MANAGER_URL =
 export async function processCleanupSandbox(
   data: CleanupSandboxData
 ): Promise<{ cleaned: boolean; artifactsPreserved: boolean }> {
-  const { sandboxId, sessionId, projectId, orgId, reason, preserveArtifacts } =
-    data;
+  const {
+    sandboxId,
+    sessionId,
+    projectId: _projectId,
+    orgId: _orgId,
+    reason,
+    preserveArtifacts,
+  } = data;
 
   logger.info(
     { sandboxId, sessionId, reason, preserveArtifacts },

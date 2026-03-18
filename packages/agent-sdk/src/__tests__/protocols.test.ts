@@ -1,5 +1,4 @@
-// @ts-nocheck – test assertions access array indices that TS can't prove are defined
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@prometheus/logger", () => ({
   createLogger: () => ({
@@ -51,7 +50,10 @@ describe("DiscoveryProtocol", () => {
 
   describe("processAnswer", () => {
     it("populates who personas from answer", () => {
-      protocol.processAnswer("who", "- Admin users\n- Regular users\n- Developers");
+      protocol.processAnswer(
+        "who",
+        "- Admin users\n- Regular users\n- Developers"
+      );
       const spec = protocol.getSpec();
       expect(spec.who.personas).toHaveLength(3);
       expect(spec.who.personas).toContain("Admin users");
@@ -72,18 +74,24 @@ describe("DiscoveryProtocol", () => {
     });
 
     it("populates acceptance criteria from answer", () => {
-      protocol.processAnswer("done", "- Users can login\n- Dashboard loads in < 2s");
+      protocol.processAnswer(
+        "done",
+        "- Users can login\n- Dashboard loads in < 2s"
+      );
       const spec = protocol.getSpec();
       expect(spec.acceptanceCriteria).toHaveLength(2);
-      expect(spec.acceptanceCriteria[0].testable).toBe(true);
+      expect(spec.acceptanceCriteria[0]?.testable).toBe(true);
     });
 
     it("populates risks from answer with medium severity default", () => {
-      protocol.processAnswer("risk", "- API rate limits\n- Data loss\n- Slow performance");
+      protocol.processAnswer(
+        "risk",
+        "- API rate limits\n- Data loss\n- Slow performance"
+      );
       const spec = protocol.getSpec();
       expect(spec.risks).toHaveLength(3);
-      expect(spec.risks[0].severity).toBe("medium");
-      expect(spec.risks[0].risk).toContain("API rate limits");
+      expect(spec.risks[0]?.severity).toBe("medium");
+      expect(spec.risks[0]?.risk).toContain("API rate limits");
     });
 
     it("updates confidence score after each answer", () => {
@@ -157,13 +165,13 @@ describe("DiscoveryProtocol", () => {
     it("returns first question when nothing answered", () => {
       const next = protocol.getNextUnansweredQuestion();
       expect(next).toBeTruthy();
-      expect(next!.category).toBe("who");
+      expect(next?.category).toBe("who");
     });
 
     it("skips answered categories", () => {
       protocol.processAnswer("who", "Admin");
       const next = protocol.getNextUnansweredQuestion();
-      expect(next!.category).toBe("what");
+      expect(next?.category).toBe("what");
     });
 
     it("returns null when all answered", () => {
@@ -196,8 +204,8 @@ describe("DiscoveryProtocol", () => {
 // ArchitectProtocol
 // ═════════════════════════════════════════════════════════════════════════════
 
-import { ArchitectProtocol } from "../protocols/architect";
 import type { TechStackDecision } from "../protocols/architect";
+import { ArchitectProtocol } from "../protocols/architect";
 
 describe("ArchitectProtocol", () => {
   let protocol: ArchitectProtocol;
@@ -227,8 +235,8 @@ describe("ArchitectProtocol", () => {
       protocol.setTechStack(techStack);
       const bp = protocol.getBlueprint();
       expect(bp.adrs.length).toBeGreaterThanOrEqual(1);
-      expect(bp.adrs[0].title).toBe("Tech Stack Selection");
-      expect(bp.adrs[0].status).toBe("accepted");
+      expect(bp.adrs[0]?.title).toBe("Tech Stack Selection");
+      expect(bp.adrs[0]?.status).toBe("accepted");
     });
   });
 
@@ -243,14 +251,24 @@ describe("ArchitectProtocol", () => {
 
       const bp = protocol.getBlueprint();
       expect(bp.adrs).toHaveLength(1);
-      expect(bp.adrs[0].id).toBe("adr_mock123");
-      expect(bp.adrs[0].status).toBe("accepted");
-      expect(bp.adrs[0].date).toBeTruthy();
+      expect(bp.adrs[0]?.id).toBe("adr_mock123");
+      expect(bp.adrs[0]?.status).toBe("accepted");
+      expect(bp.adrs[0]?.date).toBeTruthy();
     });
 
     it("accumulates multiple ADRs", () => {
-      protocol.addADR({ title: "ADR 1", context: "C1", decision: "D1", consequences: [] });
-      protocol.addADR({ title: "ADR 2", context: "C2", decision: "D2", consequences: [] });
+      protocol.addADR({
+        title: "ADR 1",
+        context: "C1",
+        decision: "D1",
+        consequences: [],
+      });
+      protocol.addADR({
+        title: "ADR 2",
+        context: "C2",
+        decision: "D2",
+        consequences: [],
+      });
       const bp = protocol.getBlueprint();
       expect(bp.adrs).toHaveLength(2);
     });
@@ -258,51 +276,61 @@ describe("ArchitectProtocol", () => {
 
   describe("identifyWorkstreams", () => {
     it("creates Database & Schema workstream when schema exists", () => {
-      protocol.setDatabaseSchema([{
-        tableName: "users",
-        columns: [{ name: "id", type: "uuid", nullable: false }],
-        indexes: ["users_pkey"],
-      }]);
+      protocol.setDatabaseSchema([
+        {
+          tableName: "users",
+          columns: [{ name: "id", type: "uuid", nullable: false }],
+          indexes: ["users_pkey"],
+        },
+      ]);
 
       const workstreams = protocol.identifyWorkstreams();
       const dbWs = workstreams.find((ws) => ws.name === "Database & Schema");
       expect(dbWs).toBeTruthy();
-      expect(dbWs!.parallelizable).toBe(true);
+      expect(dbWs?.parallelizable).toBe(true);
     });
 
     it("creates API workstream when contracts exist", () => {
-      protocol.setDatabaseSchema([{
-        tableName: "users",
-        columns: [{ name: "id", type: "uuid", nullable: false }],
-        indexes: [],
-      }]);
-      protocol.setAPIContracts([{
-        path: "/api/users",
-        method: "GET",
-        description: "List users",
-        inputType: "void",
-        outputType: "User[]",
-        auth: true,
-      }]);
+      protocol.setDatabaseSchema([
+        {
+          tableName: "users",
+          columns: [{ name: "id", type: "uuid", nullable: false }],
+          indexes: [],
+        },
+      ]);
+      protocol.setAPIContracts([
+        {
+          path: "/api/users",
+          method: "GET",
+          description: "List users",
+          inputType: "void",
+          outputType: "User[]",
+          auth: true,
+        },
+      ]);
 
       const workstreams = protocol.identifyWorkstreams();
       const apiWs = workstreams.find((ws) => ws.name === "API Implementation");
       expect(apiWs).toBeTruthy();
-      expect(apiWs!.dependencies).toContain("Database & Schema");
+      expect(apiWs?.dependencies).toContain("Database & Schema");
     });
 
     it("creates Frontend workstream when component tree exists", () => {
-      protocol.setComponentTree([{
-        name: "Dashboard",
-        type: "page",
-        children: [],
-        dependencies: [],
-      }]);
+      protocol.setComponentTree([
+        {
+          name: "Dashboard",
+          type: "page",
+          children: [],
+          dependencies: [],
+        },
+      ]);
 
       const workstreams = protocol.identifyWorkstreams();
-      const frontendWs = workstreams.find((ws) => ws.name === "Frontend Implementation");
+      const frontendWs = workstreams.find(
+        (ws) => ws.name === "Frontend Implementation"
+      );
       expect(frontendWs).toBeTruthy();
-      expect(frontendWs!.parallelizable).toBe(true);
+      expect(frontendWs?.parallelizable).toBe(true);
     });
 
     it("always includes Testing & Security workstream", () => {
@@ -327,14 +355,16 @@ describe("ArchitectProtocol", () => {
     });
 
     it("includes database schema tables", () => {
-      protocol.setDatabaseSchema([{
-        tableName: "users",
-        columns: [
-          { name: "id", type: "uuid", nullable: false },
-          { name: "email", type: "text", nullable: false },
-        ],
-        indexes: [],
-      }]);
+      protocol.setDatabaseSchema([
+        {
+          tableName: "users",
+          columns: [
+            { name: "id", type: "uuid", nullable: false },
+            { name: "email", type: "text", nullable: false },
+          ],
+          indexes: [],
+        },
+      ]);
       const md = protocol.generateBlueprintMarkdown();
       expect(md).toContain("## Database Schema");
       expect(md).toContain("users");
@@ -342,14 +372,16 @@ describe("ArchitectProtocol", () => {
     });
 
     it("includes API contracts", () => {
-      protocol.setAPIContracts([{
-        path: "/api/users",
-        method: "GET",
-        description: "List all users",
-        inputType: "void",
-        outputType: "User[]",
-        auth: true,
-      }]);
+      protocol.setAPIContracts([
+        {
+          path: "/api/users",
+          method: "GET",
+          description: "List all users",
+          inputType: "void",
+          outputType: "User[]",
+          auth: true,
+        },
+      ]);
       const md = protocol.generateBlueprintMarkdown();
       expect(md).toContain("## API Contracts");
       expect(md).toContain("GET /api/users");
@@ -373,8 +405,8 @@ describe("ArchitectProtocol", () => {
 // PlannerProtocol
 // ═════════════════════════════════════════════════════════════════════════════
 
+import type { Blueprint } from "../protocols/architect";
 import { PlannerProtocol } from "../protocols/planner";
-import type { Blueprint, Workstream } from "../protocols/architect";
 
 describe("PlannerProtocol", () => {
   let protocol: PlannerProtocol;
@@ -387,32 +419,37 @@ describe("PlannerProtocol", () => {
     it("creates a single-task plan from description", () => {
       const plan = protocol.createFromDescription("Build a user login page");
       expect(plan.tasks).toHaveLength(1);
-      expect(plan.tasks[0].title).toBe("Build a user login page");
+      expect(plan.tasks[0]?.title).toBe("Build a user login page");
     });
 
     it("infers agent role from description", () => {
-      const plan = protocol.createFromDescription("Build a React component for the dashboard");
-      expect(plan.tasks[0].agentRole).toBe("frontend_coder");
+      const plan = protocol.createFromDescription(
+        "Build a React component for the dashboard"
+      );
+      expect(plan.tasks[0]?.agentRole).toBe("frontend_coder");
     });
 
     it("uses provided agent role over inference", () => {
-      const plan = protocol.createFromDescription("Fix the bug", "security_auditor");
-      expect(plan.tasks[0].agentRole).toBe("security_auditor");
+      const plan = protocol.createFromDescription(
+        "Fix the bug",
+        "security_auditor"
+      );
+      expect(plan.tasks[0]?.agentRole).toBe("security_auditor");
     });
 
     it("estimates credits based on description length", () => {
       const shortPlan = protocol.createFromDescription("Fix bug");
-      expect(shortPlan.tasks[0].estimatedCredits).toBe(5); // < 100 chars
+      expect(shortPlan.tasks[0]?.estimatedCredits).toBe(5); // < 100 chars
 
       const protocol2 = new PlannerProtocol("proj_2");
       const longDesc = "A".repeat(200);
       const mediumPlan = protocol2.createFromDescription(longDesc);
-      expect(mediumPlan.tasks[0].estimatedCredits).toBe(15); // 100-500 chars
+      expect(mediumPlan.tasks[0]?.estimatedCredits).toBe(15); // 100-500 chars
     });
 
     it("sets totalEstimatedCredits equal to task credits", () => {
       const plan = protocol.createFromDescription("Build API endpoint");
-      expect(plan.totalEstimatedCredits).toBe(plan.tasks[0].estimatedCredits);
+      expect(plan.totalEstimatedCredits).toBe(plan.tasks[0]?.estimatedCredits);
     });
   });
 
@@ -461,13 +498,13 @@ describe("PlannerProtocol", () => {
       // Should have at least 1 wave
       expect(waves.length).toBeGreaterThanOrEqual(1);
       // First wave should contain Database tasks (no deps)
-      const firstWaveTitles = waves[0].map((t: any) => t.title);
-      expect(firstWaveTitles.length).toBeGreaterThan(0);
+      const firstWaveTitles = waves[0]?.map((t: any) => t.title);
+      expect(firstWaveTitles?.length).toBeGreaterThan(0);
     });
 
     it("handles circular dependencies by forcing remaining tasks", () => {
       // This is tested by the safety mechanism in getExecutionOrder
-      const plan = protocol.createFromDescription("Some task");
+      const _plan = protocol.createFromDescription("Some task");
       const waves = protocol.getExecutionOrder();
       expect(waves).toBeTruthy();
     });
@@ -485,8 +522,22 @@ describe("PlannerProtocol", () => {
         componentTree: [],
         adrs: [],
         parallelWorkstreams: [
-          { id: "ws_1", name: "DB", tasks: ["Migration A", "Migration B"], dependencies: [], parallelizable: true, estimatedCredits: 20 },
-          { id: "ws_2", name: "API", tasks: ["Endpoint A"], dependencies: ["DB"], parallelizable: true, estimatedCredits: 15 },
+          {
+            id: "ws_1",
+            name: "DB",
+            tasks: ["Migration A", "Migration B"],
+            dependencies: [],
+            parallelizable: true,
+            estimatedCredits: 20,
+          },
+          {
+            id: "ws_2",
+            name: "API",
+            tasks: ["Endpoint A"],
+            dependencies: ["DB"],
+            parallelizable: true,
+            estimatedCredits: 15,
+          },
         ],
         content: "",
       };
@@ -507,8 +558,22 @@ describe("PlannerProtocol", () => {
         componentTree: [],
         adrs: [],
         parallelWorkstreams: [
-          { id: "ws_1", name: "DB", tasks: ["Schema"], dependencies: [], parallelizable: true, estimatedCredits: 10 },
-          { id: "ws_2", name: "API", tasks: ["Routes"], dependencies: ["DB"], parallelizable: true, estimatedCredits: 10 },
+          {
+            id: "ws_1",
+            name: "DB",
+            tasks: ["Schema"],
+            dependencies: [],
+            parallelizable: true,
+            estimatedCredits: 10,
+          },
+          {
+            id: "ws_2",
+            name: "API",
+            tasks: ["Routes"],
+            dependencies: ["DB"],
+            parallelizable: true,
+            estimatedCredits: 10,
+          },
         ],
         content: "",
       };
@@ -528,64 +593,82 @@ describe("PlannerProtocol", () => {
         componentTree: [],
         adrs: [],
         parallelWorkstreams: [
-          { id: "ws_1", name: "DB", tasks: ["Schema"], dependencies: [], parallelizable: true, estimatedCredits: 10 },
-          { id: "ws_2", name: "Sequential", tasks: ["Step A"], dependencies: [], parallelizable: false, estimatedCredits: 5 },
+          {
+            id: "ws_1",
+            name: "DB",
+            tasks: ["Schema"],
+            dependencies: [],
+            parallelizable: true,
+            estimatedCredits: 10,
+          },
+          {
+            id: "ws_2",
+            name: "Sequential",
+            tasks: ["Step A"],
+            dependencies: [],
+            parallelizable: false,
+            estimatedCredits: 5,
+          },
         ],
         content: "",
       };
 
       const plan = protocol.createFromBlueprint(blueprint);
       expect(plan.parallelGroups).toHaveLength(1); // Only DB is parallelizable
-      expect(plan.parallelGroups[0].name).toBe("DB");
+      expect(plan.parallelGroups[0]?.name).toBe("DB");
     });
   });
 
   describe("inferAgentRole (via createFromDescription)", () => {
     it("routes database tasks to backend_coder", () => {
       const plan = protocol.createFromDescription("Create database migration");
-      expect(plan.tasks[0].agentRole).toBe("backend_coder");
+      expect(plan.tasks[0]?.agentRole).toBe("backend_coder");
     });
 
     it("routes API tasks to backend_coder", () => {
       const p = new PlannerProtocol("p");
       const plan = p.createFromDescription("Build REST API endpoint");
-      expect(plan.tasks[0].agentRole).toBe("backend_coder");
+      expect(plan.tasks[0]?.agentRole).toBe("backend_coder");
     });
 
     it("routes component tasks to frontend_coder", () => {
       const p = new PlannerProtocol("p");
-      const plan = p.createFromDescription("Build React component for dashboard");
-      expect(plan.tasks[0].agentRole).toBe("frontend_coder");
+      const plan = p.createFromDescription(
+        "Build React component for dashboard"
+      );
+      expect(plan.tasks[0]?.agentRole).toBe("frontend_coder");
     });
 
     it("routes test tasks to test_engineer", () => {
       const p = new PlannerProtocol("p");
       const plan = p.createFromDescription("Write unit tests for auth module");
-      expect(plan.tasks[0].agentRole).toBe("test_engineer");
+      expect(plan.tasks[0]?.agentRole).toBe("test_engineer");
     });
 
     it("routes security tasks to security_auditor", () => {
       const p = new PlannerProtocol("p");
       const plan = p.createFromDescription("Run security audit on code");
-      expect(plan.tasks[0].agentRole).toBe("security_auditor");
+      expect(plan.tasks[0]?.agentRole).toBe("security_auditor");
     });
 
     it("routes deploy tasks to deploy_engineer", () => {
       const p = new PlannerProtocol("p");
       const plan = p.createFromDescription("Set up Docker deployment");
-      expect(plan.tasks[0].agentRole).toBe("deploy_engineer");
+      expect(plan.tasks[0]?.agentRole).toBe("deploy_engineer");
     });
 
     it("routes integration tasks to integration_coder", () => {
       const p = new PlannerProtocol("p");
-      const plan = p.createFromDescription("Wire up the client integration layer");
-      expect(plan.tasks[0].agentRole).toBe("integration_coder");
+      const plan = p.createFromDescription(
+        "Wire up the client integration layer"
+      );
+      expect(plan.tasks[0]?.agentRole).toBe("integration_coder");
     });
 
     it("defaults to backend_coder for ambiguous tasks", () => {
       const p = new PlannerProtocol("p");
       const plan = p.createFromDescription("Fix the thing");
-      expect(plan.tasks[0].agentRole).toBe("backend_coder");
+      expect(plan.tasks[0]?.agentRole).toBe("backend_coder");
     });
   });
 });
@@ -605,7 +688,7 @@ describe("CILoopProtocol", () => {
     });
 
     it("parses vitest/jest format: Tests: X passed, Y failed, Z total", () => {
-      const output = `Tests: 10 passed, 2 failed, 12 total\nDuration: 3.5s`;
+      const output = "Tests: 10 passed, 2 failed, 12 total\nDuration: 3.5s";
       const result = protocol.parseTestOutput(output);
       expect(result.passedTests).toBe(10);
       expect(result.failedTests).toBe(2);
@@ -615,7 +698,7 @@ describe("CILoopProtocol", () => {
     });
 
     it("parses alternative format: X passing, Y failing", () => {
-      const output = `8 passing, 1 failing\nTime: 2.1s`;
+      const output = "8 passing, 1 failing\nTime: 2.1s";
       const result = protocol.parseTestOutput(output);
       expect(result.passedTests).toBe(8);
       expect(result.failedTests).toBe(1);
@@ -624,7 +707,7 @@ describe("CILoopProtocol", () => {
     });
 
     it("detects all passing (passed = true)", () => {
-      const output = `Tests: 15 passed, 0 failed, 15 total\nDuration: 1.2s`;
+      const output = "Tests: 15 passed, 0 failed, 15 total\nDuration: 1.2s";
       const result = protocol.parseTestOutput(output);
       expect(result.passed).toBe(true);
       expect(result.failedTests).toBe(0);
@@ -634,13 +717,14 @@ describe("CILoopProtocol", () => {
       const output = `error TS2345: Argument of type 'string' is not assignable\nerror TS2304: Cannot find name 'foo'`;
       const result = protocol.parseTestOutput(output);
       expect(result.failures).toHaveLength(2);
-      expect(result.failures[0].category).toBe("type");
-      expect(result.failures[0].testName).toBe("TypeScript");
+      expect(result.failures[0]?.category).toBe("type");
+      expect(result.failures[0]?.testName).toBe("TypeScript");
       expect(result.failedTests).toBe(2);
     });
 
     it("extracts failure blocks from FAIL markers", () => {
-      const output = `FAIL src/test.ts\n  expected 1 to be 2\n    at line 10\nFAIL src/other.ts\n  timeout exceeded`;
+      const output =
+        "FAIL src/test.ts\n  expected 1 to be 2\n    at line 10\nFAIL src/other.ts\n  timeout exceeded";
       const result = protocol.parseTestOutput(output);
       expect(result.failures.length).toBeGreaterThanOrEqual(2);
     });
@@ -669,7 +753,12 @@ describe("CILoopProtocol", () => {
     it("returns success when tests pass on first try", async () => {
       const protocol = new CILoopProtocol("ses_1", undefined, 5);
       const runTests = vi.fn().mockResolvedValue({
-        passed: true, totalTests: 10, passedTests: 10, failedTests: 0, failures: [], duration: 1,
+        passed: true,
+        totalTests: 10,
+        passedTests: 10,
+        failedTests: 0,
+        failures: [],
+        duration: 1,
       });
       const applyFix = vi.fn();
 
@@ -681,16 +770,36 @@ describe("CILoopProtocol", () => {
 
     it("applies fixes and retries on failure", async () => {
       const protocol = new CILoopProtocol("ses_1", undefined, 5);
-      const runTests = vi.fn()
+      const runTests = vi
+        .fn()
         .mockResolvedValueOnce({
-          passed: false, totalTests: 5, passedTests: 3, failedTests: 2,
-          failures: [{ testName: "test1", testFile: "", error: "fail", stackTrace: "", category: "unit" }],
+          passed: false,
+          totalTests: 5,
+          passedTests: 3,
+          failedTests: 2,
+          failures: [
+            {
+              testName: "test1",
+              testFile: "",
+              error: "fail",
+              stackTrace: "",
+              category: "unit",
+            },
+          ],
           duration: 1,
         })
         .mockResolvedValueOnce({
-          passed: true, totalTests: 5, passedTests: 5, failedTests: 0, failures: [], duration: 1,
+          passed: true,
+          totalTests: 5,
+          passedTests: 5,
+          failedTests: 0,
+          failures: [],
+          duration: 1,
         });
-      const applyFix = vi.fn().mockResolvedValue({ filesChanged: ["src/fix.ts"], description: "Fixed test1" });
+      const applyFix = vi.fn().mockResolvedValue({
+        filesChanged: ["src/fix.ts"],
+        description: "Fixed test1",
+      });
 
       const result = await protocol.runLoop(runTests, applyFix);
       expect(result.success).toBe(true);
@@ -701,11 +810,24 @@ describe("CILoopProtocol", () => {
     it("escalates after max iterations", async () => {
       const protocol = new CILoopProtocol("ses_1", undefined, 2);
       const runTests = vi.fn().mockResolvedValue({
-        passed: false, totalTests: 5, passedTests: 3, failedTests: 2,
-        failures: [{ testName: "test1", testFile: "", error: "always fails", stackTrace: "", category: "unit" }],
+        passed: false,
+        totalTests: 5,
+        passedTests: 3,
+        failedTests: 2,
+        failures: [
+          {
+            testName: "test1",
+            testFile: "",
+            error: "always fails",
+            stackTrace: "",
+            category: "unit",
+          },
+        ],
         duration: 1,
       });
-      const applyFix = vi.fn().mockResolvedValue({ filesChanged: [], description: "Attempted fix" });
+      const applyFix = vi
+        .fn()
+        .mockResolvedValue({ filesChanged: [], description: "Attempted fix" });
 
       const result = await protocol.runLoop(runTests, applyFix);
       expect(result.success).toBe(false);
@@ -716,13 +838,25 @@ describe("CILoopProtocol", () => {
     it("escalates on repeated identical failures", async () => {
       const protocol = new CILoopProtocol("ses_1", undefined, 10);
       const sameFailure = [
-        { testName: "flaky_test", testFile: "", error: "always the same error", stackTrace: "", category: "unit" as const },
+        {
+          testName: "flaky_test",
+          testFile: "",
+          error: "always the same error",
+          stackTrace: "",
+          category: "unit" as const,
+        },
       ];
       const runTests = vi.fn().mockResolvedValue({
-        passed: false, totalTests: 1, passedTests: 0, failedTests: 1,
-        failures: sameFailure, duration: 1,
+        passed: false,
+        totalTests: 1,
+        passedTests: 0,
+        failedTests: 1,
+        failures: sameFailure,
+        duration: 1,
       });
-      const applyFix = vi.fn().mockResolvedValue({ filesChanged: [], description: "No fix" });
+      const applyFix = vi
+        .fn()
+        .mockResolvedValue({ filesChanged: [], description: "No fix" });
 
       const result = await protocol.runLoop(runTests, applyFix);
       expect(result.success).toBe(false);
@@ -736,7 +870,11 @@ describe("CILoopProtocol", () => {
     it("routes import errors to integration_coder", () => {
       const protocol = new CILoopProtocol("ses_1");
       const result = protocol.categorizeFailure({
-        testName: "test", testFile: "", error: "Cannot find module '@foo/bar'", stackTrace: "", category: "unit",
+        testName: "test",
+        testFile: "",
+        error: "Cannot find module '@foo/bar'",
+        stackTrace: "",
+        category: "unit",
       });
       expect(result).toBe("integration_coder");
     });
@@ -744,7 +882,11 @@ describe("CILoopProtocol", () => {
     it("routes render errors to frontend_coder", () => {
       const protocol = new CILoopProtocol("ses_1");
       const result = protocol.categorizeFailure({
-        testName: "test", testFile: "", error: "Failed to render component", stackTrace: "", category: "unit",
+        testName: "test",
+        testFile: "",
+        error: "Failed to render component",
+        stackTrace: "",
+        category: "unit",
       });
       expect(result).toBe("frontend_coder");
     });
@@ -752,7 +894,11 @@ describe("CILoopProtocol", () => {
     it("routes database errors to backend_coder", () => {
       const protocol = new CILoopProtocol("ses_1");
       const result = protocol.categorizeFailure({
-        testName: "test", testFile: "", error: "Database query failed", stackTrace: "", category: "unit",
+        testName: "test",
+        testFile: "",
+        error: "Database query failed",
+        stackTrace: "",
+        category: "unit",
       });
       expect(result).toBe("backend_coder");
     });
@@ -760,7 +906,11 @@ describe("CILoopProtocol", () => {
     it("defaults to backend_coder for unknown errors", () => {
       const protocol = new CILoopProtocol("ses_1");
       const result = protocol.categorizeFailure({
-        testName: "test", testFile: "", error: "Something went wrong", stackTrace: "", category: "unit",
+        testName: "test",
+        testFile: "",
+        error: "Something went wrong",
+        stackTrace: "",
+        category: "unit",
       });
       expect(result).toBe("backend_coder");
     });
@@ -798,67 +948,108 @@ describe("BusinessLogicGuardian", () => {
           functions: "camelCase",
           constants: "UPPER_SNAKE_CASE",
         },
-        patterns: { stateManagement: "zustand", dataFetching: "tRPC", authentication: "Clerk", errorHandling: "error boundary" },
+        patterns: {
+          stateManagement: "zustand",
+          dataFetching: "tRPC",
+          authentication: "Clerk",
+          errorHandling: "error boundary",
+        },
         forbidden: [],
         required: [],
       });
     });
 
     it("detects eval() as security error", () => {
-      const result = guardian.checkFileChange("src/utils.ts", 'const result = eval("1+1");');
+      const result = guardian.checkFileChange(
+        "src/utils.ts",
+        'const result = eval("1+1");'
+      );
       expect(result.passed).toBe(false);
-      const evalViolation = result.violations.find((v) => v.message.includes("eval"));
+      const evalViolation = result.violations.find((v) =>
+        v.message.includes("eval")
+      );
       expect(evalViolation).toBeTruthy();
-      expect(evalViolation!.severity).toBe("error");
+      expect(evalViolation?.severity).toBe("error");
     });
 
     it("detects innerHTML as security error", () => {
-      const result = guardian.checkFileChange("src/page.ts", 'element.innerHTML = userInput;');
+      const result = guardian.checkFileChange(
+        "src/page.ts",
+        "element.innerHTML = userInput;"
+      );
       expect(result.passed).toBe(false);
-      const violation = result.violations.find((v) => v.message.includes("innerHTML"));
+      const violation = result.violations.find((v) =>
+        v.message.includes("innerHTML")
+      );
       expect(violation).toBeTruthy();
-      expect(violation!.severity).toBe("error");
+      expect(violation?.severity).toBe("error");
     });
 
     it("detects console.log as warning", () => {
-      const result = guardian.checkFileChange("src/service.ts", 'console.log("debug");');
-      const violation = result.violations.find((v) => v.message.includes("console.log"));
+      const result = guardian.checkFileChange(
+        "src/service.ts",
+        'console.log("debug");'
+      );
+      const violation = result.violations.find((v) =>
+        v.message.includes("console.log")
+      );
       expect(violation).toBeTruthy();
-      expect(violation!.severity).toBe("warning");
+      expect(violation?.severity).toBe("warning");
     });
 
     it("detects dangerouslySetInnerHTML as warning", () => {
-      const result = guardian.checkFileChange("src/comp.tsx", '<div dangerouslySetInnerHTML={{ __html: x }} />');
-      const violation = result.violations.find((v) => v.message.includes("dangerouslySetInnerHTML"));
+      const result = guardian.checkFileChange(
+        "src/comp.tsx",
+        "<div dangerouslySetInnerHTML={{ __html: x }} />"
+      );
+      const violation = result.violations.find((v) =>
+        v.message.includes("dangerouslySetInnerHTML")
+      );
       expect(violation).toBeTruthy();
-      expect(violation!.severity).toBe("warning");
+      expect(violation?.severity).toBe("warning");
     });
 
     it("warns on PascalCase violation for component files", () => {
-      const result = guardian.checkFileChange("src/components/myButton.tsx", "export default function myButton() {}");
+      const result = guardian.checkFileChange(
+        "src/components/myButton.tsx",
+        "export default function myButton() {}"
+      );
       const naming = result.violations.find((v) => v.type === "naming");
       expect(naming).toBeTruthy();
-      expect(naming!.message).toContain("PascalCase");
+      expect(naming?.message).toContain("PascalCase");
     });
 
     it("passes PascalCase component files", () => {
-      const result = guardian.checkFileChange("src/components/MyButton.tsx", "export default function MyButton() {}");
+      const result = guardian.checkFileChange(
+        "src/components/MyButton.tsx",
+        "export default function MyButton() {}"
+      );
       const naming = result.violations.find((v) => v.type === "naming");
       expect(naming).toBeUndefined();
     });
 
     it("detects hardcoded secrets", () => {
-      const result = guardian.checkFileChange("src/config.ts", 'const apikey = "sk-live-abc123def456ghi789jkl012mno345"');
-      const secretViolation = result.violations.find((v) => v.message.includes("secret"));
+      const result = guardian.checkFileChange(
+        "src/config.ts",
+        'const apikey = "sk-live-abc123def456ghi789jkl012mno345"'
+      );
+      const secretViolation = result.violations.find((v) =>
+        v.message.includes("secret")
+      );
       expect(secretViolation).toBeTruthy();
-      expect(secretViolation!.severity).toBe("error");
+      expect(secretViolation?.severity).toBe("error");
     });
 
     it("detects PII in logging", () => {
-      const result = guardian.checkFileChange("src/auth.ts", 'logger.info("User email:", email);');
-      const piiViolation = result.violations.find((v) => v.type === "compliance");
+      const result = guardian.checkFileChange(
+        "src/auth.ts",
+        'logger.info("User email:", email);'
+      );
+      const piiViolation = result.violations.find(
+        (v) => v.type === "compliance"
+      );
       expect(piiViolation).toBeTruthy();
-      expect(piiViolation!.message).toContain("email");
+      expect(piiViolation?.message).toContain("email");
     });
 
     it("passes clean code without violations", () => {
@@ -876,7 +1067,7 @@ describe("BusinessLogicGuardian", () => {
 
     it("includes file path in violations", () => {
       const result = guardian.checkFileChange("src/bad.ts", 'eval("x")');
-      expect(result.violations[0].file).toBe("src/bad.ts");
+      expect(result.violations[0]?.file).toBe("src/bad.ts");
     });
 
     it("includes checkedAt timestamp", () => {
@@ -888,13 +1079,16 @@ describe("BusinessLogicGuardian", () => {
 
   describe("extractRulesFromBlueprint", () => {
     it("extracts tech stack from blueprint markdown", () => {
-      const blueprintMd = `# Blueprint\n\n## Tech Stack\n- **Frontend:** React, Next.js\n- **Backend:** Hono, tRPC\n- **Database:** PostgreSQL\n\n## Other`;
+      const blueprintMd =
+        "# Blueprint\n\n## Tech Stack\n- **Frontend:** React, Next.js\n- **Backend:** Hono, tRPC\n- **Database:** PostgreSQL\n\n## Other";
       const rules = guardian.extractRulesFromBlueprint(blueprintMd);
       expect(rules.techStack.length).toBeGreaterThan(0);
     });
 
     it("sets default naming conventions", () => {
-      const rules = guardian.extractRulesFromBlueprint("# Blueprint\n## Tech Stack\n- **Frontend:** React");
+      const rules = guardian.extractRulesFromBlueprint(
+        "# Blueprint\n## Tech Stack\n- **Frontend:** React"
+      );
       expect(rules.namingConventions.files).toBe("kebab-case");
       expect(rules.namingConventions.components).toBe("PascalCase");
     });

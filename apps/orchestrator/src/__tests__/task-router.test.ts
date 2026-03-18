@@ -1,5 +1,4 @@
-// @ts-nocheck
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // ── Mocks ────────────────────────────────────────────────────────────────────
 
@@ -30,9 +29,9 @@ vi.mock("@prometheus/db", () => ({
 }));
 
 vi.mock("@prometheus/queue", () => ({
-  EventPublisher: vi.fn().mockImplementation(() => ({
-    publishSessionEvent: vi.fn().mockResolvedValue(undefined),
-  })),
+  EventPublisher: class {
+    publishSessionEvent = vi.fn().mockResolvedValue(undefined);
+  },
   QueueEvents: {
     TASK_STATUS: "task:status",
     PLAN_UPDATE: "plan:update",
@@ -54,8 +53,8 @@ vi.mock("@prometheus/utils", () => ({
   generateId: vi.fn((prefix: string) => `${prefix}_mock123`),
 }));
 
-import { TaskRouter } from "../task-router";
 import { SessionManager } from "../session-manager";
+import { TaskRouter } from "../task-router";
 
 describe("TaskRouter", () => {
   let router: TaskRouter;
@@ -71,76 +70,104 @@ describe("TaskRouter", () => {
 
   describe("routeTask", () => {
     it("routes requirements gathering to discovery", () => {
-      const result = router.routeTask("Gather requirements for the user authentication feature");
+      const result = router.routeTask(
+        "Gather requirements for the user authentication feature"
+      );
       expect(result.agentRole).toBe("discovery");
       expect(result.confidence).toBe(0.9);
     });
 
     it("routes user stories to discovery", () => {
-      const result = router.routeTask("Write user stories for the checkout flow");
+      const result = router.routeTask(
+        "Write user stories for the checkout flow"
+      );
       expect(result.agentRole).toBe("discovery");
     });
 
     it("routes architecture design to architect", () => {
-      const result = router.routeTask("Design the system architecture and create a blueprint");
+      const result = router.routeTask(
+        "Design the system architecture and create a blueprint"
+      );
       expect(result.agentRole).toBe("architect");
       expect(result.confidence).toBe(0.9);
     });
 
     it("routes schema design to architect", () => {
-      const result = router.routeTask("Define the data model and schema for the app");
+      const result = router.routeTask(
+        "Define the data model and schema for the app"
+      );
       expect(result.agentRole).toBe("architect");
     });
 
     it("routes sprint planning to planner", () => {
-      const result = router.routeTask("Create a sprint plan for the next milestone");
+      const result = router.routeTask(
+        "Create a sprint plan for the next milestone"
+      );
       expect(result.agentRole).toBe("planner");
       expect(result.confidence).toBe(0.85);
     });
 
     it("routes frontend work to frontend_coder", () => {
-      const result = router.routeTask("Build a React component for the user dashboard");
+      const result = router.routeTask(
+        "Build a React component for the user dashboard"
+      );
       expect(result.agentRole).toBe("frontend_coder");
     });
 
     it("routes UI/page work to frontend_coder", () => {
-      const result = router.routeTask("Create the settings page with Tailwind CSS layout");
+      const result = router.routeTask(
+        "Create the settings page with Tailwind CSS layout"
+      );
       expect(result.agentRole).toBe("frontend_coder");
     });
 
     it("routes API work to backend_coder", () => {
-      const result = router.routeTask("Implement the REST API endpoint for user profiles");
+      const result = router.routeTask(
+        "Implement the REST API endpoint for user profiles"
+      );
       expect(result.agentRole).toBe("backend_coder");
     });
 
     it("routes database work to backend_coder", () => {
-      const result = router.routeTask("Create a database migration for the new table");
+      const result = router.routeTask(
+        "Create a database migration for the new table"
+      );
       expect(result.agentRole).toBe("backend_coder");
     });
 
     it("routes test writing to test_engineer", () => {
-      const result = router.routeTask("Write unit tests and integration tests for the auth module");
+      const result = router.routeTask(
+        "Write unit tests and integration tests for the auth module"
+      );
       expect(result.agentRole).toBe("test_engineer");
       expect(result.confidence).toBe(0.9);
     });
 
     it("routes security audit to security_auditor", () => {
-      const result = router.routeTask("Perform a security audit and check for vulnerabilities");
+      const result = router.routeTask(
+        "Perform a security audit and check for vulnerabilities"
+      );
       expect(result.agentRole).toBe("security_auditor");
     });
 
     it("routes deployment to deploy_engineer", () => {
-      const result = router.routeTask("Set up Docker containers and Kubernetes deployment");
+      const result = router.routeTask(
+        "Set up Docker containers and Kubernetes deployment"
+      );
       expect(result.agentRole).toBe("deploy_engineer");
     });
 
     it("routes CI/CD to deploy_engineer", () => {
-      const result = router.routeTask("Configure the GitHub Actions CI/CD pipeline");
+      const result = router.routeTask(
+        "Configure the GitHub Actions CI/CD pipeline"
+      );
       expect(result.agentRole).toBe("deploy_engineer");
     });
 
     it("routes integration work to integration_coder", () => {
-      const result = router.routeTask("Wire up the data layer to connect with external services");
+      const result = router.routeTask(
+        "Wire up the data layer to connect with external services"
+      );
       expect(result.agentRole).toBe("integration_coder");
     });
 
@@ -166,7 +193,11 @@ describe("TaskRouter", () => {
       // Mock the sessionManager to return an active session
       const mockAgentLoop = {
         executeTask: vi.fn().mockResolvedValue({
-          success: true, output: "Answer", filesChanged: [], tokensUsed: { input: 0, output: 0 }, toolCalls: 0,
+          success: true,
+          output: "Answer",
+          filesChanged: [],
+          tokensUsed: { input: 0, output: 0 },
+          toolCalls: 0,
         }),
         getCreditsConsumed: vi.fn().mockReturnValue(2),
         getStatus: vi.fn().mockReturnValue("idle"),
@@ -188,7 +219,15 @@ describe("TaskRouter", () => {
       vi.spyOn(sessionManager, "getSession")
         .mockReturnValueOnce(undefined)
         .mockReturnValueOnce({
-          session: { id: "ses_1", projectId: "proj_1", userId: "user_1", status: "active", mode: "ask", startedAt: new Date(), endedAt: null },
+          session: {
+            id: "ses_1",
+            projectId: "proj_1",
+            userId: "user_1",
+            status: "active",
+            mode: "ask",
+            startedAt: new Date(),
+            endedAt: null,
+          },
           agentLoop: mockAgentLoop as any,
           startedAt: new Date(),
           activeAgents: new Map(),
@@ -212,7 +251,9 @@ describe("TaskRouter", () => {
 
     it("handles errors and sets task to failed", async () => {
       vi.spyOn(sessionManager, "getSession").mockReturnValue(undefined);
-      vi.spyOn(sessionManager, "createSession").mockRejectedValue(new Error("Session creation failed"));
+      vi.spyOn(sessionManager, "createSession").mockRejectedValue(
+        new Error("Session creation failed")
+      );
 
       const result = await router.processTask({
         taskId: "task_1",
@@ -238,14 +279,14 @@ describe("TaskRouter", () => {
 
 // Need to mock AgentLoop for SessionManager
 vi.mock("../agent-loop", () => ({
-  AgentLoop: vi.fn().mockImplementation(() => ({
-    executeTask: vi.fn().mockResolvedValue({ success: true }),
-    getCreditsConsumed: vi.fn().mockReturnValue(0),
-    getStatus: vi.fn().mockReturnValue("idle"),
-    pause: vi.fn().mockResolvedValue(undefined),
-    resume: vi.fn().mockResolvedValue(undefined),
-    stop: vi.fn().mockResolvedValue(undefined),
-  })),
+  AgentLoop: class {
+    executeTask = vi.fn().mockResolvedValue({ success: true });
+    getCreditsConsumed = vi.fn().mockReturnValue(0);
+    getStatus = vi.fn().mockReturnValue("idle");
+    pause = vi.fn().mockResolvedValue(undefined);
+    resume = vi.fn().mockResolvedValue(undefined);
+    stop = vi.fn().mockResolvedValue(undefined);
+  },
 }));
 
 describe("SessionManager", () => {
@@ -272,12 +313,15 @@ describe("SessionManager", () => {
     });
 
     it("uses existing ID when provided", async () => {
-      const session = await manager.createSession({
-        projectId: "proj_1",
-        userId: "user_1",
-        orgId: "org_1",
-        mode: "ask",
-      }, "ses_existing123");
+      const session = await manager.createSession(
+        {
+          projectId: "proj_1",
+          userId: "user_1",
+          orgId: "org_1",
+          mode: "ask",
+        },
+        "ses_existing123"
+      );
 
       expect(session.id).toBe("ses_existing123");
     });
@@ -305,13 +349,18 @@ describe("SessionManager", () => {
 
       const active = manager.getSession(session.id);
       expect(active).toBeTruthy();
-      expect(active!.session.id).toBe(session.id);
+      expect(active?.session.id).toBe(session.id);
     });
 
     it("increments active session count", async () => {
       expect(manager.getActiveSessionCount()).toBe(0);
 
-      await manager.createSession({ projectId: "p1", userId: "u1", orgId: "o1", mode: "task" });
+      await manager.createSession({
+        projectId: "p1",
+        userId: "u1",
+        orgId: "o1",
+        mode: "task",
+      });
       expect(manager.getActiveSessionCount()).toBeGreaterThanOrEqual(1);
     });
   });
@@ -328,11 +377,13 @@ describe("SessionManager", () => {
       await manager.pauseSession(session.id);
 
       const active = manager.getSession(session.id);
-      expect(active!.session.status).toBe("paused");
+      expect(active?.session.status).toBe("paused");
     });
 
     it("throws when session not found", async () => {
-      await expect(manager.pauseSession("ses_nonexistent")).rejects.toThrow("not found");
+      await expect(manager.pauseSession("ses_nonexistent")).rejects.toThrow(
+        "not found"
+      );
     });
 
     it("updates DB status to paused", async () => {
@@ -361,11 +412,13 @@ describe("SessionManager", () => {
       await manager.resumeSession(session.id);
 
       const active = manager.getSession(session.id);
-      expect(active!.session.status).toBe("active");
+      expect(active?.session.status).toBe("active");
     });
 
     it("throws when session not found", async () => {
-      await expect(manager.resumeSession("ses_nonexistent")).rejects.toThrow("not found");
+      await expect(manager.resumeSession("ses_nonexistent")).rejects.toThrow(
+        "not found"
+      );
     });
   });
 
@@ -397,7 +450,9 @@ describe("SessionManager", () => {
     });
 
     it("throws when session not found", async () => {
-      await expect(manager.cancelSession("ses_nonexistent")).rejects.toThrow("not found");
+      await expect(manager.cancelSession("ses_nonexistent")).rejects.toThrow(
+        "not found"
+      );
     });
   });
 
@@ -416,7 +471,9 @@ describe("SessionManager", () => {
     });
 
     it("silently ignores unknown session IDs", async () => {
-      await expect(manager.completeSession("ses_unknown")).resolves.toBeUndefined();
+      await expect(
+        manager.completeSession("ses_unknown")
+      ).resolves.toBeUndefined();
     });
   });
 
@@ -433,8 +490,8 @@ describe("SessionManager", () => {
 
       const status = manager.getSessionStatus(session.id);
       expect(status).toBeTruthy();
-      expect(status!.activeAgentCount).toBe(1);
-      expect(status!.agents[0].role).toBe("backend_coder");
+      expect(status?.activeAgentCount).toBe(1);
+      expect(status?.agents[0]?.role).toBe("backend_coder");
     });
 
     it("untracks an agent", async () => {
@@ -449,7 +506,7 @@ describe("SessionManager", () => {
       manager.untrackAgent(session.id, "agt_1");
 
       const status = manager.getSessionStatus(session.id);
-      expect(status!.activeAgentCount).toBe(0);
+      expect(status?.activeAgentCount).toBe(0);
     });
   });
 
@@ -468,10 +525,10 @@ describe("SessionManager", () => {
 
       const status = manager.getSessionStatus(session.id);
       expect(status).toBeTruthy();
-      expect(status!.session.id).toBe(session.id);
-      expect(status!.activeAgentCount).toBe(0);
-      expect(status!.loopStatus).toBe("idle");
-      expect(status!.creditsConsumed).toBe(0);
+      expect(status?.session.id).toBe(session.id);
+      expect(status?.activeAgentCount).toBe(0);
+      expect(status?.loopStatus).toBe("idle");
+      expect(status?.creditsConsumed).toBe(0);
     });
   });
 });

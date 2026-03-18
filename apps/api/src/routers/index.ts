@@ -1,16 +1,17 @@
 import { router } from "../trpc";
-import { healthRouter } from "./health";
-import { sessionsRouter } from "./sessions";
-import { tasksRouter } from "./tasks";
-import { projectsRouter } from "./projects";
-import { queueRouter } from "./queue";
-import { billingRouter } from "./billing";
 import { analyticsRouter } from "./analytics";
-import { settingsRouter } from "./settings";
+import { apiKeysRouter } from "./api-keys";
+import { billingRouter } from "./billing";
 import { brainRouter } from "./brain";
 import { fleetRouter } from "./fleet";
-import { userRouter } from "./user";
+import { healthRouter } from "./health";
 import { integrationsRouter } from "./integrations";
+import { projectsRouter } from "./projects";
+import { queueRouter } from "./queue";
+import { sessionsRouter } from "./sessions";
+import { settingsRouter } from "./settings";
+import { tasksRouter } from "./tasks";
+import { userRouter } from "./user";
 
 export const appRouter = router({
   health: healthRouter,
@@ -25,6 +26,7 @@ export const appRouter = router({
   fleet: fleetRouter,
   user: userRouter,
   integrations: integrationsRouter,
+  apiKeys: apiKeysRouter,
 });
 
 export type AppRouter = typeof appRouter;

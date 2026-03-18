@@ -17,7 +17,7 @@ spec:
     spec:
       containers:
         - name: socket-server
-          image: prometheus/socket-server:latest
+          image: ghcr.io/prometheus/socket-server:latest
           ports:
             - containerPort: 4001
           resources:
@@ -37,3 +37,13 @@ spec:
               port: 4001
             initialDelaySeconds: 5
             periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: 4001
+            initialDelaySeconds: 15
+            periodSeconds: 30
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0

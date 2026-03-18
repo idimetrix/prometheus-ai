@@ -1,8 +1,8 @@
+export { DEFAULT_FLAGS } from "./flags";
+export type { FeatureFlagProvider, FlagContext, FlagDefinition } from "./types";
+
 import { DEFAULT_FLAGS } from "./flags";
 import type { FeatureFlagProvider, FlagContext, FlagDefinition } from "./types";
-
-export { DEFAULT_FLAGS } from "./flags";
-export type { FeatureFlagProvider, FlagContext, FlagDefinition };
 
 /**
  * Simple hash function for deterministic percentage-based rollouts.
@@ -13,6 +13,7 @@ function hashForRollout(userId: string, flagKey: string): number {
   let hash = 0;
   for (let i = 0; i < str.length; i++) {
     const char = str.charCodeAt(i);
+    // biome-ignore lint/suspicious/noBitwiseOperators: intentional bit manipulation for hash function
     hash = ((hash << 5) - hash + char) | 0;
   }
   return Math.abs(hash) % 100;

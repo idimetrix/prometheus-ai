@@ -1,17 +1,16 @@
-import * as React from "react";
 import { cn } from "../lib/utils";
 
 interface PlanStep {
-  id: string;
-  title: string;
   description?: string;
+  id: string;
   status: "pending" | "running" | "completed" | "failed" | "skipped";
   substeps?: PlanStep[];
+  title: string;
 }
 
 interface PlanProps {
-  steps: PlanStep[];
   className?: string;
+  steps: PlanStep[];
 }
 
 const STATUS_ICONS: Record<PlanStep["status"], string> = {
@@ -34,7 +33,7 @@ export function Plan({ steps, className }: PlanProps) {
   return (
     <div className={cn("space-y-1", className)}>
       {steps.map((step, i) => (
-        <PlanStepItem key={step.id} step={step} index={i} />
+        <PlanStepItem index={i} key={step.id} step={step} />
       ))}
     </div>
   );
@@ -44,26 +43,31 @@ function PlanStepItem({ step, index }: { step: PlanStep; index: number }) {
   return (
     <div className="space-y-1">
       <div className="flex items-start gap-2 py-1">
-        <span className={cn("text-sm mt-0.5", STATUS_COLORS[step.status])}>
+        <span className={cn("mt-0.5 text-sm", STATUS_COLORS[step.status])}>
           {STATUS_ICONS[step.status]}
         </span>
-        <div className="flex-1 min-w-0">
-          <div className={cn(
-            "text-sm font-medium",
-            step.status === "completed" && "line-through text-muted-foreground",
-            step.status === "skipped" && "text-muted-foreground",
-          )}>
+        <div className="min-w-0 flex-1">
+          <div
+            className={cn(
+              "font-medium text-sm",
+              step.status === "completed" &&
+                "text-muted-foreground line-through",
+              step.status === "skipped" && "text-muted-foreground"
+            )}
+          >
             {index + 1}. {step.title}
           </div>
           {step.description && (
-            <div className="text-xs text-muted-foreground mt-0.5">{step.description}</div>
+            <div className="mt-0.5 text-muted-foreground text-xs">
+              {step.description}
+            </div>
           )}
         </div>
       </div>
       {step.substeps && step.substeps.length > 0 && (
         <div className="ml-6 border-l pl-3">
           {step.substeps.map((sub, i) => (
-            <PlanStepItem key={sub.id} step={sub} index={i} />
+            <PlanStepItem index={i} key={sub.id} step={sub} />
           ))}
         </div>
       )}

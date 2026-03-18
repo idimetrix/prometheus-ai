@@ -1,8 +1,11 @@
 import { createLogger } from "@prometheus/logger";
+import type { AgentRole } from "@prometheus/types";
 import { type AgentContext, BaseAgent, resolveTools } from "./base-agent";
 import type { AgentRoleConfig } from "./roles/index";
 
 const logger = createLogger("agent-sdk:custom-roles");
+
+const SNAKE_CASE_RE = /^[a-z][a-z0-9_]*$/;
 
 // ---------------------------------------------------------------------------
 // YAML Agent Spec Types
@@ -65,6 +68,7 @@ export interface CustomAgentSpec {
  * This is a lightweight parser that handles the specific YAML subset
  * used by agent specs (no need for a full YAML library).
  */
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: complex but well-structured logic
 export function parseAgentSpec(yamlContent: string): CustomAgentSpec {
   const lines = yamlContent.split("\n");
   const result: Record<string, unknown> = {};
@@ -72,8 +76,7 @@ export function parseAgentSpec(yamlContent: string): CustomAgentSpec {
   let currentMultiline: string[] | null = null;
   let currentList: string[] | null = null;
 
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i]!;
+  for (const line of lines) {
     const trimmed = line.trim();
 
     // Skip comments and empty lines (unless in multiline block)
@@ -179,7 +182,7 @@ export function validateAgentSpec(spec: CustomAgentSpec): ValidationResult {
   // Required fields
   if (!spec.role || typeof spec.role !== "string") {
     errors.push("'role' is required and must be a non-empty string");
-  } else if (!/^[a-z][a-z0-9_]*$/.test(spec.role)) {
+  } else if (!SNAKE_CASE_RE.test(spec.role)) {
     errors.push(
       "'role' must be snake_case (lowercase letters, numbers, underscores)"
     );
@@ -252,7 +255,7 @@ class CustomAgent extends BaseAgent {
 
   constructor(spec: CustomAgentSpec) {
     const tools = resolveTools(spec.tools);
-    super(spec.role as any, tools);
+    super(spec.role as AgentRole, tools);
     this.spec = spec;
   }
 
@@ -317,7 +320,7 @@ export function registerCustomRole(yamlContent: string): {
   }
 
   const config: AgentRoleConfig = {
-    role: spec.role as any,
+    role: spec.role as AgentRole,
     displayName: spec.displayName,
     description: spec.description,
     preferredModel: spec.preferredModel,

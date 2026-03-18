@@ -1,5 +1,5 @@
 import { createLogger } from "@prometheus/logger";
-import type { ToolRegistry, MCPToolResult } from "../../registry";
+import type { MCPToolResult, ToolRegistry } from "../../registry";
 
 const logger = createLogger("mcp-gateway:slack");
 
@@ -20,18 +20,76 @@ async function slackFetch(
     body: JSON.stringify(body),
   });
 
-  const data = await response.json() as Record<string, unknown>;
+  // Check for Slack rate limiting (HTTP 429)
+  if (response.status === 429) {
+    const retryAfter = response.headers.get("retry-after") ?? "30";
+    logger.warn({ method, retryAfter }, "Slack rate limit hit");
+    return {
+      ok: false,
+      data: null,
+      error: `Rate limited by Slack. Retry after ${retryAfter} seconds.`,
+    };
+  }
+
+  const data = (await response.json()) as Record<string, unknown>;
   return {
     ok: data.ok === true,
     data,
-    error: data.ok ? undefined : String(data.error ?? "Unknown Slack API error"),
+    error: data.ok
+      ? undefined
+      : String(data.error ?? "Unknown Slack API error"),
   };
 }
 
-function requireToken(credentials?: Record<string, string>): MCPToolResult | string {
+async function slackGet(
+  method: string,
+  token: string,
+  params?: Record<string, string>
+): Promise<{ ok: boolean; data: unknown; error?: string }> {
+  const url = new URL(`${SLACK_API}/${method}`);
+  if (params) {
+    for (const [k, v] of Object.entries(params)) {
+      url.searchParams.set(k, v);
+    }
+  }
+
+  const response = await fetch(url.toString(), {
+    method: "GET",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "User-Agent": "Prometheus-MCP-Gateway/1.0",
+    },
+  });
+
+  if (response.status === 429) {
+    const retryAfter = response.headers.get("retry-after") ?? "30";
+    logger.warn({ method, retryAfter }, "Slack rate limit hit");
+    return {
+      ok: false,
+      data: null,
+      error: `Rate limited by Slack. Retry after ${retryAfter} seconds.`,
+    };
+  }
+
+  const data = (await response.json()) as Record<string, unknown>;
+  return {
+    ok: data.ok === true,
+    data,
+    error: data.ok
+      ? undefined
+      : String(data.error ?? "Unknown Slack API error"),
+  };
+}
+
+function requireToken(
+  credentials?: Record<string, string>
+): MCPToolResult | string {
   const token = credentials?.slack_token;
   if (!token) {
-    return { success: false, error: "Slack bot token required. Provide credentials.slack_token." };
+    return {
+      success: false,
+      error: "Slack bot token required. Provide credentials.slack_token.",
+    };
   }
   return token;
 }
@@ -47,12 +105,18 @@ export function registerSlackAdapter(registry: ToolRegistry): void {
         type: "object",
         properties: {
           channel: { type: "string", description: "Channel ID or name" },
-          text: { type: "string", description: "Message text (used as fallback for blocks)" },
+          text: {
+            type: "string",
+            description: "Message text (used as fallback for blocks)",
+          },
           blocks: {
             type: "array",
             description: "Slack Block Kit blocks for rich formatting",
           },
-          thread_ts: { type: "string", description: "Thread timestamp for replies" },
+          thread_ts: {
+            type: "string",
+            description: "Thread timestamp for replies",
+          },
         },
         required: ["channel", "text"],
       },
@@ -60,15 +124,24 @@ export function registerSlackAdapter(registry: ToolRegistry): void {
     },
     async (input, credentials) => {
       const tokenOrErr = requireToken(credentials);
-      if (typeof tokenOrErr !== "string") return tokenOrErr;
+      if (typeof tokenOrErr !== "string") {
+        return tokenOrErr;
+      }
 
       const { channel, text, blocks, thread_ts } = input as {
-        channel: string; text: string; blocks?: unknown[]; thread_ts?: string;
+        channel: string;
+        text: string;
+        blocks?: unknown[];
+        thread_ts?: string;
       };
 
       const body: Record<string, unknown> = { channel, text };
-      if (blocks) body.blocks = blocks;
-      if (thread_ts) body.thread_ts = thread_ts;
+      if (blocks) {
+        body.blocks = blocks;
+      }
+      if (thread_ts) {
+        body.thread_ts = thread_ts;
+      }
 
       const result = await slackFetch("chat.postMessage", tokenOrErr, body);
 
@@ -87,18 +160,266 @@ export function registerSlackAdapter(registry: ToolRegistry): void {
     }
   );
 
+  // ---- send_dm ----
+  registry.register(
+    {
+      name: "slack_send_dm",
+      adapter: "slack",
+      description: "Send a direct message to a Slack user",
+      inputSchema: {
+        type: "object",
+        properties: {
+          userId: {
+            type: "string",
+            description: "Slack user ID to send DM to",
+          },
+          text: { type: "string", description: "Message text" },
+          blocks: {
+            type: "array",
+            description: "Slack Block Kit blocks for rich formatting",
+          },
+        },
+        required: ["userId", "text"],
+      },
+      requiresAuth: true,
+    },
+    async (input, credentials) => {
+      const tokenOrErr = requireToken(credentials);
+      if (typeof tokenOrErr !== "string") {
+        return tokenOrErr;
+      }
+
+      const { userId, text, blocks } = input as {
+        userId: string;
+        text: string;
+        blocks?: unknown[];
+      };
+
+      // Open a DM conversation first
+      const openResult = await slackFetch("conversations.open", tokenOrErr, {
+        users: userId,
+      });
+
+      if (!openResult.ok) {
+        return {
+          success: false,
+          error: `Failed to open DM: ${openResult.error}`,
+        };
+      }
+
+      const channel = (
+        (openResult.data as Record<string, unknown>)?.channel as
+          | Record<string, unknown>
+          | undefined
+      )?.id;
+      if (!channel) {
+        return { success: false, error: "Failed to get DM channel ID" };
+      }
+
+      // Send the message
+      const body: Record<string, unknown> = { channel, text };
+      if (blocks) {
+        body.blocks = blocks;
+      }
+
+      const sendResult = await slackFetch("chat.postMessage", tokenOrErr, body);
+
+      if (!sendResult.ok) {
+        return {
+          success: false,
+          error: `Slack API error: ${sendResult.error}`,
+        };
+      }
+
+      const msg = sendResult.data as Record<string, unknown>;
+      return {
+        success: true,
+        data: {
+          ts: msg.ts,
+          channel: msg.channel,
+          dm: true,
+        },
+      };
+    }
+  );
+
+  // ---- thread_reply ----
+  registry.register(
+    {
+      name: "slack_thread_reply",
+      adapter: "slack",
+      description: "Reply to a message thread in Slack",
+      inputSchema: {
+        type: "object",
+        properties: {
+          channel: {
+            type: "string",
+            description: "Channel ID where the thread exists",
+          },
+          thread_ts: {
+            type: "string",
+            description: "Timestamp of the parent message",
+          },
+          text: { type: "string", description: "Reply text" },
+          blocks: {
+            type: "array",
+            description: "Slack Block Kit blocks for rich formatting",
+          },
+          broadcast: {
+            type: "boolean",
+            description: "Also post to the channel (default false)",
+          },
+        },
+        required: ["channel", "thread_ts", "text"],
+      },
+      requiresAuth: true,
+    },
+    async (input, credentials) => {
+      const tokenOrErr = requireToken(credentials);
+      if (typeof tokenOrErr !== "string") {
+        return tokenOrErr;
+      }
+
+      const { channel, thread_ts, text, blocks, broadcast } = input as {
+        channel: string;
+        thread_ts: string;
+        text: string;
+        blocks?: unknown[];
+        broadcast?: boolean;
+      };
+
+      const body: Record<string, unknown> = {
+        channel,
+        thread_ts,
+        text,
+      };
+      if (blocks) {
+        body.blocks = blocks;
+      }
+      if (broadcast) {
+        body.reply_broadcast = true;
+      }
+
+      const result = await slackFetch("chat.postMessage", tokenOrErr, body);
+
+      if (!result.ok) {
+        return { success: false, error: `Slack API error: ${result.error}` };
+      }
+
+      const msg = result.data as Record<string, unknown>;
+      return {
+        success: true,
+        data: {
+          ts: msg.ts,
+          channel: msg.channel,
+          thread_ts,
+          is_reply: true,
+        },
+      };
+    }
+  );
+
+  // ---- list_channels ----
+  registry.register(
+    {
+      name: "slack_list_channels",
+      adapter: "slack",
+      description: "List Slack channels the bot has access to",
+      inputSchema: {
+        type: "object",
+        properties: {
+          types: {
+            type: "string",
+            description:
+              "Comma-separated channel types: public_channel, private_channel, mpim, im",
+          },
+          exclude_archived: {
+            type: "boolean",
+            description: "Exclude archived channels (default true)",
+          },
+          limit: {
+            type: "number",
+            description: "Number of channels to return (max 1000)",
+          },
+          cursor: { type: "string", description: "Pagination cursor" },
+        },
+      },
+      requiresAuth: true,
+    },
+    async (input, credentials) => {
+      const tokenOrErr = requireToken(credentials);
+      if (typeof tokenOrErr !== "string") {
+        return tokenOrErr;
+      }
+
+      const { types, exclude_archived, limit, cursor } = input as {
+        types?: string;
+        exclude_archived?: boolean;
+        limit?: number;
+        cursor?: string;
+      };
+
+      const params: Record<string, string> = {
+        types: types ?? "public_channel,private_channel",
+        exclude_archived: String(exclude_archived ?? true),
+        limit: String(Math.min(limit ?? 100, 1000)),
+      };
+      if (cursor) {
+        params.cursor = cursor;
+      }
+
+      const result = await slackGet("conversations.list", tokenOrErr, params);
+
+      if (!result.ok) {
+        return { success: false, error: `Slack API error: ${result.error}` };
+      }
+
+      const data = result.data as Record<string, unknown>;
+      const channels = ((data.channels as Record<string, unknown>[]) ?? []).map(
+        (ch) => ({
+          id: ch.id,
+          name: ch.name,
+          is_channel: ch.is_channel,
+          is_private: ch.is_private,
+          is_archived: ch.is_archived,
+          topic: (ch.topic as Record<string, unknown> | undefined)?.value ?? "",
+          purpose:
+            (ch.purpose as Record<string, unknown> | undefined)?.value ?? "",
+          num_members: ch.num_members,
+        })
+      );
+
+      const responseMeta = data.response_metadata as
+        | Record<string, unknown>
+        | undefined;
+
+      return {
+        success: true,
+        data: {
+          channels,
+          count: channels.length,
+          next_cursor: responseMeta?.next_cursor ?? null,
+        },
+      };
+    }
+  );
+
   // ---- create_channel_message (rich formatted task summary) ----
   registry.register(
     {
       name: "slack_create_channel_message",
       adapter: "slack",
-      description: "Post a formatted task/deployment notification to a Slack channel using Block Kit",
+      description:
+        "Post a formatted task/deployment notification to a Slack channel using Block Kit",
       inputSchema: {
         type: "object",
         properties: {
           channel: { type: "string" },
           title: { type: "string", description: "Notification title" },
-          status: { type: "string", enum: ["success", "failure", "in_progress", "warning"] },
+          status: {
+            type: "string",
+            enum: ["success", "failure", "in_progress", "warning"],
+          },
           body: { type: "string", description: "Main message body" },
           fields: {
             type: "array",
@@ -120,12 +441,18 @@ export function registerSlackAdapter(registry: ToolRegistry): void {
     },
     async (input, credentials) => {
       const tokenOrErr = requireToken(credentials);
-      if (typeof tokenOrErr !== "string") return tokenOrErr;
+      if (typeof tokenOrErr !== "string") {
+        return tokenOrErr;
+      }
 
       const { channel, title, status, body, fields, url, urlLabel } = input as {
-        channel: string; title: string; status: string;
-        body?: string; fields?: Array<{ label: string; value: string }>;
-        url?: string; urlLabel?: string;
+        channel: string;
+        title: string;
+        status: string;
+        body?: string;
+        fields?: Array<{ label: string; value: string }>;
+        url?: string;
+        urlLabel?: string;
       };
 
       const statusEmoji: Record<string, string> = {
@@ -138,7 +465,11 @@ export function registerSlackAdapter(registry: ToolRegistry): void {
       const blocks: unknown[] = [
         {
           type: "header",
-          text: { type: "plain_text", text: `${statusEmoji[status] ?? ""} ${title}`, emoji: true },
+          text: {
+            type: "plain_text",
+            text: `${statusEmoji[status] ?? ""} ${title}`,
+            emoji: true,
+          },
         },
       ];
 

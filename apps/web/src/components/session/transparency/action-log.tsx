@@ -21,6 +21,7 @@ interface ActionEntry {
   timestamp: string;
 }
 
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: complex but well-structured logic
 function classifyEvent(event: SessionEvent): ActionEntry {
   const data = event.data ?? {};
   let phase: StepPhase = "unknown";
@@ -114,6 +115,7 @@ function PhaseIcon({ phase }: { phase: StepPhase }) {
   const iconMap: Record<string, JSX.Element> = {
     brain: (
       <svg
+        aria-hidden="true"
         className={`h-3 w-3 ${style.color}`}
         fill="none"
         stroke="currentColor"
@@ -129,6 +131,7 @@ function PhaseIcon({ phase }: { phase: StepPhase }) {
     ),
     wrench: (
       <svg
+        aria-hidden="true"
         className={`h-3 w-3 ${style.color}`}
         fill="none"
         stroke="currentColor"
@@ -144,6 +147,7 @@ function PhaseIcon({ phase }: { phase: StepPhase }) {
     ),
     play: (
       <svg
+        aria-hidden="true"
         className={`h-3 w-3 ${style.color}`}
         fill="none"
         stroke="currentColor"
@@ -159,6 +163,7 @@ function PhaseIcon({ phase }: { phase: StepPhase }) {
     ),
     check: (
       <svg
+        aria-hidden="true"
         className={`h-3 w-3 ${style.color}`}
         fill="none"
         stroke="currentColor"
@@ -174,6 +179,7 @@ function PhaseIcon({ phase }: { phase: StepPhase }) {
     ),
     x: (
       <svg
+        aria-hidden="true"
         className={`h-3 w-3 ${style.color}`}
         fill="none"
         stroke="currentColor"
@@ -219,6 +225,7 @@ export function ActionLog() {
     <div className="flex h-full flex-col rounded-xl border border-zinc-800 bg-zinc-900/50">
       <div className="flex items-center gap-2 border-zinc-800 border-b px-3 py-2">
         <svg
+          aria-hidden="true"
           className="h-3.5 w-3.5 text-zinc-500"
           fill="none"
           stroke="currentColor"

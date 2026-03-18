@@ -4,16 +4,16 @@ import type { ContainerManager } from "./container";
 const logger = createLogger("sandbox-manager:git-ops");
 
 export interface GitCloneOptions {
-  repoUrl: string;
   branch?: string;
   depth?: number;
+  repoUrl: string;
 }
 
 export interface GitCommitOptions {
-  message: string;
-  files?: string[];
-  authorName?: string;
   authorEmail?: string;
+  authorName?: string;
+  files?: string[];
+  message: string;
 }
 
 export interface GitDiffResult {
@@ -41,7 +41,10 @@ export class GitOperations {
   /**
    * Clone a repository into the sandbox workspace.
    */
-  async clone(sandboxId: string, options: GitCloneOptions): Promise<{ success: boolean; error?: string }> {
+  async clone(
+    sandboxId: string,
+    options: GitCloneOptions
+  ): Promise<{ success: boolean; error?: string }> {
     const { repoUrl, branch, depth } = options;
 
     let cmd = "git clone";
@@ -76,7 +79,10 @@ export class GitOperations {
   /**
    * Create a new branch in the sandbox repo.
    */
-  async createBranch(sandboxId: string, branchName: string): Promise<{ success: boolean; error?: string }> {
+  async createBranch(
+    sandboxId: string,
+    branchName: string
+  ): Promise<{ success: boolean; error?: string }> {
     const safeBranch = encodeShellArg(branchName);
 
     // Create and checkout the new branch
@@ -87,7 +93,10 @@ export class GitOperations {
     );
 
     if (result.exitCode !== 0) {
-      logger.error({ sandboxId, branchName, stderr: result.stderr }, "Failed to create branch");
+      logger.error(
+        { sandboxId, branchName, stderr: result.stderr },
+        "Failed to create branch"
+      );
       return { success: false, error: result.stderr };
     }
 
@@ -98,7 +107,10 @@ export class GitOperations {
   /**
    * Stage files and commit changes.
    */
-  async commit(sandboxId: string, options: GitCommitOptions): Promise<{ success: boolean; commitSha?: string; error?: string }> {
+  async commit(
+    sandboxId: string,
+    options: GitCommitOptions
+  ): Promise<{ success: boolean; commitSha?: string; error?: string }> {
     const { message, files, authorName, authorEmail } = options;
     const workDir = "/workspace/repo";
 
@@ -141,7 +153,10 @@ export class GitOperations {
         30_000
       );
       if (addResult.exitCode !== 0) {
-        return { success: false, error: `Failed to stage files: ${addResult.stderr}` };
+        return {
+          success: false,
+          error: `Failed to stage files: ${addResult.stderr}`,
+        };
       }
     } else {
       // Stage all changes
@@ -151,7 +166,10 @@ export class GitOperations {
         30_000
       );
       if (addResult.exitCode !== 0) {
-        return { success: false, error: `Failed to stage files: ${addResult.stderr}` };
+        return {
+          success: false,
+          error: `Failed to stage files: ${addResult.stderr}`,
+        };
       }
     }
 
@@ -173,7 +191,10 @@ export class GitOperations {
     );
 
     if (commitResult.exitCode !== 0) {
-      logger.error({ sandboxId, stderr: commitResult.stderr }, "Git commit failed");
+      logger.error(
+        { sandboxId, stderr: commitResult.stderr },
+        "Git commit failed"
+      );
       return { success: false, error: commitResult.stderr };
     }
 
@@ -193,7 +214,10 @@ export class GitOperations {
   /**
    * Push current branch to remote.
    */
-  async push(sandboxId: string, options?: { remote?: string; force?: boolean }): Promise<{ success: boolean; error?: string }> {
+  async push(
+    sandboxId: string,
+    options?: { remote?: string; force?: boolean }
+  ): Promise<{ success: boolean; error?: string }> {
     const remote = options?.remote ?? "origin";
     const force = options?.force ? " --force-with-lease" : "";
     const workDir = "/workspace/repo";
@@ -224,7 +248,10 @@ export class GitOperations {
   /**
    * Get the current diff of the working directory.
    */
-  async diff(sandboxId: string, options?: { staged?: boolean }): Promise<GitDiffResult> {
+  async diff(
+    sandboxId: string,
+    options?: { staged?: boolean }
+  ): Promise<GitDiffResult> {
     const workDir = "/workspace/repo";
     const stagedFlag = options?.staged ? " --cached" : "";
 
@@ -236,7 +263,7 @@ export class GitOperations {
     );
 
     // Get diff stats
-    const statResult = await this.containerManager.exec(
+    const _statResult = await this.containerManager.exec(
       sandboxId,
       `cd ${workDir} && git diff${stagedFlag} --stat`,
       10_000
@@ -253,31 +280,40 @@ export class GitOperations {
     const statusCmd = options?.staged
       ? `cd ${workDir} && git diff --cached --name-status`
       : `cd ${workDir} && git diff --name-status`;
-    const statusResult = await this.containerManager.exec(sandboxId, statusCmd, 10_000);
+    const statusResult = await this.containerManager.exec(
+      sandboxId,
+      statusCmd,
+      10_000
+    );
 
     const files: GitDiffResult["files"] = [];
     let totalInsertions = 0;
     let totalDeletions = 0;
 
     // Parse numstat output (additions\tdeletions\tfilename)
-    const numstatLines = numstatResult.stdout.trim().split("\n").filter(Boolean);
+    const numstatLines = numstatResult.stdout
+      .trim()
+      .split("\n")
+      .filter(Boolean);
     const statusLines = statusResult.stdout.trim().split("\n").filter(Boolean);
 
     const statusMap = new Map<string, string>();
     for (const line of statusLines) {
       const [statusCode, ...pathParts] = line.split("\t");
       if (statusCode && pathParts.length > 0) {
-        statusMap.set(pathParts[pathParts.length - 1]!, statusCode.charAt(0));
+        statusMap.set(pathParts.at(-1) as string, statusCode.charAt(0));
       }
     }
 
     for (const line of numstatLines) {
       const parts = line.split("\t");
-      if (parts.length < 3) continue;
+      if (parts.length < 3) {
+        continue;
+      }
 
-      const additions = parseInt(parts[0]!, 10) || 0;
-      const deletions = parseInt(parts[1]!, 10) || 0;
-      const filePath = parts[2]!;
+      const additions = Number.parseInt(parts[0] as string, 10) || 0;
+      const deletions = Number.parseInt(parts[1] as string, 10) || 0;
+      const filePath = parts[2] as string;
 
       totalInsertions += additions;
       totalDeletions += deletions;
@@ -285,10 +321,18 @@ export class GitOperations {
       const statusCode = statusMap.get(filePath) ?? "M";
       let status: "added" | "modified" | "deleted" | "renamed" = "modified";
       switch (statusCode) {
-        case "A": status = "added"; break;
-        case "D": status = "deleted"; break;
-        case "R": status = "renamed"; break;
-        default: status = "modified"; break;
+        case "A":
+          status = "added";
+          break;
+        case "D":
+          status = "deleted";
+          break;
+        case "R":
+          status = "renamed";
+          break;
+        default:
+          status = "modified";
+          break;
       }
 
       files.push({ path: filePath, status, additions, deletions });
@@ -320,24 +364,34 @@ export class GitOperations {
   /**
    * Get the git log.
    */
-  async log(sandboxId: string, maxCount = 10): Promise<Array<{ sha: string; message: string; author: string; date: string }>> {
+  async log(
+    sandboxId: string,
+    maxCount = 10
+  ): Promise<
+    Array<{ sha: string; message: string; author: string; date: string }>
+  > {
     const result = await this.containerManager.exec(
       sandboxId,
       `cd /workspace/repo && git log --format="%H|||%s|||%an|||%aI" -n ${maxCount}`,
       10_000
     );
 
-    if (!result.stdout.trim()) return [];
+    if (!result.stdout.trim()) {
+      return [];
+    }
 
-    return result.stdout.trim().split("\n").map((line) => {
-      const [sha, message, author, date] = line.split("|||");
-      return {
-        sha: sha ?? "",
-        message: message ?? "",
-        author: author ?? "",
-        date: date ?? "",
-      };
-    });
+    return result.stdout
+      .trim()
+      .split("\n")
+      .map((line) => {
+        const [sha, message, author, date] = line.split("|||");
+        return {
+          sha: sha ?? "",
+          message: message ?? "",
+          author: author ?? "",
+          date: date ?? "",
+        };
+      });
   }
 }
 
@@ -346,5 +400,5 @@ export class GitOperations {
  */
 function encodeShellArg(arg: string): string {
   // Single-quote the argument and escape any embedded single quotes
-  return "'" + arg.replace(/'/g, "'\\''") + "'";
+  return `'${arg.replace(/'/g, "'\\''")}'`;
 }

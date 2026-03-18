@@ -13,6 +13,7 @@ interface ToolCall {
   toolName: string;
 }
 
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: complex but well-structured logic
 function extractToolCalls(
   events: Array<{
     id: string;
@@ -53,7 +54,7 @@ function extractToolCalls(
           calls[i]?.status === "pending"
         ) {
           calls[i] = {
-            ...calls[i]!,
+            ...(calls[i] as (typeof calls)[0]),
             output: data.output ? String(data.output) : null,
             status: data.error ? "error" : "success",
             durationMs:
@@ -82,8 +83,10 @@ function ToolCallCard({ call }: { call: ToolCall }) {
       <button
         className="flex w-full items-center gap-2 px-3 py-2 text-left"
         onClick={() => setExpanded(!expanded)}
+        type="button"
       >
         <svg
+          aria-hidden="true"
           className={`h-3 w-3 shrink-0 text-zinc-600 transition-transform ${expanded ? "rotate-90" : ""}`}
           fill="none"
           stroke="currentColor"
@@ -151,6 +154,7 @@ export function ToolCallDetail() {
     <div className="flex h-full flex-col rounded-xl border border-zinc-800 bg-zinc-900/50">
       <div className="flex items-center gap-2 border-zinc-800 border-b px-3 py-2">
         <svg
+          aria-hidden="true"
           className="h-3.5 w-3.5 text-zinc-500"
           fill="none"
           stroke="currentColor"

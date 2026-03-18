@@ -7,12 +7,12 @@ const originalNodeEnv = process.env.NODE_ENV;
 
 afterEach(() => {
   if (originalLogLevel === undefined) {
-    process.env.LOG_LEVEL = undefined;
+    Reflect.deleteProperty(process.env, "LOG_LEVEL");
   } else {
     process.env.LOG_LEVEL = originalLogLevel;
   }
   if (originalNodeEnv === undefined) {
-    process.env.NODE_ENV = undefined;
+    Reflect.deleteProperty(process.env, "NODE_ENV");
   } else {
     process.env.NODE_ENV = originalNodeEnv;
   }
@@ -40,7 +40,7 @@ describe("createLogger", () => {
   });
 
   it("defaults to 'info' level when no level specified", () => {
-    process.env.LOG_LEVEL = undefined;
+    Reflect.deleteProperty(process.env, "LOG_LEVEL");
     const logger = createLogger("test");
     expect(logger.level).toBe("info");
   });
@@ -76,18 +76,16 @@ describe("withRequestId", () => {
 describe("withTiming", () => {
   it("measures execution time and returns result", async () => {
     const logger = createLogger({ service: "test", level: "silent" });
-    const result = await withTiming(logger, "test-op", async () => {
-      return 42;
-    });
+    const result = await withTiming(logger, "test-op", () =>
+      Promise.resolve(42)
+    );
     expect(result).toBe(42);
   });
 
   it("re-throws errors from the timed function", async () => {
     const logger = createLogger({ service: "test", level: "silent" });
     await expect(
-      withTiming(logger, "fail-op", async () => {
-        throw new Error("boom");
-      })
+      withTiming(logger, "fail-op", () => Promise.reject(new Error("boom")))
     ).rejects.toThrow("boom");
   });
 });

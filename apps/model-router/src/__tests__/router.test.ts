@@ -1,19 +1,32 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // ── Mocks ────────────────────────────────────────────────────────────────────
 
 const mockCreate = vi.fn();
 
 vi.mock("@prometheus/ai", () => ({
+  PROVIDER_ENDPOINTS: {
+    ollama: "http://localhost:11434/v1",
+    cerebras: "https://api.cerebras.ai/v1",
+    groq: "https://api.groq.com/openai/v1",
+    gemini: "https://generativelanguage.googleapis.com/v1beta/openai",
+    openrouter: "https://openrouter.ai/api/v1",
+    mistral: "https://api.mistral.ai/v1",
+    deepseek: "https://api.deepseek.com/v1",
+    anthropic: "https://api.anthropic.com/v1",
+    openai: "https://api.openai.com/v1",
+  },
   MODEL_REGISTRY: {
     "ollama/qwen3-coder-next": {
       id: "qwen3-coder-next",
       provider: "ollama",
       tier: 0,
       capabilities: ["coding", "chat"],
-      contextWindow: 32768,
+      contextWindow: 32_768,
       costPerInputToken: 0,
       costPerOutputToken: 0,
+      supportsStreaming: true,
+      maxOutputTokens: 8192,
     },
     "cerebras/qwen3-235b": {
       id: "qwen3-235b",
@@ -23,69 +36,85 @@ vi.mock("@prometheus/ai", () => ({
       contextWindow: 8192,
       costPerInputToken: 0,
       costPerOutputToken: 0,
+      supportsStreaming: true,
+      maxOutputTokens: 8192,
     },
     "groq/llama-3.3-70b-versatile": {
       id: "llama-3.3-70b-versatile",
       provider: "groq",
       tier: 1,
       capabilities: ["coding", "chat"],
-      contextWindow: 128000,
+      contextWindow: 128_000,
       costPerInputToken: 0.0001,
       costPerOutputToken: 0.0002,
+      supportsStreaming: true,
+      maxOutputTokens: 32_768,
     },
     "ollama/deepseek-r1:32b": {
       id: "deepseek-r1:32b",
       provider: "ollama",
       tier: 0,
       capabilities: ["reasoning"],
-      contextWindow: 32768,
+      contextWindow: 32_768,
       costPerInputToken: 0,
       costPerOutputToken: 0,
+      supportsStreaming: true,
+      maxOutputTokens: 8192,
     },
     "ollama/qwen3.5:27b": {
       id: "qwen3.5:27b",
       provider: "ollama",
       tier: 0,
       capabilities: ["reasoning"],
-      contextWindow: 32768,
+      contextWindow: 32_768,
       costPerInputToken: 0,
       costPerOutputToken: 0,
+      supportsStreaming: true,
+      maxOutputTokens: 8192,
     },
     "gemini/gemini-2.5-flash": {
       id: "gemini-2.5-flash",
       provider: "gemini",
       tier: 2,
       capabilities: ["coding", "longContext"],
-      contextWindow: 1000000,
-      costPerInputToken: 0.00001,
-      costPerOutputToken: 0.00004,
+      contextWindow: 1_000_000,
+      costPerInputToken: 0.000_01,
+      costPerOutputToken: 0.000_04,
+      supportsStreaming: true,
+      maxOutputTokens: 65_536,
     },
     "anthropic/claude-sonnet-4-6": {
       id: "claude-sonnet-4-6",
       provider: "anthropic",
       tier: 3,
       capabilities: ["coding", "reasoning", "vision"],
-      contextWindow: 200000,
+      contextWindow: 200_000,
       costPerInputToken: 0.003,
       costPerOutputToken: 0.015,
+      supportsStreaming: true,
+      maxOutputTokens: 8192,
     },
     "anthropic/claude-opus-4-6": {
       id: "claude-opus-4-6",
       provider: "anthropic",
       tier: 4,
       capabilities: ["coding", "reasoning", "vision"],
-      contextWindow: 200000,
+      contextWindow: 200_000,
       costPerInputToken: 0.015,
       costPerOutputToken: 0.075,
+      supportsStreaming: true,
+      maxOutputTokens: 4096,
     },
     "ollama/qwen2.5-coder:14b": {
       id: "qwen2.5-coder:14b",
       provider: "ollama",
       tier: 0,
       capabilities: ["coding"],
-      contextWindow: 16384,
+      contextWindow: 16_384,
       costPerInputToken: 0,
       costPerOutputToken: 0,
+      supportsStreaming: true,
+      maxOutputTokens: 8192,
     },
   },
   createLLMClient: vi.fn().mockReturnValue({
@@ -110,8 +139,8 @@ vi.mock("@prometheus/logger", () => ({
   }),
 }));
 
-import { ModelRouterService } from "../router";
 import type { RouteRequest } from "../router";
+import { ModelRouterService } from "../router";
 
 describe("ModelRouterService", () => {
   let service: ModelRouterService;
@@ -148,17 +177,17 @@ describe("ModelRouterService", () => {
 
     it("default slot uses ollama/qwen3-coder-next as primary", () => {
       const configs = service.getSlotConfigs();
-      expect(configs.default!.primary).toBe("ollama/qwen3-coder-next");
+      expect(configs.default?.primary).toBe("ollama/qwen3-coder-next");
     });
 
     it("think slot uses ollama/deepseek-r1:32b as primary", () => {
       const configs = service.getSlotConfigs();
-      expect(configs.think!.primary).toBe("ollama/deepseek-r1:32b");
+      expect(configs.think?.primary).toBe("ollama/deepseek-r1:32b");
     });
 
     it("premium slot uses claude-opus as primary", () => {
       const configs = service.getSlotConfigs();
-      expect(configs.premium!.primary).toBe("anthropic/claude-opus-4-6");
+      expect(configs.premium?.primary).toBe("anthropic/claude-opus-4-6");
     });
 
     it("each slot has at least one fallback", () => {
@@ -180,7 +209,12 @@ describe("ModelRouterService", () => {
     it("routes to primary model successfully", async () => {
       mockCreate.mockResolvedValueOnce({
         id: "cmpl_1",
-        choices: [{ message: { role: "assistant", content: "Hi there" }, finish_reason: "stop" }],
+        choices: [
+          {
+            message: { role: "assistant", content: "Hi there" },
+            finish_reason: "stop",
+          },
+        ],
         usage: { prompt_tokens: 10, completion_tokens: 5 },
       });
 
@@ -189,12 +223,17 @@ describe("ModelRouterService", () => {
       expect(result.model).toBe("ollama/qwen3-coder-next");
       expect(result.provider).toBe("ollama");
       expect(result.slot).toBe("default");
-      expect(result.choices[0]!.message.content).toBe("Hi there");
+      expect(result.choices[0]?.message.content).toBe("Hi there");
     });
 
     it("calculates usage tokens correctly", async () => {
       mockCreate.mockResolvedValueOnce({
-        choices: [{ message: { role: "assistant", content: "Response" }, finish_reason: "stop" }],
+        choices: [
+          {
+            message: { role: "assistant", content: "Response" },
+            finish_reason: "stop",
+          },
+        ],
         usage: { prompt_tokens: 100, completion_tokens: 50 },
       });
 
@@ -208,8 +247,14 @@ describe("ModelRouterService", () => {
     it("falls back to next model when primary fails", async () => {
       mockCreate
         .mockRejectedValueOnce(new Error("Model unavailable")) // primary fails
-        .mockResolvedValueOnce({ // first fallback succeeds
-          choices: [{ message: { role: "assistant", content: "Fallback response" }, finish_reason: "stop" }],
+        .mockResolvedValueOnce({
+          // first fallback succeeds
+          choices: [
+            {
+              message: { role: "assistant", content: "Fallback response" },
+              finish_reason: "stop",
+            },
+          ],
           usage: { prompt_tokens: 10, completion_tokens: 5 },
         });
 
@@ -226,7 +271,12 @@ describe("ModelRouterService", () => {
         .mockResolvedValueOnce(true); // fallback OK
 
       mockCreate.mockResolvedValueOnce({
-        choices: [{ message: { role: "assistant", content: "OK" }, finish_reason: "stop" }],
+        choices: [
+          {
+            message: { role: "assistant", content: "OK" },
+            finish_reason: "stop",
+          },
+        ],
         usage: { prompt_tokens: 10, completion_tokens: 5 },
       });
 
@@ -239,28 +289,50 @@ describe("ModelRouterService", () => {
     it("throws when all models in the chain are exhausted", async () => {
       mockCreate.mockRejectedValue(new Error("All fail"));
 
-      await expect(service.route(baseRequest)).rejects.toThrow("All models exhausted");
+      await expect(service.route(baseRequest)).rejects.toThrow(
+        "All models exhausted"
+      );
     });
 
     it("throws for unknown slot", async () => {
-      await expect(service.route({ slot: "nonexistent", messages: [] })).rejects.toThrow("Unknown slot");
+      await expect(
+        service.route({ slot: "nonexistent", messages: [] })
+      ).rejects.toThrow("Unknown slot");
     });
 
     it("records rate limit data for each attempt", async () => {
       mockCreate.mockResolvedValueOnce({
-        choices: [{ message: { role: "assistant", content: "OK" }, finish_reason: "stop" }],
+        choices: [
+          {
+            message: { role: "assistant", content: "OK" },
+            finish_reason: "stop",
+          },
+        ],
         usage: { prompt_tokens: 50, completion_tokens: 25 },
       });
 
       await service.route(baseRequest);
 
-      expect(mockRateLimiter.recordRequest).toHaveBeenCalledWith("ollama", "ollama/qwen3-coder-next");
-      expect(mockRateLimiter.recordTokenUsage).toHaveBeenCalledWith("ollama", "ollama/qwen3-coder-next", 50, 25);
+      expect(mockRateLimiter.recordRequest).toHaveBeenCalledWith(
+        "ollama",
+        "ollama/qwen3-coder-next"
+      );
+      expect(mockRateLimiter.recordTokenUsage).toHaveBeenCalledWith(
+        "ollama",
+        "ollama/qwen3-coder-next",
+        50,
+        25
+      );
     });
 
     it("uses explicit model override when provided and exists in registry", async () => {
       mockCreate.mockResolvedValueOnce({
-        choices: [{ message: { role: "assistant", content: "Claude response" }, finish_reason: "stop" }],
+        choices: [
+          {
+            message: { role: "assistant", content: "Claude response" },
+            finish_reason: "stop",
+          },
+        ],
         usage: { prompt_tokens: 20, completion_tokens: 10 },
       });
 
@@ -277,8 +349,14 @@ describe("ModelRouterService", () => {
     it("falls through to slot routing when override model fails", async () => {
       mockCreate
         .mockRejectedValueOnce(new Error("Override failed")) // override fails
-        .mockResolvedValueOnce({ // primary succeeds
-          choices: [{ message: { role: "assistant", content: "Primary" }, finish_reason: "stop" }],
+        .mockResolvedValueOnce({
+          // primary succeeds
+          choices: [
+            {
+              message: { role: "assistant", content: "Primary" },
+              finish_reason: "stop",
+            },
+          ],
           usage: { prompt_tokens: 10, completion_tokens: 5 },
         });
 
@@ -293,7 +371,12 @@ describe("ModelRouterService", () => {
 
     it("calculates cost based on model pricing", async () => {
       mockCreate.mockResolvedValueOnce({
-        choices: [{ message: { role: "assistant", content: "Response" }, finish_reason: "stop" }],
+        choices: [
+          {
+            message: { role: "assistant", content: "Response" },
+            finish_reason: "stop",
+          },
+        ],
         usage: { prompt_tokens: 1000, completion_tokens: 500 },
       });
 
@@ -309,7 +392,12 @@ describe("ModelRouterService", () => {
 
     it("returns zero cost for local models", async () => {
       mockCreate.mockResolvedValueOnce({
-        choices: [{ message: { role: "assistant", content: "Local" }, finish_reason: "stop" }],
+        choices: [
+          {
+            message: { role: "assistant", content: "Local" },
+            finish_reason: "stop",
+          },
+        ],
         usage: { prompt_tokens: 1000, completion_tokens: 500 },
       });
 
@@ -319,7 +407,12 @@ describe("ModelRouterService", () => {
 
     it("reports routing metadata correctly for primary model", async () => {
       mockCreate.mockResolvedValueOnce({
-        choices: [{ message: { role: "assistant", content: "OK" }, finish_reason: "stop" }],
+        choices: [
+          {
+            message: { role: "assistant", content: "OK" },
+            finish_reason: "stop",
+          },
+        ],
         usage: { prompt_tokens: 10, completion_tokens: 5 },
       });
 
@@ -333,7 +426,12 @@ describe("ModelRouterService", () => {
 
     it("handles missing usage in response gracefully", async () => {
       mockCreate.mockResolvedValueOnce({
-        choices: [{ message: { role: "assistant", content: "OK" }, finish_reason: "stop" }],
+        choices: [
+          {
+            message: { role: "assistant", content: "OK" },
+            finish_reason: "stop",
+          },
+        ],
         // No usage field
       });
 
@@ -381,12 +479,12 @@ describe("ModelRouterService", () => {
 
   describe("selectSlot", () => {
     it("returns longContext for > 32K tokens", () => {
-      const slot = service.selectSlot(50000);
+      const slot = service.selectSlot(50_000);
       expect(slot).toBe("longContext");
     });
 
     it("returns default for <= 32K tokens without task type", () => {
-      const slot = service.selectSlot(10000);
+      const slot = service.selectSlot(10_000);
       expect(slot).toBe("default");
     });
 
@@ -423,7 +521,7 @@ describe("ModelRouterService", () => {
     });
 
     it("falls back to token-based selection for unknown task type", () => {
-      const slot = service.selectSlot(50000, "unknown_type");
+      const slot = service.selectSlot(50_000, "unknown_type");
       expect(slot).toBe("longContext");
     });
 
@@ -438,7 +536,12 @@ describe("ModelRouterService", () => {
   describe("routeCompletion (legacy)", () => {
     it("maps task_type to slot and returns completion", async () => {
       mockCreate.mockResolvedValueOnce({
-        choices: [{ message: { role: "assistant", content: "Code" }, finish_reason: "stop" }],
+        choices: [
+          {
+            message: { role: "assistant", content: "Code" },
+            finish_reason: "stop",
+          },
+        ],
         usage: { prompt_tokens: 10, completion_tokens: 5 },
       });
 
@@ -453,7 +556,12 @@ describe("ModelRouterService", () => {
 
     it("defaults to coding task_type when not specified", async () => {
       mockCreate.mockResolvedValueOnce({
-        choices: [{ message: { role: "assistant", content: "OK" }, finish_reason: "stop" }],
+        choices: [
+          {
+            message: { role: "assistant", content: "OK" },
+            finish_reason: "stop",
+          },
+        ],
         usage: { prompt_tokens: 10, completion_tokens: 5 },
       });
 
@@ -466,7 +574,12 @@ describe("ModelRouterService", () => {
 
     it("returns simplified response without routing metadata", async () => {
       mockCreate.mockResolvedValueOnce({
-        choices: [{ message: { role: "assistant", content: "OK" }, finish_reason: "stop" }],
+        choices: [
+          {
+            message: { role: "assistant", content: "OK" },
+            finish_reason: "stop",
+          },
+        ],
         usage: { prompt_tokens: 10, completion_tokens: 5 },
       });
 

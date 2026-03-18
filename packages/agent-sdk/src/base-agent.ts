@@ -1,9 +1,8 @@
-import type { AgentRole } from "@prometheus/types";
-import { createLLMClient } from "@prometheus/ai";
+import { createLLMClient, type ModelProvider } from "@prometheus/ai";
 import { createLogger, type Logger } from "@prometheus/logger";
-import type { AgentToolDefinition, ToolResult, ToolExecutionContext } from "./tools/types";
-import { TOOL_REGISTRY } from "./tools/registry";
-import { ToolRegistry } from "./tools/registry";
+import type { AgentRole } from "@prometheus/types";
+import { TOOL_REGISTRY, ToolRegistry } from "./tools/registry";
+import type { AgentToolDefinition, ToolExecutionContext } from "./tools/types";
 // We use inline type assertions rather than importing OpenAI types directly
 // to avoid module resolution issues with pnpm hoisting.
 
@@ -12,67 +11,70 @@ import { ToolRegistry } from "./tools/registry";
 // ---------------------------------------------------------------------------
 
 export interface AgentContext {
-  sessionId: string;
-  projectId: string;
-  orgId: string;
-  userId: string;
   agentRole: AgentRole;
-  model?: string;
-  tools?: string[];
   blueprintContent: string | null;
-  projectContext: string | null;
   memory?: AgentMessage[];
+  model?: string;
+  orgId: string;
+  projectContext: string | null;
+  projectId: string;
   sandboxId?: string;
+  sessionId: string;
+  tools?: string[];
+  userId: string;
   workDir?: string;
 }
 
 export interface AgentMessage {
-  role: "system" | "user" | "assistant" | "tool";
   content: string | null;
+  role: "system" | "user" | "assistant" | "tool";
   toolCallId?: string;
   toolCalls?: ToolCall[];
 }
 
 export interface ToolCall {
+  arguments: string;
   id: string;
   name: string;
-  arguments: string;
 }
 
 export interface AgentExecutionResult {
-  success: boolean;
-  output: string;
-  filesChanged: string[];
-  tokensUsed: { input: number; output: number };
-  toolCalls: number;
-  steps: number;
-  creditsConsumed: number;
-  error?: string;
-  blockerEscalated?: boolean;
   askUserPending?: {
     question: string;
     options: string[];
     context: string;
   };
+  blockerEscalated?: boolean;
+  creditsConsumed: number;
+  error?: string;
+  filesChanged: string[];
+  killRequests?: Array<{
+    agentId: string;
+    reason: string;
+  }>;
+  output: string;
   spawnRequests?: Array<{
     role: string;
     task: string;
     dependencies: string[];
     priority: number;
   }>;
-  killRequests?: Array<{
-    agentId: string;
-    reason: string;
-  }>;
+  steps: number;
+  success: boolean;
+  tokensUsed: { input: number; output: number };
+  toolCalls: number;
 }
 
 export interface EventPublisherInterface {
-  publishSessionEvent(sessionId: string, event: {
-    type: string;
-    data: Record<string, unknown>;
-    agentRole?: string;
-    timestamp: string;
-  }): Promise<void>;
+  publishSessionEvent(
+    sessionId: string,
+    event: {
+      type: string;
+      data: Record<string, unknown>;
+      agentRole?: string;
+      timestamp: string;
+    }
+  ): Promise<void>;
 }
 
 // ---------------------------------------------------------------------------
@@ -93,12 +95,17 @@ export function resolveTools(names: string[]): AgentToolDefinition[] {
   const tools: AgentToolDefinition[] = [];
   for (const name of names) {
     const tool = TOOL_REGISTRY[name];
-    if (tool) tools.push(tool);
+    if (tool) {
+      tools.push(tool);
+    }
   }
   return tools;
 }
 
-function parseModelString(modelStr: string): { provider: string; model: string } {
+function parseModelString(modelStr: string): {
+  provider: string;
+  model: string;
+} {
   const slashIdx = modelStr.indexOf("/");
   if (slashIdx === -1) {
     return { provider: "ollama", model: modelStr };
@@ -110,7 +117,9 @@ function parseModelString(modelStr: string): { provider: string; model: string }
 }
 
 function truncateOutput(output: string, maxLen = 20_000): string {
-  if (output.length <= maxLen) return output;
+  if (output.length <= maxLen) {
+    return output;
+  }
   const half = Math.floor(maxLen / 2) - 50;
   return (
     output.slice(0, half) +
@@ -139,7 +148,12 @@ export abstract class BaseAgent {
   protected creditsConsumed = 0;
   protected toolCallCount = 0;
   protected filesChanged: Set<string> = new Set();
-  protected spawnRequests: Array<{ role: string; task: string; dependencies: string[]; priority: number }> = [];
+  protected spawnRequests: Array<{
+    role: string;
+    task: string;
+    dependencies: string[];
+    priority: number;
+  }> = [];
   protected killRequests: Array<{ agentId: string; reason: string }> = [];
 
   constructor(role: AgentRole, tools: AgentToolDefinition[] = []) {
@@ -211,7 +225,10 @@ export abstract class BaseAgent {
       }
     }
 
-    this.logger.info({ sessionId: context.sessionId, role: this.role }, "Agent initialized");
+    this.logger.info(
+      { sessionId: context.sessionId, role: this.role },
+      "Agent initialized"
+    );
   }
 
   /**
@@ -243,7 +260,11 @@ export abstract class BaseAgent {
 
   getToolDefinitions(): Array<{
     type: "function";
-    function: { name: string; description: string; parameters: Record<string, unknown> };
+    function: {
+      name: string;
+      description: string;
+      parameters: Record<string, unknown>;
+    };
   }> {
     return this.toolRegistry.getOpenAIToolDefs();
   }
@@ -257,9 +278,11 @@ export abstract class BaseAgent {
    * Preserves the system message and recent messages, summarizing old ones.
    */
   private trimMessages(): void {
-    if (this.messages.length <= MAX_CONTEXT_MESSAGES) return;
+    if (this.messages.length <= MAX_CONTEXT_MESSAGES) {
+      return;
+    }
 
-    const systemMsg = this.messages[0]!;
+    const systemMsg = this.messages[0] as (typeof this.messages)[0];
     const recentCount = Math.floor(MAX_CONTEXT_MESSAGES * 0.7);
     const recentMessages = this.messages.slice(-recentCount);
 
@@ -279,8 +302,13 @@ export abstract class BaseAgent {
   // Event publishing
   // ---------------------------------------------------------------------------
 
-  private async publishEvent(type: string, data: Record<string, unknown>): Promise<void> {
-    if (!this.eventPublisher || !this.context) return;
+  private async publishEvent(
+    type: string,
+    data: Record<string, unknown>
+  ): Promise<void> {
+    if (!(this.eventPublisher && this.context)) {
+      return;
+    }
     try {
       await this.eventPublisher.publishSessionEvent(this.context.sessionId, {
         type,
@@ -297,6 +325,7 @@ export abstract class BaseAgent {
   // Main execution loop
   // ---------------------------------------------------------------------------
 
+  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: complex but well-structured logic
   async run(task: string): Promise<AgentExecutionResult> {
     if (!this.context) {
       throw new Error("Agent not initialized. Call initialize() first.");
@@ -312,7 +341,7 @@ export abstract class BaseAgent {
     });
 
     const { provider, model } = parseModelString(this.getModel());
-    const client = createLLMClient({ provider });
+    const client = createLLMClient({ provider: provider as ModelProvider });
 
     const toolCtx: ToolExecutionContext = {
       sessionId: ctx.sessionId,
@@ -333,19 +362,35 @@ export abstract class BaseAgent {
 
         // Build the request
         const toolDefs = this.getToolDefinitions();
-        const requestMessages = this.messages.map((m) => this.toOpenAIMessage(m));
+        const requestMessages = this.messages.map((m) =>
+          this.toOpenAIMessage(m)
+        );
 
-        this.logger.debug({
-          step: this.stepCount,
-          messageCount: requestMessages.length,
-          toolCount: toolDefs.length,
-        }, "Calling LLM");
+        this.logger.debug(
+          {
+            step: this.stepCount,
+            messageCount: requestMessages.length,
+            toolCount: toolDefs.length,
+          },
+          "Calling LLM"
+        );
 
         // Call the LLM
         const response = await client.chat.completions.create({
           model,
-          messages: requestMessages as any[],
-          tools: toolDefs.length > 0 ? toolDefs as any[] : undefined,
+          // biome-ignore lint/suspicious/noExplicitAny: OpenAI SDK message types require flexible casting
+          messages: requestMessages as any,
+          tools:
+            toolDefs.length > 0
+              ? (toolDefs as Array<{
+                  type: "function";
+                  function: {
+                    name: string;
+                    description: string;
+                    parameters: Record<string, unknown>;
+                  };
+                }>)
+              : undefined,
           temperature: 0.2,
           max_tokens: 16_384,
         });
@@ -394,12 +439,15 @@ export abstract class BaseAgent {
           break;
         }
 
-        // Parse tool calls
-        const toolCalls: ToolCall[] = toolCallsRaw.map((tc) => ({
-          id: tc.id,
-          name: tc.function.name,
-          arguments: tc.function.arguments,
-        }));
+        // Parse tool calls (filter to function-type tool calls for OpenAI v6 union)
+        const toolCalls: ToolCall[] = toolCallsRaw
+          .filter((tc) => tc.type === "function")
+          .map((tc) => {
+            const fn = (
+              tc as unknown as { function: { name: string; arguments: string } }
+            ).function;
+            return { id: tc.id, name: fn.name, arguments: fn.arguments };
+          });
 
         this.addAssistantMessage(content, toolCalls);
 
@@ -414,12 +462,18 @@ export abstract class BaseAgent {
           } catch {
             const errMsg = `Failed to parse arguments for tool '${tc.name}': invalid JSON`;
             this.addToolResult(tc.id, errMsg);
-            await this.publishEvent("error", { message: errMsg, toolCall: tc.name });
+            await this.publishEvent("error", {
+              message: errMsg,
+              toolCall: tc.name,
+            });
             allSucceeded = false;
             continue;
           }
 
-          this.logger.info({ tool: tc.name, step: this.stepCount }, "Executing tool");
+          this.logger.info(
+            { tool: tc.name, step: this.stepCount },
+            "Executing tool"
+          );
 
           await this.publishEvent("agent_output", {
             type: "tool_call",
@@ -428,7 +482,11 @@ export abstract class BaseAgent {
             step: this.stepCount,
           });
 
-          const result = await this.toolRegistry.execute(tc.name, parsedArgs, toolCtx);
+          const result = await this.toolRegistry.execute(
+            tc.name,
+            parsedArgs,
+            toolCtx
+          );
 
           // Track credit cost for the tool
           const toolDef = this.toolRegistry.resolve(tc.name);
@@ -437,7 +495,12 @@ export abstract class BaseAgent {
           }
 
           // Track file changes
-          if (parsedArgs.path && (tc.name.includes("write") || tc.name.includes("edit") || tc.name.includes("delete"))) {
+          if (
+            parsedArgs.path &&
+            (tc.name.includes("write") ||
+              tc.name.includes("edit") ||
+              tc.name.includes("delete"))
+          ) {
             this.filesChanged.add(parsedArgs.path as string);
           }
 
@@ -459,7 +522,11 @@ export abstract class BaseAgent {
             this.addToolResult(tc.id, "Waiting for user response...");
 
             // Return with askUserPending so the caller can resume later
-            return this.buildResult(true, "Paused: waiting for user response", askUserPending);
+            return this.buildResult(
+              true,
+              "Paused: waiting for user response",
+              askUserPending
+            );
           }
 
           if (result.output === "__SPAWN_AGENT__" && result.metadata) {
@@ -469,7 +536,10 @@ export abstract class BaseAgent {
               dependencies: (result.metadata.dependencies as string[]) ?? [],
               priority: (result.metadata.priority as number) ?? 5,
             });
-            this.addToolResult(tc.id, `Agent spawn queued: ${result.metadata.role} agent will handle "${result.metadata.task}"`);
+            this.addToolResult(
+              tc.id,
+              `Agent spawn queued: ${result.metadata.role} agent will handle "${result.metadata.task}"`
+            );
             continue;
           }
 
@@ -478,7 +548,10 @@ export abstract class BaseAgent {
               agentId: result.metadata.agentId as string,
               reason: result.metadata.reason as string,
             });
-            this.addToolResult(tc.id, `Agent kill queued: ${result.metadata.agentId} (${result.metadata.reason})`);
+            this.addToolResult(
+              tc.id,
+              `Agent kill queued: ${result.metadata.agentId} (${result.metadata.reason})`
+            );
             continue;
           }
 
@@ -516,18 +589,22 @@ export abstract class BaseAgent {
 
         // Escalate if stuck
         if (this.consecutiveFailures >= CONSECUTIVE_FAILURE_THRESHOLD) {
-          this.logger.warn({ consecutiveFailures: this.consecutiveFailures }, "Blocker detected, escalating");
+          this.logger.warn(
+            { consecutiveFailures: this.consecutiveFailures },
+            "Blocker detected, escalating"
+          );
           await this.publishEvent("error", {
             type: "blocker_detected",
             consecutiveFailures: this.consecutiveFailures,
-            message: "Agent is stuck: 3 consecutive tool call failures. Escalating.",
+            message:
+              "Agent is stuck: 3 consecutive tool call failures. Escalating.",
           });
 
           return this.buildResult(
             false,
             `Agent escalated: ${this.consecutiveFailures} consecutive tool failures. Last output: ${finalOutput || "(no output)"}`,
             undefined,
-            true,
+            true
           );
         }
 
@@ -548,7 +625,10 @@ export abstract class BaseAgent {
           steps: this.stepCount,
         });
 
-        return this.buildResult(false, `Agent reached maximum step limit (${MAX_STEPS}). Last output: ${finalOutput || "(no output)"}`);
+        return this.buildResult(
+          false,
+          `Agent reached maximum step limit (${MAX_STEPS}). Last output: ${finalOutput || "(no output)"}`
+        );
       }
 
       await this.publishEvent("agent_output", {
@@ -582,7 +662,7 @@ export abstract class BaseAgent {
     output: string,
     askUserPending?: AgentExecutionResult["askUserPending"],
     blockerEscalated = false,
-    error?: string,
+    error?: string
   ): AgentExecutionResult {
     return {
       success,
@@ -595,8 +675,10 @@ export abstract class BaseAgent {
       error,
       blockerEscalated: blockerEscalated || undefined,
       askUserPending,
-      spawnRequests: this.spawnRequests.length > 0 ? this.spawnRequests : undefined,
-      killRequests: this.killRequests.length > 0 ? this.killRequests : undefined,
+      spawnRequests:
+        this.spawnRequests.length > 0 ? this.spawnRequests : undefined,
+      killRequests:
+        this.killRequests.length > 0 ? this.killRequests : undefined,
     };
   }
 

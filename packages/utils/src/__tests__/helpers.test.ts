@@ -31,7 +31,7 @@ describe("truncate", () => {
 });
 
 describe("debounce", () => {
-  it("debounces calls", async () => {
+  it("debounces calls", () => {
     vi.useFakeTimers();
     const fn = vi.fn();
     const debounced = debounce(fn, 100);

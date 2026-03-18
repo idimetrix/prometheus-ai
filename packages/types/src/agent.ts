@@ -1,20 +1,20 @@
 import type { AgentRole } from "./enums";
 
 export interface AgentConfig {
-  role: AgentRole;
-  model: string;
-  systemPrompt: string;
-  tools: string[];
   maxTokens: number;
+  model: string;
+  role: AgentRole;
+  systemPrompt: string;
   temperature: number;
+  tools: string[];
 }
 
 export interface AgentInstance {
-  id: string;
-  sessionId: string;
-  role: AgentRole;
-  status: "idle" | "working" | "error" | "terminated";
   currentTaskId: string | null;
-  startedAt: Date;
+  id: string;
   lastActiveAt: Date;
+  role: AgentRole;
+  sessionId: string;
+  startedAt: Date;
+  status: "idle" | "working" | "error" | "terminated";
 }

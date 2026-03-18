@@ -1,24 +1,24 @@
 import { createLogger } from "@prometheus/logger";
-import { ContainerManager, type ContainerInfo } from "./container";
+import type { ContainerInfo, ContainerManager } from "./container";
 
 const logger = createLogger("sandbox-manager:pool");
 
 interface PooledSandbox {
+  acquiredAt: Date | null;
+  idleTimer: ReturnType<typeof setTimeout> | null;
   info: ContainerInfo;
+  lastUsedAt: Date;
   projectId: string | null;
   sessionId: string | null;
-  acquiredAt: Date | null;
-  lastUsedAt: Date;
-  idleTimer: ReturnType<typeof setTimeout> | null;
 }
 
 export interface PoolStats {
-  total: number;
   active: number;
-  idle: number;
-  warmTarget: number;
-  maxCapacity: number;
   byStatus: Record<string, number>;
+  idle: number;
+  maxCapacity: number;
+  total: number;
+  warmTarget: number;
 }
 
 export class SandboxPool {
@@ -29,22 +29,32 @@ export class SandboxPool {
   private readonly idleTtlMs: number;
   private cleanupInterval: ReturnType<typeof setInterval> | null = null;
 
-  constructor(containerManager: ContainerManager, options?: {
-    warmPoolSize?: number;
-    maxPoolSize?: number;
-    idleTtlMs?: number;
-  }) {
+  constructor(
+    containerManager: ContainerManager,
+    options?: {
+      warmPoolSize?: number;
+      maxPoolSize?: number;
+      idleTtlMs?: number;
+    }
+  ) {
     this.containerManager = containerManager;
-    this.warmPoolSize = options?.warmPoolSize ?? Number(process.env.WARM_POOL_SIZE ?? 2);
-    this.maxPoolSize = options?.maxPoolSize ?? Number(process.env.MAX_POOL_SIZE ?? 10);
-    this.idleTtlMs = options?.idleTtlMs ?? Number(process.env.SANDBOX_IDLE_TTL_MS ?? 30 * 60 * 1000); // 30 min
+    this.warmPoolSize =
+      options?.warmPoolSize ?? Number(process.env.WARM_POOL_SIZE ?? 2);
+    this.maxPoolSize =
+      options?.maxPoolSize ?? Number(process.env.MAX_POOL_SIZE ?? 10);
+    this.idleTtlMs =
+      options?.idleTtlMs ??
+      Number(process.env.SANDBOX_IDLE_TTL_MS ?? 30 * 60 * 1000); // 30 min
   }
 
   /**
    * Initialize the pool with pre-warmed sandboxes and start the cleanup timer.
    */
   async initialize(): Promise<void> {
-    logger.info({ warmPoolSize: this.warmPoolSize, maxPoolSize: this.maxPoolSize }, "Initializing sandbox pool");
+    logger.info(
+      { warmPoolSize: this.warmPoolSize, maxPoolSize: this.maxPoolSize },
+      "Initializing sandbox pool"
+    );
 
     // Pre-warm sandboxes
     const promises: Promise<void>[] = [];
@@ -99,7 +109,10 @@ export class SandboxPool {
       };
       this.pool.set(info.id, pooled);
 
-      logger.info({ sandboxId: info.id, projectId }, "New sandbox created on demand");
+      logger.info(
+        { sandboxId: info.id, projectId },
+        "New sandbox created on demand"
+      );
       return info;
     }
 
@@ -130,7 +143,9 @@ export class SandboxPool {
 
     // Start idle TTL timer
     sandbox.idleTimer = setTimeout(() => {
-      this.evictSandbox(sandboxId).catch(() => {});
+      this.evictSandbox(sandboxId).catch(() => {
+        /* fire-and-forget */
+      });
     }, this.idleTtlMs);
 
     logger.info({ sandboxId }, "Sandbox released back to pool");
@@ -138,7 +153,9 @@ export class SandboxPool {
     // If we have more idle sandboxes than the warm pool size, evict excess
     const idleCount = this.getIdleCount();
     if (idleCount > this.warmPoolSize + 2) {
-      this.evictExcess().catch(() => {});
+      this.evictExcess().catch(() => {
+        /* fire-and-forget */
+      });
     }
   }
 
@@ -157,7 +174,9 @@ export class SandboxPool {
     logger.info({ sandboxId }, "Sandbox destroyed and removed from pool");
 
     // Replenish warm pool if needed
-    this.replenishPool().catch(() => {});
+    this.replenishPool().catch(() => {
+      /* fire-and-forget */
+    });
   }
 
   /**
@@ -179,10 +198,10 @@ export class SandboxPool {
       const status = sandbox.info.status;
       byStatus[status] = (byStatus[status] ?? 0) + 1;
 
-      if (sandbox.sessionId !== null) {
-        active++;
-      } else {
+      if (sandbox.sessionId === null) {
         idle++;
+      } else {
+        active++;
       }
     }
 
@@ -209,7 +228,9 @@ export class SandboxPool {
 
     const destroyPromises: Promise<void>[] = [];
     for (const [sandboxId, sandbox] of this.pool) {
-      if (sandbox.idleTimer) clearTimeout(sandbox.idleTimer);
+      if (sandbox.idleTimer) {
+        clearTimeout(sandbox.idleTimer);
+      }
       destroyPromises.push(this.containerManager.destroy(sandboxId));
     }
 
@@ -221,7 +242,11 @@ export class SandboxPool {
 
   // ---- Private helpers ----
 
-  private markAcquired(sandbox: PooledSandbox, projectId: string, sessionId: string | null): ContainerInfo {
+  private markAcquired(
+    sandbox: PooledSandbox,
+    projectId: string,
+    sessionId: string | null
+  ): ContainerInfo {
     // Clear idle timer
     if (sandbox.idleTimer) {
       clearTimeout(sandbox.idleTimer);
@@ -236,10 +261,15 @@ export class SandboxPool {
     sandbox.info.sessionId = sessionId;
     sandbox.info.status = "busy";
 
-    logger.info({ sandboxId: sandbox.info.id, projectId }, "Sandbox acquired from pool");
+    logger.info(
+      { sandboxId: sandbox.info.id, projectId },
+      "Sandbox acquired from pool"
+    );
 
     // Replenish warm pool asynchronously
-    this.replenishPool().catch(() => {});
+    this.replenishPool().catch(() => {
+      /* fire-and-forget */
+    });
 
     return sandbox.info;
   }
@@ -269,7 +299,9 @@ export class SandboxPool {
   private async replenishPool(): Promise<void> {
     const idleCount = this.getIdleCount();
     const deficit = this.warmPoolSize - idleCount;
-    if (deficit <= 0 || this.pool.size >= this.maxPoolSize) return;
+    if (deficit <= 0 || this.pool.size >= this.maxPoolSize) {
+      return;
+    }
 
     const toCreate = Math.min(deficit, this.maxPoolSize - this.pool.size);
     const promises: Promise<void>[] = [];
@@ -281,14 +313,18 @@ export class SandboxPool {
 
   private async evictSandbox(sandboxId: string): Promise<void> {
     const sandbox = this.pool.get(sandboxId);
-    if (!sandbox || sandbox.sessionId) return; // Don't evict active sandboxes
+    if (!sandbox || sandbox.sessionId) {
+      return; // Don't evict active sandboxes
+    }
 
     logger.info({ sandboxId }, "Evicting idle sandbox (TTL expired)");
     this.pool.delete(sandboxId);
     await this.containerManager.destroy(sandboxId);
 
     // Replenish if needed
-    this.replenishPool().catch(() => {});
+    this.replenishPool().catch(() => {
+      /* fire-and-forget */
+    });
   }
 
   private async evictExcess(): Promise<void> {
@@ -297,14 +333,22 @@ export class SandboxPool {
       .sort(([, a], [, b]) => a.lastUsedAt.getTime() - b.lastUsedAt.getTime());
 
     const excess = idleSandboxes.length - this.warmPoolSize;
-    if (excess <= 0) return;
+    if (excess <= 0) {
+      return;
+    }
 
     // Evict oldest idle sandboxes
     for (let i = 0; i < excess; i++) {
-      const [sandboxId, sandbox] = idleSandboxes[i]!;
-      if (sandbox.idleTimer) clearTimeout(sandbox.idleTimer);
+      const [sandboxId, sandbox] = idleSandboxes[
+        i
+      ] as (typeof idleSandboxes)[0];
+      if (sandbox.idleTimer) {
+        clearTimeout(sandbox.idleTimer);
+      }
       this.pool.delete(sandboxId);
-      await this.containerManager.destroy(sandboxId).catch(() => {});
+      await this.containerManager.destroy(sandboxId).catch(() => {
+        /* fire-and-forget */
+      });
       logger.info({ sandboxId }, "Excess idle sandbox evicted");
     }
   }
@@ -322,18 +366,29 @@ export class SandboxPool {
       }
 
       // Clean up sandboxes stuck in non-ready states for too long
-      if (sandbox.info.status === "creating" || sandbox.info.status === "stopping") {
+      if (
+        sandbox.info.status === "creating" ||
+        sandbox.info.status === "stopping"
+      ) {
         const stuckMs = now - sandbox.lastUsedAt.getTime();
-        if (stuckMs > 5 * 60 * 1000) { // 5 minutes
-          logger.warn({ sandboxId, status: sandbox.info.status }, "Cleaning up stuck sandbox");
+        if (stuckMs > 5 * 60 * 1000) {
+          // 5 minutes
+          logger.warn(
+            { sandboxId, status: sandbox.info.status },
+            "Cleaning up stuck sandbox"
+          );
           this.pool.delete(sandboxId);
-          await this.containerManager.destroy(sandboxId).catch(() => {});
+          await this.containerManager.destroy(sandboxId).catch(() => {
+            /* fire-and-forget */
+          });
         }
       }
     }
   }
 
   private getIdleCount(): number {
-    return Array.from(this.pool.values()).filter((s) => !s.sessionId && s.info.status === "ready").length;
+    return Array.from(this.pool.values()).filter(
+      (s) => !s.sessionId && s.info.status === "ready"
+    ).length;
   }
 }

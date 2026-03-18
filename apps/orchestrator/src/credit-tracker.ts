@@ -250,7 +250,7 @@ export class CreditTracker {
         await tx
           .update(creditReservations)
           .set({ status: "released" })
-          .where(eq(creditReservations.id, this.reservationId!));
+          .where(eq(creditReservations.id, this.reservationId as string));
 
         await tx.insert(creditTransactions).values({
           id: generateId("ctx"),

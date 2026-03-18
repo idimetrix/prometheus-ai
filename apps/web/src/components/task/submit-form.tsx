@@ -48,7 +48,7 @@ export function TaskSubmitForm({
   // Auto-select first project if only one available
   useEffect(() => {
     if (projects.length === 1 && !selectedProjectId) {
-      setSelectedProjectId(projects[0]?.id);
+      setSelectedProjectId(projects[0]?.id ?? "");
     }
   }, [projects, selectedProjectId]);
 
@@ -91,9 +91,9 @@ export function TaskSubmitForm({
     <div className="mx-auto max-w-3xl space-y-6">
       {/* Mode selector */}
       <div>
-        <label className="mb-2 block font-medium text-sm text-zinc-300">
+        <span className="mb-2 block font-medium text-sm text-zinc-300">
           Mode
-        </label>
+        </span>
         <div className="flex flex-wrap gap-2">
           {MODES.map((m) => (
             <button
@@ -118,11 +118,15 @@ export function TaskSubmitForm({
       {/* Project selector */}
       {projects.length > 0 && (
         <div>
-          <label className="mb-2 block font-medium text-sm text-zinc-300">
+          <label
+            className="mb-2 block font-medium text-sm text-zinc-300"
+            htmlFor="task-project-select"
+          >
             Project
           </label>
           <select
             className="w-full rounded-lg border border-zinc-800 bg-zinc-900 px-3 py-2.5 text-sm text-zinc-200 outline-none focus:border-violet-500 focus:ring-1 focus:ring-violet-500"
+            id="task-project-select"
             onChange={(e) => setSelectedProjectId(e.target.value)}
             value={selectedProjectId}
           >
@@ -150,21 +154,28 @@ export function TaskSubmitForm({
 
       {/* Prompt textarea */}
       <div>
-        <label className="mb-2 block font-medium text-sm text-zinc-300">
+        <label
+          className="mb-2 block font-medium text-sm text-zinc-300"
+          htmlFor="task-prompt"
+        >
           Describe your task
         </label>
         <textarea
           className="w-full resize-none rounded-xl border border-zinc-800 bg-zinc-900 px-4 py-3 text-sm text-zinc-200 leading-relaxed outline-none placeholder:text-zinc-600 focus:border-violet-500 focus:ring-1 focus:ring-violet-500"
+          id="task-prompt"
           onChange={(e) => setPrompt(e.target.value)}
-          placeholder={
-            mode === "ask"
-              ? "What would you like to know about this codebase?"
-              : mode === "plan"
-                ? "Describe what you want to plan..."
-                : mode === "watch"
-                  ? "Describe what to monitor..."
-                  : "Describe what you want to build or fix..."
-          }
+          placeholder={(() => {
+            if (mode === "ask") {
+              return "What would you like to know about this codebase?";
+            }
+            if (mode === "plan") {
+              return "Describe what you want to plan...";
+            }
+            if (mode === "watch") {
+              return "Describe what to monitor...";
+            }
+            return "Describe what you want to build or fix...";
+          })()}
           rows={8}
           value={prompt}
         />
@@ -200,6 +211,7 @@ export function TaskSubmitForm({
           {isSubmitting ? (
             <>
               <svg
+                aria-hidden="true"
                 className="h-4 w-4 animate-spin"
                 fill="none"
                 viewBox="0 0 24 24"
@@ -223,6 +235,7 @@ export function TaskSubmitForm({
           ) : (
             <>
               <svg
+                aria-hidden="true"
                 className="h-4 w-4"
                 fill="none"
                 stroke="currentColor"

@@ -1,12 +1,11 @@
-import { db } from "@prometheus/db";
-import { fileIndexes } from "@prometheus/db";
-import { createLogger } from "@prometheus/logger";
-import { eq, and } from "drizzle-orm";
 import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
-import type { SemanticLayer } from "../layers/semantic";
+import { db, fileIndexes } from "@prometheus/db";
+import { createLogger } from "@prometheus/logger";
+import { and, eq } from "drizzle-orm";
 import type { KnowledgeGraphLayer } from "../layers/knowledge-graph";
+import type { SemanticLayer } from "../layers/semantic";
 
 const logger = createLogger("project-brain:indexer");
 
@@ -57,32 +56,61 @@ const SKIP_DIRS = new Set([
 const MAX_FILE_SIZE = 256 * 1024;
 
 export interface FileChange {
-  path: string;
+  action: "added" | "modified" | "deleted";
   content: string;
   hash: string;
-  action: "added" | "modified" | "deleted";
+  path: string;
+}
+
+export interface IndexProgress {
+  currentFile: string | null;
+  errorFiles: number;
+  estimatedRemainingMs: number | null;
+  indexedFiles: number;
+  projectId: string;
+  skippedFiles: number;
+  startedAt: string;
+  totalFiles: number;
 }
 
 export class FileIndexer {
+  private readonly progressMap = new Map<string, IndexProgress>();
+
   constructor(
     private readonly semantic: SemanticLayer,
-    private readonly knowledgeGraph: KnowledgeGraphLayer,
+    private readonly knowledgeGraph: KnowledgeGraphLayer
   ) {}
+
+  /**
+   * Get current indexing progress for a project.
+   */
+  getProgress(projectId: string): IndexProgress | null {
+    return this.progressMap.get(projectId) ?? null;
+  }
 
   /**
    * Index a single file. Computes hash and skips if unchanged.
    */
-  async indexFile(projectId: string, filePath: string, content: string): Promise<boolean> {
+  async indexFile(
+    projectId: string,
+    filePath: string,
+    content: string
+  ): Promise<boolean> {
     const hash = crypto.createHash("sha256").update(content).digest("hex");
 
     // Check existing hash in DB
     const existing = await db
       .select()
       .from(fileIndexes)
-      .where(and(eq(fileIndexes.projectId, projectId), eq(fileIndexes.filePath, filePath)))
+      .where(
+        and(
+          eq(fileIndexes.projectId, projectId),
+          eq(fileIndexes.filePath, filePath)
+        )
+      )
       .limit(1);
 
-    if (existing.length > 0 && existing[0]!.fileHash === hash) {
+    if (existing.length > 0 && existing[0]?.fileHash === hash) {
       logger.debug({ projectId, filePath }, "File unchanged, skipping");
       return false;
     }
@@ -98,32 +126,93 @@ export class FileIndexer {
   /**
    * Walk a directory and index all source files. Supports incremental re-indexing
    * by checking file hashes against the file_indexes table.
+   * Publishes progress updates for tracking.
    */
   async indexDirectory(
     projectId: string,
     dirPath: string,
-  ): Promise<{ indexed: number; skipped: number; errors: number }> {
-    const stats = { indexed: 0, skipped: 0, errors: 0 };
+    onProgress?: (progress: IndexProgress) => void
+  ): Promise<{
+    indexed: number;
+    skipped: number;
+    errors: number;
+    totalFiles: number;
+  }> {
+    const stats = { indexed: 0, skipped: 0, errors: 0, totalFiles: 0 };
+    const startedAt = new Date().toISOString();
 
     const filePaths = await this.walkDirectory(dirPath);
-    logger.info({ projectId, dirPath, totalFiles: filePaths.length }, "Starting directory index");
+    stats.totalFiles = filePaths.length;
+    logger.info(
+      { projectId, dirPath, totalFiles: filePaths.length },
+      "Starting directory index"
+    );
+
+    // Initialize progress
+    const progress: IndexProgress = {
+      projectId,
+      totalFiles: filePaths.length,
+      indexedFiles: 0,
+      skippedFiles: 0,
+      errorFiles: 0,
+      currentFile: null,
+      startedAt,
+      estimatedRemainingMs: null,
+    };
+    this.progressMap.set(projectId, progress);
+
+    const batchStartTime = Date.now();
 
     for (const absPath of filePaths) {
+      const relativePath = path.relative(dirPath, absPath);
+      progress.currentFile = relativePath;
+
       try {
         const content = await fs.readFile(absPath, "utf-8");
-        // Use relative path from the dirPath for consistency
-        const relativePath = path.relative(dirPath, absPath);
-        const wasIndexed = await this.indexFile(projectId, relativePath, content);
+        const wasIndexed = await this.indexFile(
+          projectId,
+          relativePath,
+          content
+        );
 
         if (wasIndexed) {
           stats.indexed++;
+          progress.indexedFiles++;
         } else {
           stats.skipped++;
+          progress.skippedFiles++;
         }
       } catch (err) {
         logger.warn({ projectId, file: absPath, err }, "Failed to index file");
         stats.errors++;
+        progress.errorFiles++;
       }
+
+      // Estimate remaining time
+      const elapsed = Date.now() - batchStartTime;
+      const processed =
+        progress.indexedFiles + progress.skippedFiles + progress.errorFiles;
+      if (processed > 0) {
+        const msPerFile = elapsed / processed;
+        const remaining = filePaths.length - processed;
+        progress.estimatedRemainingMs = Math.round(msPerFile * remaining);
+      }
+
+      // Emit progress every 10 files or on completion
+      if (
+        onProgress &&
+        (processed % 10 === 0 || processed === filePaths.length)
+      ) {
+        onProgress({ ...progress });
+      }
+    }
+
+    progress.currentFile = null;
+    progress.estimatedRemainingMs = 0;
+    this.progressMap.set(projectId, progress);
+
+    if (onProgress) {
+      onProgress({ ...progress });
     }
 
     logger.info({ projectId, dirPath, ...stats }, "Directory index complete");
@@ -135,7 +224,7 @@ export class FileIndexer {
    */
   async indexChanges(
     projectId: string,
-    changes: FileChange[],
+    changes: FileChange[]
   ): Promise<{ indexed: number; skipped: number; removed: number }> {
     let indexed = 0;
     let skipped = 0;
@@ -153,21 +242,31 @@ export class FileIndexer {
         .select()
         .from(fileIndexes)
         .where(
-          and(eq(fileIndexes.projectId, projectId), eq(fileIndexes.filePath, change.path)),
+          and(
+            eq(fileIndexes.projectId, projectId),
+            eq(fileIndexes.filePath, change.path)
+          )
         )
         .limit(1);
 
-      if (existing.length > 0 && existing[0]!.fileHash === change.hash) {
+      if (existing.length > 0 && existing[0]?.fileHash === change.hash) {
         skipped++;
         continue;
       }
 
       await this.semantic.indexFile(projectId, change.path, change.content);
-      await this.knowledgeGraph.analyzeFile(projectId, change.path, change.content);
+      await this.knowledgeGraph.analyzeFile(
+        projectId,
+        change.path,
+        change.content
+      );
       indexed++;
     }
 
-    logger.info({ projectId, indexed, skipped, removed }, "Index update complete");
+    logger.info(
+      { projectId, indexed, skipped, removed },
+      "Index update complete"
+    );
     return { indexed, skipped, removed };
   }
 
@@ -176,9 +275,12 @@ export class FileIndexer {
    */
   async fullReindex(
     projectId: string,
-    files: Array<{ path: string; content: string; hash: string }>,
+    files: Array<{ path: string; content: string; hash: string }>
   ): Promise<void> {
-    logger.info({ projectId, fileCount: files.length }, "Starting full reindex");
+    logger.info(
+      { projectId, fileCount: files.length },
+      "Starting full reindex"
+    );
 
     const changes: FileChange[] = files.map((f) => ({
       ...f,
@@ -186,7 +288,37 @@ export class FileIndexer {
     }));
 
     await this.indexChanges(projectId, changes);
-    logger.info({ projectId, fileCount: files.length }, "Full reindex complete");
+    logger.info(
+      { projectId, fileCount: files.length },
+      "Full reindex complete"
+    );
+  }
+
+  /**
+   * Detect language from file extension.
+   */
+  detectLanguage(filePath: string): string | null {
+    return this.semantic.detectLanguage(filePath);
+  }
+
+  /**
+   * Count lines of code in content.
+   */
+  countLOC(content: string): number {
+    const lines = content.split("\n");
+    // Count non-empty, non-comment lines
+    let loc = 0;
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (
+        trimmed.length > 0 &&
+        !trimmed.startsWith("//") &&
+        !trimmed.startsWith("#")
+      ) {
+        loc++;
+      }
+    }
+    return loc;
   }
 
   /**
@@ -195,7 +327,7 @@ export class FileIndexer {
   private async walkDirectory(dirPath: string): Promise<string[]> {
     const results: string[] = [];
 
-    let entries;
+    let entries: import("node:fs").Dirent[];
     try {
       entries = await fs.readdir(dirPath, { withFileTypes: true });
     } catch {
@@ -203,8 +335,12 @@ export class FileIndexer {
     }
 
     for (const entry of entries) {
-      if (entry.name.startsWith(".") && SKIP_DIRS.has(entry.name)) continue;
-      if (SKIP_DIRS.has(entry.name)) continue;
+      if (entry.name.startsWith(".") && SKIP_DIRS.has(entry.name)) {
+        continue;
+      }
+      if (SKIP_DIRS.has(entry.name)) {
+        continue;
+      }
 
       const fullPath = path.join(dirPath, entry.name);
 
@@ -213,12 +349,16 @@ export class FileIndexer {
         results.push(...subFiles);
       } else if (entry.isFile()) {
         const ext = path.extname(entry.name).toLowerCase();
-        if (!INDEXABLE_EXTENSIONS.has(ext)) continue;
+        if (!INDEXABLE_EXTENSIONS.has(ext)) {
+          continue;
+        }
 
         // Check file size
         try {
           const stat = await fs.stat(fullPath);
-          if (stat.size > MAX_FILE_SIZE) continue;
+          if (stat.size > MAX_FILE_SIZE) {
+            continue;
+          }
         } catch {
           continue;
         }

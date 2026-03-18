@@ -1,4 +1,4 @@
-import { randomBytes, createCipheriv, createDecipheriv } from "node:crypto";
+import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
 
 const ALGORITHM = "aes-256-gcm";
 const IV_LENGTH = 16;
@@ -6,7 +6,9 @@ const AUTH_TAG_LENGTH = 16;
 
 function getKey(): Buffer {
   const key = process.env.ENCRYPTION_KEY;
-  if (!key) throw new Error("ENCRYPTION_KEY environment variable is required");
+  if (!key) {
+    throw new Error("ENCRYPTION_KEY environment variable is required");
+  }
   return Buffer.from(key, "hex");
 }
 

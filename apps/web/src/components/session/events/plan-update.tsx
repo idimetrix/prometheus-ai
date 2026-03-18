@@ -13,6 +13,7 @@ function StepStatusIcon({ status }: { status: string }) {
       return (
         <div className="flex h-4 w-4 items-center justify-center rounded-full bg-green-500/20">
           <svg
+            aria-hidden="true"
             className="h-2.5 w-2.5 text-green-400"
             fill="none"
             stroke="currentColor"
@@ -38,6 +39,7 @@ function StepStatusIcon({ status }: { status: string }) {
       return (
         <div className="flex h-4 w-4 items-center justify-center rounded-full bg-red-500/20">
           <svg
+            aria-hidden="true"
             className="h-2.5 w-2.5 text-red-400"
             fill="none"
             stroke="currentColor"
@@ -72,6 +74,7 @@ export function PlanUpdate({ event }: PlanUpdateProps) {
       <div className="mb-2 flex items-center justify-between">
         <div className="flex items-center gap-2">
           <svg
+            aria-hidden="true"
             className="h-3.5 w-3.5 text-zinc-500"
             fill="none"
             stroke="currentColor"
@@ -114,13 +117,18 @@ export function PlanUpdate({ event }: PlanUpdateProps) {
             <StepStatusIcon status={step.status} />
             <div className="min-w-0 flex-1">
               <span
-                className={`text-xs ${
-                  step.status === "done" || step.status === "completed"
-                    ? "text-zinc-500 line-through"
-                    : step.status === "running" || step.status === "in_progress"
-                      ? "font-medium text-violet-300"
-                      : "text-zinc-300"
-                }`}
+                className={`text-xs ${(() => {
+                  if (step.status === "done" || step.status === "completed") {
+                    return "text-zinc-500 line-through";
+                  }
+                  if (
+                    step.status === "running" ||
+                    step.status === "in_progress"
+                  ) {
+                    return "font-medium text-violet-300";
+                  }
+                  return "text-zinc-300";
+                })()}`}
               >
                 {i + 1}. {step.title}
               </span>

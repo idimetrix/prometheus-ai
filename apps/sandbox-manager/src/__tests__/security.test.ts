@@ -1,17 +1,19 @@
-import { describe, it, expect } from "vitest";
+import { describe, expect, it } from "vitest";
+
+const DANGEROUS_PATTERNS = [
+  /rm\s+-rf\s+\//,
+  /:\(\)\s*\{\s*:\|:&\s*\}/,
+  /dd\s+if=\/dev\/zero/,
+  /\|\s*sh\b/,
+  /\|\s*bash\b/,
+  /\bshutdown\b/,
+  /\breboot\b/,
+  /\bmkfs\b/,
+];
+
+const WHITESPACE_RE = /\s+/;
 
 describe("Command Security Patterns", () => {
-  const dangerousPatterns = [
-    /rm\s+-rf\s+\//,
-    /:\(\)\s*\{\s*:\|:&\s*\}/,
-    /dd\s+if=\/dev\/zero/,
-    /\|\s*sh\b/,
-    /\|\s*bash\b/,
-    /\bshutdown\b/,
-    /\breboot\b/,
-    /\bmkfs\b/,
-  ];
-
   const dangerousCommands = [
     "rm -rf /",
     ":(){ :|:& };:",
@@ -37,19 +39,32 @@ describe("Command Security Patterns", () => {
 
   it("detects all dangerous commands", () => {
     for (const cmd of dangerousCommands) {
-      const isDangerous = dangerousPatterns.some((p) => p.test(cmd));
-      expect(isDangerous, `Expected "${cmd}" to be detected as dangerous`).toBe(true);
+      const isDangerous = DANGEROUS_PATTERNS.some((p) => p.test(cmd));
+      expect(isDangerous, `Expected "${cmd}" to be detected as dangerous`).toBe(
+        true
+      );
     }
   });
 
   it("allows safe commands", () => {
     const allowedBases = new Set([
-      "node", "npm", "pnpm", "npx", "yarn",
-      "git", "ls", "cat", "mkdir", "python", "go",
+      "node",
+      "npm",
+      "pnpm",
+      "npx",
+      "yarn",
+      "git",
+      "ls",
+      "cat",
+      "mkdir",
+      "python",
+      "go",
     ]);
     for (const cmd of safeCommands) {
-      const base = cmd.split(/\s+/)[0]!;
-      expect(allowedBases.has(base), `Expected "${base}" to be allowed`).toBe(true);
+      const base = cmd.split(WHITESPACE_RE)[0] as string;
+      expect(allowedBases.has(base), `Expected "${base}" to be allowed`).toBe(
+        true
+      );
     }
   });
 });
@@ -95,7 +110,9 @@ describe("Environment Variable Sanitization", () => {
     const safe = ["NODE_ENV", "PORT", "LOG_LEVEL", "HOME"];
     for (const v of safe) {
       const isSensitive =
-        v.includes("SECRET") || v.includes("PASSWORD") || v.includes("ENCRYPTION");
+        v.includes("SECRET") ||
+        v.includes("PASSWORD") ||
+        v.includes("ENCRYPTION");
       expect(isSensitive).toBe(false);
     }
   });

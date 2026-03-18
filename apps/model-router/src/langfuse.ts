@@ -147,7 +147,9 @@ export function getMetrics(): {
     if (!modelBreakdown[t.model]) {
       modelBreakdown[t.model] = { calls: 0, tokens: 0, costUsd: 0 };
     }
-    const entry = modelBreakdown[t.model]!;
+    const entry = modelBreakdown[t.model] as NonNullable<
+      (typeof modelBreakdown)[string]
+    >;
     entry.calls++;
     entry.tokens += t.totalTokens;
     entry.costUsd += t.costUsd;

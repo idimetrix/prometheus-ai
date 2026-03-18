@@ -77,6 +77,7 @@ export function AskMode({ sessionId }: AskModeProps) {
       {/* Header */}
       <div className="flex items-center gap-2 border-zinc-800 border-b px-4 py-3">
         <svg
+          aria-hidden="true"
           className="h-4 w-4 text-violet-400"
           fill="none"
           stroke="currentColor"
@@ -101,6 +102,7 @@ export function AskMode({ sessionId }: AskModeProps) {
           <div className="flex h-full flex-col items-center justify-center gap-3 text-center">
             <div className="flex h-12 w-12 items-center justify-center rounded-full bg-violet-500/10">
               <svg
+                aria-hidden="true"
                 className="h-6 w-6 text-violet-400"
                 fill="none"
                 stroke="currentColor"
@@ -190,6 +192,7 @@ export function AskMode({ sessionId }: AskModeProps) {
             type="button"
           >
             <svg
+              aria-hidden="true"
               className="h-4 w-4"
               fill="none"
               stroke="currentColor"

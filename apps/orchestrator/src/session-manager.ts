@@ -1,17 +1,16 @@
+import { agents, db, sessions } from "@prometheus/db";
 import { createLogger } from "@prometheus/logger";
-import { db } from "@prometheus/db";
-import { sessions, agents } from "@prometheus/db";
 import { EventPublisher, QueueEvents } from "@prometheus/queue";
 import type { Session, SessionStatus } from "@prometheus/types";
 import { generateId } from "@prometheus/utils";
+import { and, eq } from "drizzle-orm";
 import { AgentLoop } from "./agent-loop";
-import { eq, and } from "drizzle-orm";
 
 interface ActiveSession {
-  session: Session;
-  agentLoop: AgentLoop;
-  startedAt: Date;
   activeAgents: Map<string, { role: string; startedAt: Date }>;
+  agentLoop: AgentLoop;
+  session: Session;
+  startedAt: Date;
 }
 
 /**
@@ -33,12 +32,15 @@ export class SessionManager {
    * Create a new session. Persists to DB and keeps an in-memory reference
    * with an associated AgentLoop.
    */
-  async createSession(params: {
-    projectId: string;
-    userId: string;
-    orgId: string;
-    mode: string;
-  }, existingId?: string): Promise<Session> {
+  async createSession(
+    params: {
+      projectId: string;
+      userId: string;
+      orgId: string;
+      mode: string;
+    },
+    existingId?: string
+  ): Promise<Session> {
     const sessionId = existingId ?? generateId("ses");
 
     const session: Session = {
@@ -53,20 +55,31 @@ export class SessionManager {
 
     // Persist to database
     try {
-      await db.insert(sessions).values({
-        id: session.id,
-        projectId: session.projectId,
-        userId: session.userId,
-        status: "active",
-        mode: session.mode,
-        startedAt: session.startedAt,
-      }).onConflictDoNothing();
+      await db
+        .insert(sessions)
+        .values({
+          id: session.id,
+          projectId: session.projectId,
+          userId: session.userId,
+          status: "active",
+          mode: session.mode,
+          startedAt: session.startedAt,
+        })
+        .onConflictDoNothing();
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
-      this.logger.warn({ error: msg, sessionId: session.id }, "Failed to persist session to DB (may already exist)");
+      this.logger.warn(
+        { error: msg, sessionId: session.id },
+        "Failed to persist session to DB (may already exist)"
+      );
     }
 
-    const agentLoop = new AgentLoop(session.id, params.projectId, params.orgId, params.userId);
+    const agentLoop = new AgentLoop(
+      session.id,
+      params.projectId,
+      params.orgId,
+      params.userId
+    );
     this.activeSessions.set(session.id, {
       session,
       agentLoop,
@@ -74,23 +87,37 @@ export class SessionManager {
       activeAgents: new Map(),
     });
 
-    this.logger.info({ sessionId: session.id, projectId: params.projectId, mode: params.mode }, "Session created");
+    this.logger.info(
+      { sessionId: session.id, projectId: params.projectId, mode: params.mode },
+      "Session created"
+    );
     return session;
   }
 
   /**
    * Load a session from the database into memory if not already active.
    */
-  async loadSession(sessionId: string, orgId: string): Promise<ActiveSession | null> {
+  async loadSession(
+    sessionId: string,
+    orgId: string
+  ): Promise<ActiveSession | null> {
     // Check in-memory first
     const existing = this.activeSessions.get(sessionId);
-    if (existing) return existing;
+    if (existing) {
+      return existing;
+    }
 
     // Load from DB
     try {
-      const rows = await db.select().from(sessions).where(eq(sessions.id, sessionId)).limit(1);
+      const rows = await db
+        .select()
+        .from(sessions)
+        .where(eq(sessions.id, sessionId))
+        .limit(1);
       const row = rows[0];
-      if (!row) return null;
+      if (!row) {
+        return null;
+      }
 
       const session: Session = {
         id: row.id,
@@ -102,7 +129,12 @@ export class SessionManager {
         endedAt: row.endedAt,
       };
 
-      const agentLoop = new AgentLoop(session.id, session.projectId, orgId, session.userId);
+      const agentLoop = new AgentLoop(
+        session.id,
+        session.projectId,
+        orgId,
+        session.userId
+      );
       const active: ActiveSession = {
         session,
         agentLoop,
@@ -115,7 +147,10 @@ export class SessionManager {
       return active;
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
-      this.logger.error({ error: msg, sessionId }, "Failed to load session from DB");
+      this.logger.error(
+        { error: msg, sessionId },
+        "Failed to load session from DB"
+      );
       return null;
     }
   }
@@ -125,18 +160,26 @@ export class SessionManager {
    */
   async pauseSession(sessionId: string): Promise<void> {
     const active = this.activeSessions.get(sessionId);
-    if (!active) throw new Error(`Session ${sessionId} not found`);
+    if (!active) {
+      throw new Error(`Session ${sessionId} not found`);
+    }
 
     active.session.status = "paused" as SessionStatus;
     await active.agentLoop.pause();
 
     // Persist to DB
-    await db.update(sessions).set({ status: "paused" }).where(eq(sessions.id, sessionId));
+    await db
+      .update(sessions)
+      .set({ status: "paused" })
+      .where(eq(sessions.id, sessionId));
 
     // Update all active agents for this session
-    await db.update(agents).set({ status: "idle" }).where(
-      and(eq(agents.sessionId, sessionId), eq(agents.status, "working"))
-    );
+    await db
+      .update(agents)
+      .set({ status: "idle" })
+      .where(
+        and(eq(agents.sessionId, sessionId), eq(agents.status, "working"))
+      );
 
     await this.eventPublisher.publishSessionEvent(sessionId, {
       type: QueueEvents.AGENT_STATUS,
@@ -152,13 +195,18 @@ export class SessionManager {
    */
   async resumeSession(sessionId: string): Promise<void> {
     const active = this.activeSessions.get(sessionId);
-    if (!active) throw new Error(`Session ${sessionId} not found`);
+    if (!active) {
+      throw new Error(`Session ${sessionId} not found`);
+    }
 
     active.session.status = "active" as SessionStatus;
     await active.agentLoop.resume();
 
     // Persist to DB
-    await db.update(sessions).set({ status: "active" }).where(eq(sessions.id, sessionId));
+    await db
+      .update(sessions)
+      .set({ status: "active" })
+      .where(eq(sessions.id, sessionId));
 
     await this.eventPublisher.publishSessionEvent(sessionId, {
       type: QueueEvents.SESSION_RESUME,
@@ -174,23 +222,31 @@ export class SessionManager {
    */
   async cancelSession(sessionId: string): Promise<void> {
     const active = this.activeSessions.get(sessionId);
-    if (!active) throw new Error(`Session ${sessionId} not found`);
+    if (!active) {
+      throw new Error(`Session ${sessionId} not found`);
+    }
 
     active.session.status = "cancelled" as SessionStatus;
     active.session.endedAt = new Date();
     await active.agentLoop.stop();
 
     // Persist to DB
-    await db.update(sessions).set({
-      status: "cancelled",
-      endedAt: active.session.endedAt,
-    }).where(eq(sessions.id, sessionId));
+    await db
+      .update(sessions)
+      .set({
+        status: "cancelled",
+        endedAt: active.session.endedAt,
+      })
+      .where(eq(sessions.id, sessionId));
 
     // Terminate all agents
-    await db.update(agents).set({
-      status: "terminated",
-      terminatedAt: new Date(),
-    }).where(eq(agents.sessionId, sessionId));
+    await db
+      .update(agents)
+      .set({
+        status: "terminated",
+        terminatedAt: new Date(),
+      })
+      .where(eq(agents.sessionId, sessionId));
 
     this.activeSessions.delete(sessionId);
 
@@ -208,16 +264,21 @@ export class SessionManager {
    */
   async completeSession(sessionId: string): Promise<void> {
     const active = this.activeSessions.get(sessionId);
-    if (!active) return;
+    if (!active) {
+      return;
+    }
 
     active.session.status = "completed" as SessionStatus;
     active.session.endedAt = new Date();
     await active.agentLoop.stop();
 
-    await db.update(sessions).set({
-      status: "completed",
-      endedAt: active.session.endedAt,
-    }).where(eq(sessions.id, sessionId));
+    await db
+      .update(sessions)
+      .set({
+        status: "completed",
+        endedAt: active.session.endedAt,
+      })
+      .where(eq(sessions.id, sessionId));
 
     this.activeSessions.delete(sessionId);
     this.logger.info({ sessionId }, "Session completed");
@@ -228,7 +289,9 @@ export class SessionManager {
    */
   trackAgent(sessionId: string, agentId: string, role: string): void {
     const active = this.activeSessions.get(sessionId);
-    if (!active) return;
+    if (!active) {
+      return;
+    }
     active.activeAgents.set(agentId, { role, startedAt: new Date() });
   }
 
@@ -237,7 +300,9 @@ export class SessionManager {
    */
   untrackAgent(sessionId: string, agentId: string): void {
     const active = this.activeSessions.get(sessionId);
-    if (!active) return;
+    if (!active) {
+      return;
+    }
     active.activeAgents.delete(agentId);
   }
 
@@ -256,7 +321,9 @@ export class SessionManager {
     creditsConsumed: number;
   } | null {
     const active = this.activeSessions.get(sessionId);
-    if (!active) return null;
+    if (!active) {
+      return null;
+    }
 
     return {
       session: active.session,

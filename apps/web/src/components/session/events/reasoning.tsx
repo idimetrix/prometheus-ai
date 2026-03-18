@@ -21,9 +21,11 @@ export function Reasoning({ event }: ReasoningProps) {
       <button
         className="flex w-full items-center gap-2 text-left"
         onClick={() => setExpanded(!expanded)}
+        type="button"
       >
         <div className="flex h-5 w-5 items-center justify-center rounded-full bg-violet-500/20">
           <svg
+            aria-hidden="true"
             className="h-3 w-3 text-violet-400"
             fill="none"
             stroke="currentColor"
@@ -39,6 +41,7 @@ export function Reasoning({ event }: ReasoningProps) {
         </div>
         <span className="font-medium text-violet-400 text-xs">Thinking</span>
         <svg
+          aria-hidden="true"
           className={`ml-auto h-3 w-3 text-zinc-500 transition-transform ${
             expanded ? "rotate-180" : ""
           }`}

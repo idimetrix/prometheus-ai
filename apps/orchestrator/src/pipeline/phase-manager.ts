@@ -1,9 +1,12 @@
 import { createLogger } from "@prometheus/logger";
 import type { AgentLoop } from "../agent-loop";
+import { type CILoopResult, CILoopRunner } from "../ci-loop/ci-loop-runner";
+import {
+  ArchitecturePhase,
+  type ArchitectureResult,
+} from "../phases/architecture";
 import { DiscoveryPhase, type DiscoveryResult } from "../phases/discovery";
-import { ArchitecturePhase, type ArchitectureResult } from "../phases/architecture";
 import { PlanningPhase, type SprintPlan } from "../phases/planning";
-import { CILoopRunner, type CILoopResult } from "../ci-loop/ci-loop-runner";
 
 const logger = createLogger("orchestrator:pipeline");
 
@@ -18,18 +21,18 @@ export type PipelinePhase =
   | "deploy";
 
 export interface PipelineState {
-  currentPhase: PipelinePhase;
-  completedPhases: PipelinePhase[];
-  discoveryResult: DiscoveryResult | null;
   architectureResult: ArchitectureResult | null;
-  sprintPlan: SprintPlan | null;
   ciLoopResult: CILoopResult | null;
-  startedAt: Date;
+  completedPhases: PipelinePhase[];
+  currentPhase: PipelinePhase;
+  discoveryResult: DiscoveryResult | null;
   error: string | null;
+  sprintPlan: SprintPlan | null;
+  startedAt: Date;
 }
 
 export class PhaseManager {
-  private state: PipelineState;
+  private readonly state: PipelineState;
   private readonly discovery = new DiscoveryPhase();
   private readonly architecture = new ArchitecturePhase();
   private readonly planning = new PlanningPhase();
@@ -48,7 +51,11 @@ export class PhaseManager {
     };
   }
 
-  async runPipeline(agentLoop: AgentLoop, prompt: string, preset?: string): Promise<PipelineState> {
+  async runPipeline(
+    agentLoop: AgentLoop,
+    prompt: string,
+    preset?: string
+  ): Promise<PipelineState> {
     try {
       // Phase 1: Discovery
       this.state.currentPhase = "discovery";
@@ -65,7 +72,11 @@ export class PhaseManager {
       // Phase 2: Architecture
       this.state.currentPhase = "architecture";
       logger.info("Phase 2: Architecture");
-      const archResult = await this.architecture.execute(agentLoop, discoveryResult.srs, preset);
+      const archResult = await this.architecture.execute(
+        agentLoop,
+        discoveryResult.srs,
+        preset
+      );
       this.state.architectureResult = archResult;
       this.state.completedPhases.push("architecture");
 
@@ -118,11 +129,17 @@ export class PhaseManager {
       );
       this.state.completedPhases.push("deploy");
 
-      logger.info({ completedPhases: this.state.completedPhases.length }, "Pipeline complete!");
+      logger.info(
+        { completedPhases: this.state.completedPhases.length },
+        "Pipeline complete!"
+      );
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
       this.state.error = msg;
-      logger.error({ phase: this.state.currentPhase, error: msg }, "Pipeline failed");
+      logger.error(
+        { phase: this.state.currentPhase, error: msg },
+        "Pipeline failed"
+      );
     }
 
     return this.state;

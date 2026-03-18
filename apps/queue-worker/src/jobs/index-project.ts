@@ -54,7 +54,7 @@ export async function processIndexProject(
   } else {
     // Incremental indexing of specific files
     for (let i = 0; i < filePaths.length; i++) {
-      const filePath = filePaths[i]!;
+      const filePath = filePaths[i] as string;
 
       try {
         const response = await fetch(`${BRAIN_URL}/index/file`, {

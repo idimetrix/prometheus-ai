@@ -1,3 +1,17 @@
-export { requireAuth, getAuthContext } from "./server";
 export { authMiddleware } from "./middleware";
-export type { AuthContext } from "./server";
+export type {
+  CreateOrgParams,
+  InviteMemberParams,
+  OrgMembership,
+  RemoveMemberParams,
+  SwitchOrgParams,
+  UpdateMemberRoleParams,
+} from "./organizations";
+export {
+  canDeleteOrg,
+  canManageBilling,
+  canManageMembers,
+  canManageOrgSettings,
+} from "./organizations";
+export type { AuthContext, OrgRole } from "./server";
+export { getAuthContext, hasOrgRole, ORG_ROLES, requireAuth } from "./server";

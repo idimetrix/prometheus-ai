@@ -6,6 +6,28 @@ import { and, desc, eq, sql } from "drizzle-orm";
 
 const logger = createLogger("project-brain:conversational-memory");
 
+// ─── Top-level regex constants for pattern detection ─────────────────────
+const PREFERENCE_PATTERNS: RegExp[] = [
+  /(?:i (?:prefer|like|want|always use|always prefer|love))\s+(.{10,100})/gi,
+  /(?:please (?:always|use|prefer))\s+(.{10,100})/gi,
+  /(?:my preference is)\s+(.{10,100})/gi,
+  /(?:don't|never|avoid)\s+(?:use|do|add)\s+(.{10,80})/gi,
+];
+
+const DECISION_PATTERNS: RegExp[] = [
+  /(?:we (?:decided|chose|agreed|went with|will use|should use))\s+(.{10,150})/gi,
+  /(?:the (?:decision|plan|approach) is)\s+(.{10,150})/gi,
+  /(?:let's go with|let's use|we'll use)\s+(.{10,100})/gi,
+];
+
+const CONVENTION_PATTERNS: RegExp[] = [
+  /(?:convention|standard|rule|guideline):\s*(.{10,150})/gi,
+  /(?:always (?:name|prefix|suffix|format|structure))\s+(.{10,100})/gi,
+  /(?:files? (?:should|must) be)\s+(.{10,100})/gi,
+];
+
+const TRAILING_PUNCTUATION_RE = /[.!?]+$/;
+
 /**
  * A single conversational memory entry (Mem0-style).
  *
@@ -85,7 +107,7 @@ export class ConversationalMemoryLayer {
     const similar = await this.findSimilar(projectId, content, 1, 0.9);
     if (similar.length > 0) {
       // Update existing memory instead of creating a duplicate
-      const existing = similar[0]!;
+      const existing = similar[0] as (typeof similar)[0];
       const updated = await this.boostMemory(projectId, existing.id);
       if (updated) {
         logger.debug(
@@ -317,7 +339,7 @@ export class ConversationalMemoryLayer {
       return null;
     }
 
-    const row = rows[0]!;
+    const row = rows[0] as (typeof rows)[0];
     const parsed = this.parseStoredContent(row.content);
     if (!parsed) {
       return null;
@@ -531,7 +553,7 @@ export class ConversationalMemoryLayer {
       if (rows.length === 0) {
         continue;
       }
-      const parsed = this.parseStoredContent(rows[0]?.content);
+      const parsed = this.parseStoredContent(rows[0]?.content ?? "");
       if (!parsed) {
         continue;
       }
@@ -596,19 +618,15 @@ export class ConversationalMemoryLayer {
    */
   private detectPreferences(text: string): string[] {
     const prefs: string[] = [];
-    const patterns = [
-      /(?:i (?:prefer|like|want|always use|always prefer|love))\s+(.{10,100})/gi,
-      /(?:please (?:always|use|prefer))\s+(.{10,100})/gi,
-      /(?:my preference is)\s+(.{10,100})/gi,
-      /(?:don't|never|avoid)\s+(?:use|do|add)\s+(.{10,80})/gi,
-    ];
 
-    for (const pattern of patterns) {
-      let match;
-      while ((match = pattern.exec(text)) !== null) {
+    for (const pattern of PREFERENCE_PATTERNS) {
+      pattern.lastIndex = 0;
+      let match: RegExpExecArray | null = pattern.exec(text);
+      while (match !== null) {
         if (match[1]) {
-          prefs.push(match[1].trim().replace(/[.!?]+$/, ""));
+          prefs.push(match[1].trim().replace(TRAILING_PUNCTUATION_RE, ""));
         }
+        match = pattern.exec(text);
       }
     }
 
@@ -620,18 +638,15 @@ export class ConversationalMemoryLayer {
    */
   private detectDecisions(text: string): string[] {
     const decisions: string[] = [];
-    const patterns = [
-      /(?:we (?:decided|chose|agreed|went with|will use|should use))\s+(.{10,150})/gi,
-      /(?:the (?:decision|plan|approach) is)\s+(.{10,150})/gi,
-      /(?:let's go with|let's use|we'll use)\s+(.{10,100})/gi,
-    ];
 
-    for (const pattern of patterns) {
-      let match;
-      while ((match = pattern.exec(text)) !== null) {
+    for (const pattern of DECISION_PATTERNS) {
+      pattern.lastIndex = 0;
+      let match: RegExpExecArray | null = pattern.exec(text);
+      while (match !== null) {
         if (match[1]) {
-          decisions.push(match[1].trim().replace(/[.!?]+$/, ""));
+          decisions.push(match[1].trim().replace(TRAILING_PUNCTUATION_RE, ""));
         }
+        match = pattern.exec(text);
       }
     }
 
@@ -643,18 +658,17 @@ export class ConversationalMemoryLayer {
    */
   private detectConventions(text: string): string[] {
     const conventions: string[] = [];
-    const patterns = [
-      /(?:convention|standard|rule|guideline):\s*(.{10,150})/gi,
-      /(?:always (?:name|prefix|suffix|format|structure))\s+(.{10,100})/gi,
-      /(?:files? (?:should|must) be)\s+(.{10,100})/gi,
-    ];
 
-    for (const pattern of patterns) {
-      let match;
-      while ((match = pattern.exec(text)) !== null) {
+    for (const pattern of CONVENTION_PATTERNS) {
+      pattern.lastIndex = 0;
+      let match: RegExpExecArray | null = pattern.exec(text);
+      while (match !== null) {
         if (match[1]) {
-          conventions.push(match[1].trim().replace(/[.!?]+$/, ""));
+          conventions.push(
+            match[1].trim().replace(TRAILING_PUNCTUATION_RE, "")
+          );
         }
+        match = pattern.exec(text);
       }
     }
 
@@ -705,7 +719,7 @@ export class ConversationalMemoryLayer {
     const norm = Math.sqrt(embedding.reduce((sum, v) => sum + v * v, 0));
     if (norm > 0) {
       for (let i = 0; i < dimensions; i++) {
-        embedding[i] = embedding[i]! / norm;
+        embedding[i] = (embedding[i] as number) / norm;
       }
     }
     return embedding;

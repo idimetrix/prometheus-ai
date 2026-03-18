@@ -1,11 +1,11 @@
 apiVersion: keda.sh/v1alpha1
 kind: ScaledObject
 metadata:
-  name: agent-worker-scaler
+  name: queue-worker-scaler
   namespace: prometheus
 spec:
   scaleTargetRef:
-    name: agent-worker
+    name: queue-worker
   minReplicaCount: 2
   maxReplicaCount: 16
   pollingInterval: 10
@@ -15,7 +15,26 @@ spec:
       metadata:
         address: redis.prometheus.svc.cluster.local:6379
         listName: "bull:agent-tasks:wait"
-        listLength: "1"
+        listLength: "5"
         activationListLength: "0"
       authenticationRef:
         name: redis-auth
+    - type: redis
+      metadata:
+        address: redis.prometheus.svc.cluster.local:6379
+        listName: "bull:code-execution:wait"
+        listLength: "3"
+        activationListLength: "0"
+      authenticationRef:
+        name: redis-auth
+---
+apiVersion: keda.sh/v1alpha1
+kind: TriggerAuthentication
+metadata:
+  name: redis-auth
+  namespace: prometheus
+spec:
+  secretTargetRef:
+    - parameter: password
+      name: redis-auth
+      key: password

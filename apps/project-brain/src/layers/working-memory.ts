@@ -1,5 +1,5 @@
-import { redis } from "@prometheus/queue";
 import { createLogger } from "@prometheus/logger";
+import { redis } from "@prometheus/queue";
 
 const logger = createLogger("project-brain:working-memory");
 
@@ -11,7 +11,7 @@ export class WorkingMemoryLayer {
     sessionId: string,
     key: string,
     value: unknown,
-    ttlSeconds: number = DEFAULT_TTL_SECONDS,
+    ttlSeconds: number = DEFAULT_TTL_SECONDS
   ): Promise<void> {
     const fullKey = `${WORKING_MEMORY_PREFIX}${sessionId}:${key}`;
     const serialized = JSON.stringify(value);
@@ -22,7 +22,9 @@ export class WorkingMemoryLayer {
   async get(sessionId: string, key: string): Promise<unknown | null> {
     const fullKey = `${WORKING_MEMORY_PREFIX}${sessionId}:${key}`;
     const raw = await redis.get(fullKey);
-    if (!raw) return null;
+    if (!raw) {
+      return null;
+    }
     try {
       return JSON.parse(raw);
     } catch {
@@ -33,14 +35,16 @@ export class WorkingMemoryLayer {
   async getAll(sessionId: string): Promise<Record<string, unknown>> {
     const pattern = `${WORKING_MEMORY_PREFIX}${sessionId}:*`;
     const keys = await redis.keys(pattern);
-    if (keys.length === 0) return {};
+    if (keys.length === 0) {
+      return {};
+    }
 
     const result: Record<string, unknown> = {};
     const prefix = `${WORKING_MEMORY_PREFIX}${sessionId}:`;
 
     const values = await redis.mget(...keys);
     for (let i = 0; i < keys.length; i++) {
-      const shortKey = keys[i]!.slice(prefix.length);
+      const shortKey = keys[i]?.slice(prefix.length) ?? "";
       const raw = values[i] ?? null;
       if (raw !== null) {
         try {
@@ -65,6 +69,9 @@ export class WorkingMemoryLayer {
     if (keys.length > 0) {
       await redis.del(...keys);
     }
-    logger.debug({ sessionId, keysCleared: keys.length }, "Working memory cleared");
+    logger.debug(
+      { sessionId, keysCleared: keys.length },
+      "Working memory cleared"
+    );
   }
 }

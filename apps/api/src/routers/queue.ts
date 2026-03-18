@@ -1,14 +1,19 @@
-import { z } from "zod";
-import { router, protectedProcedure, publicProcedure } from "../trpc";
 import { agentTaskQueue } from "@prometheus/queue";
+import { z } from "zod";
+import { protectedProcedure, publicProcedure, router } from "../trpc";
 
 export const queueRouter = router({
   position: protectedProcedure
-    .input(z.object({ taskId: z.string() }))
+    .input(z.object({ taskId: z.string().min(1, "Task ID is required") }))
     .query(async ({ input }) => {
       const job = await agentTaskQueue.getJob(input.taskId);
       if (!job) {
-        return { taskId: input.taskId, position: -1, estimatedWaitSeconds: 0, totalInQueue: 0 };
+        return {
+          taskId: input.taskId,
+          position: -1,
+          estimatedWaitSeconds: 0,
+          totalInQueue: 0,
+        };
       }
 
       const waiting = await agentTaskQueue.getWaitingCount();

@@ -1,11 +1,20 @@
-// @ts-nocheck
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@prometheus/db", () => {
   const findFirst = vi.fn();
   const findMany = vi.fn();
-  const insertChain = { values: vi.fn().mockReturnValue({ returning: vi.fn().mockResolvedValue([{ id: "ses_1" }]) }) };
-  const updateChain = { set: vi.fn().mockReturnValue({ where: vi.fn().mockReturnValue({ returning: vi.fn().mockResolvedValue([{ id: "ses_1" }]) }) }) };
+  const insertChain = {
+    values: vi.fn().mockReturnValue({
+      returning: vi.fn().mockResolvedValue([{ id: "ses_1" }]),
+    }),
+  };
+  const updateChain = {
+    set: vi.fn().mockReturnValue({
+      where: vi.fn().mockReturnValue({
+        returning: vi.fn().mockResolvedValue([{ id: "ses_1" }]),
+      }),
+    }),
+  };
   return {
     db: {
       query: {
@@ -21,9 +30,9 @@ vi.mock("@prometheus/db", () => {
 });
 
 vi.mock("@prometheus/queue", () => ({
-  EventPublisher: vi.fn().mockImplementation(() => ({
-    publishSessionEvent: vi.fn(),
-  })),
+  EventPublisher: class {
+    publishSessionEvent = vi.fn();
+  },
   QueueEvents: { AGENT_STATUS: "agent:status" },
   createRedisConnection: vi.fn(),
 }));
@@ -53,13 +62,15 @@ describe("SessionManager", () => {
   });
 
   it("creates a session", async () => {
-    const session = await manager.createSession({
-      id: "ses_1",
-      projectId: "proj_1",
-      orgId: "org_1",
-      userId: "usr_1",
-      mode: "task",
-    }, "ses_1");
+    const session = await manager.createSession(
+      {
+        projectId: "proj_1",
+        orgId: "org_1",
+        userId: "usr_1",
+        mode: "task",
+      } as any,
+      "ses_1"
+    );
 
     expect(session).toBeDefined();
     expect(manager.getActiveSessionCount()).toBeGreaterThanOrEqual(0);
@@ -70,7 +81,7 @@ describe("SessionManager", () => {
     expect(session).toBeUndefined();
   });
 
-  it("tracks active session count", async () => {
+  it("tracks active session count", () => {
     const initial = manager.getActiveSessionCount();
     expect(initial).toBeGreaterThanOrEqual(0);
   });

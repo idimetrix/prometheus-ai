@@ -1,6 +1,6 @@
-import type { Socket } from "socket.io";
 import { getAuthContext } from "@prometheus/auth";
 import { createLogger } from "@prometheus/logger";
+import type { Socket } from "socket.io";
 
 const logger = createLogger("socket-server:auth");
 

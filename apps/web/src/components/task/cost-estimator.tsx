@@ -60,6 +60,7 @@ export function CostEstimator({ mode, descriptionLength }: CostEstimatorProps) {
     <div className="flex items-center gap-3">
       <div className="flex items-center gap-1.5">
         <svg
+          aria-hidden="true"
           className="h-4 w-4 text-yellow-500"
           fill="currentColor"
           viewBox="0 0 20 20"

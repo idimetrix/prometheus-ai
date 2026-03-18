@@ -1,7 +1,7 @@
 "use client";
 
-import { use } from "react";
 import Link from "next/link";
+import { use } from "react";
 import { trpc } from "@/lib/trpc";
 
 const STATUS_COLORS: Record<string, string> = {
@@ -46,8 +46,10 @@ export default function ProjectDetailPage({
       <div className="flex items-center justify-between">
         <div>
           <div className="flex items-center gap-3">
-            <h1 className="text-2xl font-bold text-zinc-100">{project.name}</h1>
-            <span className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${STATUS_COLORS[project.status] ?? "bg-zinc-800 text-zinc-400"}`}>
+            <h1 className="font-bold text-2xl text-zinc-100">{project.name}</h1>
+            <span
+              className={`rounded-full px-2.5 py-0.5 font-medium text-xs ${STATUS_COLORS[project.status] ?? "bg-zinc-800 text-zinc-400"}`}
+            >
               {project.status}
             </span>
           </div>
@@ -55,19 +57,21 @@ export default function ProjectDetailPage({
             <p className="mt-1 text-sm text-zinc-500">{project.description}</p>
           )}
           {project.repoUrl && (
-            <p className="mt-1 font-mono text-xs text-zinc-600">{project.repoUrl}</p>
+            <p className="mt-1 font-mono text-xs text-zinc-600">
+              {project.repoUrl}
+            </p>
           )}
         </div>
         <div className="flex gap-3">
           <Link
+            className="rounded-lg border border-zinc-700 bg-zinc-900 px-4 py-2 font-medium text-sm text-zinc-300 hover:bg-zinc-800"
             href={`/dashboard/projects/${projectId}/brain`}
-            className="rounded-lg border border-zinc-700 bg-zinc-900 px-4 py-2 text-sm font-medium text-zinc-300 hover:bg-zinc-800"
           >
             Project Brain
           </Link>
           <Link
+            className="rounded-lg bg-violet-600 px-4 py-2 font-medium text-sm text-white hover:bg-violet-700"
             href="/new"
-            className="rounded-lg bg-violet-600 px-4 py-2 text-sm font-medium text-white hover:bg-violet-700"
           >
             New Task
           </Link>
@@ -79,19 +83,19 @@ export default function ProjectDetailPage({
         <div className="grid gap-4 md:grid-cols-3">
           <div className="rounded-xl border border-zinc-800 bg-zinc-900/50 p-4">
             <span className="text-xs text-zinc-500">Agent Mode</span>
-            <p className="mt-1 text-sm font-medium text-zinc-200 capitalize">
+            <p className="mt-1 font-medium text-sm text-zinc-200 capitalize">
               {project.settings.agentAggressiveness?.replace("_", " ")}
             </p>
           </div>
           <div className="rounded-xl border border-zinc-800 bg-zinc-900/50 p-4">
             <span className="text-xs text-zinc-500">CI Loop Max</span>
-            <p className="mt-1 text-sm font-medium text-zinc-200">
+            <p className="mt-1 font-medium text-sm text-zinc-200">
               {project.settings.ciLoopMaxIterations} iterations
             </p>
           </div>
           <div className="rounded-xl border border-zinc-800 bg-zinc-900/50 p-4">
             <span className="text-xs text-zinc-500">Test Coverage Target</span>
-            <p className="mt-1 text-sm font-medium text-zinc-200">
+            <p className="mt-1 font-medium text-sm text-zinc-200">
               {project.settings.testCoverageTarget}%
             </p>
           </div>
@@ -100,29 +104,34 @@ export default function ProjectDetailPage({
 
       {/* Sessions */}
       <div>
-        <h2 className="text-lg font-semibold text-zinc-200">Sessions</h2>
+        <h2 className="font-semibold text-lg text-zinc-200">Sessions</h2>
         <div className="mt-4 space-y-2">
           {sessions.length === 0 ? (
             <div className="rounded-xl border border-zinc-800 bg-zinc-900/30 p-8 text-center text-sm text-zinc-500">
               No sessions yet. Create a task to get started.
             </div>
           ) : (
-            sessions.map((session: any) => (
+            sessions.map((session) => (
               <Link
-                key={session.id}
-                href={`/dashboard/sessions/${session.id}`}
                 className="flex items-center justify-between rounded-xl border border-zinc-800 bg-zinc-900/30 p-4 transition-colors hover:border-zinc-700"
+                href={`/dashboard/sessions/${session.id}`}
+                key={session.id}
               >
                 <div className="flex items-center gap-3">
-                  <span className={`h-2 w-2 rounded-full ${
-                    session.status === "active" ? "bg-green-500 animate-pulse"
-                    : session.status === "paused" ? "bg-yellow-500"
-                    : session.status === "completed" ? "bg-blue-500"
-                    : session.status === "failed" ? "bg-red-500"
-                    : "bg-zinc-600"
-                  }`} />
+                  <span
+                    className={`h-2 w-2 rounded-full ${
+                      (
+                        {
+                          active: "animate-pulse bg-green-500",
+                          paused: "bg-yellow-500",
+                          completed: "bg-blue-500",
+                          failed: "bg-red-500",
+                        } as Record<string, string>
+                      )[session.status as string] ?? "bg-zinc-600"
+                    }`}
+                  />
                   <div>
-                    <span className="text-sm font-medium text-zinc-200">
+                    <span className="font-medium text-sm text-zinc-200">
                       {session.mode} session
                     </span>
                     <span className="ml-2 font-mono text-xs text-zinc-500">
@@ -131,7 +140,9 @@ export default function ProjectDetailPage({
                   </div>
                 </div>
                 <div className="flex items-center gap-4">
-                  <span className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${STATUS_COLORS[session.status] ?? ""}`}>
+                  <span
+                    className={`rounded-full px-2 py-0.5 font-medium text-[10px] ${STATUS_COLORS[session.status] ?? ""}`}
+                  >
                     {session.status}
                   </span>
                   <span className="text-xs text-zinc-600">

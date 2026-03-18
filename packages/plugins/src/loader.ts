@@ -18,9 +18,11 @@ const pluginStorage = new Map<string, Map<string, string>>();
 
 function getPluginStorage(pluginId: string) {
   return {
+    // biome-ignore lint/suspicious/useAwait: interface requires Promise return
     async get(key: string): Promise<string | null> {
       return pluginStorage.get(pluginId)?.get(key) ?? null;
     },
+    // biome-ignore lint/suspicious/useAwait: interface requires Promise return
     async set(key: string, value: string): Promise<void> {
       let store = pluginStorage.get(pluginId);
       if (!store) {
@@ -29,6 +31,7 @@ function getPluginStorage(pluginId: string) {
       }
       store.set(key, value);
     },
+    // biome-ignore lint/suspicious/useAwait: interface requires Promise return
     async delete(key: string): Promise<void> {
       pluginStorage.get(pluginId)?.delete(key);
     },

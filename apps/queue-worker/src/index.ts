@@ -1,133 +1,295 @@
-import { Worker } from "bullmq";
 import { createLogger } from "@prometheus/logger";
+import type {
+  AgentTaskData,
+  CleanupSandboxData,
+  CreditGrantData,
+  GenerateEmbeddingsData,
+  IndexProjectData,
+  SendNotificationData,
+  UsageRollupData,
+} from "@prometheus/queue";
 import { createRedisConnection } from "@prometheus/queue";
-import type { AgentTaskData, IndexingJobData, NotificationJobData, BillingEventData } from "@prometheus/queue";
-import { TaskProcessor } from "./processor";
+import { Queue, Worker } from "bullmq";
+import { processCleanupSandbox } from "./jobs/cleanup-sandbox";
+import { processCreditGrant } from "./jobs/credit-grant";
+import { processGenerateEmbeddings } from "./jobs/generate-embeddings";
+import { processIndexProject } from "./jobs/index-project";
+import { processUsageRollup } from "./jobs/usage-rollup";
 import { processNotification } from "./notifications";
+import { TaskProcessor } from "./processor";
 
 const logger = createLogger("queue-worker");
 const processor = new TaskProcessor();
 
-// Main agent task worker
+// ========== Worker Concurrency Configuration ==========
+const concurrency = {
+  agentTasks: Number(process.env.WORKER_CONCURRENCY ?? 2),
+  enterprise: Number(process.env.ENTERPRISE_CONCURRENCY ?? 4),
+  indexing: Number(process.env.INDEXING_CONCURRENCY ?? 1),
+  embeddings: Number(process.env.EMBEDDINGS_CONCURRENCY ?? 2),
+  notifications: Number(process.env.NOTIFICATION_CONCURRENCY ?? 5),
+  cleanup: Number(process.env.CLEANUP_CONCURRENCY ?? 2),
+  billing: Number(process.env.BILLING_CONCURRENCY ?? 3),
+};
+
+// ========== Dead Letter Queues ==========
+const agentTaskDLQ = new Queue("agent-tasks:dlq", {
+  connection: createRedisConnection(),
+});
+const billingDLQ = new Queue("credit-grant:dlq", {
+  connection: createRedisConnection(),
+});
+
+// ========== Helper: Move to DLQ ==========
+async function moveToDLQ(
+  dlq: Queue,
+  job: { id?: string; name: string; data: unknown },
+  error: Error
+) {
+  try {
+    await dlq.add(`dlq:${job.name}`, {
+      originalJobId: job.id,
+      originalData: job.data,
+      error: error.message,
+      failedAt: new Date().toISOString(),
+    });
+    logger.warn(
+      { jobId: job.id, dlq: dlq.name },
+      "Job moved to dead letter queue"
+    );
+  } catch (dlqError) {
+    logger.error({ jobId: job.id, dlqError }, "Failed to move job to DLQ");
+  }
+}
+
+// ========== Agent Task Worker ==========
 const agentWorker = new Worker<AgentTaskData>(
   "agent-tasks",
   async (job) => {
-    logger.info({ jobId: job.id, taskId: job.data.taskId, priority: job.opts.priority }, "Processing agent task");
-    return processor.process(job.data);
+    logger.info(
+      {
+        jobId: job.id,
+        taskId: job.data.taskId,
+        attempt: job.attemptsMade + 1,
+        priority: job.opts.priority,
+      },
+      "Processing agent task"
+    );
+    return await processor.process(job.data);
   },
   {
     connection: createRedisConnection(),
-    concurrency: Number(process.env.WORKER_CONCURRENCY ?? 2),
+    concurrency: concurrency.agentTasks,
     limiter: {
       max: 10,
-      duration: 60000,
+      duration: 60_000,
     },
-  },
+  }
 );
 
-// Enterprise isolated worker (separate queue for enterprise tier)
+// ========== Enterprise Task Worker ==========
 const enterpriseWorker = new Worker<AgentTaskData>(
   "enterprise-tasks",
   async (job) => {
-    logger.info({ jobId: job.id, taskId: job.data.taskId }, "Processing enterprise task");
-    return processor.process(job.data);
+    logger.info(
+      { jobId: job.id, taskId: job.data.taskId, attempt: job.attemptsMade + 1 },
+      "Processing enterprise task"
+    );
+    return await processor.process(job.data);
   },
   {
     connection: createRedisConnection(),
-    concurrency: Number(process.env.ENTERPRISE_CONCURRENCY ?? 4),
-  },
+    concurrency: concurrency.enterprise,
+  }
 );
 
-// Indexing worker
-const indexingWorker = new Worker<IndexingJobData>(
-  "indexing",
+// ========== Index Project Worker ==========
+const indexProjectWorker = new Worker<IndexProjectData>(
+  "index-project",
   async (job) => {
-    logger.info({ projectId: job.data.projectId, files: job.data.filePaths.length }, "Processing indexing job");
-    const brainUrl = process.env.PROJECT_BRAIN_URL ?? "http://localhost:4003";
-
-    if (job.data.fullReindex) {
-      await fetch(`${brainUrl}/index/directory`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ projectId: job.data.projectId }),
+    logger.info(
+      {
+        jobId: job.id,
+        projectId: job.data.projectId,
+        files: job.data.filePaths.length,
+        fullReindex: job.data.fullReindex,
+      },
+      "Processing index-project job"
+    );
+    return await processIndexProject(job.data, (progress) => {
+      job.updateProgress(progress).catch(() => {
+        /* fire-and-forget */
       });
-    } else {
-      for (const filePath of job.data.filePaths) {
-        await fetch(`${brainUrl}/index/file`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ projectId: job.data.projectId, filePath }),
-        });
-      }
-    }
+    });
   },
   {
     connection: createRedisConnection(),
-    concurrency: 1,
-  },
+    concurrency: concurrency.indexing,
+  }
 );
 
-// Notification worker (email + in-app via Socket.io)
-const notificationWorker = new Worker<NotificationJobData>(
-  "notifications",
+// ========== Generate Embeddings Worker ==========
+const embeddingsWorker = new Worker<GenerateEmbeddingsData>(
+  "generate-embeddings",
   async (job) => {
-    logger.info({ type: job.data.type, userId: job.data.userId }, "Processing notification");
+    logger.info(
+      {
+        jobId: job.id,
+        projectId: job.data.projectId,
+        filePath: job.data.filePath,
+        chunks: job.data.chunks.length,
+      },
+      "Processing generate-embeddings job"
+    );
+    return await processGenerateEmbeddings(job.data);
+  },
+  {
+    connection: createRedisConnection(),
+    concurrency: concurrency.embeddings,
+  }
+);
+
+// ========== Send Notification Worker ==========
+const notificationWorker = new Worker<SendNotificationData>(
+  "send-notification",
+  async (job) => {
+    logger.info(
+      {
+        jobId: job.id,
+        type: job.data.type,
+        userId: job.data.userId,
+        channel: job.data.channel,
+      },
+      "Processing send-notification job"
+    );
     await processNotification(job.data);
   },
   {
     connection: createRedisConnection(),
-    concurrency: 5,
-  },
+    concurrency: concurrency.notifications,
+  }
 );
 
-// Billing event worker
-const billingWorker = new Worker<BillingEventData>(
-  "billing-events",
+// ========== Cleanup Sandbox Worker ==========
+const cleanupWorker = new Worker<CleanupSandboxData>(
+  "cleanup-sandbox",
   async (job) => {
-    const { type, orgId, amount, metadata } = job.data;
-    logger.info({ type, orgId, amount }, "Processing billing event");
-    // Billing events are handled by the billing service
-    // This worker ensures events are processed reliably
+    logger.info(
+      { jobId: job.id, sandboxId: job.data.sandboxId, reason: job.data.reason },
+      "Processing cleanup-sandbox job"
+    );
+    return await processCleanupSandbox(job.data);
   },
   {
     connection: createRedisConnection(),
-    concurrency: 3,
-  },
+    concurrency: concurrency.cleanup,
+  }
 );
 
-// Event handlers
-for (const [name, worker] of Object.entries({
-  agent: agentWorker,
-  enterprise: enterpriseWorker,
-  indexing: indexingWorker,
-  notification: notificationWorker,
-  billing: billingWorker,
-})) {
+// ========== Usage Rollup Worker ==========
+const usageRollupWorker = new Worker<UsageRollupData>(
+  "usage-rollup",
+  async (job) => {
+    logger.info(
+      {
+        jobId: job.id,
+        orgId: job.data.orgId,
+        periodStart: job.data.periodStart,
+      },
+      "Processing usage-rollup job"
+    );
+    return await processUsageRollup(job.data);
+  },
+  {
+    connection: createRedisConnection(),
+    concurrency: 1, // Rollups must be serialized per org
+  }
+);
+
+// ========== Credit Grant Worker ==========
+const creditGrantWorker = new Worker<CreditGrantData>(
+  "credit-grant",
+  async (job) => {
+    logger.info(
+      {
+        jobId: job.id,
+        orgId: job.data.orgId,
+        amount: job.data.amount,
+        reason: job.data.reason,
+      },
+      "Processing credit-grant job"
+    );
+    return await processCreditGrant(job.data);
+  },
+  {
+    connection: createRedisConnection(),
+    concurrency: concurrency.billing,
+  }
+);
+
+// ========== Event Handlers (logging, DLQ) ==========
+const workers: Record<string, { worker: Worker; dlq?: Queue }> = {
+  "agent-tasks": { worker: agentWorker, dlq: agentTaskDLQ },
+  "enterprise-tasks": { worker: enterpriseWorker, dlq: agentTaskDLQ },
+  "index-project": { worker: indexProjectWorker },
+  "generate-embeddings": { worker: embeddingsWorker },
+  "send-notification": { worker: notificationWorker },
+  "cleanup-sandbox": { worker: cleanupWorker },
+  "usage-rollup": { worker: usageRollupWorker },
+  "credit-grant": { worker: creditGrantWorker, dlq: billingDLQ },
+};
+
+for (const [name, { worker, dlq }] of Object.entries(workers)) {
   worker.on("completed", (job) => {
     logger.info({ worker: name, jobId: job.id }, "Job completed");
   });
 
   worker.on("failed", (job, error) => {
-    logger.error({ worker: name, jobId: job?.id, error: error.message }, "Job failed");
+    const isLastAttempt = job
+      ? job.attemptsMade >= (job.opts.attempts ?? 1)
+      : true;
+    logger.error(
+      {
+        worker: name,
+        jobId: job?.id,
+        error: error.message,
+        attempt: job?.attemptsMade,
+        maxAttempts: job?.opts.attempts,
+        isLastAttempt,
+      },
+      "Job failed"
+    );
+
+    // Move to DLQ if all retries exhausted
+    if (isLastAttempt && dlq && job) {
+      moveToDLQ(dlq, job, error);
+    }
   });
 
   worker.on("error", (error) => {
     logger.error({ worker: name, error: error.message }, "Worker error");
   });
+
+  worker.on("stalled", (jobId) => {
+    logger.warn({ worker: name, jobId }, "Job stalled");
+  });
 }
 
-logger.info("Queue Workers started (agent, enterprise, indexing, notification)");
+logger.info(
+  {
+    workers: Object.keys(workers),
+    concurrency,
+  },
+  "Queue Workers started"
+);
 
-// Graceful shutdown
+// ========== Graceful Shutdown ==========
 const shutdown = async () => {
   logger.info("Shutting down workers...");
-  await Promise.all([
-    agentWorker.close(),
-    enterpriseWorker.close(),
-    indexingWorker.close(),
-    notificationWorker.close(),
-    billingWorker.close(),
-  ]);
+  await Promise.allSettled(
+    Object.values(workers).map(({ worker }) => worker.close())
+  );
+  logger.info("All workers closed");
   process.exit(0);
 };
 

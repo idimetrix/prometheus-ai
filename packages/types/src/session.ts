@@ -1,31 +1,36 @@
-import type { SessionStatus, AgentMode, SessionEventType, AgentRole } from "./enums";
+import type {
+  AgentMode,
+  AgentRole,
+  SessionEventType,
+  SessionStatus,
+} from "./enums";
 
 export interface Session {
-  id: string;
-  projectId: string;
-  userId: string;
-  status: SessionStatus;
-  mode: AgentMode;
-  startedAt: Date;
   endedAt: Date | null;
+  id: string;
+  mode: AgentMode;
+  projectId: string;
+  startedAt: Date;
+  status: SessionStatus;
+  userId: string;
 }
 
 export interface SessionEvent {
+  agentRole: AgentRole | null;
+  data: Record<string, unknown>;
   id: string;
   sessionId: string;
-  type: SessionEventType;
-  data: Record<string, unknown>;
-  agentRole: AgentRole | null;
   timestamp: Date;
+  type: SessionEventType;
 }
 
 export interface SessionMessage {
-  id: string;
-  sessionId: string;
-  role: "user" | "assistant" | "system";
   content: string;
+  createdAt: Date;
+  id: string;
   modelUsed: string | null;
+  role: "user" | "assistant" | "system";
+  sessionId: string;
   tokensIn: number | null;
   tokensOut: number | null;
-  createdAt: Date;
 }

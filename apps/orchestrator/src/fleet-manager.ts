@@ -100,7 +100,7 @@ export class FleetManager {
     await this.publishFleetStatus();
 
     for (let waveIdx = 0; waveIdx < schedule.waves.length; waveIdx++) {
-      const wave = schedule.waves[waveIdx]!;
+      const wave = schedule.waves[waveIdx] as (typeof schedule.waves)[number];
       logger.info({ wave: waveIdx + 1, tasks: wave.length }, "Starting wave");
 
       // Execute tasks in wave, limited by tier parallelism

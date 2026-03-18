@@ -2,6 +2,8 @@ import { createLogger } from "@prometheus/logger";
 
 const logger = createLogger("orchestrator:moa");
 
+const JSON_OBJECT_RE = /\{[\s\S]*\}/;
+
 export interface MoAResult {
   responses: Array<{
     model: string;
@@ -10,8 +12,8 @@ export interface MoAResult {
     tokensUsed: number;
     duration: number;
   }>;
-  synthesized: string;
   selectedModel: string;
+  synthesized: string;
 }
 
 export class MixtureOfAgents {
@@ -23,11 +25,15 @@ export class MixtureOfAgents {
   private readonly modelRouterUrl: string;
 
   constructor() {
-    this.modelRouterUrl = process.env.MODEL_ROUTER_URL ?? "http://localhost:4004";
+    this.modelRouterUrl =
+      process.env.MODEL_ROUTER_URL ?? "http://localhost:4004";
   }
 
-  async generate(prompt: string, maxRounds: number = 2): Promise<MoAResult> {
-    logger.info({ models: this.models.length, maxRounds }, "Starting MoA generation");
+  async generate(prompt: string, maxRounds = 2): Promise<MoAResult> {
+    logger.info(
+      { models: this.models.length, maxRounds },
+      "Starting MoA generation"
+    );
 
     // Round 1: Generate from multiple models in parallel
     const responses = await Promise.all(
@@ -40,15 +46,13 @@ export class MixtureOfAgents {
             body: JSON.stringify({
               slot: "default",
               model,
-              messages: [
-                { role: "user", content: prompt },
-              ],
+              messages: [{ role: "user", content: prompt }],
             }),
-            signal: AbortSignal.timeout(120000),
+            signal: AbortSignal.timeout(120_000),
           });
 
           if (res.ok) {
-            const data = await res.json() as {
+            const data = (await res.json()) as {
               content: string;
               tokensUsed?: number;
             };
@@ -70,7 +74,7 @@ export class MixtureOfAgents {
           tokensUsed: 0,
           duration: Date.now() - start,
         };
-      }),
+      })
     );
 
     const validResponses = responses.filter((r) => r.output.length > 0);
@@ -79,7 +83,7 @@ export class MixtureOfAgents {
       return {
         responses,
         synthesized: "",
-        selectedModel: this.models[0]!,
+        selectedModel: this.models[0] ?? "",
       };
     }
 
@@ -88,8 +92,8 @@ export class MixtureOfAgents {
     let selectedModel: string;
 
     if (validResponses.length === 1) {
-      synthesized = validResponses[0]!.output;
-      selectedModel = validResponses[0]!.model;
+      synthesized = validResponses[0]?.output ?? "";
+      selectedModel = validResponses[0]?.model ?? "";
     } else {
       const result = await this.synthesize(prompt, validResponses);
       synthesized = result.synthesized;
@@ -99,7 +103,9 @@ export class MixtureOfAgents {
     // Optional refinement rounds
     for (let round = 1; round < maxRounds; round++) {
       const refined = await this.evaluateAndRefine(prompt, synthesized, round);
-      if (refined.score > 0.9) break;
+      if (refined.score > 0.9) {
+        break;
+      }
       synthesized = refined.improved;
     }
 
@@ -108,7 +114,7 @@ export class MixtureOfAgents {
 
   private async synthesize(
     originalPrompt: string,
-    responses: Array<{ model: string; output: string }>,
+    responses: Array<{ model: string; output: string }>
   ): Promise<{ synthesized: string; selectedModel: string }> {
     const synthesisPrompt = `You are synthesizing solutions from multiple AI models.
 Given the original task and multiple solutions, create the best combined solution.
@@ -131,18 +137,21 @@ Synthesize the best combined solution, taking the strongest elements from each.`
           slot: "review",
           messages: [{ role: "user", content: synthesisPrompt }],
         }),
-        signal: AbortSignal.timeout(120000),
+        signal: AbortSignal.timeout(120_000),
       });
 
       if (res.ok) {
-        const data = await res.json() as { content: string };
+        const data = (await res.json()) as { content: string };
         return {
-          synthesized: data.content ?? responses[0]!.output,
+          synthesized: data.content ?? responses[0]?.output,
           selectedModel: "synthesized",
         };
       }
     } catch (err) {
-      logger.warn({ error: err }, "MoA synthesis failed, using best individual response");
+      logger.warn(
+        { error: err },
+        "MoA synthesis failed, using best individual response"
+      );
     }
 
     // Fallback: pick longest response as proxy for most thorough
@@ -155,7 +164,7 @@ Synthesize the best combined solution, taking the strongest elements from each.`
   async evaluateAndRefine(
     prompt: string,
     currentSolution: string,
-    round: number,
+    round: number
   ): Promise<{ improved: string; score: number }> {
     try {
       const res = await fetch(`${this.modelRouterUrl}/route`, {
@@ -166,7 +175,8 @@ Synthesize the best combined solution, taking the strongest elements from each.`
           messages: [
             {
               role: "system",
-              content: "Evaluate the solution quality (0-1) and improve it if possible. Respond with JSON: { \"score\": 0.9, \"improved\": \"...\" }",
+              content:
+                'Evaluate the solution quality (0-1) and improve it if possible. Respond with JSON: { "score": 0.9, "improved": "..." }',
             },
             {
               role: "user",
@@ -174,13 +184,13 @@ Synthesize the best combined solution, taking the strongest elements from each.`
             },
           ],
         }),
-        signal: AbortSignal.timeout(60000),
+        signal: AbortSignal.timeout(60_000),
       });
 
       if (res.ok) {
-        const data = await res.json() as { content: string };
+        const data = (await res.json()) as { content: string };
         const content = data.content ?? "";
-        const jsonMatch = content.match(/\{[\s\S]*\}/);
+        const jsonMatch = content.match(JSON_OBJECT_RE);
         if (jsonMatch) {
           const parsed = JSON.parse(jsonMatch[0]);
           return {

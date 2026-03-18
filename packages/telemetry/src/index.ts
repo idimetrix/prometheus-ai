@@ -54,7 +54,7 @@ export async function initTelemetry(config: TelemetryConfig): Promise<void> {
   const sampleRate = config.sampleRate ?? (isDev ? 1.0 : 0.1);
 
   const { NodeSDK } = await import("@opentelemetry/sdk-node");
-  const { Resource } = await import("@opentelemetry/resources");
+  const { resourceFromAttributes } = await import("@opentelemetry/resources");
   const { ATTR_SERVICE_NAME, ATTR_SERVICE_VERSION } = await import(
     "@opentelemetry/semantic-conventions"
   );
@@ -68,7 +68,7 @@ export async function initTelemetry(config: TelemetryConfig): Promise<void> {
     "@opentelemetry/sdk-metrics"
   );
 
-  const resource = new Resource({
+  const resource = resourceFromAttributes({
     [ATTR_SERVICE_NAME]: config.serviceName,
     [ATTR_SERVICE_VERSION]: process.env.APP_VERSION ?? "0.1.0",
     "deployment.environment": process.env.NODE_ENV ?? "development",
@@ -185,22 +185,28 @@ export async function withSpan<T>(
   options?: SpanOptions
 ): Promise<T> {
   const tracer = getTracer();
-  return tracer.startActiveSpan(name, options ?? {}, async (span: Span) => {
-    try {
-      const result = await fn(span);
-      span.setStatus({ code: SpanStatusCode.OK });
-      return result;
-    } catch (err) {
-      span.setStatus({
-        code: SpanStatusCode.ERROR,
-        message: err instanceof Error ? err.message : String(err),
-      });
-      span.recordException(err instanceof Error ? err : new Error(String(err)));
-      throw err;
-    } finally {
-      span.end();
+  return await tracer.startActiveSpan(
+    name,
+    options ?? {},
+    async (span: Span) => {
+      try {
+        const result = await fn(span);
+        span.setStatus({ code: SpanStatusCode.OK });
+        return result;
+      } catch (err) {
+        span.setStatus({
+          code: SpanStatusCode.ERROR,
+          message: err instanceof Error ? err.message : String(err),
+        });
+        span.recordException(
+          err instanceof Error ? err : new Error(String(err))
+        );
+        throw err;
+      } finally {
+        span.end();
+      }
     }
-  });
+  );
 }
 
 /**

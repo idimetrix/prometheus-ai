@@ -75,6 +75,7 @@ export function PlanMode({ sessionId }: PlanModeProps) {
         <div className="flex items-center justify-between border-zinc-800 border-b px-4 py-3">
           <div className="flex items-center gap-2">
             <svg
+              aria-hidden="true"
               className="h-4 w-4 text-indigo-400"
               fill="none"
               stroke="currentColor"
@@ -126,13 +127,15 @@ export function PlanMode({ sessionId }: PlanModeProps) {
               {planSteps.map((step, i) => (
                 <div
                   className={`rounded-xl border p-4 transition-colors ${
-                    step.status === "running" || step.status === "in_progress"
-                      ? "border-violet-500/30 bg-violet-500/5"
-                      : step.status === "done" || step.status === "completed"
-                        ? "border-green-500/20 bg-green-500/5"
-                        : step.status === "failed"
-                          ? "border-red-500/20 bg-red-500/5"
-                          : "border-zinc-800 bg-zinc-900/30"
+                    (
+                      {
+                        running: "border-violet-500/30 bg-violet-500/5",
+                        in_progress: "border-violet-500/30 bg-violet-500/5",
+                        done: "border-green-500/20 bg-green-500/5",
+                        completed: "border-green-500/20 bg-green-500/5",
+                        failed: "border-red-500/20 bg-red-500/5",
+                      } as Record<string, string>
+                    )[step.status] ?? "border-zinc-800 bg-zinc-900/30"
                   }`}
                   key={step.id}
                 >
@@ -140,19 +143,21 @@ export function PlanMode({ sessionId }: PlanModeProps) {
                     <div className="flex items-start gap-3">
                       <div
                         className={`mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full font-medium text-xs ${
-                          step.status === "done" || step.status === "completed"
-                            ? "bg-green-500/20 text-green-400"
-                            : step.status === "running" ||
-                                step.status === "in_progress"
-                              ? "bg-violet-500/20 text-violet-400"
-                              : step.status === "failed"
-                                ? "bg-red-500/20 text-red-400"
-                                : "bg-zinc-800 text-zinc-500"
+                          (
+                            {
+                              done: "bg-green-500/20 text-green-400",
+                              completed: "bg-green-500/20 text-green-400",
+                              running: "bg-violet-500/20 text-violet-400",
+                              in_progress: "bg-violet-500/20 text-violet-400",
+                              failed: "bg-red-500/20 text-red-400",
+                            } as Record<string, string>
+                          )[step.status] ?? "bg-zinc-800 text-zinc-500"
                         }`}
                       >
                         {step.status === "done" ||
                         step.status === "completed" ? (
                           <svg
+                            aria-hidden="true"
                             className="h-3.5 w-3.5"
                             fill="none"
                             stroke="currentColor"
@@ -199,6 +204,7 @@ export function PlanMode({ sessionId }: PlanModeProps) {
                             setEditingStepId(step.id);
                             setEditText(step.title);
                           }}
+                          type="button"
                         >
                           Modify
                         </button>
@@ -218,6 +224,7 @@ export function PlanMode({ sessionId }: PlanModeProps) {
                       <button
                         className="rounded-lg bg-violet-600 px-3 py-1.5 font-medium text-white text-xs hover:bg-violet-700"
                         onClick={() => handleModifyStep(step.id)}
+                        type="button"
                       >
                         Save
                       </button>
@@ -227,6 +234,7 @@ export function PlanMode({ sessionId }: PlanModeProps) {
                           setEditingStepId(null);
                           setEditText("");
                         }}
+                        type="button"
                       >
                         Cancel
                       </button>
@@ -253,8 +261,10 @@ export function PlanMode({ sessionId }: PlanModeProps) {
                 className="flex items-center gap-1.5 rounded-lg bg-green-600 px-4 py-2 font-medium text-white text-xs transition-colors hover:bg-green-700 disabled:opacity-50"
                 disabled={isApproving}
                 onClick={handleApprove}
+                type="button"
               >
                 <svg
+                  aria-hidden="true"
                   className="h-3.5 w-3.5"
                   fill="none"
                   stroke="currentColor"
@@ -273,8 +283,10 @@ export function PlanMode({ sessionId }: PlanModeProps) {
                 className="flex items-center gap-1.5 rounded-lg border border-red-800/50 bg-red-950/50 px-4 py-2 font-medium text-red-400 text-xs transition-colors hover:bg-red-900/50 disabled:opacity-50"
                 disabled={isRejecting}
                 onClick={handleReject}
+                type="button"
               >
                 <svg
+                  aria-hidden="true"
                   className="h-3.5 w-3.5"
                   fill="none"
                   stroke="currentColor"
@@ -298,6 +310,7 @@ export function PlanMode({ sessionId }: PlanModeProps) {
       <div className="flex w-72 flex-col rounded-xl border border-zinc-800 bg-zinc-900/50">
         <div className="flex items-center gap-2 border-zinc-800 border-b px-3 py-3">
           <svg
+            aria-hidden="true"
             className="h-3.5 w-3.5 text-zinc-500"
             fill="none"
             stroke="currentColor"

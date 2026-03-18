@@ -16,6 +16,39 @@ import type { SymbolStore } from "../parsers/symbols";
 
 const logger = createLogger("project-brain:convention-extractor");
 
+// ─── Top-level regex constants ──────────────────────────────────────────
+const KEBAB_CASE_FILE_RE = /^[a-z][a-z0-9]*(-[a-z0-9]+)+\.\w+$/;
+const CAMEL_CASE_FILE_RE = /^[a-z][a-zA-Z0-9]+\.\w+$/;
+const PASCAL_CASE_FILE_RE = /^[A-Z][a-zA-Z0-9]+\.\w+$/;
+const CODE_FILE_EXT_RE = /\.(ts|tsx|js|jsx)$/;
+const CAMEL_CASE_VAR_RE = /(?:const|let|var)\s+([a-z][a-zA-Z0-9]+)\b/g;
+const SNAKE_CASE_VAR_RE = /(?:const|let|var)\s+([a-z]+_[a-z_]+)\b/g;
+const I_PREFIX_INTERFACE_RE = /interface\s+I[A-Z]\w+/g;
+const PLAIN_INTERFACE_RE = /interface\s+(?!I[A-Z])\w+/g;
+const BARREL_EXPORT_RE = /^export\s+/m;
+const EXPORT_COUNT_RE = /export/g;
+const TEST_FILE_RE = /\.(test|spec)\.(ts|tsx|js|jsx)$/;
+const IMPORT_FROM_RE = /import\s+.*?\s+from\s+["'](.+?)["']/g;
+const IMPORT_SOURCE_RE = /from\s+["'](.+?)["']/;
+const IMPORT_TYPE_RE = /import\s+type\s+/g;
+const TRY_CATCH_RE = /try\s*\{/g;
+const INSTANCEOF_ERROR_RE = /instanceof\s+Error/;
+const EXTENDS_ERROR_RE = /extends\s+Error/;
+const STRUCTURED_LOGGER_RE = /createLogger|getLogger|pino|winston|bunyan/;
+const CONSOLE_LOG_RE = /console\.(log|warn|error|info)\s*\(/;
+const NAMED_EXPORT_RE =
+  /export\s+(?:const|function|class|interface|type|enum)\s/g;
+const DEFAULT_EXPORT_RE = /export\s+default\s/g;
+const TS_FILE_EXT_RE = /\.(ts|tsx)$/;
+const ZOD_SCHEMA_RE = /z\.\w+\(/g;
+const INTERFACE_DECL_RE = /\binterface\s+\w+/g;
+const TYPE_ALIAS_RE = /\btype\s+\w+\s*=/g;
+const VITEST_IMPORT_RE = /from\s+['"]vitest['"]/;
+const JEST_IMPORT_RE = /from\s+['"]@jest['"]|jest\.fn/;
+const DESCRIBE_RE = /describe\s*\(/g;
+const IT_RE = /\bit\s*\(/g;
+const TEST_FN_RE = /\btest\s*\(/g;
+
 export interface ExtractedConvention {
   category: ConventionCategory;
   confidence: number; // 0-1, how confident we are this is an actual convention
@@ -169,15 +202,9 @@ export class ConventionExtractor {
 
     // File naming patterns
     const fileNames = files.map((f) => f.path.split("/").pop() ?? "");
-    const kebabFiles = fileNames.filter((n) =>
-      /^[a-z][a-z0-9]*(-[a-z0-9]+)+\.\w+$/.test(n)
-    );
-    const camelFiles = fileNames.filter((n) =>
-      /^[a-z][a-zA-Z0-9]+\.\w+$/.test(n)
-    );
-    const _pascalFiles = fileNames.filter((n) =>
-      /^[A-Z][a-zA-Z0-9]+\.\w+$/.test(n)
-    );
+    const kebabFiles = fileNames.filter((n) => KEBAB_CASE_FILE_RE.test(n));
+    const camelFiles = fileNames.filter((n) => CAMEL_CASE_FILE_RE.test(n));
+    const _pascalFiles = fileNames.filter((n) => PASCAL_CASE_FILE_RE.test(n));
 
     if (kebabFiles.length > files.length * 0.5) {
       conventions.push({
@@ -202,17 +229,13 @@ export class ConventionExtractor {
     }
 
     // Variable naming
-    const codeFiles = files.filter((f) => /\.(ts|tsx|js|jsx)$/.test(f.path));
+    const codeFiles = files.filter((f) => CODE_FILE_EXT_RE.test(f.path));
     let camelVarCount = 0;
     let snakeVarCount = 0;
 
     for (const file of codeFiles) {
-      const camelMatches = file.content.match(
-        /(?:const|let|var)\s+([a-z][a-zA-Z0-9]+)\b/g
-      );
-      const snakeMatches = file.content.match(
-        /(?:const|let|var)\s+([a-z]+_[a-z_]+)\b/g
-      );
+      const camelMatches = file.content.match(CAMEL_CASE_VAR_RE);
+      const snakeMatches = file.content.match(SNAKE_CASE_VAR_RE);
       camelVarCount += camelMatches?.length ?? 0;
       snakeVarCount += snakeMatches?.length ?? 0;
     }
@@ -233,8 +256,8 @@ export class ConventionExtractor {
     let iPrefixCount = 0;
     let noPrefixCount = 0;
     for (const file of codeFiles) {
-      const iInterfaces = file.content.match(/interface\s+I[A-Z]\w+/g);
-      const plainInterfaces = file.content.match(/interface\s+(?!I[A-Z])\w+/g);
+      const iInterfaces = file.content.match(I_PREFIX_INTERFACE_RE);
+      const plainInterfaces = file.content.match(PLAIN_INTERFACE_RE);
       iPrefixCount += iInterfaces?.length ?? 0;
       noPrefixCount += plainInterfaces?.length ?? 0;
     }
@@ -266,8 +289,8 @@ export class ConventionExtractor {
     );
     const barrelFiles = indexFiles.filter(
       (f) =>
-        /^export\s+/m.test(f.content) &&
-        (f.content.match(/export/g)?.length ?? 0) > 1
+        BARREL_EXPORT_RE.test(f.content) &&
+        (f.content.match(EXPORT_COUNT_RE)?.length ?? 0) > 1
     );
 
     if (barrelFiles.length > 2) {
@@ -286,9 +309,7 @@ export class ConventionExtractor {
     }
 
     // Co-located tests
-    const testFiles = files.filter((f) =>
-      /\.(test|spec)\.(ts|tsx|js|jsx)$/.test(f.path)
-    );
+    const testFiles = files.filter((f) => TEST_FILE_RE.test(f.path));
     const colocatedTests = testFiles.filter((f) => {
       const dir = f.path.split("/").slice(0, -1).join("/");
       return (
@@ -323,7 +344,7 @@ export class ConventionExtractor {
     files: Array<{ path: string; content: string }>
   ): ExtractedConvention[] {
     const conventions: ExtractedConvention[] = [];
-    const codeFiles = files.filter((f) => /\.(ts|tsx|js|jsx)$/.test(f.path));
+    const codeFiles = files.filter((f) => CODE_FILE_EXT_RE.test(f.path));
 
     let _relativeImports = 0;
     let _absoluteImports = 0;
@@ -332,12 +353,11 @@ export class ConventionExtractor {
     let aliasImports = 0;
 
     for (const file of codeFiles) {
-      const importLines =
-        file.content.match(/import\s+.*?\s+from\s+["'](.+?)["']/g) ?? [];
+      const importLines = file.content.match(IMPORT_FROM_RE) ?? [];
       totalImports += importLines.length;
 
       for (const line of importLines) {
-        const source = line.match(/from\s+["'](.+?)["']/)?.[1] ?? "";
+        const source = line.match(IMPORT_SOURCE_RE)?.[1] ?? "";
         if (source.startsWith(".") || source.startsWith("..")) {
           _relativeImports++;
         } else if (source.startsWith("@") || source.startsWith("~")) {
@@ -347,7 +367,7 @@ export class ConventionExtractor {
         }
       }
 
-      const typeImports = file.content.match(/import\s+type\s+/g);
+      const typeImports = file.content.match(IMPORT_TYPE_RE);
       typeOnlyImports += typeImports?.length ?? 0;
     }
 
@@ -388,7 +408,7 @@ export class ConventionExtractor {
     files: Array<{ path: string; content: string }>
   ): ExtractedConvention[] {
     const conventions: ExtractedConvention[] = [];
-    const codeFiles = files.filter((f) => /\.(ts|tsx|js|jsx)$/.test(f.path));
+    const codeFiles = files.filter((f) => CODE_FILE_EXT_RE.test(f.path));
 
     let tryCatchCount = 0;
     let instanceofErrorCount = 0;
@@ -396,17 +416,17 @@ export class ConventionExtractor {
     const errorFiles: string[] = [];
 
     for (const file of codeFiles) {
-      const tryCatches = file.content.match(/try\s*\{/g);
+      const tryCatches = file.content.match(TRY_CATCH_RE);
       if (tryCatches) {
         tryCatchCount += tryCatches.length;
         errorFiles.push(file.path);
       }
 
-      if (/instanceof\s+Error/.test(file.content)) {
+      if (INSTANCEOF_ERROR_RE.test(file.content)) {
         instanceofErrorCount++;
       }
 
-      if (/extends\s+Error/.test(file.content)) {
+      if (EXTENDS_ERROR_RE.test(file.content)) {
         customErrorCount++;
       }
     }
@@ -443,18 +463,18 @@ export class ConventionExtractor {
     files: Array<{ path: string; content: string }>
   ): ExtractedConvention[] {
     const conventions: ExtractedConvention[] = [];
-    const codeFiles = files.filter((f) => /\.(ts|tsx|js|jsx)$/.test(f.path));
+    const codeFiles = files.filter((f) => CODE_FILE_EXT_RE.test(f.path));
 
     let structuredLoggerCount = 0;
     let consoleLogCount = 0;
     const loggerFiles: string[] = [];
 
     for (const file of codeFiles) {
-      if (/createLogger|getLogger|pino|winston|bunyan/.test(file.content)) {
+      if (STRUCTURED_LOGGER_RE.test(file.content)) {
         structuredLoggerCount++;
         loggerFiles.push(file.path);
       }
-      if (/console\.(log|warn|error|info)\s*\(/.test(file.content)) {
+      if (CONSOLE_LOG_RE.test(file.content)) {
         consoleLogCount++;
       }
     }
@@ -479,16 +499,14 @@ export class ConventionExtractor {
     files: Array<{ path: string; content: string }>
   ): ExtractedConvention[] {
     const conventions: ExtractedConvention[] = [];
-    const codeFiles = files.filter((f) => /\.(ts|tsx|js|jsx)$/.test(f.path));
+    const codeFiles = files.filter((f) => CODE_FILE_EXT_RE.test(f.path));
 
     let namedExportCount = 0;
     let defaultExportCount = 0;
 
     for (const file of codeFiles) {
-      const namedExports = file.content.match(
-        /export\s+(?:const|function|class|interface|type|enum)\s/g
-      );
-      const defaultExports = file.content.match(/export\s+default\s/g);
+      const namedExports = file.content.match(NAMED_EXPORT_RE);
+      const defaultExports = file.content.match(DEFAULT_EXPORT_RE);
       namedExportCount += namedExports?.length ?? 0;
       defaultExportCount += defaultExports?.length ?? 0;
     }
@@ -516,20 +534,20 @@ export class ConventionExtractor {
     files: Array<{ path: string; content: string }>
   ): ExtractedConvention[] {
     const conventions: ExtractedConvention[] = [];
-    const tsFiles = files.filter((f) => /\.(ts|tsx)$/.test(f.path));
+    const tsFiles = files.filter((f) => TS_FILE_EXT_RE.test(f.path));
 
     let zodSchemaCount = 0;
     let interfaceCount = 0;
     let typeAliasCount = 0;
 
     for (const file of tsFiles) {
-      const zodSchemas = file.content.match(/z\.\w+\(/g);
+      const zodSchemas = file.content.match(ZOD_SCHEMA_RE);
       zodSchemaCount += zodSchemas?.length ?? 0;
 
-      const interfaces = file.content.match(/\binterface\s+\w+/g);
+      const interfaces = file.content.match(INTERFACE_DECL_RE);
       interfaceCount += interfaces?.length ?? 0;
 
-      const typeAliases = file.content.match(/\btype\s+\w+\s*=/g);
+      const typeAliases = file.content.match(TYPE_ALIAS_RE);
       typeAliasCount += typeAliases?.length ?? 0;
     }
 
@@ -562,9 +580,7 @@ export class ConventionExtractor {
     files: Array<{ path: string; content: string }>
   ): ExtractedConvention[] {
     const conventions: ExtractedConvention[] = [];
-    const testFiles = files.filter((f) =>
-      /\.(test|spec)\.(ts|tsx|js|jsx)$/.test(f.path)
-    );
+    const testFiles = files.filter((f) => TEST_FILE_RE.test(f.path));
 
     if (testFiles.length === 0) {
       return conventions;
@@ -576,16 +592,16 @@ export class ConventionExtractor {
     let testFnCount = 0;
 
     for (const file of testFiles) {
-      if (/from\s+['"]vitest['"]/.test(file.content)) {
+      if (VITEST_IMPORT_RE.test(file.content)) {
         vitestCount++;
       }
-      if (/from\s+['"]@jest['"]|jest\.fn/.test(file.content)) {
+      if (JEST_IMPORT_RE.test(file.content)) {
         jestCount++;
       }
 
-      const describes = file.content.match(/describe\s*\(/g);
-      const its = file.content.match(/\bit\s*\(/g);
-      const tests = file.content.match(/\btest\s*\(/g);
+      const describes = file.content.match(DESCRIBE_RE);
+      const its = file.content.match(IT_RE);
+      const tests = file.content.match(TEST_FN_RE);
       describeItCount += (describes?.length ?? 0) + (its?.length ?? 0);
       testFnCount += tests?.length ?? 0;
     }

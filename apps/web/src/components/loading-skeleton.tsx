@@ -45,9 +45,17 @@ export function SkeletonTableRow({
   return (
     <tr className={className}>
       {Array.from({ length: columns }).map((_, i) => (
-        <td className="px-4 py-3" key={i}>
+        <td className="px-4 py-3" key={`col-${i}`}>
           <Skeleton
-            className={`h-4 ${i === 0 ? "w-32" : i === columns - 1 ? "w-16" : "w-20"}`}
+            className={`h-4 ${(() => {
+              if (i === 0) {
+                return "w-32";
+              }
+              if (i === columns - 1) {
+                return "w-16";
+              }
+              return "w-20";
+            })()}`}
           />
         </td>
       ))}
@@ -69,7 +77,7 @@ export function SkeletonTable({
         <thead>
           <tr className="border-zinc-800 border-b">
             {Array.from({ length: columns }).map((_, i) => (
-              <th className="px-4 py-3" key={i}>
+              <th className="px-4 py-3" key={`th-${i}`}>
                 <Skeleton className="h-3 w-16" />
               </th>
             ))}
@@ -77,7 +85,7 @@ export function SkeletonTable({
         </thead>
         <tbody className="divide-y divide-zinc-800">
           {Array.from({ length: rows }).map((_, i) => (
-            <SkeletonTableRow columns={columns} key={i} />
+            <SkeletonTableRow columns={columns} key={`row-${i}`} />
           ))}
         </tbody>
       </table>
@@ -90,7 +98,7 @@ export function SkeletonStats({ count = 4 }: { count?: number }) {
   return (
     <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
       {Array.from({ length: count }).map((_, i) => (
-        <SkeletonCard key={i} />
+        <SkeletonCard key={`stat-${i}`} />
       ))}
     </div>
   );

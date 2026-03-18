@@ -24,6 +24,7 @@ interface PaletteAction {
 const ICONS: Record<string, JSX.Element> = {
   navigate: (
     <svg
+      aria-hidden="true"
       className="h-4 w-4 text-zinc-500"
       fill="none"
       stroke="currentColor"
@@ -39,6 +40,7 @@ const ICONS: Record<string, JSX.Element> = {
   ),
   create: (
     <svg
+      aria-hidden="true"
       className="h-4 w-4 text-green-500"
       fill="none"
       stroke="currentColor"
@@ -54,6 +56,7 @@ const ICONS: Record<string, JSX.Element> = {
   ),
   search: (
     <svg
+      aria-hidden="true"
       className="h-4 w-4 text-blue-500"
       fill="none"
       stroke="currentColor"
@@ -69,6 +72,7 @@ const ICONS: Record<string, JSX.Element> = {
   ),
   settings: (
     <svg
+      aria-hidden="true"
       className="h-4 w-4 text-zinc-500"
       fill="none"
       stroke="currentColor"
@@ -89,6 +93,7 @@ const ICONS: Record<string, JSX.Element> = {
   ),
   project: (
     <svg
+      aria-hidden="true"
       className="h-4 w-4 text-violet-500"
       fill="none"
       stroke="currentColor"
@@ -104,6 +109,7 @@ const ICONS: Record<string, JSX.Element> = {
   ),
   session: (
     <svg
+      aria-hidden="true"
       className="h-4 w-4 text-amber-500"
       fill="none"
       stroke="currentColor"
@@ -119,6 +125,7 @@ const ICONS: Record<string, JSX.Element> = {
   ),
   help: (
     <svg
+      aria-hidden="true"
       className="h-4 w-4 text-zinc-500"
       fill="none"
       stroke="currentColor"
@@ -238,7 +245,10 @@ export function CommandPalette() {
   const groupedActions = useMemo(() => {
     const groups: Record<string, PaletteAction[]> = {};
     for (const action of filteredActions) {
-      (groups[action.category] ??= []).push(action);
+      if (!groups[action.category]) {
+        groups[action.category] = [];
+      }
+      groups[action.category]?.push(action);
     }
     return groups;
   }, [filteredActions]);
@@ -315,6 +325,9 @@ export function CommandPalette() {
   return (
     <div className="fixed inset-0 z-50 flex items-start justify-center pt-[15vh]">
       {/* Backdrop */}
+      {/* biome-ignore lint/a11y/useKeyWithClickEvents: backdrop click-to-close */}
+      {/* biome-ignore lint/a11y/noStaticElementInteractions: backdrop overlay */}
+      {/* biome-ignore lint/a11y/noNoninteractiveElementInteractions: backdrop overlay */}
       <div
         className="fixed inset-0 bg-black/60 backdrop-blur-sm"
         onClick={() => {
@@ -328,6 +341,7 @@ export function CommandPalette() {
         {/* Search input */}
         <div className="flex items-center gap-3 border-zinc-800 border-b px-4 py-3">
           <svg
+            aria-hidden="true"
             className="h-5 w-5 shrink-0 text-zinc-500"
             fill="none"
             stroke="currentColor"
@@ -386,6 +400,7 @@ export function CommandPalette() {
                         key={action.id}
                         onClick={() => executeAction(action)}
                         onMouseEnter={() => setSelectedIndex(idx)}
+                        type="button"
                       >
                         {action.icon && ICONS[action.icon]}
                         <div className="flex-1">

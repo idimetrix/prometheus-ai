@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // ── Mocks ────────────────────────────────────────────────────────────────────
 
@@ -10,8 +10,8 @@ vi.mock("../connection", () => ({
   }),
 }));
 
-import { EventPublisher } from "../pub-sub";
 import type { SessionEvent } from "../pub-sub";
+import { EventPublisher } from "../pub-sub";
 
 describe("EventPublisher", () => {
   let publisher: EventPublisher;
@@ -35,7 +35,7 @@ describe("EventPublisher", () => {
 
       expect(mockPublish).toHaveBeenCalledWith(
         "session:ses_123:events",
-        expect.any(String),
+        expect.any(String)
       );
     });
 
@@ -49,7 +49,7 @@ describe("EventPublisher", () => {
 
       await publisher.publishSessionEvent("ses_1", event);
 
-      const publishedData = JSON.parse(mockPublish.mock.calls[0]![1]);
+      const publishedData = JSON.parse(mockPublish.mock.calls[0]?.[1]);
       expect(publishedData.type).toBe("agent:output");
       expect(publishedData.data.content).toBe("Hello world");
       expect(publishedData.agentRole).toBe("backend_coder");
@@ -65,7 +65,7 @@ describe("EventPublisher", () => {
 
       await publisher.publishSessionEvent("ses_1", event);
 
-      const publishedData = JSON.parse(mockPublish.mock.calls[0]![1]);
+      const publishedData = JSON.parse(mockPublish.mock.calls[0]?.[1]);
       expect(publishedData.agentRole).toBe("discovery");
     });
 
@@ -78,7 +78,7 @@ describe("EventPublisher", () => {
 
       await publisher.publishSessionEvent("ses_1", event);
 
-      const publishedData = JSON.parse(mockPublish.mock.calls[0]![1]);
+      const publishedData = JSON.parse(mockPublish.mock.calls[0]?.[1]);
       expect(publishedData.agentRole).toBeUndefined();
     });
   });
@@ -97,7 +97,7 @@ describe("EventPublisher", () => {
 
       expect(mockPublish).toHaveBeenCalledWith(
         "fleet:events",
-        expect.any(String),
+        expect.any(String)
       );
     });
 
@@ -110,7 +110,7 @@ describe("EventPublisher", () => {
 
       await publisher.publishFleetEvent("org_456", event);
 
-      const publishedData = JSON.parse(mockPublish.mock.calls[0]![1]);
+      const publishedData = JSON.parse(mockPublish.mock.calls[0]?.[1]);
       expect(publishedData.orgId).toBe("org_456");
       expect(publishedData.type).toBe("agent:status");
       expect(publishedData.data.agentId).toBe("agt_1");
@@ -126,7 +126,7 @@ describe("EventPublisher", () => {
 
       await publisher.publishFleetEvent("org_1", event);
 
-      const publishedData = JSON.parse(mockPublish.mock.calls[0]![1]);
+      const publishedData = JSON.parse(mockPublish.mock.calls[0]?.[1]);
       expect(publishedData.orgId).toBe("org_1");
       expect(publishedData.agentRole).toBe("orchestrator");
       expect(publishedData.data.taskId).toBe("task_1");
@@ -145,7 +145,7 @@ describe("EventPublisher", () => {
 
       expect(mockPublish).toHaveBeenCalledWith(
         "user:user_1:notifications",
-        expect.any(String),
+        expect.any(String)
       );
     });
 
@@ -156,7 +156,7 @@ describe("EventPublisher", () => {
         message: "You have 5 credits remaining.",
       });
 
-      const publishedData = JSON.parse(mockPublish.mock.calls[0]![1]);
+      const publishedData = JSON.parse(mockPublish.mock.calls[0]?.[1]);
       expect(publishedData.timestamp).toBeDefined();
       expect(() => new Date(publishedData.timestamp)).not.toThrow();
     });
@@ -169,7 +169,7 @@ describe("EventPublisher", () => {
         data: { taskId: "task_1", creditsUsed: 5 },
       });
 
-      const publishedData = JSON.parse(mockPublish.mock.calls[0]![1]);
+      const publishedData = JSON.parse(mockPublish.mock.calls[0]?.[1]);
       expect(publishedData.data.taskId).toBe("task_1");
       expect(publishedData.data.creditsUsed).toBe(5);
     });
@@ -181,7 +181,7 @@ describe("EventPublisher", () => {
         message: "You completed 10 tasks this week.",
       });
 
-      const publishedData = JSON.parse(mockPublish.mock.calls[0]![1]);
+      const publishedData = JSON.parse(mockPublish.mock.calls[0]?.[1]);
       expect(publishedData.type).toBe("weekly_summary");
       expect(publishedData.data).toBeUndefined();
     });
@@ -200,7 +200,7 @@ describe("EventPublisher", () => {
 
       expect(mockPublish).toHaveBeenCalledWith(
         "session:ses_1:events",
-        expect.any(String),
+        expect.any(String)
       );
     });
 
@@ -212,7 +212,7 @@ describe("EventPublisher", () => {
         totalInQueue: 4,
       });
 
-      const publishedData = JSON.parse(mockPublish.mock.calls[0]![1]);
+      const publishedData = JSON.parse(mockPublish.mock.calls[0]?.[1]);
       expect(publishedData.type).toBe("queue_position");
       expect(publishedData.data.taskId).toBe("task_1");
       expect(publishedData.data.position).toBe(2);
@@ -229,7 +229,7 @@ describe("EventPublisher", () => {
         totalInQueue: 3,
       });
 
-      const publishedData = JSON.parse(mockPublish.mock.calls[0]![1]);
+      const publishedData = JSON.parse(mockPublish.mock.calls[0]?.[1]);
       expect(publishedData.data.position).toBe(0);
       expect(publishedData.data.estimatedWaitSeconds).toBe(0);
     });

@@ -1,16 +1,16 @@
 export default function AboutPage() {
   return (
     <div className="mx-auto max-w-3xl px-6 py-24">
-      <h1 className="text-4xl font-bold text-zinc-100">About PROMETHEUS</h1>
+      <h1 className="font-bold text-4xl text-zinc-100">About PROMETHEUS</h1>
       <div className="mt-8 space-y-8">
-        <p className="text-lg leading-relaxed text-zinc-400">
+        <p className="text-lg text-zinc-400 leading-relaxed">
           PROMETHEUS is the first AI engineering platform that builds your
           entire project from requirements to production deployment using 12
           specialist AI agents.
         </p>
 
         <div>
-          <h2 className="text-2xl font-semibold text-zinc-200">
+          <h2 className="font-semibold text-2xl text-zinc-200">
             Why PROMETHEUS?
           </h2>
           <div className="mt-4 space-y-3">
@@ -37,10 +37,10 @@ export default function AboutPage() {
               },
             ].map((item) => (
               <div
-                key={item.title}
                 className="rounded-xl border border-zinc-800 bg-zinc-900/30 p-4"
+                key={item.title}
               >
-                <h3 className="text-sm font-semibold text-zinc-200">
+                <h3 className="font-semibold text-sm text-zinc-200">
                   {item.title}
                 </h3>
                 <p className="mt-1 text-sm text-zinc-500">{item.desc}</p>
@@ -50,7 +50,7 @@ export default function AboutPage() {
         </div>
 
         <div>
-          <h2 className="text-2xl font-semibold text-zinc-200">How It Works</h2>
+          <h2 className="font-semibold text-2xl text-zinc-200">How It Works</h2>
           <div className="mt-4 space-y-3">
             {[
               "Describe what you want to build",
@@ -61,10 +61,10 @@ export default function AboutPage() {
               "Production-ready code delivered as a PR",
             ].map((step, i) => (
               <div
-                key={i}
                 className="flex items-center gap-3 rounded-lg border border-zinc-800 bg-zinc-900/30 px-4 py-3"
+                key={i}
               >
-                <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-violet-600/10 text-xs font-bold text-violet-400">
+                <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-violet-600/10 font-bold text-violet-400 text-xs">
                   {i + 1}
                 </div>
                 <span className="text-sm text-zinc-300">{step}</span>

@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import { useCallback, useEffect, useState } from "react";
 import { useSocket } from "@/hooks/use-socket";
 
@@ -65,7 +66,10 @@ export function SessionPresence({
       on("session:viewers", (data: unknown) => {
         const d = data as { viewers: Viewer[] };
         setViewers(d.viewers ?? []);
-      }) ?? (() => {})
+      }) ??
+        (() => {
+          /* no-op fallback */
+        })
     );
 
     cleanups.push(
@@ -77,24 +81,37 @@ export function SessionPresence({
           }
           return [...prev, d.viewer];
         });
-      }) ?? (() => {})
+      }) ??
+        (() => {
+          /* no-op fallback */
+        })
     );
 
     cleanups.push(
       on("session:viewer_left", (data: unknown) => {
         const d = data as { userId: string };
         setViewers((prev) => prev.filter((v) => v.userId !== d.userId));
-      }) ?? (() => {})
+      }) ??
+        (() => {
+          /* no-op fallback */
+        })
     );
 
     cleanups.push(
       on("session:control_changed", (data: unknown) => {
         const d = data as { userId: string };
         setHasControl(d.userId === currentUserId);
-      }) ?? (() => {})
+      }) ??
+        (() => {
+          /* no-op fallback */
+        })
     );
 
-    return () => cleanups.forEach((fn) => fn());
+    return () => {
+      for (const fn of cleanups) {
+        fn();
+      }
+    };
   }, [socket, on, currentUserId]);
 
   const handleTakeover = useCallback(() => {
@@ -122,10 +139,12 @@ export function SessionPresence({
                 title={viewer.name}
               >
                 {viewer.avatar ? (
-                  <img
+                  <Image
                     alt={viewer.name}
                     className="h-full w-full rounded-full object-cover"
+                    height={24}
                     src={viewer.avatar}
+                    width={24}
                   />
                 ) : (
                   viewer.name.charAt(0).toUpperCase()
@@ -148,6 +167,7 @@ export function SessionPresence({
       {!isSessionOwner && (
         <div className="flex items-center gap-1.5 rounded-full border border-zinc-800 bg-zinc-900 px-2.5 py-1">
           <svg
+            aria-hidden="true"
             className="h-3 w-3 text-zinc-500"
             fill="none"
             stroke="currentColor"
@@ -175,6 +195,7 @@ export function SessionPresence({
           <button
             className="rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-1.5 font-medium text-xs text-zinc-300 transition-colors hover:bg-zinc-700"
             onClick={handleRelease}
+            type="button"
           >
             Release Control
           </button>
@@ -183,6 +204,7 @@ export function SessionPresence({
         <button
           className="rounded-lg border border-violet-800/50 bg-violet-950/30 px-3 py-1.5 font-medium text-violet-400 text-xs transition-colors hover:bg-violet-900/40"
           onClick={handleTakeover}
+          type="button"
         >
           Take Control
         </button>

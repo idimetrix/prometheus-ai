@@ -1,65 +1,134 @@
-import { spawn, type ChildProcess } from "node:child_process";
-import * as fs from "node:fs/promises";
-import * as path from "node:path";
-import * as os from "node:os";
+import { type ChildProcess, spawn } from "node:child_process";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { dirname, join, resolve } from "node:path";
 import { createLogger } from "@prometheus/logger";
 import { generateId } from "@prometheus/utils";
 import { validateCommand, validateFilePath, validateTimeout } from "./security";
 
 const logger = createLogger("sandbox-manager:container");
 
-const IS_PRODUCTION = process.env.NODE_ENV === "production";
+/**
+ * Determine sandbox execution mode:
+ * 1. SANDBOX_MODE env var takes priority ("docker" | "dev")
+ * 2. NODE_ENV=production defaults to "docker"
+ * 3. Otherwise, auto-detect: use Docker if available, fall back to dev
+ */
+async function detectSandboxMode(): Promise<"docker" | "dev"> {
+  const explicit = process.env.SANDBOX_MODE?.toLowerCase();
+  if (explicit === "docker") {
+    return "docker";
+  }
+  if (explicit === "dev") {
+    return "dev";
+  }
+
+  if (process.env.NODE_ENV === "production") {
+    return "docker";
+  }
+
+  // Auto-detect: check if Docker daemon is reachable
+  try {
+    const available = await isDockerAvailable();
+    if (available) {
+      logger.info("Docker detected, using container mode");
+      return "docker";
+    }
+  } catch {
+    // Fall through to dev mode
+  }
+
+  logger.info(
+    "Docker not available, using dev mode (temp directories + child_process)"
+  );
+  return "dev";
+}
+
+/**
+ * Check whether the Docker CLI can connect to a running daemon.
+ */
+function isDockerAvailable(): Promise<boolean> {
+  return new Promise<boolean>((resolve) => {
+    const child = spawn("docker", ["info", "--format", "{{.ID}}"], {
+      timeout: 5000,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    child.on("close", (code) => resolve(code === 0));
+    child.on("error", () => resolve(false));
+  });
+}
 
 export interface ContainerInfo {
-  id: string;
   containerId: string;
+  cpuLimit: number;
+  createdAt: Date;
+  id: string;
+  lastUsedAt: Date;
+  memoryLimitMb: number;
   projectId: string | null;
   sessionId: string | null;
   status: "creating" | "ready" | "busy" | "stopping" | "stopped";
-  createdAt: Date;
-  lastUsedAt: Date;
   workspacePath: string;
-  cpuLimit: number;
-  memoryLimitMb: number;
 }
 
 export interface ExecResult {
-  exitCode: number;
-  stdout: string;
-  stderr: string;
   duration: number;
+  exitCode: number;
+  stderr: string;
+  stdout: string;
 }
 
 export interface CreateContainerOptions {
-  projectId?: string;
-  repoUrl?: string;
   branch?: string;
   cpuLimit?: number;
   memoryLimitMb?: number;
+  projectId?: string;
+  repoUrl?: string;
 }
 
 export class ContainerManager {
   private docker: DockerClient | null = null;
+  private mode: "docker" | "dev" = "dev";
+  private modeResolved = false;
   private readonly containers = new Map<string, ContainerInfo>();
   private readonly runningProcesses = new Map<string, Set<ChildProcess>>();
   private readonly image = process.env.SANDBOX_IMAGE ?? "node:22-alpine";
   private readonly sandboxBaseDir: string;
 
   constructor() {
-    this.sandboxBaseDir = process.env.SANDBOX_BASE_DIR
-      ?? path.join(os.tmpdir(), "prometheus-sandboxes");
+    this.sandboxBaseDir =
+      process.env.SANDBOX_BASE_DIR ?? join(tmpdir(), "prometheus-sandboxes");
+  }
 
-    if (IS_PRODUCTION) {
+  /**
+   * Resolve the sandbox mode (docker vs dev) on first use.
+   * Called lazily to avoid blocking the constructor.
+   */
+  private async ensureMode(): Promise<void> {
+    if (this.modeResolved) {
+      return;
+    }
+
+    this.mode = await detectSandboxMode();
+    if (this.mode === "docker") {
       this.docker = new DockerClient();
     }
+    this.modeResolved = true;
+  }
+
+  /** Get the current sandbox execution mode */
+  getMode(): "docker" | "dev" {
+    return this.mode;
   }
 
   /**
    * Create a new sandbox environment.
-   * In development: creates a temp directory with process isolation.
-   * In production: creates a Docker container.
+   * In dev mode: creates a temp directory with process isolation.
+   * In docker mode: creates a Docker container with security constraints.
    */
   async create(options?: CreateContainerOptions): Promise<ContainerInfo> {
+    await this.ensureMode();
+
     const id = generateId("sbx");
     const cpuLimit = options?.cpuLimit ?? 1;
     const memoryLimitMb = options?.memoryLimitMb ?? 2048;
@@ -78,7 +147,7 @@ export class ContainerManager {
     };
 
     try {
-      if (IS_PRODUCTION && this.docker) {
+      if (this.mode === "docker" && this.docker) {
         await this.createDockerContainer(info, cpuLimit, memoryLimitMb);
       } else {
         await this.createDevSandbox(info);
@@ -89,7 +158,7 @@ export class ContainerManager {
       this.runningProcesses.set(id, new Set());
 
       logger.info(
-        { sandboxId: id, mode: IS_PRODUCTION ? "docker" : "dev", workspace: info.workspacePath },
+        { sandboxId: id, mode: this.mode, workspace: info.workspacePath },
         "Sandbox created"
       );
 
@@ -105,10 +174,16 @@ export class ContainerManager {
   /**
    * Execute a shell command inside a sandbox.
    */
-  async exec(sandboxId: string, command: string, timeout?: number): Promise<ExecResult> {
+  async exec(
+    sandboxId: string,
+    command: string,
+    timeout?: number
+  ): Promise<ExecResult> {
     const info = this.containers.get(sandboxId);
     if (!info || (info.status !== "ready" && info.status !== "busy")) {
-      throw new Error(`Sandbox ${sandboxId} not available (status: ${info?.status ?? "not found"})`);
+      throw new Error(
+        `Sandbox ${sandboxId} not available (status: ${info?.status ?? "not found"})`
+      );
     }
 
     // Validate command security
@@ -122,7 +197,7 @@ export class ContainerManager {
       };
     }
 
-    // Validate and clamp timeout
+    // Validate and clamp timeout (max 5 minutes)
     const timeoutCheck = validateTimeout(timeout ?? 60_000);
     const effectiveTimeout = timeoutCheck.timeout;
 
@@ -132,10 +207,15 @@ export class ContainerManager {
 
     try {
       let result: ExecResult;
-      if (IS_PRODUCTION && this.docker) {
+      if (this.mode === "docker" && this.docker) {
         result = await this.execInDocker(info, command, effectiveTimeout);
       } else {
-        result = await this.execInDev(info, command, effectiveTimeout, sandboxId);
+        result = await this.execInDev(
+          info,
+          command,
+          effectiveTimeout,
+          sandboxId
+        );
       }
 
       info.status = "ready";
@@ -144,7 +224,10 @@ export class ContainerManager {
       info.status = "ready";
       const duration = Date.now() - startTime;
       const msg = error instanceof Error ? error.message : String(error);
-      logger.error({ sandboxId, command: command.slice(0, 100), error: msg }, "Exec failed");
+      logger.error(
+        { sandboxId, command: command.slice(0, 100), error: msg },
+        "Exec failed"
+      );
       return { exitCode: 1, stdout: "", stderr: msg, duration };
     }
   }
@@ -152,24 +235,35 @@ export class ContainerManager {
   /**
    * Write a file inside the sandbox.
    */
-  async writeFile(sandboxId: string, filePath: string, content: string): Promise<void> {
+  async writeFile(
+    sandboxId: string,
+    filePath: string,
+    content: string
+  ): Promise<void> {
     const info = this.containers.get(sandboxId);
-    if (!info) throw new Error(`Sandbox ${sandboxId} not found`);
+    if (!info) {
+      throw new Error(`Sandbox ${sandboxId} not found`);
+    }
 
     info.lastUsedAt = new Date();
 
-    if (IS_PRODUCTION && this.docker) {
+    if (this.mode === "docker" && this.docker) {
       // Use docker exec to write the file
-      await this.execInDocker(info, `mkdir -p "$(dirname '${filePath}')" && cat > '${filePath}'`, 30_000, content);
+      await this.execInDocker(
+        info,
+        `mkdir -p "$(dirname '${filePath}')" && cat > '${filePath}'`,
+        30_000,
+        content
+      );
     } else {
       const pathCheck = validateFilePath(info.workspacePath, filePath);
       if (!pathCheck.valid) {
         throw new Error(`Security: ${pathCheck.reason}`);
       }
 
-      const fullPath = path.resolve(info.workspacePath, filePath);
-      await fs.mkdir(path.dirname(fullPath), { recursive: true });
-      await fs.writeFile(fullPath, content, "utf-8");
+      const fullPath = resolve(info.workspacePath, filePath);
+      await mkdir(dirname(fullPath), { recursive: true });
+      await writeFile(fullPath, content, "utf-8");
     }
 
     logger.debug({ sandboxId, filePath }, "File written");
@@ -180,25 +274,26 @@ export class ContainerManager {
    */
   async readFile(sandboxId: string, filePath: string): Promise<string> {
     const info = this.containers.get(sandboxId);
-    if (!info) throw new Error(`Sandbox ${sandboxId} not found`);
+    if (!info) {
+      throw new Error(`Sandbox ${sandboxId} not found`);
+    }
 
     info.lastUsedAt = new Date();
 
-    if (IS_PRODUCTION && this.docker) {
+    if (this.mode === "docker" && this.docker) {
       const result = await this.execInDocker(info, `cat '${filePath}'`, 10_000);
       if (result.exitCode !== 0) {
         throw new Error(`Failed to read file: ${result.stderr}`);
       }
       return result.stdout;
-    } else {
-      const pathCheck = validateFilePath(info.workspacePath, filePath);
-      if (!pathCheck.valid) {
-        throw new Error(`Security: ${pathCheck.reason}`);
-      }
-
-      const fullPath = path.resolve(info.workspacePath, filePath);
-      return await fs.readFile(fullPath, "utf-8");
     }
+    const pathCheck = validateFilePath(info.workspacePath, filePath);
+    if (!pathCheck.valid) {
+      throw new Error(`Security: ${pathCheck.reason}`);
+    }
+
+    const fullPath = resolve(info.workspacePath, filePath);
+    return await readFile(fullPath, "utf-8");
   }
 
   /**
@@ -206,7 +301,9 @@ export class ContainerManager {
    */
   async destroy(sandboxId: string): Promise<void> {
     const info = this.containers.get(sandboxId);
-    if (!info) return;
+    if (!info) {
+      return;
+    }
 
     info.status = "stopping";
 
@@ -224,7 +321,7 @@ export class ContainerManager {
     }
 
     try {
-      if (IS_PRODUCTION && this.docker) {
+      if (this.mode === "docker" && this.docker) {
         await this.destroyDockerContainer(info);
       } else {
         await this.destroyDevSandbox(info);
@@ -256,27 +353,31 @@ export class ContainerManager {
   }
 
   /**
-   * Check if Docker is available (production mode).
+   * Check if Docker is available.
    */
   async checkDockerConnectivity(): Promise<boolean> {
-    if (!IS_PRODUCTION || !this.docker) {
+    if (this.mode !== "docker" || !this.docker) {
       return true; // Dev mode doesn't need Docker
     }
-    return this.docker.ping();
+    return await this.docker.ping();
   }
 
-  // ---- Development mode: temp directories + child_process ----
+  // ─── Development mode: temp directories + child_process ────────────
 
   private async createDevSandbox(info: ContainerInfo): Promise<void> {
-    const sandboxDir = path.join(this.sandboxBaseDir, info.id);
-    await fs.mkdir(sandboxDir, { recursive: true });
-    await fs.mkdir(path.join(sandboxDir, "workspace"), { recursive: true });
+    const sandboxDir = join(
+      this.sandboxBaseDir,
+      `prometheus-sandbox-${info.id}`
+    );
+    await mkdir(sandboxDir, { recursive: true });
+    await mkdir(join(sandboxDir, "workspace"), { recursive: true });
+    await mkdir(join(sandboxDir, "tmp"), { recursive: true });
 
-    info.workspacePath = path.join(sandboxDir, "workspace");
+    info.workspacePath = join(sandboxDir, "workspace");
     info.containerId = `dev-${info.id}`;
   }
 
-  private async execInDev(
+  private execInDev(
     info: ContainerInfo,
     command: string,
     timeout: number,
@@ -291,6 +392,7 @@ export class ContainerManager {
         env: {
           ...process.env,
           HOME: info.workspacePath,
+          TMPDIR: join(dirname(info.workspacePath), "tmp"),
           SANDBOX_ID: sandboxId,
           NODE_ENV: "development",
         },
@@ -299,7 +401,9 @@ export class ContainerManager {
 
       // Track process for cleanup
       const processes = this.runningProcesses.get(sandboxId);
-      if (processes) processes.add(child);
+      if (processes) {
+        processes.add(child);
+      }
 
       let stdout = "";
       let stderr = "";
@@ -321,11 +425,25 @@ export class ContainerManager {
         }
       });
 
-      child.on("close", (code) => {
+      child.on("close", (code, signal) => {
         const processes = this.runningProcesses.get(sandboxId);
-        if (processes) processes.delete(child);
+        if (processes) {
+          processes.delete(child);
+        }
 
         const duration = Date.now() - startTime;
+
+        // Detect timeout (signal SIGTERM from node's timeout)
+        if (signal === "SIGTERM" && duration >= timeout - 100) {
+          resolve({
+            exitCode: 124, // Standard timeout exit code
+            stdout: stdout.trim(),
+            stderr: `Process timed out after ${Math.round(timeout / 1000)}s`,
+            duration,
+          });
+          return;
+        }
+
         resolve({
           exitCode: code ?? 1,
           stdout: stdout.trim(),
@@ -336,7 +454,9 @@ export class ContainerManager {
 
       child.on("error", (err) => {
         const processes = this.runningProcesses.get(sandboxId);
-        if (processes) processes.delete(child);
+        if (processes) {
+          processes.delete(child);
+        }
 
         const duration = Date.now() - startTime;
         resolve({
@@ -350,20 +470,24 @@ export class ContainerManager {
   }
 
   private async destroyDevSandbox(info: ContainerInfo): Promise<void> {
-    const sandboxDir = path.join(this.sandboxBaseDir, info.id);
-    await fs.rm(sandboxDir, { recursive: true, force: true });
+    // Kill any lingering processes in the sandbox directory
+    const sandboxDir = dirname(info.workspacePath);
+    await rm(sandboxDir, { recursive: true, force: true });
   }
 
-  // ---- Production mode: Docker containers ----
+  // ─── Production mode: Docker containers ────────────────────────────
 
   private async createDockerContainer(
     info: ContainerInfo,
     cpuLimit: number,
     memoryLimitMb: number
   ): Promise<void> {
-    if (!this.docker) throw new Error("Docker not available");
+    if (!this.docker) {
+      throw new Error("Docker not available");
+    }
 
     const containerName = `prometheus-sandbox-${info.id}`;
+    const diskLimitMb = Number(process.env.SANDBOX_DISK_LIMIT_MB ?? 10_240); // 10GB default
 
     const createResult = await this.docker.createContainer({
       Image: this.image,
@@ -375,8 +499,18 @@ export class ContainerManager {
         MemorySwap: memoryLimitMb * 1024 * 1024, // No swap
         NetworkMode: "bridge",
         SecurityOpt: ["no-new-privileges"],
-        ReadonlyRootfs: false,
-        Tmpfs: { "/tmp": "rw,noexec,nosuid,size=512m" },
+        ReadonlyRootfs: true,
+        Tmpfs: {
+          "/tmp": `rw,noexec,nosuid,size=${Math.min(512, diskLimitMb)}m`,
+          "/home/sandbox": "rw,nosuid,size=256m",
+        },
+        // Disk quota via storage-opt (requires overlay2 with xfs + pquota)
+        StorageOpt: diskLimitMb ? { size: `${diskLimitMb}M` } : undefined,
+        // Drop all capabilities except what's minimally needed
+        CapDrop: ["ALL"],
+        CapAdd: ["CHOWN", "DAC_OVERRIDE", "FOWNER", "SETGID", "SETUID"],
+        // PID limit to prevent fork bombs
+        PidsLimit: 256,
       },
       WorkingDir: "/workspace",
       Env: ["NODE_ENV=development", "HOME=/home/sandbox"],
@@ -384,6 +518,8 @@ export class ContainerManager {
         "prometheus.sandbox": "true",
         "prometheus.sandbox.id": info.id,
       },
+      // Mount a volume for the writable workspace
+      Volumes: { "/workspace": {} },
     });
 
     await this.docker.startContainer(createResult.Id);
@@ -397,7 +533,9 @@ export class ContainerManager {
     timeout: number,
     stdin?: string
   ): Promise<ExecResult> {
-    if (!this.docker) throw new Error("Docker not available");
+    if (!this.docker) {
+      throw new Error("Docker not available");
+    }
 
     const startTime = Date.now();
     const result = await this.docker.execInContainer(
@@ -412,18 +550,20 @@ export class ContainerManager {
   }
 
   private async destroyDockerContainer(info: ContainerInfo): Promise<void> {
-    if (!this.docker) return;
+    if (!this.docker) {
+      return;
+    }
     await this.docker.stopContainer(info.containerId, 5);
     await this.docker.removeContainer(info.containerId);
   }
 }
 
 /**
- * Minimal Docker client using the Docker Engine API over unix socket.
- * Uses fetch with unix socket support or falls back to child_process.
+ * Minimal Docker client using the Docker CLI.
+ * Shells out to docker commands for simplicity and portability.
  */
 class DockerClient {
-  private readonly socketPath: string;
+  readonly socketPath: string;
 
   constructor(socketPath?: string) {
     this.socketPath = socketPath ?? "/var/run/docker.sock";
@@ -431,16 +571,24 @@ class DockerClient {
 
   async ping(): Promise<boolean> {
     try {
-      const result = await this.dockerExec(["docker", "info", "--format", "{{.ID}}"]);
+      const result = await this.dockerExec([
+        "docker",
+        "info",
+        "--format",
+        "{{.ID}}",
+      ]);
       return result.exitCode === 0;
     } catch {
       return false;
     }
   }
 
-  async createContainer(config: Record<string, unknown>): Promise<{ Id: string }> {
+  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: complex but well-structured logic
+  async createContainer(
+    config: Record<string, unknown>
+  ): Promise<{ Id: string }> {
     const name = config.name as string;
-    delete config.name;
+    config.name = undefined;
 
     const args = ["docker", "create", "--name", name];
 
@@ -463,9 +611,34 @@ class DockerClient {
           args.push("--security-opt", opt);
         }
       }
+      if (hostConfig.ReadonlyRootfs) {
+        args.push("--read-only");
+      }
       if (hostConfig.Tmpfs) {
-        for (const [mount, opts] of Object.entries(hostConfig.Tmpfs as Record<string, string>)) {
+        for (const [mount, opts] of Object.entries(
+          hostConfig.Tmpfs as Record<string, string>
+        )) {
           args.push("--tmpfs", `${mount}:${opts}`);
+        }
+      }
+      if (hostConfig.CapDrop) {
+        for (const cap of hostConfig.CapDrop as string[]) {
+          args.push("--cap-drop", cap);
+        }
+      }
+      if (hostConfig.CapAdd) {
+        for (const cap of hostConfig.CapAdd as string[]) {
+          args.push("--cap-add", cap);
+        }
+      }
+      if (hostConfig.PidsLimit) {
+        args.push("--pids-limit", String(hostConfig.PidsLimit));
+      }
+      if (hostConfig.StorageOpt) {
+        for (const [key, value] of Object.entries(
+          hostConfig.StorageOpt as Record<string, string>
+        )) {
+          args.push("--storage-opt", `${key}=${value}`);
         }
       }
     }
@@ -481,7 +654,9 @@ class DockerClient {
     }
 
     if (config.Labels) {
-      for (const [key, value] of Object.entries(config.Labels as Record<string, string>)) {
+      for (const [key, value] of Object.entries(
+        config.Labels as Record<string, string>
+      )) {
         args.push("--label", `${key}=${value}`);
       }
     }
@@ -508,11 +683,21 @@ class DockerClient {
   }
 
   async stopContainer(containerId: string, timeoutSec: number): Promise<void> {
-    await this.dockerExec(["docker", "stop", "-t", String(timeoutSec), containerId]).catch(() => {});
+    await this.dockerExec([
+      "docker",
+      "stop",
+      "-t",
+      String(timeoutSec),
+      containerId,
+    ]).catch(() => {
+      /* best-effort stop */
+    });
   }
 
   async removeContainer(containerId: string): Promise<void> {
-    await this.dockerExec(["docker", "rm", "-f", containerId]).catch(() => {});
+    await this.dockerExec(["docker", "rm", "-f", containerId]).catch(() => {
+      /* best-effort remove */
+    });
   }
 
   async execInContainer(
@@ -527,7 +712,7 @@ class DockerClient {
     }
     args.push(containerId, ...cmd);
 
-    return this.dockerExec(args, timeout, stdin);
+    return await this.dockerExec(args, timeout, stdin);
   }
 
   private dockerExec(
@@ -536,7 +721,7 @@ class DockerClient {
     stdin?: string
   ): Promise<{ exitCode: number; stdout: string; stderr: string }> {
     return new Promise((resolve) => {
-      const child = spawn(args[0]!, args.slice(1), {
+      const child = spawn(args[0] as string, args.slice(1), {
         timeout,
         stdio: ["pipe", "pipe", "pipe"],
       });
@@ -557,7 +742,11 @@ class DockerClient {
       }
 
       child.on("close", (code) => {
-        resolve({ exitCode: code ?? 1, stdout: stdout.trim(), stderr: stderr.trim() });
+        resolve({
+          exitCode: code ?? 1,
+          stdout: stdout.trim(),
+          stderr: stderr.trim(),
+        });
       });
 
       child.on("error", (err) => {

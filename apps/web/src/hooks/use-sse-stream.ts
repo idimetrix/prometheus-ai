@@ -9,8 +9,6 @@ const MAX_RECONNECT_ATTEMPTS = 15;
 const HEARTBEAT_TIMEOUT_MS = 15_000;
 const EVENT_BUFFER_FLUSH_MS = 50;
 
-type EventHandler = (data: Record<string, unknown>) => void;
-
 interface BufferedEvent {
   data: Record<string, unknown>;
   type: string;
@@ -27,21 +25,159 @@ export function useSSEStream(sessionId: string | null) {
 
   const store = useSessionStore();
   const notifications = useNotificationStore();
+  const connectRef = useRef<() => void>(() => {
+    /* initialized below */
+  });
+  const scheduleReconnectRef = useRef<() => void>(() => {
+    /* initialized below */
+  });
 
-  const resetHeartbeat = useCallback(() => {
-    if (heartbeatTimer.current) {
-      clearTimeout(heartbeatTimer.current);
-    }
-    heartbeatTimer.current = setTimeout(() => {
-      // No heartbeat received in 15s - reconnect
-      console.warn("[SSE] Heartbeat timeout, reconnecting...");
-      eventSourceRef.current?.close();
-      eventSourceRef.current = null;
-      setIsConnected(false);
-      store.setConnected(false);
-      scheduleReconnect();
-    }, HEARTBEAT_TIMEOUT_MS);
-  }, [store, scheduleReconnect]);
+  const processEvent = useCallback(
+    // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: inherent domain complexity
+    function processEvent(type: string, data: Record<string, unknown>) {
+      switch (type) {
+        case "agent_output":
+          store.addTerminalLine({
+            content: data.content as string,
+            timestamp: (data.timestamp as string) ?? new Date().toISOString(),
+          });
+          store.addEvent({
+            id: crypto.randomUUID(),
+            type: "agent_output",
+            data,
+            timestamp: (data.timestamp as string) ?? new Date().toISOString(),
+          });
+          break;
+
+        case "terminal_output":
+          store.addTerminalLine({
+            content: data.content as string,
+            timestamp: (data.timestamp as string) ?? new Date().toISOString(),
+          });
+          break;
+
+        case "plan_update":
+          if (data.steps) {
+            store.setPlanSteps(
+              data.steps as import("@/stores/session.store").PlanStep[]
+            );
+          }
+          break;
+
+        case "plan_step_update":
+          if (data.stepId) {
+            store.updatePlanStep(data.stepId as string, {
+              status: data.status as string,
+              title: data.title as string,
+              description: data.description as string,
+            });
+          }
+          break;
+
+        case "file_change":
+          if (data.files) {
+            store.setFileTree(
+              data.files as import("@/stores/session.store").FileEntry[]
+            );
+          } else if (data.file) {
+            store.addFileEntry(
+              data.file as import("@/stores/session.store").FileEntry
+            );
+          }
+          break;
+
+        case "file_diff":
+        case "code_change":
+          store.addEvent({
+            id: crypto.randomUUID(),
+            type,
+            data,
+            timestamp: new Date().toISOString(),
+          });
+          break;
+
+        case "queue_position":
+          store.setQueuePosition(data.position as number);
+          break;
+
+        case "task_status":
+          store.setStatus(data.status as string);
+          store.addEvent({
+            id: crypto.randomUUID(),
+            type: "task_status",
+            data,
+            timestamp: new Date().toISOString(),
+          });
+          break;
+
+        case "reasoning":
+          store.addReasoning(
+            (data.content as string) ?? (data.thought as string) ?? ""
+          );
+          store.addTerminalLine({
+            content: `[THINK] ${(data.content as string) ?? (data.thought as string) ?? ""}`,
+            timestamp: new Date().toISOString(),
+          });
+          break;
+
+        case "checkpoint":
+          store.addEvent({
+            id: crypto.randomUUID(),
+            type: "checkpoint",
+            data,
+            timestamp: new Date().toISOString(),
+          });
+          break;
+
+        case "credit_update":
+          store.addEvent({
+            id: crypto.randomUUID(),
+            type: "credit_update",
+            data,
+            timestamp: new Date().toISOString(),
+          });
+          break;
+
+        case "error":
+          store.addEvent({
+            id: crypto.randomUUID(),
+            type: "error",
+            data,
+            timestamp: new Date().toISOString(),
+          });
+          notifications.addNotification({
+            id: crypto.randomUUID(),
+            type: "error",
+            title: "Session Error",
+            message: (data.message as string) ?? "An error occurred",
+            timestamp: new Date().toISOString(),
+          });
+          break;
+
+        case "session_complete":
+          store.setStatus((data.status as string) ?? "completed");
+          notifications.addNotification({
+            id: crypto.randomUUID(),
+            type: "success",
+            title: "Session Complete",
+            message: (data.message as string) ?? "Session has finished",
+            timestamp: new Date().toISOString(),
+          });
+          break;
+
+        default:
+          // Forward unknown events to the event log
+          store.addEvent({
+            id: crypto.randomUUID(),
+            type,
+            data,
+            timestamp: new Date().toISOString(),
+          });
+          break;
+      }
+    },
+    [store, notifications]
+  );
 
   const flushBuffer = useCallback(() => {
     const events = eventBuffer.current.splice(0);
@@ -67,148 +203,20 @@ export function useSSEStream(sessionId: string | null) {
     [flushBuffer]
   );
 
-  function processEvent(type: string, data: Record<string, unknown>) {
-    switch (type) {
-      case "agent_output":
-        store.addTerminalLine({
-          content: data.content as string,
-          timestamp: (data.timestamp as string) ?? new Date().toISOString(),
-        });
-        store.addEvent({
-          id: crypto.randomUUID(),
-          type: "agent_output",
-          data,
-          timestamp: (data.timestamp as string) ?? new Date().toISOString(),
-        });
-        break;
-
-      case "terminal_output":
-        store.addTerminalLine({
-          content: data.content as string,
-          timestamp: (data.timestamp as string) ?? new Date().toISOString(),
-        });
-        break;
-
-      case "plan_update":
-        if (data.steps) {
-          store.setPlanSteps(
-            data.steps as import("@/stores/session.store").PlanStep[]
-          );
-        }
-        break;
-
-      case "plan_step_update":
-        if (data.stepId) {
-          store.updatePlanStep(data.stepId as string, {
-            status: data.status as string,
-            title: data.title as string,
-            description: data.description as string,
-          });
-        }
-        break;
-
-      case "file_change":
-        if (data.files) {
-          store.setFileTree(
-            data.files as import("@/stores/session.store").FileEntry[]
-          );
-        } else if (data.file) {
-          store.addFileEntry(
-            data.file as import("@/stores/session.store").FileEntry
-          );
-        }
-        break;
-
-      case "file_diff":
-      case "code_change":
-        store.addEvent({
-          id: crypto.randomUUID(),
-          type,
-          data,
-          timestamp: new Date().toISOString(),
-        });
-        break;
-
-      case "queue_position":
-        store.setQueuePosition(data.position as number);
-        break;
-
-      case "task_status":
-        store.setStatus(data.status as string);
-        store.addEvent({
-          id: crypto.randomUUID(),
-          type: "task_status",
-          data,
-          timestamp: new Date().toISOString(),
-        });
-        break;
-
-      case "reasoning":
-        store.addReasoning(
-          (data.content as string) ?? (data.thought as string) ?? ""
-        );
-        store.addTerminalLine({
-          content: `[THINK] ${(data.content as string) ?? (data.thought as string) ?? ""}`,
-          timestamp: new Date().toISOString(),
-        });
-        break;
-
-      case "checkpoint":
-        store.addEvent({
-          id: crypto.randomUUID(),
-          type: "checkpoint",
-          data,
-          timestamp: new Date().toISOString(),
-        });
-        break;
-
-      case "credit_update":
-        store.addEvent({
-          id: crypto.randomUUID(),
-          type: "credit_update",
-          data,
-          timestamp: new Date().toISOString(),
-        });
-        break;
-
-      case "error":
-        store.addEvent({
-          id: crypto.randomUUID(),
-          type: "error",
-          data,
-          timestamp: new Date().toISOString(),
-        });
-        notifications.addNotification({
-          id: crypto.randomUUID(),
-          type: "error",
-          title: "Session Error",
-          message: (data.message as string) ?? "An error occurred",
-          timestamp: new Date().toISOString(),
-        });
-        break;
-
-      case "session_complete":
-        store.setStatus((data.status as string) ?? "completed");
-        notifications.addNotification({
-          id: crypto.randomUUID(),
-          type: "success",
-          title: "Session Complete",
-          message: (data.message as string) ?? "Session has finished",
-          timestamp: new Date().toISOString(),
-        });
-        break;
-
-      default:
-        // Forward unknown events to the event log
-        store.addEvent({
-          id: crypto.randomUUID(),
-          type,
-          data,
-          timestamp: new Date().toISOString(),
-        });
-        break;
+  const resetHeartbeat = useCallback(() => {
+    if (heartbeatTimer.current) {
+      clearTimeout(heartbeatTimer.current);
     }
-  }
+    heartbeatTimer.current = setTimeout(() => {
+      // No heartbeat received in 15s - reconnect
+      console.warn("[SSE] Heartbeat timeout, reconnecting...");
+      eventSourceRef.current?.close();
+      eventSourceRef.current = null;
+      setIsConnected(false);
+      store.setConnected(false);
+      scheduleReconnectRef.current();
+    }, HEARTBEAT_TIMEOUT_MS);
+  }, [store]);
 
   const scheduleReconnect = useCallback(() => {
     if (reconnectAttempts.current >= MAX_RECONNECT_ATTEMPTS) {
@@ -219,9 +227,9 @@ export function useSSEStream(sessionId: string | null) {
       RECONNECT_BASE_DELAY_MS *
       Math.min(2 ** (reconnectAttempts.current - 1), 16);
     reconnectTimer.current = setTimeout(() => {
-      connect();
+      connectRef.current();
     }, delay);
-  }, [connect]);
+  }, []);
 
   const connect = useCallback(() => {
     if (!sessionId) {
@@ -305,9 +313,13 @@ export function useSSEStream(sessionId: string | null) {
       if (heartbeatTimer.current) {
         clearTimeout(heartbeatTimer.current);
       }
-      scheduleReconnect();
+      scheduleReconnectRef.current();
     };
-  }, [sessionId, store, resetHeartbeat, queueEvent, scheduleReconnect]);
+  }, [sessionId, store, resetHeartbeat, queueEvent]);
+
+  // Keep refs in sync with latest callbacks
+  connectRef.current = connect;
+  scheduleReconnectRef.current = scheduleReconnect;
 
   const disconnect = useCallback(() => {
     if (reconnectTimer.current) {

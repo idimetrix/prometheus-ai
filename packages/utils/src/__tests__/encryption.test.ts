@@ -48,7 +48,7 @@ describe("encryption", () => {
 
   it("throws on missing ENCRYPTION_KEY", () => {
     const saved = process.env.ENCRYPTION_KEY;
-    process.env.ENCRYPTION_KEY = undefined;
+    Reflect.deleteProperty(process.env, "ENCRYPTION_KEY");
     expect(() => encrypt("test")).toThrow("ENCRYPTION_KEY");
     process.env.ENCRYPTION_KEY = saved;
   });

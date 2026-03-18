@@ -95,10 +95,11 @@ export async function processUsageRollup(
         creditsUsed: finalMetrics.creditsUsed,
         costUsd: finalMetrics.costUsd,
       })
-      .where(eq(usageRollups.id, existing[0]?.id));
+      .where(eq(usageRollups.id, (existing[0] as (typeof existing)[0]).id));
 
-    logger.info({ orgId, rollupId: existing[0]?.id }, "Usage rollup updated");
-    return { rollupId: existing[0]?.id, metrics: finalMetrics };
+    const rollupId = (existing[0] as (typeof existing)[0]).id;
+    logger.info({ orgId, rollupId }, "Usage rollup updated");
+    return { rollupId, metrics: finalMetrics };
   }
 
   await db.insert(usageRollups).values({

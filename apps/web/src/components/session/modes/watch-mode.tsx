@@ -121,8 +121,10 @@ export function WatchMode({ sessionId }: WatchModeProps) {
               className="flex items-center gap-1.5 rounded-lg border border-yellow-700/50 bg-yellow-950/50 px-3 py-1.5 font-medium text-xs text-yellow-400 transition-colors hover:bg-yellow-900/50 disabled:opacity-50"
               disabled={releaseMutation.isPending}
               onClick={handleRelease}
+              type="button"
             >
               <svg
+                aria-hidden="true"
                 className="h-3.5 w-3.5"
                 fill="none"
                 stroke="currentColor"
@@ -142,8 +144,10 @@ export function WatchMode({ sessionId }: WatchModeProps) {
               className="flex items-center gap-1.5 rounded-lg bg-violet-600 px-3 py-1.5 font-medium text-white text-xs transition-colors hover:bg-violet-700 disabled:opacity-50"
               disabled={takeoverMutation.isPending}
               onClick={handleTakeover}
+              type="button"
             >
               <svg
+                aria-hidden="true"
                 className="h-3.5 w-3.5"
                 fill="none"
                 stroke="currentColor"
@@ -189,8 +193,8 @@ export function WatchMode({ sessionId }: WatchModeProps) {
             </div>
           ) : (
             <div className="space-y-0.5">
-              {terminalLines.map((line, i) => (
-                <div className="flex gap-2" key={i}>
+              {terminalLines.map((line, lineIdx) => (
+                <div className="flex gap-2" key={`wl-${lineIdx}`}>
                   {line.timestamp && (
                     <span className="shrink-0 text-zinc-700">
                       {new Date(line.timestamp).toLocaleTimeString([], {
@@ -201,17 +205,21 @@ export function WatchMode({ sessionId }: WatchModeProps) {
                     </span>
                   )}
                   <span
-                    className={
-                      line.content.startsWith("[ERROR]")
-                        ? "text-red-400"
-                        : line.content.startsWith("[WARN]")
-                          ? "text-yellow-400"
-                          : line.content.startsWith("[THINK]")
-                            ? "text-violet-400 italic"
-                            : line.content.startsWith("[SUCCESS]")
-                              ? "text-green-400"
-                              : "text-zinc-300"
-                    }
+                    className={(() => {
+                      if (line.content.startsWith("[ERROR]")) {
+                        return "text-red-400";
+                      }
+                      if (line.content.startsWith("[WARN]")) {
+                        return "text-yellow-400";
+                      }
+                      if (line.content.startsWith("[THINK]")) {
+                        return "text-violet-400 italic";
+                      }
+                      if (line.content.startsWith("[SUCCESS]")) {
+                        return "text-green-400";
+                      }
+                      return "text-zinc-300";
+                    })()}
                   >
                     {line.content}
                   </span>

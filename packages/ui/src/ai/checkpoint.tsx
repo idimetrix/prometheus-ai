@@ -1,29 +1,39 @@
-import * as React from "react";
 import { cn } from "../lib/utils";
 
 interface CheckpointProps {
+  className?: string;
   id: string;
   label: string;
-  timestamp: string;
   onRestore?: (id: string) => void;
-  className?: string;
+  timestamp: string;
 }
 
-export function Checkpoint({ id, label, timestamp, onRestore, className }: CheckpointProps) {
+export function Checkpoint({
+  id,
+  label,
+  timestamp,
+  onRestore,
+  className,
+}: CheckpointProps) {
   return (
-    <div className={cn(
-      "flex items-center gap-3 rounded-lg border border-dashed border-blue-500/30 bg-blue-500/5 px-3 py-2",
-      className
-    )}>
+    <div
+      className={cn(
+        "flex items-center gap-3 rounded-lg border border-blue-500/30 border-dashed bg-blue-500/5 px-3 py-2",
+        className
+      )}
+    >
       <span className="text-blue-500 text-sm">⊙</span>
-      <div className="flex-1 min-w-0">
-        <div className="text-sm font-medium text-blue-600 truncate">{label}</div>
-        <div className="text-xs text-muted-foreground">{timestamp}</div>
+      <div className="min-w-0 flex-1">
+        <div className="truncate font-medium text-blue-600 text-sm">
+          {label}
+        </div>
+        <div className="text-muted-foreground text-xs">{timestamp}</div>
       </div>
       {onRestore && (
         <button
+          className="shrink-0 text-blue-500 text-xs hover:text-blue-400"
           onClick={() => onRestore(id)}
-          className="text-xs text-blue-500 hover:text-blue-400 shrink-0"
+          type="button"
         >
           Restore
         </button>

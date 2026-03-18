@@ -15,6 +15,7 @@ export function CreditUpdate({ event }: CreditUpdateProps) {
     <div className="flex items-center gap-3 rounded-lg border border-zinc-800 bg-zinc-900/50 px-3 py-2">
       <div className="flex h-6 w-6 items-center justify-center rounded-full bg-yellow-500/10">
         <svg
+          aria-hidden="true"
           className="h-3.5 w-3.5 text-yellow-500"
           fill="currentColor"
           viewBox="0 0 20 20"

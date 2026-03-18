@@ -1,19 +1,18 @@
-import { db } from "@prometheus/db";
-import { episodicMemories } from "@prometheus/db";
-import { generateId } from "@prometheus/utils";
+import { db, episodicMemories } from "@prometheus/db";
 import { createLogger } from "@prometheus/logger";
-import { eq, and, or, ilike, desc } from "drizzle-orm";
+import { generateId } from "@prometheus/utils";
+import { and, desc, eq, ilike, or } from "drizzle-orm";
 
 const logger = createLogger("project-brain:episodic");
 
 export interface EpisodicMemory {
-  id: string;
-  projectId: string;
-  eventType: string;
-  decision: string;
-  reasoning: string | null;
-  outcome: string | null;
   createdAt: Date;
+  decision: string;
+  eventType: string;
+  id: string;
+  outcome: string | null;
+  projectId: string;
+  reasoning: string | null;
 }
 
 export class EpisodicLayer {
@@ -24,7 +23,7 @@ export class EpisodicLayer {
       decision: string;
       reasoning?: string;
       outcome?: string;
-    },
+    }
   ): Promise<EpisodicMemory> {
     const id = generateId("ep");
 
@@ -40,20 +39,28 @@ export class EpisodicLayer {
       })
       .returning();
 
-    logger.debug({ projectId, eventType: data.eventType, id }, "Episodic memory stored");
+    logger.debug(
+      { projectId, eventType: data.eventType, id },
+      "Episodic memory stored"
+    );
 
+    const record = inserted as NonNullable<typeof inserted>;
     return {
-      id: inserted!.id,
-      projectId: inserted!.projectId,
-      eventType: inserted!.eventType,
-      decision: inserted!.decision,
-      reasoning: inserted!.reasoning,
-      outcome: inserted!.outcome,
-      createdAt: inserted!.createdAt,
+      id: record.id,
+      projectId: record.projectId,
+      eventType: record.eventType,
+      decision: record.decision,
+      reasoning: record.reasoning,
+      outcome: record.outcome,
+      createdAt: record.createdAt,
     };
   }
 
-  async recall(projectId: string, query: string, limit: number = 5): Promise<EpisodicMemory[]> {
+  async recall(
+    projectId: string,
+    query: string,
+    limit = 5
+  ): Promise<EpisodicMemory[]> {
     const results = await db
       .select()
       .from(episodicMemories)
@@ -62,9 +69,9 @@ export class EpisodicLayer {
           eq(episodicMemories.projectId, projectId),
           or(
             ilike(episodicMemories.decision, `%${query}%`),
-            ilike(episodicMemories.reasoning, `%${query}%`),
-          ),
-        ),
+            ilike(episodicMemories.reasoning, `%${query}%`)
+          )
+        )
       )
       .orderBy(desc(episodicMemories.createdAt))
       .limit(limit);
@@ -80,7 +87,7 @@ export class EpisodicLayer {
     }));
   }
 
-  async getRecent(projectId: string, limit: number = 10): Promise<EpisodicMemory[]> {
+  async getRecent(projectId: string, limit = 10): Promise<EpisodicMemory[]> {
     const results = await db
       .select()
       .from(episodicMemories)

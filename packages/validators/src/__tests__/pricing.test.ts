@@ -1,5 +1,5 @@
-import { describe, it, expect } from "vitest";
-import { PRICING_TIERS, CREDIT_COSTS } from "../pricing";
+import { describe, expect, it } from "vitest";
+import { CREDIT_COSTS, PRICING_TIERS } from "../pricing";
 
 describe("PRICING_TIERS", () => {
   it("should have all 6 tiers", () => {
@@ -26,20 +26,20 @@ describe("PRICING_TIERS", () => {
       PRICING_TIERS.studio.price,
     ];
     for (let i = 1; i < prices.length; i++) {
-      expect(prices[i]).toBeGreaterThan(prices[i - 1]!);
+      expect(prices[i]).toBeGreaterThan(prices[i - 1] as number);
     }
   });
 
   it("should have increasing credits", () => {
     const credits = [
-      PRICING_TIERS.hobby.creditsIncluded!,
-      PRICING_TIERS.starter.creditsIncluded!,
-      PRICING_TIERS.pro.creditsIncluded!,
-      PRICING_TIERS.team.creditsIncluded!,
-      PRICING_TIERS.studio.creditsIncluded!,
+      PRICING_TIERS.hobby.creditsIncluded as number,
+      PRICING_TIERS.starter.creditsIncluded as number,
+      PRICING_TIERS.pro.creditsIncluded as number,
+      PRICING_TIERS.team.creditsIncluded as number,
+      PRICING_TIERS.studio.creditsIncluded as number,
     ];
     for (let i = 1; i < credits.length; i++) {
-      expect(credits[i]).toBeGreaterThan(credits[i - 1]!);
+      expect(credits[i]).toBeGreaterThan(credits[i - 1] as number);
     }
   });
 

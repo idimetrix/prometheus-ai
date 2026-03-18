@@ -1,17 +1,16 @@
+import { db, users } from "@prometheus/db";
 import { createLogger } from "@prometheus/logger";
-import { db } from "@prometheus/db";
-import { users } from "@prometheus/db";
-import { eq } from "drizzle-orm";
+import type { SendNotificationData } from "@prometheus/queue";
 import { EventPublisher } from "@prometheus/queue";
-import type { NotificationJobData } from "@prometheus/queue";
+import { eq } from "drizzle-orm";
 
 const logger = createLogger("queue-worker:notifications");
 const publisher = new EventPublisher();
 
 interface EmailPayload {
-  to: string;
-  subject: string;
   html: string;
+  subject: string;
+  to: string;
 }
 
 async function sendEmail(payload: EmailPayload): Promise<boolean> {
@@ -56,67 +55,95 @@ async function getUserEmail(userId: string): Promise<string | null> {
   return user?.email ?? null;
 }
 
-export async function processNotification(job: NotificationJobData): Promise<void> {
-  const { type, userId, orgId, data } = job;
+export async function processNotification(
+  job: SendNotificationData
+): Promise<void> {
+  const { type, userId, orgId: _orgId, channel, data } = job;
 
-  // Send in-app notification via Socket.io
-  await publisher.publishNotification(userId, {
-    type: type === "task_complete" ? "success"
-      : type === "task_failed" ? "error"
-      : type === "credits_low" ? "warning"
-      : "info",
-    title: getNotificationTitle(type),
-    message: getNotificationMessage(type, data),
-    data,
-  });
+  const shouldSendInApp = channel === "in_app" || channel === "both";
+  const shouldSendEmail = channel === "email" || channel === "both";
 
-  // Send email for important notifications
-  const email = await getUserEmail(userId);
-  if (!email) return;
+  // Send in-app notification via Socket.io/Redis pub/sub
+  if (shouldSendInApp) {
+    await publisher.publishNotification(userId, {
+      type: (() => {
+        const typeMap: Record<string, string> = {
+          task_complete: "success",
+          task_failed: "error",
+          credits_low: "warning",
+          security_alert: "error",
+        };
+        return typeMap[type] ?? "info";
+      })(),
+      title: getNotificationTitle(type),
+      message: getNotificationMessage(type, data),
+      data,
+    });
+  }
 
+  // Send email for relevant notification types
+  if (shouldSendEmail) {
+    const email = await getUserEmail(userId);
+    if (!email) {
+      logger.debug(
+        { userId, type },
+        "No email found for user, skipping email notification"
+      );
+      return;
+    }
+
+    const emailSent = await sendEmailForType(type, email, data);
+    if (emailSent) {
+      logger.info({ userId, type }, "Email notification sent");
+    }
+  }
+}
+
+async function sendEmailForType(
+  type: string,
+  email: string,
+  data: Record<string, unknown>
+): Promise<boolean> {
   switch (type) {
     case "task_complete":
-      await sendEmail({
+      return await sendEmail({
         to: email,
         subject: "Task Completed - PROMETHEUS",
         html: emailTemplate(
           "Task Completed",
-          `Your task has been completed successfully.`,
+          "Your task has been completed successfully.",
           `<p><strong>Task:</strong> ${data.title ?? data.taskId ?? "Unknown"}</p>
-           <p>View the results in your PROMETHEUS dashboard.</p>`,
+           <p>View the results in your PROMETHEUS dashboard.</p>`
         ),
       });
-      break;
 
     case "task_failed":
-      await sendEmail({
+      return sendEmail({
         to: email,
         subject: "Task Failed - PROMETHEUS",
         html: emailTemplate(
           "Task Failed",
-          `A task has failed and may need your attention.`,
+          "A task has failed and may need your attention.",
           `<p><strong>Task:</strong> ${data.title ?? data.taskId ?? "Unknown"}</p>
            <p><strong>Error:</strong> ${data.error ?? "Unknown error"}</p>
-           <p>Check your dashboard for details.</p>`,
+           <p>Check your dashboard for details.</p>`
         ),
       });
-      break;
 
     case "credits_low":
-      await sendEmail({
+      return sendEmail({
         to: email,
         subject: "Credits Running Low - PROMETHEUS",
         html: emailTemplate(
           "Credits Running Low",
-          `Your credit balance is running low.`,
+          "Your credit balance is running low.",
           `<p><strong>Remaining:</strong> ${data.balance ?? 0} credits</p>
-           <p>Purchase more credits or upgrade your plan to continue using PROMETHEUS.</p>`,
+           <p>Purchase more credits or upgrade your plan to continue using PROMETHEUS.</p>`
         ),
       });
-      break;
 
     case "weekly_summary":
-      await sendEmail({
+      return sendEmail({
         to: email,
         subject: "Your Weekly Summary - PROMETHEUS",
         html: emailTemplate(
@@ -125,35 +152,89 @@ export async function processNotification(job: NotificationJobData): Promise<voi
           `<p><strong>Tasks Completed:</strong> ${data.tasksCompleted ?? 0}</p>
            <p><strong>Credits Used:</strong> ${data.creditsUsed ?? 0}</p>
            <p><strong>PRs Created:</strong> ${data.prsCreated ?? 0}</p>
-           <p><strong>Estimated Hours Saved:</strong> ${data.hoursSaved ?? 0}</p>`,
+           <p><strong>Estimated Hours Saved:</strong> ${data.hoursSaved ?? 0}</p>`
         ),
       });
-      break;
+
+    case "invite":
+      return sendEmail({
+        to: email,
+        subject: "You've been invited to PROMETHEUS",
+        html: emailTemplate(
+          "Team Invitation",
+          `You've been invited to join a team on PROMETHEUS.`,
+          `<p><strong>Organization:</strong> ${data.orgName ?? "Unknown"}</p>
+           <p><strong>Invited by:</strong> ${data.invitedBy ?? "A team member"}</p>
+           <div style="margin-top:16px;">
+             <a href="${process.env.APP_URL ?? "http://localhost:3000"}/invite/${data.inviteToken ?? ""}"
+                style="display:inline-block;background:#8b5cf6;color:white;text-decoration:none;padding:10px 24px;border-radius:8px;font-size:14px;font-weight:500;">
+               Accept Invitation
+             </a>
+           </div>`
+        ),
+      });
+
+    case "security_alert":
+      return sendEmail({
+        to: email,
+        subject: "Security Alert - PROMETHEUS",
+        html: emailTemplate(
+          "Security Alert",
+          "A security event has been detected on your account.",
+          `<p><strong>Event:</strong> ${data.event ?? "Unknown"}</p>
+           <p><strong>Details:</strong> ${data.details ?? "Please review your account settings."}</p>
+           <p>If this wasn't you, please change your password immediately.</p>`
+        ),
+      });
 
     default:
       logger.debug({ type }, "No email configured for notification type");
+      return false;
   }
 }
 
 function getNotificationTitle(type: string): string {
   switch (type) {
-    case "task_complete": return "Task Completed";
-    case "task_failed": return "Task Failed";
-    case "credits_low": return "Credits Low";
-    case "queue_ready": return "Queue Ready";
-    case "weekly_summary": return "Weekly Summary";
-    default: return "Notification";
+    case "task_complete":
+      return "Task Completed";
+    case "task_failed":
+      return "Task Failed";
+    case "credits_low":
+      return "Credits Low";
+    case "queue_ready":
+      return "Queue Ready";
+    case "weekly_summary":
+      return "Weekly Summary";
+    case "invite":
+      return "Team Invitation";
+    case "security_alert":
+      return "Security Alert";
+    default:
+      return "Notification";
   }
 }
 
-function getNotificationMessage(type: string, data: Record<string, unknown>): string {
+function getNotificationMessage(
+  type: string,
+  data: Record<string, unknown>
+): string {
   switch (type) {
-    case "task_complete": return `Task "${data.title ?? "Unknown"}" completed successfully.`;
-    case "task_failed": return `Task "${data.title ?? "Unknown"}" failed: ${data.error ?? "unknown error"}`;
-    case "credits_low": return `Your credit balance is low (${data.balance ?? 0} remaining).`;
-    case "queue_ready": return "Your task is ready to be processed.";
-    case "weekly_summary": return `This week: ${data.tasksCompleted ?? 0} tasks, ${data.creditsUsed ?? 0} credits.`;
-    default: return "You have a new notification.";
+    case "task_complete":
+      return `Task "${data.title ?? "Unknown"}" completed successfully.`;
+    case "task_failed":
+      return `Task "${data.title ?? "Unknown"}" failed: ${data.error ?? "unknown error"}`;
+    case "credits_low":
+      return `Your credit balance is low (${data.balance ?? 0} remaining).`;
+    case "queue_ready":
+      return "Your task is ready to be processed.";
+    case "weekly_summary":
+      return `This week: ${data.tasksCompleted ?? 0} tasks, ${data.creditsUsed ?? 0} credits.`;
+    case "invite":
+      return `You've been invited to join ${data.orgName ?? "a team"}.`;
+    case "security_alert":
+      return `Security alert: ${data.event ?? "unusual activity detected"}.`;
+    default:
+      return "You have a new notification.";
   }
 }
 

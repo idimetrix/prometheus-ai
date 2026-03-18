@@ -4,6 +4,8 @@ import matter from "gray-matter";
 
 const CONTENT_DIR = path.join(process.cwd(), "content");
 
+const MD_EXTENSION_RE = /\.md$/;
+
 export interface DocPage {
   content: string;
   description: string;
@@ -19,7 +21,7 @@ export function getDocSlugs(): string[] {
   return fs
     .readdirSync(CONTENT_DIR)
     .filter((f) => f.endsWith(".md"))
-    .map((f) => f.replace(/\.md$/, ""));
+    .map((f) => f.replace(MD_EXTENSION_RE, ""));
 }
 
 export function getDocBySlug(slug: string): DocPage | null {

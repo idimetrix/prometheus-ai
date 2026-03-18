@@ -15,6 +15,7 @@ function PlanPanel() {
         return (
           <div className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-green-500/20">
             <svg
+              aria-hidden="true"
               className="h-3 w-3 text-green-400"
               fill="none"
               stroke="currentColor"
@@ -40,6 +41,7 @@ function PlanPanel() {
         return (
           <div className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-red-500/20">
             <svg
+              aria-hidden="true"
               className="h-3 w-3 text-red-400"
               fill="none"
               stroke="currentColor"
@@ -67,6 +69,7 @@ function PlanPanel() {
     <div className="flex h-full flex-col rounded-xl border border-zinc-800 bg-zinc-900/50">
       <div className="flex items-center gap-2 border-zinc-800 border-b px-3 py-2">
         <svg
+          aria-hidden="true"
           className="h-3.5 w-3.5 text-zinc-500"
           fill="none"
           stroke="currentColor"
@@ -109,12 +112,14 @@ function PlanPanel() {
                 <div className="min-w-0 flex-1">
                   <div
                     className={`font-medium text-xs ${
-                      step.status === "done" || step.status === "completed"
-                        ? "text-zinc-500 line-through"
-                        : step.status === "running" ||
-                            step.status === "in_progress"
-                          ? "text-violet-300"
-                          : "text-zinc-300"
+                      (
+                        {
+                          done: "text-zinc-500 line-through",
+                          completed: "text-zinc-500 line-through",
+                          running: "text-violet-300",
+                          in_progress: "text-violet-300",
+                        } as Record<string, string>
+                      )[step.status] ?? "text-zinc-300"
                     }`}
                   >
                     {i + 1}. {step.title}
@@ -169,8 +174,8 @@ function TerminalPanel() {
           </div>
         ) : (
           <div className="space-y-0.5">
-            {terminalLines.map((line, i) => (
-              <div className="flex gap-2" key={i}>
+            {terminalLines.map((line, lineIdx) => (
+              <div className="flex gap-2" key={`term-${lineIdx}`}>
                 {line.timestamp && (
                   <span className="shrink-0 text-zinc-700">
                     {new Date(line.timestamp).toLocaleTimeString([], {
@@ -181,20 +186,30 @@ function TerminalPanel() {
                   </span>
                 )}
                 <span
-                  className={
-                    line.content.startsWith("[ERROR]") ||
-                    line.content.startsWith("Error")
-                      ? "text-red-400"
-                      : line.content.startsWith("[WARN]")
-                        ? "text-yellow-400"
-                        : line.content.startsWith("[THINK]") ||
-                            line.content.startsWith("Reasoning:")
-                          ? "text-violet-400 italic"
-                          : line.content.startsWith("[SUCCESS]") ||
-                              line.content.startsWith("Done")
-                            ? "text-green-400"
-                            : "text-zinc-300"
-                  }
+                  className={(() => {
+                    if (
+                      line.content.startsWith("[ERROR]") ||
+                      line.content.startsWith("Error")
+                    ) {
+                      return "text-red-400";
+                    }
+                    if (line.content.startsWith("[WARN]")) {
+                      return "text-yellow-400";
+                    }
+                    if (
+                      line.content.startsWith("[THINK]") ||
+                      line.content.startsWith("Reasoning:")
+                    ) {
+                      return "text-violet-400 italic";
+                    }
+                    if (
+                      line.content.startsWith("[SUCCESS]") ||
+                      line.content.startsWith("Done")
+                    ) {
+                      return "text-green-400";
+                    }
+                    return "text-zinc-300";
+                  })()}
                 >
                   {line.content}
                 </span>
@@ -219,6 +234,7 @@ function CodePanel() {
     <div className="flex h-full flex-col rounded-xl border border-zinc-800 bg-zinc-900/50">
       <div className="flex items-center gap-2 border-zinc-800 border-b px-3 py-2">
         <svg
+          aria-hidden="true"
           className="h-3.5 w-3.5 text-zinc-500"
           fill="none"
           stroke="currentColor"
@@ -243,31 +259,34 @@ function CodePanel() {
           </div>
         ) : (
           <div className="space-y-3">
-            {diffs.map((diff, i) => (
+            {diffs.map((diff, diffIdx) => (
               <div
                 className="rounded-lg border border-zinc-800 bg-zinc-950"
-                key={i}
+                key={`diff-${diffIdx}`}
               >
                 <div className="border-zinc-800 border-b px-3 py-1.5">
                   <span className="font-mono text-[10px] text-zinc-400">
-                    {String(diff.data?.filePath ?? `Change ${i + 1}`)}
+                    {String(diff.data?.filePath ?? `Change ${diffIdx + 1}`)}
                   </span>
                 </div>
                 <pre className="overflow-auto p-3 text-[11px] leading-relaxed">
                   {String(diff.data?.diff ?? diff.data?.content ?? "")
                     .split("\n")
-                    .map((line: string, j: number) => (
+                    .map((line: string, lineIdx: number) => (
                       <div
-                        className={
-                          line.startsWith("+")
-                            ? "bg-green-500/10 text-green-400"
-                            : line.startsWith("-")
-                              ? "bg-red-500/10 text-red-400"
-                              : line.startsWith("@@")
-                                ? "text-violet-400"
-                                : "text-zinc-500"
-                        }
-                        key={j}
+                        className={(() => {
+                          if (line.startsWith("+")) {
+                            return "bg-green-500/10 text-green-400";
+                          }
+                          if (line.startsWith("-")) {
+                            return "bg-red-500/10 text-red-400";
+                          }
+                          if (line.startsWith("@@")) {
+                            return "text-violet-400";
+                          }
+                          return "text-zinc-500";
+                        })()}
+                        key={`dl-${lineIdx}`}
                       >
                         {line}
                       </div>
@@ -291,6 +310,7 @@ function FileTreePanel() {
     <div className="flex h-full flex-col rounded-xl border border-zinc-800 bg-zinc-900/50">
       <div className="flex items-center gap-2 border-zinc-800 border-b px-3 py-2">
         <svg
+          aria-hidden="true"
           className="h-3.5 w-3.5 text-zinc-500"
           fill="none"
           stroke="currentColor"
@@ -315,29 +335,28 @@ function FileTreePanel() {
           </div>
         ) : (
           <div className="space-y-0.5">
-            {fileTree.map((file, i) => (
+            {fileTree.map((file) => (
               <div
                 className="flex items-center gap-2 rounded px-2 py-1 text-xs hover:bg-zinc-800/50"
-                key={`${file.path}-${i}`}
+                key={file.path}
               >
                 <span
                   className={`text-xs ${
-                    file.status === "created"
-                      ? "text-green-400"
-                      : file.status === "modified"
-                        ? "text-yellow-400"
-                        : file.status === "deleted"
-                          ? "text-red-400"
-                          : "text-zinc-600"
+                    (
+                      {
+                        created: "text-green-400",
+                        modified: "text-yellow-400",
+                        deleted: "text-red-400",
+                      } as Record<string, string>
+                    )[file.status ?? ""] ?? "text-zinc-600"
                   }`}
                 >
-                  {file.status === "created"
-                    ? "+"
-                    : file.status === "modified"
-                      ? "M"
-                      : file.status === "deleted"
-                        ? "D"
-                        : "\u2022"}
+                  {(
+                    { created: "+", modified: "M", deleted: "D" } as Record<
+                      string,
+                      string
+                    >
+                  )[file.status ?? ""] ?? "\u2022"}
                 </span>
                 <span className="truncate font-mono text-zinc-300">
                   {file.path}

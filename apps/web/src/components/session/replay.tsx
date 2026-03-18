@@ -44,8 +44,8 @@ export function SessionReplay({ events, sessionId }: SessionReplayProps) {
       if (index >= totalEvents - 1) {
         return 0;
       }
-      const current = new Date(sortedEvents[index]?.timestamp).getTime();
-      const next = new Date(sortedEvents[index + 1]?.timestamp).getTime();
+      const current = new Date(sortedEvents[index]?.timestamp ?? 0).getTime();
+      const next = new Date(sortedEvents[index + 1]?.timestamp ?? 0).getTime();
       const realDelay = next - current;
       // Cap at 3 seconds, minimum 100ms, adjusted by speed
       return Math.max(100, Math.min(3000, realDelay)) / speed;
@@ -60,7 +60,10 @@ export function SessionReplay({ events, sessionId }: SessionReplayProps) {
         setPlaybackState("stopped");
         return prev;
       }
-      setVisibleEvents((ve) => [...ve, sortedEvents[next]!]);
+      setVisibleEvents((ve) => [
+        ...ve,
+        sortedEvents[next] as (typeof sortedEvents)[0],
+      ]);
       return next;
     });
   }, [totalEvents, sortedEvents]);
@@ -102,7 +105,9 @@ export function SessionReplay({ events, sessionId }: SessionReplayProps) {
     if (currentIndex >= totalEvents - 1) {
       // Restart from beginning
       setCurrentIndex(0);
-      setVisibleEvents([sortedEvents[0]!].filter(Boolean));
+      setVisibleEvents(
+        [sortedEvents[0] as (typeof sortedEvents)[0]].filter(Boolean)
+      );
     }
     setPlaybackState("playing");
   };
@@ -125,7 +130,10 @@ export function SessionReplay({ events, sessionId }: SessionReplayProps) {
     if (currentIndex < totalEvents - 1) {
       const next = currentIndex + 1;
       setCurrentIndex(next);
-      setVisibleEvents((ve) => [...ve, sortedEvents[next]!]);
+      setVisibleEvents((ve) => [
+        ...ve,
+        sortedEvents[next] as (typeof sortedEvents)[0],
+      ]);
     }
   };
 
@@ -190,6 +198,7 @@ export function SessionReplay({ events, sessionId }: SessionReplayProps) {
           className="rounded bg-zinc-100 px-2 py-1 text-xs hover:bg-zinc-200 disabled:opacity-30 dark:bg-zinc-800 dark:hover:bg-zinc-700"
           disabled={currentIndex === 0}
           onClick={stepBackward}
+          type="button"
         >
           ⏮
         </button>
@@ -197,6 +206,7 @@ export function SessionReplay({ events, sessionId }: SessionReplayProps) {
           <button
             className="rounded bg-yellow-100 px-3 py-1 text-xs text-yellow-700 hover:bg-yellow-200 dark:bg-yellow-900/30 dark:text-yellow-400"
             onClick={pause}
+            type="button"
           >
             ⏸ Pause
           </button>
@@ -204,6 +214,7 @@ export function SessionReplay({ events, sessionId }: SessionReplayProps) {
           <button
             className="rounded bg-green-100 px-3 py-1 text-green-700 text-xs hover:bg-green-200 dark:bg-green-900/30 dark:text-green-400"
             onClick={play}
+            type="button"
           >
             ▶ Play
           </button>
@@ -211,6 +222,7 @@ export function SessionReplay({ events, sessionId }: SessionReplayProps) {
         <button
           className="rounded bg-zinc-100 px-2 py-1 text-xs hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700"
           onClick={stop}
+          type="button"
         >
           ⏹
         </button>
@@ -218,6 +230,7 @@ export function SessionReplay({ events, sessionId }: SessionReplayProps) {
           className="rounded bg-zinc-100 px-2 py-1 text-xs hover:bg-zinc-200 disabled:opacity-30 dark:bg-zinc-800 dark:hover:bg-zinc-700"
           disabled={currentIndex >= totalEvents - 1}
           onClick={stepForward}
+          type="button"
         >
           ⏭
         </button>
@@ -234,6 +247,7 @@ export function SessionReplay({ events, sessionId }: SessionReplayProps) {
               }`}
               key={s}
               onClick={() => setSpeed(s)}
+              type="button"
             >
               {s}x
             </button>

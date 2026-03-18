@@ -12,9 +12,9 @@ vi.mock("@prometheus/logger", () => ({
 const mockPublishSessionEvent = vi.fn().mockResolvedValue(undefined);
 
 vi.mock("@prometheus/queue", () => ({
-  EventPublisher: vi.fn().mockImplementation(() => ({
-    publishSessionEvent: mockPublishSessionEvent,
-  })),
+  EventPublisher: class {
+    publishSessionEvent = mockPublishSessionEvent;
+  },
   QueueEvents: {
     CHECKPOINT: "checkpoint",
     AGENT_STATUS: "agent:status",
@@ -82,7 +82,7 @@ describe("CheckpointManager", () => {
         respondedBy: "user_1",
         respondedAt: new Date(),
       };
-      const checkpointId = pending[0]?.id;
+      const checkpointId = (pending[0] as (typeof pending)[0]).id;
       const responded = manager.respondToCheckpoint(checkpointId, response);
       expect(responded).toBe(true);
 
@@ -106,7 +106,7 @@ describe("CheckpointManager", () => {
       expect(pending[0]?.description).toContain("delete-database");
 
       // Reject the operation
-      manager.respondToCheckpoint(pending[0]?.id, {
+      manager.respondToCheckpoint((pending[0] as (typeof pending)[0]).id, {
         action: "reject",
         message: "Too dangerous",
         respondedBy: "user_1",
@@ -134,7 +134,7 @@ describe("CheckpointManager", () => {
         "What database schema do you prefer?"
       );
 
-      manager.respondToCheckpoint(pending[0]?.id, {
+      manager.respondToCheckpoint((pending[0] as (typeof pending)[0]).id, {
         action: "input",
         data: { choice: "postgres" },
         respondedBy: "user_1",
@@ -193,7 +193,7 @@ describe("CheckpointManager", () => {
     it("returns false for already-resolved checkpoint", async () => {
       const promise = manager.requestInput("ses_double", "Question?");
       const pending = manager.getPendingCheckpoints("ses_double");
-      const id = pending[0]?.id;
+      const id = (pending[0] as (typeof pending)[0]).id;
 
       // First response succeeds
       expect(
@@ -218,7 +218,7 @@ describe("CheckpointManager", () => {
   });
 
   describe("getPendingCheckpoints", () => {
-    it("returns only checkpoints for the specified session", async () => {
+    it("returns only checkpoints for the specified session", () => {
       manager.requestInput("ses_a", "Q1?");
       manager.requestInput("ses_b", "Q2?");
       manager.requestInput("ses_a", "Q3?");
@@ -248,7 +248,7 @@ describe("CheckpointManager", () => {
       expect(r2.action).toBe("reject");
     });
 
-    it("does not affect checkpoints from other sessions", async () => {
+    it("does not affect checkpoints from other sessions", () => {
       manager.requestInput("ses_keep", "Q?");
       manager.requestInput("ses_cancel2", "Q?");
 

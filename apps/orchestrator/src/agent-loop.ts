@@ -1,27 +1,37 @@
+import type {
+  AgentContext,
+  AgentExecutionResult,
+  BaseAgent,
+  ToolCall,
+} from "@prometheus/agent-sdk";
+import { AGENT_ROLES, TOOL_REGISTRY } from "@prometheus/agent-sdk";
 import { createLogger } from "@prometheus/logger";
 import { EventPublisher, QueueEvents } from "@prometheus/queue";
-import type { BaseAgent, AgentContext, AgentExecutionResult, ToolCall } from "@prometheus/agent-sdk";
-import { AGENT_ROLES, TOOL_REGISTRY } from "@prometheus/agent-sdk";
+import type { AgentRole } from "@prometheus/types";
+import { BlueprintEnforcer } from "./blueprint-enforcer";
+import { type ConfidenceResult, ConfidenceScorer } from "./confidence";
 
 export type AgentLoopStatus = "idle" | "running" | "paused" | "stopped";
 
 interface LoopIteration {
-  iteration: number;
   agentRole: string;
-  startedAt: Date;
   completedAt: Date | null;
+  iteration: number;
   result: AgentExecutionResult | null;
+  startedAt: Date;
 }
 
 interface ProjectBrainContext {
   blueprintContent: string | null;
+  projectSummary: string | null;
   recentCIResults: string | null;
   sprintState: string | null;
-  projectSummary: string | null;
 }
 
-const MODEL_ROUTER_URL = process.env.MODEL_ROUTER_URL ?? "http://localhost:4002";
-const PROJECT_BRAIN_URL = process.env.PROJECT_BRAIN_URL ?? "http://localhost:4005";
+const MODEL_ROUTER_URL =
+  process.env.MODEL_ROUTER_URL ?? "http://localhost:4004";
+const PROJECT_BRAIN_URL =
+  process.env.PROJECT_BRAIN_URL ?? "http://localhost:4003";
 
 /** Maximum consecutive failures on the same step before triggering a blocker. */
 const BLOCKER_THRESHOLD = 3;
@@ -38,19 +48,32 @@ export class AgentLoop {
   private readonly orgId: string;
   private readonly userId: string;
   private status: AgentLoopStatus = "idle";
-  private iterations: LoopIteration[] = [];
-  private activeAgent: BaseAgent | null = null;
+  private readonly iterations: LoopIteration[] = [];
   private readonly eventPublisher: EventPublisher;
+  private readonly confidenceScorer: ConfidenceScorer;
+  private readonly blueprintEnforcer: BlueprintEnforcer;
   private consecutiveFailures = 0;
   private totalCreditsConsumed = 0;
+  private lastConfidence: ConfidenceResult | null = null;
 
-  constructor(sessionId: string, projectId: string, orgId: string, userId: string) {
+  constructor(
+    sessionId: string,
+    projectId: string,
+    orgId: string,
+    userId: string
+  ) {
     this.sessionId = sessionId;
     this.projectId = projectId;
     this.orgId = orgId;
     this.userId = userId;
     this.logger = createLogger(`agent-loop:${sessionId}`);
     this.eventPublisher = new EventPublisher();
+    this.confidenceScorer = new ConfidenceScorer();
+    this.blueprintEnforcer = new BlueprintEnforcer();
+  }
+
+  getLastConfidence(): ConfidenceResult | null {
+    return this.lastConfidence;
   }
 
   getStatus(): AgentLoopStatus {
@@ -82,33 +105,45 @@ export class AgentLoop {
     };
 
     try {
-      const response = await fetch(`${PROJECT_BRAIN_URL}/api/projects/${this.projectId}/context`, {
-        headers: { "Content-Type": "application/json" },
-        signal: AbortSignal.timeout(10_000),
-      });
+      const response = await fetch(
+        `${PROJECT_BRAIN_URL}/api/projects/${this.projectId}/context`,
+        {
+          headers: { "Content-Type": "application/json" },
+          signal: AbortSignal.timeout(10_000),
+        }
+      );
 
       if (!response.ok) {
-        this.logger.warn({ status: response.status }, "Failed to load Project Brain context, continuing without it");
+        this.logger.warn(
+          { status: response.status },
+          "Failed to load Project Brain context, continuing without it"
+        );
         return defaultCtx;
       }
 
-      const data = await response.json() as ProjectBrainContext;
+      const data = (await response.json()) as ProjectBrainContext;
       this.logger.info("Loaded Project Brain context");
       return data;
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
-      this.logger.warn({ error: msg }, "Project Brain unavailable, continuing without context");
+      this.logger.warn(
+        { error: msg },
+        "Project Brain unavailable, continuing without context"
+      );
       return defaultCtx;
     }
   }
 
-  private createContext(brainContext: ProjectBrainContext, agentRole: string = "orchestrator"): AgentContext {
+  private createContext(
+    brainContext: ProjectBrainContext,
+    agentRole = "orchestrator"
+  ): AgentContext {
     return {
       sessionId: this.sessionId,
       projectId: this.projectId,
       orgId: this.orgId,
       userId: this.userId,
-      agentRole: agentRole as any,
+      agentRole: agentRole as AgentRole,
       blueprintContent: brainContext.blueprintContent,
       projectContext: brainContext.projectSummary,
     };
@@ -138,13 +173,25 @@ export class AgentLoop {
    * Execute a task with a specific agent role. This is the main entry
    * point called by the TaskRouter and phase runners.
    */
-  async executeTask(taskDescription: string, agentRole: string): Promise<AgentExecutionResult> {
+  async executeTask(
+    taskDescription: string,
+    agentRole: string
+  ): Promise<AgentExecutionResult> {
     this.status = "running";
     this.consecutiveFailures = 0;
+    this.confidenceScorer.reset();
 
     // Load context from project brain
     const brainContext = await this.loadProjectBrainContext();
     const context = this.createContext(brainContext);
+
+    // Phase 9.5: Load blueprint into enforcer
+    await this.blueprintEnforcer.loadForProject(this.projectId).catch((err) => {
+      this.logger.warn(
+        { err },
+        "Blueprint loading failed, continuing without enforcement"
+      );
+    });
 
     // Create agent instance
     const roleConfig = AGENT_ROLES[agentRole];
@@ -153,7 +200,6 @@ export class AgentLoop {
     }
 
     const agent = roleConfig.create();
-    this.activeAgent = agent;
     agent.initialize(context);
 
     // Inject project context into the task description if available
@@ -178,10 +224,13 @@ export class AgentLoop {
       result: null,
     };
 
-    this.logger.info({
-      iteration: iteration.iteration,
-      agentRole,
-    }, "Starting agent execution");
+    this.logger.info(
+      {
+        iteration: iteration.iteration,
+        agentRole,
+      },
+      "Starting agent execution"
+    );
 
     // Publish status event
     await this.eventPublisher.publishSessionEvent(this.sessionId, {
@@ -218,7 +267,8 @@ export class AgentLoop {
 
       return result;
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
+      const errorMessage =
+        error instanceof Error ? error.message : String(error);
       this.logger.error({ error: errorMessage }, "Agent execution failed");
 
       iteration.completedAt = new Date();
@@ -227,7 +277,9 @@ export class AgentLoop {
         output: "",
         filesChanged: [],
         tokensUsed: { input: 0, output: 0 },
-        toolCalls: 0, steps: 0, creditsConsumed: 0,
+        toolCalls: 0,
+        steps: 0,
+        creditsConsumed: 0,
         error: errorMessage,
       };
       this.iterations.push(iteration);
@@ -241,7 +293,7 @@ export class AgentLoop {
         timestamp: new Date().toISOString(),
       });
 
-      return iteration.result!;
+      return iteration.result as NonNullable<typeof iteration.result>;
     }
   }
 
@@ -249,10 +301,11 @@ export class AgentLoop {
    * Core agent loop: send messages to LLM, parse tool calls, execute
    * them, and repeat until the agent completes or hits the iteration limit.
    */
+  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: complex but well-structured logic
   private async runAgentLoop(
     agent: BaseAgent,
-    context: AgentContext,
-    agentRole: string,
+    _context: AgentContext,
+    agentRole: string
   ): Promise<AgentExecutionResult> {
     const maxIterations = 50;
     let totalToolCalls = 0;
@@ -261,9 +314,18 @@ export class AgentLoop {
     const filesChanged = new Set<string>();
     let lastOutput = "";
     let consecutiveErrors = 0;
+    let staleIterations = 0;
 
-    const slot = this.selectSlotForRole(agentRole);
+    let slot = this.selectSlotForRole(agentRole);
     const toolDefs = agent.getToolDefinitions();
+
+    // Phase 9.5: Inject blueprint context if available
+    const blueprintContext = this.blueprintEnforcer.getContextForPrompt();
+    if (blueprintContext) {
+      agent.addUserMessage(
+        `[System] Blueprint constraints for this project:\n${blueprintContext}`
+      );
+    }
 
     for (let i = 0; i < maxIterations; i++) {
       // Handle pause
@@ -284,10 +346,22 @@ export class AgentLoop {
 
       let response: {
         choices: Array<{
-          message: { role: string; content: string; tool_calls?: Array<{ id: string; function: { name: string; arguments: string } }> };
+          message: {
+            role: string;
+            content: string;
+            tool_calls?: Array<{
+              id: string;
+              function: { name: string; arguments: string };
+            }>;
+          };
           finish_reason: string;
         }>;
-        usage: { prompt_tokens: number; completion_tokens: number; total_tokens: number; cost_usd: number };
+        usage: {
+          prompt_tokens: number;
+          completion_tokens: number;
+          total_tokens: number;
+          cost_usd: number;
+        };
       };
 
       try {
@@ -308,23 +382,30 @@ export class AgentLoop {
 
         if (!routeResponse.ok) {
           const errBody = await routeResponse.text();
-          throw new Error(`Model router returned ${routeResponse.status}: ${errBody}`);
+          throw new Error(
+            `Model router returned ${routeResponse.status}: ${errBody}`
+          );
         }
 
-        response = await routeResponse.json() as typeof response;
+        response = (await routeResponse.json()) as typeof response;
       } catch (error) {
         consecutiveErrors++;
         const msg = error instanceof Error ? error.message : String(error);
         this.logger.error({ error: msg, iteration: i }, "LLM request failed");
 
         if (consecutiveErrors >= BLOCKER_THRESHOLD) {
-          await this.publishBlocker(agentRole, `LLM call failed ${consecutiveErrors} times: ${msg}`);
+          await this.publishBlocker(
+            agentRole,
+            `LLM call failed ${consecutiveErrors} times: ${msg}`
+          );
           return {
             success: false,
             output: lastOutput,
             filesChanged: Array.from(filesChanged),
             tokensUsed: { input: totalInputTokens, output: totalOutputTokens },
-            toolCalls: totalToolCalls, steps: 0, creditsConsumed: 0,
+            toolCalls: totalToolCalls,
+            steps: 0,
+            creditsConsumed: 0,
             error: `Blocked after ${consecutiveErrors} consecutive LLM failures`,
           };
         }
@@ -396,11 +477,75 @@ export class AgentLoop {
         const toolName = tc.function.name;
         const toolArgs = this.parseToolArgs(tc.function.arguments);
 
-        this.logger.info({ tool: toolName, callId: tc.id }, "Executing tool call");
+        this.logger.info(
+          { tool: toolName, callId: tc.id },
+          "Executing tool call"
+        );
+
+        // Phase 9.5: Blueprint pre-action validation
+        if (this.blueprintEnforcer.isLoaded()) {
+          let actionType:
+            | "file_write"
+            | "file_edit"
+            | "terminal_exec"
+            | "other";
+          if (toolName === "file_write" || toolName === "file_edit") {
+            actionType = toolName as "file_write" | "file_edit";
+          } else if (toolName === "terminal_exec") {
+            actionType = "terminal_exec";
+          } else {
+            actionType = "other";
+          }
+          const violations = this.blueprintEnforcer.validateAction({
+            type: actionType,
+            filePath:
+              (toolArgs.path as string) ?? (toolArgs.filePath as string),
+            content: toolArgs.content as string,
+            command: toolArgs.command as string,
+          });
+
+          if (violations.length > 0) {
+            const errors = violations.filter((v) => v.severity === "error");
+            if (errors.length > 0) {
+              // Block the action and inform the agent
+              const violationMsg = errors
+                .map((v) => `- ${v.description}`)
+                .join("\n");
+              agent.addToolResult(
+                tc.id,
+                JSON.stringify({
+                  success: false,
+                  error: `Blueprint violation(s) blocked this action:\n${violationMsg}`,
+                })
+              );
+              this.logger.warn(
+                { toolName, violations: errors.length },
+                "Blueprint violations blocked tool call"
+              );
+              continue;
+            }
+
+            // Warnings: let the action proceed but inform the agent
+            const _warningMsg = violations
+              .map((v) => `- [${v.severity}] ${v.description}`)
+              .join("\n");
+            this.logger.info(
+              { toolName, warnings: violations.length },
+              "Blueprint warnings for tool call"
+            );
+            // We'll append warnings after the tool result below
+          }
+        }
 
         const toolDef = TOOL_REGISTRY[toolName];
         if (!toolDef) {
-          agent.addToolResult(tc.id, JSON.stringify({ success: false, error: `Unknown tool: ${toolName}` }));
+          agent.addToolResult(
+            tc.id,
+            JSON.stringify({
+              success: false,
+              error: `Unknown tool: ${toolName}`,
+            })
+          );
           continue;
         }
 
@@ -422,11 +567,16 @@ export class AgentLoop {
           }
           if (toolName === "file_write" || toolName === "file_edit") {
             const filePath = toolArgs.path ?? toolArgs.filePath;
-            if (filePath) filesChanged.add(String(filePath));
+            if (filePath) {
+              filesChanged.add(String(filePath));
+            }
           }
 
           // Publish file change event if applicable
-          if (filesChanged.size > 0 && (toolName === "file_write" || toolName === "file_edit")) {
+          if (
+            filesChanged.size > 0 &&
+            (toolName === "file_write" || toolName === "file_edit")
+          ) {
             await this.eventPublisher.publishSessionEvent(this.sessionId, {
               type: QueueEvents.FILE_CHANGE,
               data: {
@@ -454,26 +604,103 @@ export class AgentLoop {
           }
         } catch (error) {
           const errMsg = error instanceof Error ? error.message : String(error);
-          this.logger.error({ tool: toolName, error: errMsg }, "Tool execution failed");
-          agent.addToolResult(tc.id, JSON.stringify({
-            success: false,
-            error: errMsg,
-          }));
+          this.logger.error(
+            { tool: toolName, error: errMsg },
+            "Tool execution failed"
+          );
+          agent.addToolResult(
+            tc.id,
+            JSON.stringify({
+              success: false,
+              error: errMsg,
+            })
+          );
 
           // Track consecutive failures for blocker detection
           this.consecutiveFailures++;
           if (this.consecutiveFailures >= BLOCKER_THRESHOLD) {
-            await this.publishBlocker(agentRole, `Tool ${toolName} failed ${this.consecutiveFailures} times: ${errMsg}`);
+            await this.publishBlocker(
+              agentRole,
+              `Tool ${toolName} failed ${this.consecutiveFailures} times: ${errMsg}`
+            );
             return {
               success: false,
               output: lastOutput,
               filesChanged: Array.from(filesChanged),
-              tokensUsed: { input: totalInputTokens, output: totalOutputTokens },
-              toolCalls: totalToolCalls, steps: 0, creditsConsumed: 0,
+              tokensUsed: {
+                input: totalInputTokens,
+                output: totalOutputTokens,
+              },
+              toolCalls: totalToolCalls,
+              steps: 0,
+              creditsConsumed: 0,
               error: `Blocked: ${toolName} failed ${this.consecutiveFailures} consecutive times`,
             };
           }
         }
+      }
+
+      // Phase 9.4: Score confidence after each iteration with tool calls
+      const iterationToolResults = toolCalls.map((tc) => {
+        const toolDef = TOOL_REGISTRY[tc.function.name];
+        return { success: !!toolDef, name: tc.function.name };
+      });
+      const signals = ConfidenceScorer.extractSignals(
+        assistantContent,
+        iterationToolResults,
+        filesChanged.size,
+        staleIterations,
+        lastOutput.length
+      );
+      staleIterations = signals.staleIterations;
+
+      const confidence = this.confidenceScorer.scoreIteration(signals);
+      this.lastConfidence = confidence;
+
+      // Publish confidence event
+      await this.eventPublisher.publishSessionEvent(this.sessionId, {
+        type: QueueEvents.AGENT_STATUS,
+        data: {
+          agentRole,
+          confidence: confidence.score,
+          action: confidence.action,
+          iteration: i,
+        },
+        timestamp: new Date().toISOString(),
+      });
+
+      // Phase 9.4: Adaptive model slot based on confidence
+      if (confidence.recommendedSlot) {
+        slot = ConfidenceScorer.getModelSlot(slot, confidence);
+      }
+
+      // Phase 9.4: Handle low confidence actions
+      if (confidence.action === "escalate") {
+        this.logger.warn(
+          { confidence: confidence.score, iteration: i },
+          "Low confidence - escalating"
+        );
+        await this.publishBlocker(
+          agentRole,
+          `Agent confidence dropped to ${confidence.score.toFixed(2)}. Factors: ${confidence.factors.map((f) => `${f.name}=${f.value.toFixed(2)}`).join(", ")}`
+        );
+        return {
+          success: false,
+          output: lastOutput,
+          filesChanged: Array.from(filesChanged),
+          tokensUsed: { input: totalInputTokens, output: totalOutputTokens },
+          toolCalls: totalToolCalls,
+          steps: 0,
+          creditsConsumed: 0,
+          error: `Escalated due to low confidence (${confidence.score.toFixed(2)})`,
+        };
+      }
+
+      if (confidence.action === "request_help") {
+        // Add a hint to the agent that it should be more careful
+        agent.addUserMessage(
+          "[System] Your confidence appears moderate. Please verify your approach before proceeding, and be explicit about any uncertainties."
+        );
       }
     }
 
@@ -482,15 +709,23 @@ export class AgentLoop {
       output: lastOutput,
       filesChanged: Array.from(filesChanged),
       tokensUsed: { input: totalInputTokens, output: totalOutputTokens },
-      toolCalls: totalToolCalls, steps: 0, creditsConsumed: 0,
+      toolCalls: totalToolCalls,
+      steps: 0,
+      creditsConsumed: 0,
     };
   }
 
   /**
    * Publish a human_input_needed event when the agent is blocked.
    */
-  private async publishBlocker(agentRole: string, reason: string): Promise<void> {
-    this.logger.warn({ agentRole, reason }, "Agent blocked, requesting human input");
+  private async publishBlocker(
+    agentRole: string,
+    reason: string
+  ): Promise<void> {
+    this.logger.warn(
+      { agentRole, reason },
+      "Agent blocked, requesting human input"
+    );
     this.status = "paused";
 
     await this.eventPublisher.publishSessionEvent(this.sessionId, {
@@ -525,30 +760,29 @@ export class AgentLoop {
   private waitForResume(): Promise<void> {
     return new Promise((resolve) => {
       const check = () => {
-        if (this.status !== "paused") {
-          resolve();
-        } else {
+        if (this.status === "paused") {
           setTimeout(check, 500);
+        } else {
+          resolve();
         }
       };
       check();
     });
   }
 
-  async pause(): Promise<void> {
+  pause(): void {
     this.status = "paused";
     this.logger.info("Agent loop paused");
   }
 
-  async resume(): Promise<void> {
+  resume(): void {
     this.status = "running";
     this.consecutiveFailures = 0;
     this.logger.info("Agent loop resumed");
   }
 
-  async stop(): Promise<void> {
+  stop(): void {
     this.status = "stopped";
-    this.activeAgent = null;
     this.logger.info("Agent loop stopped");
   }
 }

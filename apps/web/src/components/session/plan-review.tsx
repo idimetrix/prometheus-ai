@@ -3,8 +3,6 @@
 import { useCallback, useState } from "react";
 import { type PlanStep, useSessionStore } from "@/stores/session.store";
 
-type ReviewAction = "approved" | "rejected" | "modified";
-
 interface PlanReviewProps {
   onApprove: (approvedStepIds: string[]) => void;
   onModify: (steps: PlanStep[]) => void;
@@ -98,6 +96,7 @@ export function PlanReview({
       <div className="flex items-center justify-center rounded-xl border border-zinc-800 bg-zinc-900/50 p-8">
         <div className="text-center">
           <svg
+            aria-hidden="true"
             className="mx-auto h-8 w-8 text-zinc-700"
             fill="none"
             stroke="currentColor"
@@ -143,6 +142,7 @@ export function PlanReview({
             onClick={
               checkedSteps.size === planSteps.length ? deselectAll : selectAll
             }
+            type="button"
           >
             {checkedSteps.size === planSteps.length
               ? "Deselect all"
@@ -194,11 +194,14 @@ export function PlanReview({
                       <button
                         className="text-[10px] text-violet-400 hover:text-violet-300"
                         onClick={handleModify}
+                        type="button"
                       >
                         Save
                       </button>
                     </div>
                   ) : (
+                    // biome-ignore lint/a11y/noStaticElementInteractions: double-click to edit
+                    // biome-ignore lint/a11y/noNoninteractiveElementInteractions: double-click to edit
                     <div
                       className="cursor-pointer font-medium text-xs text-zinc-300"
                       onDoubleClick={() => startEdit(step)}
@@ -218,6 +221,7 @@ export function PlanReview({
                     <button
                       className="rounded bg-zinc-800 px-2 py-0.5 text-[10px] text-zinc-400 hover:bg-zinc-700 hover:text-zinc-300"
                       onClick={() => onStepExecute(step.id)}
+                      type="button"
                     >
                       Run
                     </button>
@@ -225,8 +229,10 @@ export function PlanReview({
                   <button
                     className="text-zinc-700 hover:text-zinc-400"
                     onClick={() => startEdit(step)}
+                    type="button"
                   >
                     <svg
+                      aria-hidden="true"
                       className="h-3 w-3"
                       fill="none"
                       stroke="currentColor"
@@ -265,8 +271,10 @@ export function PlanReview({
         <button
           className="flex items-center gap-1.5 rounded-lg bg-green-600 px-4 py-2 font-medium text-white text-xs transition-colors hover:bg-green-700"
           onClick={handleApprove}
+          type="button"
         >
           <svg
+            aria-hidden="true"
             className="h-3.5 w-3.5"
             fill="none"
             stroke="currentColor"
@@ -288,6 +296,7 @@ export function PlanReview({
           <button
             className="flex items-center gap-1.5 rounded-lg bg-red-600 px-4 py-2 font-medium text-white text-xs transition-colors hover:bg-red-700"
             onClick={handleReject}
+            type="button"
           >
             Confirm Reject
           </button>
@@ -295,8 +304,10 @@ export function PlanReview({
           <button
             className="flex items-center gap-1.5 rounded-lg border border-red-800/50 px-4 py-2 font-medium text-red-400 text-xs transition-colors hover:bg-red-950/30"
             onClick={() => setShowRejectInput(true)}
+            type="button"
           >
             <svg
+              aria-hidden="true"
               className="h-3.5 w-3.5"
               fill="none"
               stroke="currentColor"

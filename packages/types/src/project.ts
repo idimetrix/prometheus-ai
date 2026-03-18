@@ -1,31 +1,31 @@
 import type { AgentAggressiveness, BlueprintEnforcement } from "./enums";
 
 export interface Project {
-  id: string;
-  orgId: string;
-  name: string;
-  description: string | null;
-  repoUrl: string | null;
-  techStackPreset: string | null;
-  status: "active" | "archived" | "setup";
   createdAt: Date;
+  description: string | null;
+  id: string;
+  name: string;
+  orgId: string;
+  repoUrl: string | null;
+  status: "active" | "archived" | "setup";
+  techStackPreset: string | null;
   updatedAt: Date;
 }
 
 export interface ProjectSettings {
-  projectId: string;
   agentAggressiveness: AgentAggressiveness;
-  ciLoopMaxIterations: number;
-  parallelAgentCount: number;
   blueprintEnforcement: BlueprintEnforcement;
-  testCoverageTarget: number;
-  securityScanLevel: "basic" | "standard" | "thorough";
+  ciLoopMaxIterations: number;
   deployTarget: "staging" | "production" | "manual";
   modelCostBudget: number | null;
+  parallelAgentCount: number;
+  projectId: string;
+  securityScanLevel: "basic" | "standard" | "thorough";
+  testCoverageTarget: number;
 }
 
 export interface ProjectMember {
   projectId: string;
-  userId: string;
   role: "owner" | "contributor" | "viewer";
+  userId: string;
 }

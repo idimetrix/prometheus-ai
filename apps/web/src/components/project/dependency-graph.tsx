@@ -61,8 +61,8 @@ export function DependencyGraph({
       // Repulsion between all nodes
       for (let i = 0; i < positioned.length; i++) {
         for (let j = i + 1; j < positioned.length; j++) {
-          const a = positioned[i]!;
-          const b = positioned[j]!;
+          const a = positioned[i] as (typeof positioned)[number];
+          const b = positioned[j] as (typeof positioned)[number];
           const dx = b.x - a.x;
           const dy = b.y - a.y;
           const dist = Math.max(1, Math.sqrt(dx * dx + dy * dy));
@@ -203,12 +203,14 @@ export function DependencyGraph({
         <button
           className="flex h-7 w-7 items-center justify-center rounded border border-zinc-300 bg-white text-sm hover:bg-zinc-100 dark:border-zinc-600 dark:bg-zinc-800 dark:hover:bg-zinc-700"
           onClick={() => setZoom((z) => Math.min(3, z + 0.2))}
+          type="button"
         >
           +
         </button>
         <button
           className="flex h-7 w-7 items-center justify-center rounded border border-zinc-300 bg-white text-sm hover:bg-zinc-100 dark:border-zinc-600 dark:bg-zinc-800 dark:hover:bg-zinc-700"
           onClick={() => setZoom((z) => Math.max(0.2, z - 0.2))}
+          type="button"
         >
           -
         </button>
@@ -218,6 +220,7 @@ export function DependencyGraph({
             setZoom(1);
             setPan({ x: 0, y: 0 });
           }}
+          type="button"
         >
           Reset
         </button>
@@ -245,6 +248,7 @@ export function DependencyGraph({
       </div>
 
       <svg
+        aria-hidden="true"
         className="cursor-grab active:cursor-grabbing"
         height="100%"
         onMouseDown={handleMouseDown}
@@ -287,6 +291,7 @@ export function DependencyGraph({
           {layoutNodes.map((node) => {
             const r = getNodeRadius(node);
             return (
+              // biome-ignore lint/a11y/noStaticElementInteractions: SVG group requires click handler
               <g
                 className="cursor-pointer"
                 key={node.id}

@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, expect, it } from "vitest";
 import { createSessionSchema } from "../session";
 
 describe("createSessionSchema", () => {
@@ -24,10 +24,16 @@ describe("createSessionSchema", () => {
   });
 
   it("should validate mode enum", () => {
-    const valid = createSessionSchema.safeParse({ projectId: "p", mode: "ask" });
+    const valid = createSessionSchema.safeParse({
+      projectId: "p",
+      mode: "ask",
+    });
     expect(valid.success).toBe(true);
 
-    const invalid = createSessionSchema.safeParse({ projectId: "p", mode: "invalid" });
+    const invalid = createSessionSchema.safeParse({
+      projectId: "p",
+      mode: "invalid",
+    });
     expect(invalid.success).toBe(false);
   });
 

@@ -34,7 +34,7 @@ export class OrgRateLimiter {
     jobId?: string
   ): Promise<RateLimitResult> {
     const config = getRateLimitForTier(tier);
-    return this.checkWithConfig(orgId, config, jobId);
+    return await this.checkWithConfig(orgId, config, jobId);
   }
 
   /**

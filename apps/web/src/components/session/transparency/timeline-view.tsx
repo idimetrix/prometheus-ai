@@ -47,7 +47,7 @@ export function TimelineView() {
       return [];
     }
 
-    const baseTime = new Date(events[0]?.timestamp).getTime();
+    const baseTime = new Date(events[0]?.timestamp ?? 0).getTime();
 
     return events.map(
       (event): TimelineEntry => ({
@@ -67,7 +67,8 @@ export function TimelineView() {
     }
   }, []);
 
-  const totalDuration = timeline.length > 0 ? timeline.at(-1)?.relativeMs : 0;
+  const totalDuration =
+    timeline.length > 0 ? (timeline.at(-1)?.relativeMs ?? 0) : 0;
 
   const formatDuration = (ms: number) => {
     if (ms < 1000) {
@@ -83,6 +84,7 @@ export function TimelineView() {
     <div className="flex h-full flex-col rounded-xl border border-zinc-800 bg-zinc-900/50">
       <div className="flex items-center gap-2 border-zinc-800 border-b px-3 py-2">
         <svg
+          aria-hidden="true"
           className="h-3.5 w-3.5 text-zinc-500"
           fill="none"
           stroke="currentColor"
@@ -115,7 +117,9 @@ export function TimelineView() {
             <div className="space-y-2">
               {timeline.map((entry, i) => {
                 const gap =
-                  i > 0 ? entry.relativeMs - timeline[i - 1]?.relativeMs : 0;
+                  i > 0
+                    ? entry.relativeMs - (timeline[i - 1]?.relativeMs ?? 0)
+                    : 0;
 
                 return (
                   <div key={entry.id}>

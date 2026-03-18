@@ -16,7 +16,11 @@ function getBackoffDelay(attempt: number): number {
 
 async function getClerkToken(): Promise<string | null> {
   try {
-    const session = (window as Record<string, any>).Clerk?.session;
+    const session = (
+      window as unknown as {
+        Clerk?: { session?: { getToken: () => Promise<string> } };
+      }
+    ).Clerk?.session;
     if (session) {
       return await session.getToken();
     }

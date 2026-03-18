@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // ── Mocks ────────────────────────────────────────────────────────────────────
 
@@ -8,8 +8,8 @@ vi.mock("@clerk/backend", () => ({
   verifyToken: (...args: any[]) => mockVerifyToken(...args),
 }));
 
-import { getAuthContext, requireAuth } from "../server";
 import { authMiddleware } from "../middleware";
+import { getAuthContext, requireAuth } from "../server";
 
 describe("Auth Package", () => {
   beforeEach(() => {
@@ -30,10 +30,10 @@ describe("Auth Package", () => {
 
       const ctx = await getAuthContext("valid_token");
       expect(ctx).not.toBeNull();
-      expect(ctx!.userId).toBe("user_abc123");
-      expect(ctx!.orgId).toBe("org_xyz789");
-      expect(ctx!.orgRole).toBe("admin");
-      expect(ctx!.sessionId).toBe("sess_123");
+      expect(ctx?.userId).toBe("user_abc123");
+      expect(ctx?.orgId).toBe("org_xyz789");
+      expect(ctx?.orgRole).toBe("admin");
+      expect(ctx?.sessionId).toBe("sess_123");
     });
 
     it("returns null for invalid token", async () => {
@@ -57,13 +57,13 @@ describe("Auth Package", () => {
 
       const ctx = await getAuthContext("personal_token");
       expect(ctx).not.toBeNull();
-      expect(ctx!.userId).toBe("user_abc123");
-      expect(ctx!.orgId).toBeNull();
-      expect(ctx!.orgRole).toBeNull();
+      expect(ctx?.userId).toBe("user_abc123");
+      expect(ctx?.orgId).toBeNull();
+      expect(ctx?.orgRole).toBeNull();
     });
 
     it("throws when CLERK_SECRET_KEY is missing", async () => {
-      delete process.env.CLERK_SECRET_KEY;
+      process.env.CLERK_SECRET_KEY = undefined;
       // getAuthContext catches all errors and returns null
       const ctx = await getAuthContext("any_token");
       expect(ctx).toBeNull();
@@ -79,7 +79,7 @@ describe("Auth Package", () => {
 
       const ctx = await getAuthContext("token");
       expect(ctx).not.toBeNull();
-      expect(ctx!.sessionId).toBe("");
+      expect(ctx?.sessionId).toBe("");
     });
 
     it("passes token and secretKey to verifyToken", async () => {
@@ -89,7 +89,10 @@ describe("Auth Package", () => {
       });
 
       await getAuthContext("my_token");
-      expect(mockVerifyToken).toHaveBeenCalledWith("my_token", { secretKey: "sk_test_123" });
+      expect(mockVerifyToken).toHaveBeenCalledWith("my_token", {
+        secretKey: "sk_test_123",
+        clockSkewInMs: 60_000,
+      });
     });
   });
 
@@ -139,19 +142,26 @@ describe("Auth Package", () => {
 
       const ctx = await middleware(request);
       expect(ctx.userId).toBe("user_1");
-      expect(mockVerifyToken).toHaveBeenCalledWith("valid_token_here", expect.any(Object));
+      expect(mockVerifyToken).toHaveBeenCalledWith(
+        "valid_token_here",
+        expect.any(Object)
+      );
     });
 
     it("throws when authorization header is missing", async () => {
       const request = new Request("http://localhost/api");
-      await expect(middleware(request)).rejects.toThrow("Missing authorization header");
+      await expect(middleware(request)).rejects.toThrow(
+        "Missing authorization header"
+      );
     });
 
     it("throws when authorization header does not start with Bearer", async () => {
       const request = new Request("http://localhost/api", {
         headers: { authorization: "Basic abc123" },
       });
-      await expect(middleware(request)).rejects.toThrow("Missing authorization header");
+      await expect(middleware(request)).rejects.toThrow(
+        "Missing authorization header"
+      );
     });
 
     it("throws when token is invalid", async () => {

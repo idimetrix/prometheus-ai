@@ -1,7 +1,7 @@
 "use client";
 
-import { useState } from "react";
 import Link from "next/link";
+import { useState } from "react";
 
 const TIERS = [
   {
@@ -63,7 +63,7 @@ const TIERS = [
     key: "team",
     name: "Team",
     price: 299,
-    credits: 10000,
+    credits: 10_000,
     agents: 25,
     tasks: 500,
     features: [
@@ -110,7 +110,7 @@ export default function PricingPage() {
       <div className="mx-auto max-w-6xl px-6">
         {/* Header */}
         <div className="text-center">
-          <h1 className="text-4xl font-bold text-zinc-100">
+          <h1 className="font-bold text-4xl text-zinc-100">
             Simple, Transparent Pricing
           </h1>
           <p className="mx-auto mt-4 max-w-xl text-lg text-zinc-500">
@@ -122,44 +122,55 @@ export default function PricingPage() {
         <div className="mt-16 grid gap-4 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
           {TIERS.map((tier) => (
             <div
-              key={tier.key}
               className={`relative rounded-xl border p-6 ${
                 tier.highlight
                   ? "border-violet-500 bg-violet-950/20 ring-1 ring-violet-500/30"
                   : "border-zinc-800 bg-zinc-900/30"
               }`}
+              key={tier.key}
             >
               {tier.highlight && (
-                <div className="absolute -top-3 left-1/2 -translate-x-1/2 rounded-full bg-violet-600 px-3 py-0.5 text-xs font-medium text-white">
+                <div className="absolute -top-3 left-1/2 -translate-x-1/2 rounded-full bg-violet-600 px-3 py-0.5 font-medium text-white text-xs">
                   Most Popular
                 </div>
               )}
-              <h3 className="text-lg font-semibold text-zinc-200">
+              <h3 className="font-semibold text-lg text-zinc-200">
                 {tier.name}
               </h3>
               <div className="mt-4">
-                {tier.price !== null ? (
+                {tier.price === null ? (
+                  <div className="font-bold text-4xl text-zinc-100">Custom</div>
+                ) : (
                   <div className="flex items-baseline gap-1">
-                    <span className="text-4xl font-bold text-zinc-100">
+                    <span className="font-bold text-4xl text-zinc-100">
                       ${tier.price}
                     </span>
                     <span className="text-sm text-zinc-500">/mo</span>
                   </div>
-                ) : (
-                  <div className="text-4xl font-bold text-zinc-100">Custom</div>
                 )}
               </div>
               <div className="mt-2 text-sm text-zinc-500">
-                {tier.credits !== null
-                  ? `${tier.credits.toLocaleString()} credits/mo`
-                  : "Unlimited"}
+                {tier.credits === null
+                  ? "Unlimited"
+                  : `${tier.credits.toLocaleString()} credits/mo`}
               </div>
 
               <ul className="mt-6 space-y-2.5">
                 {tier.features.map((feature, i) => (
-                  <li key={i} className="flex items-start gap-2 text-sm">
-                    <svg className="mt-0.5 h-4 w-4 shrink-0 text-green-500" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" d="m4.5 12.75 6 6 9-13.5" />
+                  <li className="flex items-start gap-2 text-sm" key={i}>
+                    <svg
+                      aria-hidden="true"
+                      className="mt-0.5 h-4 w-4 shrink-0 text-green-500"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth={2}
+                      viewBox="0 0 24 24"
+                    >
+                      <path
+                        d="m4.5 12.75 6 6 9-13.5"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      />
                     </svg>
                     <span className="text-zinc-400">{feature}</span>
                   </li>
@@ -167,12 +178,12 @@ export default function PricingPage() {
               </ul>
 
               <Link
-                href={tier.price === null ? "/about" : "/sign-up"}
-                className={`mt-6 block w-full rounded-lg px-4 py-2.5 text-center text-sm font-medium transition-colors ${
+                className={`mt-6 block w-full rounded-lg px-4 py-2.5 text-center font-medium text-sm transition-colors ${
                   tier.highlight
                     ? "bg-violet-600 text-white hover:bg-violet-700"
                     : "border border-zinc-700 text-zinc-300 hover:bg-zinc-800"
                 }`}
+                href={tier.price === null ? "/about" : "/sign-up"}
               >
                 {tier.cta}
               </Link>
@@ -182,37 +193,45 @@ export default function PricingPage() {
 
         {/* ROI Calculator */}
         <div className="mt-24 text-center">
-          <h2 className="text-2xl font-bold text-zinc-100">ROI Calculator</h2>
+          <h2 className="font-bold text-2xl text-zinc-100">ROI Calculator</h2>
           <p className="mt-2 text-zinc-500">
             See how much time and money PROMETHEUS can save you.
           </p>
           <div className="mx-auto mt-8 max-w-md rounded-xl border border-zinc-800 bg-zinc-900/50 p-6 text-left">
             <div className="space-y-4">
               <div>
-                <label className="text-sm font-medium text-zinc-300">
+                <label
+                  className="font-medium text-sm text-zinc-300"
+                  htmlFor="hourly-rate"
+                >
                   Your hourly rate ($)
                 </label>
                 <input
+                  className="mt-1.5 w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm text-zinc-200 outline-none focus:border-violet-500"
+                  id="hourly-rate"
+                  onChange={(e) => setHourlyRate(Number(e.target.value) || 0)}
                   type="number"
                   value={hourlyRate}
-                  onChange={(e) => setHourlyRate(Number(e.target.value) || 0)}
-                  className="mt-1.5 w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm text-zinc-200 outline-none focus:border-violet-500"
                 />
               </div>
               <div>
-                <label className="text-sm font-medium text-zinc-300">
+                <label
+                  className="font-medium text-sm text-zinc-300"
+                  htmlFor="hours-saved"
+                >
                   Hours saved per week
                 </label>
                 <input
+                  className="mt-1.5 w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm text-zinc-200 outline-none focus:border-violet-500"
+                  id="hours-saved"
+                  onChange={(e) => setHoursSaved(Number(e.target.value) || 0)}
                   type="number"
                   value={hoursSaved}
-                  onChange={(e) => setHoursSaved(Number(e.target.value) || 0)}
-                  className="mt-1.5 w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm text-zinc-200 outline-none focus:border-violet-500"
                 />
               </div>
               <div className="rounded-lg border border-zinc-800 bg-zinc-950 p-4">
                 <div className="text-xs text-zinc-500">Monthly savings</div>
-                <div className="mt-1 text-3xl font-bold text-green-400">
+                <div className="mt-1 font-bold text-3xl text-green-400">
                   ${monthlySavings.toLocaleString()}
                 </div>
                 <div className="mt-1 text-sm text-zinc-500">

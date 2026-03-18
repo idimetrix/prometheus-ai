@@ -68,7 +68,7 @@ export class CheckpointManager {
     },
     timeoutMs = 300_000 // 5 minutes
   ): Promise<CheckpointResponse> {
-    return this.createCheckpoint({
+    return await this.createCheckpoint({
       sessionId,
       type: "plan_confirmation",
       title: "Plan Confirmation Required",
@@ -88,7 +88,7 @@ export class CheckpointManager {
     details: Record<string, unknown>,
     timeoutMs = 120_000 // 2 minutes
   ): Promise<CheckpointResponse> {
-    return this.createCheckpoint({
+    return await this.createCheckpoint({
       sessionId,
       type: "high_stakes",
       title: "Approval Required",
@@ -107,7 +107,7 @@ export class CheckpointManager {
     context: Record<string, unknown> = {},
     timeoutMs = 600_000 // 10 minutes
   ): Promise<CheckpointResponse> {
-    return this.createCheckpoint({
+    return await this.createCheckpoint({
       sessionId,
       type: "input_request",
       title: "Input Needed",

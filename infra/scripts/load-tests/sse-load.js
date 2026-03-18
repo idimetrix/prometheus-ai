@@ -27,10 +27,13 @@ export const options = {
   },
 };
 
+// biome-ignore lint/correctness/noUndeclaredVariables: k6 global
 const BASE_URL = __ENV.API_URL || "http://localhost:4000";
+// biome-ignore lint/correctness/noUndeclaredVariables: k6 global
 const AUTH_TOKEN = __ENV.AUTH_TOKEN || "";
 
 export default function () {
+  // biome-ignore lint/correctness/noUndeclaredVariables: k6 global
   const sessionId = `sse-load-test-${__VU % 3}`;
   const url = `${BASE_URL}/api/sse/session/${sessionId}`;
   const headers = AUTH_TOKEN ? { Authorization: `Bearer ${AUTH_TOKEN}` } : {};

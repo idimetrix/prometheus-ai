@@ -1,5 +1,4 @@
-// @ts-nocheck
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // ── Mocks ────────────────────────────────────────────────────────────────────
 
@@ -22,9 +21,22 @@ vi.mock("@prometheus/db", () => ({
     insert: (...args: any[]) => mockInsert(...args),
     select: (...args: any[]) => mockSelect(...args),
   },
-  modelUsage: { orgId: "orgId", model: "model", tokensIn: "tokensIn", tokensOut: "tokensOut", costUsd: "costUsd", createdAt: "createdAt", taskId: "taskId" },
+  modelUsage: {
+    orgId: "orgId",
+    model: "model",
+    tokensIn: "tokensIn",
+    tokensOut: "tokensOut",
+    costUsd: "costUsd",
+    createdAt: "createdAt",
+    taskId: "taskId",
+  },
   usageRollups: {},
-  creditTransactions: { orgId: "orgId", type: "type", amount: "amount", createdAt: "createdAt" },
+  creditTransactions: {
+    orgId: "orgId",
+    type: "type",
+    amount: "amount",
+    createdAt: "createdAt",
+  },
 }));
 
 vi.mock("@prometheus/utils", () => ({
@@ -40,8 +52,8 @@ vi.mock("@prometheus/logger", () => ({
   }),
 }));
 
-import { UsageTracker } from "../usage-tracker";
 import type { UsageRecord } from "../usage-tracker";
+import { UsageTracker } from "../usage-tracker";
 
 describe("UsageTracker", () => {
   let tracker: UsageTracker;
@@ -83,7 +95,7 @@ describe("UsageTracker", () => {
 
     it("records all fields from the usage record", async () => {
       await tracker.recordUsage(baseRecord);
-      const insertCall = mockInsert.mock.results[0].value;
+      const insertCall = mockInsert.mock.results[0]?.value;
       expect(insertCall.values).toHaveBeenCalled();
     });
 
@@ -113,32 +125,36 @@ describe("UsageTracker", () => {
 
     it("aggregates total tokens and cost", async () => {
       // First select call returns summary
-      selectChain.where.mockResolvedValueOnce([{
-        totalTokensIn: 10000,
-        totalTokensOut: 5000,
-        totalCost: 0.50,
-        count: 25,
-      }]);
+      selectChain.where.mockResolvedValueOnce([
+        {
+          totalTokensIn: 10_000,
+          totalTokensOut: 5000,
+          totalCost: 0.5,
+          count: 25,
+        },
+      ]);
       // Second select call returns by-model breakdown
       selectChain.groupBy.mockResolvedValueOnce([
-        { model: "qwen3-coder", tokens: 12000, cost: 0.0, count: 20 },
-        { model: "claude-sonnet", tokens: 3000, cost: 0.50, count: 5 },
+        { model: "qwen3-coder", tokens: 12_000, cost: 0.0, count: 20 },
+        { model: "claude-sonnet", tokens: 3000, cost: 0.5, count: 5 },
       ]);
 
       const result = await tracker.getUsageSummary("org_1", start, end);
 
-      expect(result.totalTokens).toBe(15000); // 10000 + 5000
+      expect(result.totalTokens).toBe(15_000); // 10000 + 5000
       expect(result.totalCostUsd).toBe(0.5);
       expect(result.taskCount).toBe(25);
     });
 
     it("returns by-model breakdown", async () => {
-      selectChain.where.mockResolvedValueOnce([{
-        totalTokensIn: 5000,
-        totalTokensOut: 2000,
-        totalCost: 0.25,
-        count: 10,
-      }]);
+      selectChain.where.mockResolvedValueOnce([
+        {
+          totalTokensIn: 5000,
+          totalTokensOut: 2000,
+          totalCost: 0.25,
+          count: 10,
+        },
+      ]);
       selectChain.groupBy.mockResolvedValueOnce([
         { model: "qwen3-coder", tokens: 5000, cost: 0.0, count: 8 },
         { model: "claude-sonnet", tokens: 2000, cost: 0.25, count: 2 },
@@ -147,17 +163,19 @@ describe("UsageTracker", () => {
       const result = await tracker.getUsageSummary("org_1", start, end);
 
       expect(result.byModel["qwen3-coder"]).toBeDefined();
-      expect(result.byModel["qwen3-coder"].tokens).toBe(5000);
-      expect(result.byModel["claude-sonnet"].cost).toBe(0.25);
+      expect(result.byModel["qwen3-coder"]?.tokens).toBe(5000);
+      expect(result.byModel["claude-sonnet"]?.cost).toBe(0.25);
     });
 
     it("returns zeros when no usage data exists", async () => {
-      selectChain.where.mockResolvedValueOnce([{
-        totalTokensIn: 0,
-        totalTokensOut: 0,
-        totalCost: 0,
-        count: 0,
-      }]);
+      selectChain.where.mockResolvedValueOnce([
+        {
+          totalTokensIn: 0,
+          totalTokensOut: 0,
+          totalCost: 0,
+          count: 0,
+        },
+      ]);
       selectChain.groupBy.mockResolvedValueOnce([]);
 
       const result = await tracker.getUsageSummary("org_1", start, end);
@@ -187,12 +205,14 @@ describe("UsageTracker", () => {
       // credit consumption query
       selectChain.where.mockResolvedValueOnce([{ consumed: 100 }]);
       // getUsageSummary inner calls
-      selectChain.where.mockResolvedValueOnce([{
-        totalTokensIn: 50000,
-        totalTokensOut: 20000,
-        totalCost: 5.0,
-        count: 50,
-      }]);
+      selectChain.where.mockResolvedValueOnce([
+        {
+          totalTokensIn: 50_000,
+          totalTokensOut: 20_000,
+          totalCost: 5.0,
+          count: 50,
+        },
+      ]);
       selectChain.groupBy.mockResolvedValueOnce([]);
 
       const result = await tracker.calculateMargin("org_1", start, end);
@@ -206,9 +226,14 @@ describe("UsageTracker", () => {
 
     it("returns zero margin when no credits consumed", async () => {
       selectChain.where.mockResolvedValueOnce([{ consumed: 0 }]);
-      selectChain.where.mockResolvedValueOnce([{
-        totalTokensIn: 0, totalTokensOut: 0, totalCost: 0, count: 0,
-      }]);
+      selectChain.where.mockResolvedValueOnce([
+        {
+          totalTokensIn: 0,
+          totalTokensOut: 0,
+          totalCost: 0,
+          count: 0,
+        },
+      ]);
       selectChain.groupBy.mockResolvedValueOnce([]);
 
       const result = await tracker.calculateMargin("org_1", start, end);
@@ -220,9 +245,14 @@ describe("UsageTracker", () => {
 
     it("handles negative margin (cost exceeds revenue)", async () => {
       selectChain.where.mockResolvedValueOnce([{ consumed: 10 }]);
-      selectChain.where.mockResolvedValueOnce([{
-        totalTokensIn: 100000, totalTokensOut: 50000, totalCost: 5.0, count: 10,
-      }]);
+      selectChain.where.mockResolvedValueOnce([
+        {
+          totalTokensIn: 100_000,
+          totalTokensOut: 50_000,
+          totalCost: 5.0,
+          count: 10,
+        },
+      ]);
       selectChain.groupBy.mockResolvedValueOnce([]);
 
       const result = await tracker.calculateMargin("org_1", start, end);
@@ -239,9 +269,14 @@ describe("UsageTracker", () => {
   describe("createDailyRollup", () => {
     it("creates a rollup record for the specified date", async () => {
       // getUsageSummary inner calls
-      selectChain.where.mockResolvedValueOnce([{
-        totalTokensIn: 5000, totalTokensOut: 2000, totalCost: 0.25, count: 10,
-      }]);
+      selectChain.where.mockResolvedValueOnce([
+        {
+          totalTokensIn: 5000,
+          totalTokensOut: 2000,
+          totalCost: 0.25,
+          count: 10,
+        },
+      ]);
       selectChain.groupBy.mockResolvedValueOnce([]);
 
       await tracker.createDailyRollup("org_1", new Date("2025-06-15"));

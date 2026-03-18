@@ -17,7 +17,7 @@ spec:
     spec:
       containers:
         - name: api
-          image: prometheus/api:latest
+          image: ghcr.io/prometheus/api:latest
           ports:
             - containerPort: 4000
           resources:

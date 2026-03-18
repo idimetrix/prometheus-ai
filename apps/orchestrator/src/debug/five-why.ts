@@ -2,20 +2,23 @@ import { createLogger } from "@prometheus/logger";
 
 const logger = createLogger("orchestrator:debug");
 
+const JSON_OBJECT_RE = /\{[\s\S]*\}/;
+
 export interface FiveWhyResult {
   error: string;
-  whyChain: string[];
-  rootCause: string;
   minimalFix: string;
-  testCases: string[];
+  rootCause: string;
   similarBugs: string[];
+  testCases: string[];
+  whyChain: string[];
 }
 
 export class FiveWhyDebugger {
   private readonly modelRouterUrl: string;
 
   constructor() {
-    this.modelRouterUrl = process.env.MODEL_ROUTER_URL ?? "http://localhost:4004";
+    this.modelRouterUrl =
+      process.env.MODEL_ROUTER_URL ?? "http://localhost:4004";
   }
 
   async analyze(error: string, codeContext: string): Promise<FiveWhyResult> {
@@ -50,9 +53,9 @@ Respond in this exact JSON format:
       });
 
       if (response.ok) {
-        const data = await response.json() as { content: string };
+        const data = (await response.json()) as { content: string };
         const content = data.content ?? "";
-        const jsonMatch = content.match(/\{[\s\S]*\}/);
+        const jsonMatch = content.match(JSON_OBJECT_RE);
         if (jsonMatch) {
           const parsed = JSON.parse(jsonMatch[0]);
           return {
@@ -66,16 +69,23 @@ Respond in this exact JSON format:
         }
       }
     } catch (err) {
-      logger.warn({ error: err }, "LLM-based 5-Why analysis failed, using heuristic");
+      logger.warn(
+        { error: err },
+        "LLM-based 5-Why analysis failed, using heuristic"
+      );
     }
 
     // Heuristic fallback
     return this.heuristicAnalysis(error, codeContext);
   }
 
-  private heuristicAnalysis(error: string, codeContext: string): FiveWhyResult {
+  private heuristicAnalysis(
+    error: string,
+    _codeContext: string
+  ): FiveWhyResult {
     const isTypeError = error.includes("TypeError") || error.includes("TS2");
-    const isImportError = error.includes("Cannot find module") || error.includes("import");
+    const isImportError =
+      error.includes("Cannot find module") || error.includes("import");
     const isNullError = error.includes("null") || error.includes("undefined");
 
     let rootCause = "Unknown error pattern";

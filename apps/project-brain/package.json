@@ -12,21 +12,21 @@
     "clean": "rm -rf dist .turbo"
   },
   "dependencies": {
-    "hono": "^4.7.0",
-    "@hono/node-server": "^1.14.0",
+    "hono": "^4.12.8",
+    "@hono/node-server": "^1.19.11",
     "@prometheus/db": "workspace:*",
     "@prometheus/ai": "workspace:*",
     "@prometheus/queue": "workspace:*",
     "@prometheus/logger": "workspace:*",
     "@prometheus/types": "workspace:*",
     "@prometheus/utils": "workspace:*",
-    "drizzle-orm": "^0.39.0",
-    "ioredis": "5.9.3"
+    "drizzle-orm": "^0.45.1",
+    "ioredis": "5.10.0"
   },
   "devDependencies": {
     "@prometheus/config-typescript": "workspace:*",
-    "tsx": "^4.19.0",
-    "tsup": "^8.4.0",
-    "typescript": "^5.7.0"
+    "tsx": "^4.21.0",
+    "tsup": "^8.5.1",
+    "typescript": "^5.9.3"
   }
 }

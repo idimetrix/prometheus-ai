@@ -1,14 +1,17 @@
 import { serve } from "@hono/node-server";
-import { Hono } from "hono";
 import { createLogger } from "@prometheus/logger";
-import { SandboxPool } from "./pool";
+import { Hono } from "hono";
+import { cors } from "hono/cors";
 import { ContainerManager } from "./container";
 import { GitOperations } from "./git-ops";
 import { createHealthChecker } from "./health";
+import { SandboxPool } from "./pool";
 import { validateTimeout } from "./security";
 
 const logger = createLogger("sandbox-manager");
 const app = new Hono();
+
+app.use("/*", cors());
 
 const containerManager = new ContainerManager();
 const sandboxPool = new SandboxPool(containerManager);
@@ -62,16 +65,22 @@ app.post("/sandbox/create", async (c) => {
       if (!cloneResult.success) {
         // Clean up the sandbox if clone fails
         await sandboxPool.release(sandbox.id);
-        return c.json({ error: `Failed to clone repo: ${cloneResult.error}` }, 500);
+        return c.json(
+          { error: `Failed to clone repo: ${cloneResult.error}` },
+          500
+        );
       }
     }
 
-    return c.json({
-      id: sandbox.id,
-      status: sandbox.status,
-      workspacePath: sandbox.workspacePath,
-      createdAt: sandbox.createdAt.toISOString(),
-    }, 201);
+    return c.json(
+      {
+        id: sandbox.id,
+        status: sandbox.status,
+        workspacePath: sandbox.workspacePath,
+        createdAt: sandbox.createdAt.toISOString(),
+      },
+      201
+    );
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);
     logger.error({ error: msg }, "Failed to create sandbox");
@@ -96,10 +105,19 @@ app.post("/sandbox/:id/exec", async (c) => {
     const timeoutMs = body.timeout ?? 60_000;
     const timeoutCheck = validateTimeout(timeoutMs);
     if (!timeoutCheck.valid) {
-      return c.json({ error: `Timeout exceeds maximum (300s). Clamped to ${timeoutCheck.timeout}ms` }, 400);
+      return c.json(
+        {
+          error: `Timeout exceeds maximum (300s). Clamped to ${timeoutCheck.timeout}ms`,
+        },
+        400
+      );
     }
 
-    const result = await containerManager.exec(sandboxId, body.command, timeoutCheck.timeout);
+    const result = await containerManager.exec(
+      sandboxId,
+      body.command,
+      timeoutCheck.timeout
+    );
 
     return c.json(result);
   } catch (error) {
@@ -205,7 +223,10 @@ app.post("/sandbox/:id/git", async (c) => {
 
       case "createBranch": {
         if (!body.branchName) {
-          return c.json({ error: "branchName is required for createBranch" }, 400);
+          return c.json(
+            { error: "branchName is required for createBranch" },
+            400
+          );
         }
         const result = await gitOps.createBranch(sandboxId, body.branchName);
         return c.json(result);
@@ -248,7 +269,10 @@ app.post("/sandbox/:id/git", async (c) => {
       }
 
       default:
-        return c.json({ error: `Unknown git operation: ${body.operation}` }, 400);
+        return c.json(
+          { error: `Unknown git operation: ${body.operation}` },
+          400
+        );
     }
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);
@@ -296,17 +320,23 @@ app.get("/sandbox/:id", (c) => {
 
 // ---- Startup ----
 
-const port = Number(process.env.SANDBOX_MANAGER_PORT ?? 4003);
+const port = Number(process.env.SANDBOX_MANAGER_PORT ?? 4006);
 
 async function start() {
   // Initialize the sandbox pool (pre-warm sandboxes)
   await sandboxPool.initialize().catch((err) => {
     const msg = err instanceof Error ? err.message : String(err);
-    logger.warn({ error: msg }, "Pool initialization failed (will create sandboxes on demand)");
+    logger.warn(
+      { error: msg },
+      "Pool initialization failed (will create sandboxes on demand)"
+    );
   });
 
   serve({ fetch: app.fetch, port }, () => {
-    logger.info(`Sandbox Manager running on port ${port}`);
+    logger.info(
+      { port, mode: containerManager.getMode() },
+      "Sandbox Manager running"
+    );
   });
 
   // Graceful shutdown

@@ -18,8 +18,22 @@ pnpm build        # Build all packages
 pnpm typecheck    # TypeScript check all packages
 pnpm test         # Run all tests
 pnpm test --filter=@prometheus/api    # Test specific package
+pnpm lint         # Biome lint (read-only)
+pnpm format       # Format with Ultracite (error-level)
+pnpm check        # Ultracite read-only check (format + lint)
+pnpm fix          # Ultracite fix (format + lint fix)
+pnpm unsafe       # Biome check + format with unsafe auto-fixes
 pnpm db:push      # Push DB schema changes (dev)
 pnpm db:migrate   # Run DB migrations (prod)
+pnpm db:generate  # Generate Drizzle migrations
+pnpm db:pull      # Pull schema from existing DB
+pnpm db:seed      # Seed database with sample data
+pnpm db:studio    # Open Drizzle Studio GUI
+pnpm db:check     # Check schema integrity
+pnpm db:reset     # Destructive reset DB (force push)
+pnpm db:drop      # Drop all tables
+pnpm db:fresh     # Reset + seed (clean start)
+pnpm db:setup     # Generate + migrate (combined)
 ```
 
 ## Dev Setup
@@ -47,6 +61,9 @@ pnpm dev              # Start development
 
 ## Key Conventions
 
+- Use Biome + Ultracite for formatting and linting (not Prettier/ESLint)
+- Lefthook pre-commit hook auto-formats staged files; pre-push runs typecheck
+- Use `...timestamps` spread from `@prometheus/db` schema helpers for createdAt/updatedAt columns
 - Use tRPC for all API endpoints
 - Validate inputs with Zod schemas from `@prometheus/validators`
 - Use Drizzle ORM for database queries (never raw SQL)

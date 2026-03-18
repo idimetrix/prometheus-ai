@@ -130,8 +130,12 @@ export function apiKeyAuthMiddleware(): MiddlewareHandler {
     db.update(apiKeys)
       .set({ lastUsed: new Date() })
       .where(eq(apiKeys.id, key.id))
-      .then(() => {})
-      .catch(() => {});
+      .then(() => {
+        /* fire-and-forget */
+      })
+      .catch(() => {
+        /* ignore update errors */
+      });
 
     // Build a synthetic AuthContext for tRPC
     const syntheticAuth: AuthContext = {

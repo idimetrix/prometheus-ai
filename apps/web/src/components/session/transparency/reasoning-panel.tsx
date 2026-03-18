@@ -3,12 +3,6 @@
 import { useState } from "react";
 import { useSessionStore } from "@/stores/session.store";
 
-interface ReasoningEntry {
-  collapsed: boolean;
-  content: string;
-  id: number;
-}
-
 export function ReasoningPanel() {
   const { reasoning } = useSessionStore();
   const [collapsedMap, setCollapsedMap] = useState<Record<number, boolean>>({});
@@ -33,6 +27,7 @@ export function ReasoningPanel() {
     <div className="flex h-full flex-col rounded-xl border border-zinc-800 bg-zinc-900/50">
       <div className="flex items-center gap-2 border-zinc-800 border-b px-3 py-2">
         <svg
+          aria-hidden="true"
           className="h-3.5 w-3.5 text-violet-500"
           fill="none"
           stroke="currentColor"
@@ -50,12 +45,14 @@ export function ReasoningPanel() {
           <button
             className="rounded px-1.5 py-0.5 text-[10px] text-zinc-500 hover:bg-zinc-800 hover:text-zinc-400"
             onClick={collapseAll}
+            type="button"
           >
             Collapse all
           </button>
           <button
             className="rounded px-1.5 py-0.5 text-[10px] text-zinc-500 hover:bg-zinc-800 hover:text-zinc-400"
             onClick={expandAll}
+            type="button"
           >
             Expand all
           </button>
@@ -80,8 +77,10 @@ export function ReasoningPanel() {
                   <button
                     className="flex w-full items-center gap-2 px-3 py-2 text-left"
                     onClick={() => toggle(i)}
+                    type="button"
                   >
                     <svg
+                      aria-hidden="true"
                       className={`h-3 w-3 shrink-0 text-zinc-600 transition-transform ${
                         isCollapsed ? "" : "rotate-90"
                       }`}

@@ -34,12 +34,12 @@ export const connectIntegrationSchema = z.object({
     .refine((data) => data.accessToken || data.apiKey, {
       message: "Either accessToken or apiKey must be provided",
     }),
-  config: z.record(z.unknown()).default({}),
+  config: z.record(z.string(), z.unknown()).default({}),
 });
 
 export const configureIntegrationSchema = z.object({
   integrationId: z.string().min(1),
-  config: z.record(z.unknown()),
+  config: z.record(z.string(), z.unknown()),
 });
 
 export const disconnectIntegrationSchema = z.object({
@@ -56,7 +56,7 @@ export const configureMcpToolSchema = z.object({
   projectId: z.string().min(1),
   toolName: z.string().min(1).max(100),
   enabled: z.boolean().default(true),
-  config: z.record(z.unknown()).default({}),
+  config: z.record(z.string(), z.unknown()).default({}),
 });
 
 export const listMcpToolsSchema = z.object({
@@ -97,7 +97,7 @@ export const mcpToolOutputSchema = z.object({
   projectId: z.string(),
   toolName: z.string(),
   enabled: z.boolean(),
-  config: z.record(z.unknown()),
+  config: z.record(z.string(), z.unknown()),
 });
 
 // ---------- Types ----------

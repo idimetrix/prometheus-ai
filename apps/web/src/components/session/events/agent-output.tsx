@@ -18,25 +18,35 @@ export function AgentOutput({ event }: AgentOutputProps) {
   function renderContent(text: string) {
     const lines = text.split("\n");
 
-    return lines.map((line, i) => {
+    return lines.map((line, lineIdx) => {
+      const lineKey = `line-${lineIdx}`;
       // Headings
       if (line.startsWith("### ")) {
         return (
-          <h4 className="mt-2 mb-1 font-semibold text-xs text-zinc-200" key={i}>
+          <h4
+            className="mt-2 mb-1 font-semibold text-xs text-zinc-200"
+            key={lineKey}
+          >
             {line.slice(4)}
           </h4>
         );
       }
       if (line.startsWith("## ")) {
         return (
-          <h3 className="mt-2 mb-1 font-semibold text-sm text-zinc-100" key={i}>
+          <h3
+            className="mt-2 mb-1 font-semibold text-sm text-zinc-100"
+            key={lineKey}
+          >
             {line.slice(3)}
           </h3>
         );
       }
       if (line.startsWith("# ")) {
         return (
-          <h2 className="mt-2 mb-1 font-bold text-sm text-zinc-100" key={i}>
+          <h2
+            className="mt-2 mb-1 font-bold text-sm text-zinc-100"
+            key={lineKey}
+          >
             {line.slice(2)}
           </h2>
         );
@@ -44,12 +54,13 @@ export function AgentOutput({ event }: AgentOutputProps) {
 
       // Code blocks (single backtick inline)
       const parts = line.split(/(`[^`]+`)/g);
-      const rendered = parts.map((part, j) => {
+      const rendered = parts.map((part, partIdx) => {
+        const partKey = `${lineKey}-p${partIdx}`;
         if (part.startsWith("`") && part.endsWith("`")) {
           return (
             <code
               className="rounded bg-zinc-800 px-1 py-0.5 font-mono text-[11px] text-violet-300"
-              key={j}
+              key={partKey}
             >
               {part.slice(1, -1)}
             </code>
@@ -57,27 +68,28 @@ export function AgentOutput({ event }: AgentOutputProps) {
         }
         // Bold
         const boldParts = part.split(/(\*\*[^*]+\*\*)/g);
-        return boldParts.map((bp, k) => {
+        return boldParts.map((bp, bpIdx) => {
+          const bpKey = `${partKey}-b${bpIdx}`;
           if (bp.startsWith("**") && bp.endsWith("**")) {
             return (
-              <strong className="font-semibold text-zinc-100" key={`${j}-${k}`}>
+              <strong className="font-semibold text-zinc-100" key={bpKey}>
                 {bp.slice(2, -2)}
               </strong>
             );
           }
-          return <span key={`${j}-${k}`}>{bp}</span>;
+          return <span key={bpKey}>{bp}</span>;
         });
       });
 
       // Empty line
       if (line.trim() === "") {
-        return <div className="h-2" key={i} />;
+        return <div className="h-2" key={lineKey} />;
       }
 
       // List items
       if (line.startsWith("- ") || line.startsWith("* ")) {
         return (
-          <div className="flex gap-2 text-xs text-zinc-300" key={i}>
+          <div className="flex gap-2 text-xs text-zinc-300" key={lineKey}>
             <span className="text-zinc-600">-</span>
             <span>{rendered}</span>
           </div>
@@ -85,7 +97,7 @@ export function AgentOutput({ event }: AgentOutputProps) {
       }
 
       return (
-        <div className="text-xs text-zinc-300 leading-relaxed" key={i}>
+        <div className="text-xs text-zinc-300 leading-relaxed" key={lineKey}>
           {rendered}
         </div>
       );
@@ -97,6 +109,7 @@ export function AgentOutput({ event }: AgentOutputProps) {
       <div className="mb-2 flex items-center gap-2">
         <div className="flex h-5 w-5 items-center justify-center rounded-full bg-violet-500/20">
           <svg
+            aria-hidden="true"
             className="h-3 w-3 text-violet-400"
             fill="none"
             stroke="currentColor"

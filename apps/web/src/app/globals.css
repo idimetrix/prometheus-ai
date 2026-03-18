@@ -19,8 +19,8 @@
 }
 
 body {
-  background-color: var(--color-background);
   color: var(--color-foreground);
+  background-color: var(--color-background);
 }
 
 /* Scrollbar styling */
@@ -44,6 +44,7 @@ body {
 
 /* Terminal font */
 .font-mono {
-  font-family: "JetBrains Mono", "Fira Code", "Cascadia Code", ui-monospace,
+  font-family:
+    "JetBrains Mono", "Fira Code", "Cascadia Code", ui-monospace,
     SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
 }

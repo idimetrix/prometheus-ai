@@ -1,26 +1,26 @@
-import type { TaskStatus, AgentRole } from "./enums";
+import type { AgentRole, TaskStatus } from "./enums";
 
 export interface Task {
-  id: string;
-  sessionId: string;
-  projectId: string;
-  title: string;
-  description: string | null;
-  status: TaskStatus;
-  priority: number;
   agentRole: AgentRole | null;
-  creditsReserved: number;
-  creditsConsumed: number;
-  startedAt: Date | null;
   completedAt: Date | null;
   createdAt: Date;
+  creditsConsumed: number;
+  creditsReserved: number;
+  description: string | null;
+  id: string;
+  priority: number;
+  projectId: string;
+  sessionId: string;
+  startedAt: Date | null;
+  status: TaskStatus;
+  title: string;
 }
 
 export interface TaskStep {
-  id: string;
-  taskId: string;
-  stepNumber: number;
   description: string;
-  status: TaskStatus;
+  id: string;
   output: string | null;
+  status: TaskStatus;
+  stepNumber: number;
+  taskId: string;
 }

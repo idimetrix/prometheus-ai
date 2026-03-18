@@ -1,28 +1,33 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // ── Mocks (hoisted so vi.mock factory can reference them) ────────────────────
 
-const { mockUpdate, mockInsert, mockFindMany, mockFindFirst } = vi.hoisted(() => ({
-  mockUpdate: vi.fn().mockReturnValue({
-    set: vi.fn().mockReturnValue({
-      where: vi.fn().mockResolvedValue(undefined),
+const { mockUpdate, mockInsert, mockFindMany, mockFindFirst } = vi.hoisted(
+  () => ({
+    mockUpdate: vi.fn().mockReturnValue({
+      set: vi.fn().mockReturnValue({
+        where: vi.fn().mockResolvedValue(undefined),
+      }),
     }),
-  }),
-  mockInsert: vi.fn().mockReturnValue({
-    values: vi.fn().mockReturnValue({
-      returning: vi.fn().mockResolvedValue([]),
+    mockInsert: vi.fn().mockReturnValue({
+      values: vi.fn().mockReturnValue({
+        returning: vi.fn().mockResolvedValue([]),
+      }),
     }),
-  }),
-  mockFindMany: vi.fn().mockResolvedValue([]),
-  mockFindFirst: vi.fn().mockResolvedValue(null),
-}));
+    mockFindMany: vi.fn().mockResolvedValue([]),
+    mockFindFirst: vi.fn().mockResolvedValue(null),
+  })
+);
 
 vi.mock("@prometheus/db", () => ({
   db: {
     update: (...args: any[]) => mockUpdate(...args),
     insert: (...args: any[]) => mockInsert(...args),
     query: {
-      tasks: { findMany: (...args: any[]) => mockFindMany(...args), findFirst: mockFindFirst },
+      tasks: {
+        findMany: (...args: any[]) => mockFindMany(...args),
+        findFirst: mockFindFirst,
+      },
       creditBalances: { findFirst: vi.fn().mockResolvedValue({ balance: 50 }) },
     },
   },
@@ -41,9 +46,9 @@ vi.mock("@prometheus/utils", () => ({
 const mockPublishSessionEvent = vi.fn().mockResolvedValue(undefined);
 
 vi.mock("@prometheus/queue", () => ({
-  EventPublisher: vi.fn().mockImplementation(() => ({
-    publishSessionEvent: mockPublishSessionEvent,
-  })),
+  EventPublisher: class {
+    publishSessionEvent = mockPublishSessionEvent;
+  },
 }));
 
 vi.mock("@prometheus/logger", () => ({
@@ -59,8 +64,8 @@ vi.mock("@prometheus/logger", () => ({
 const mockFetch = vi.fn();
 vi.stubGlobal("fetch", mockFetch);
 
-import { TaskProcessor } from "../processor";
 import type { AgentTaskData } from "@prometheus/queue";
+import { TaskProcessor } from "../processor";
 
 const baseTaskData: AgentTaskData = {
   taskId: "task_1",
@@ -102,7 +107,7 @@ describe("TaskProcessor", () => {
 
     expect(mockUpdate).toHaveBeenCalled();
     // First call updates status to "running"
-    const firstUpdateCall = mockUpdate.mock.results[0]!.value;
+    const firstUpdateCall = mockUpdate.mock.results[0]?.value;
     expect(firstUpdateCall.set).toHaveBeenCalled();
   });
 
@@ -126,7 +131,7 @@ describe("TaskProcessor", () => {
       expect.objectContaining({
         type: "task_status",
         data: expect.objectContaining({ taskId: "task_1", status: "running" }),
-      }),
+      })
     );
   });
 
@@ -170,7 +175,7 @@ describe("TaskProcessor", () => {
     expect(result.creditsConsumed).toBe(5);
     expect(mockFetch).toHaveBeenCalledWith(
       expect.stringContaining("/process"),
-      expect.objectContaining({ method: "POST" }),
+      expect.objectContaining({ method: "POST" })
     );
   });
 
@@ -256,7 +261,7 @@ describe("TaskProcessor", () => {
           status: "completed",
           creditsConsumed: 4,
         }),
-      }),
+      })
     );
   });
 
@@ -360,7 +365,7 @@ describe("TaskProcessor", () => {
       { status: "running" },
     ]);
 
-    const updateCallsBefore = mockUpdate.mock.calls.length;
+    const _updateCallsBefore = mockUpdate.mock.calls.length;
     await processor.process(baseTaskData);
     // Session update for status should NOT include "completed" or "failed"
     // because not all tasks are done
@@ -369,7 +374,7 @@ describe("TaskProcessor", () => {
   it("uses fallback processing when orchestrator response is invalid", async () => {
     mockFetch.mockResolvedValueOnce({
       ok: true,
-      json: async () => { throw new Error("Parse error"); },
+      json: () => Promise.reject(new Error("Parse error")),
     });
 
     // Should not throw - uses fallback processing

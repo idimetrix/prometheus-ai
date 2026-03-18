@@ -17,7 +17,7 @@ interface TakeoverControlsProps {
  * control from the agent during a session.
  */
 export function TakeoverControls({
-  sessionId,
+  sessionId: _sessionId,
   isHumanControlled,
   currentUserId,
   controllingUserId,
@@ -32,7 +32,7 @@ export function TakeoverControls({
   const isCurrentUserControlling = controllingUserId === currentUserId;
   const isOtherUserControlling = isHumanControlled && !isCurrentUserControlling;
 
-  const handleTakeover = useCallback(async () => {
+  const handleTakeover = useCallback(() => {
     setIsLoading(true);
     try {
       onTakeover();
@@ -41,7 +41,7 @@ export function TakeoverControls({
     }
   }, [onTakeover]);
 
-  const handleRelease = useCallback(async () => {
+  const handleRelease = useCallback(() => {
     setIsLoading(true);
     try {
       onRelease(releaseContext || undefined);
@@ -77,6 +77,7 @@ export function TakeoverControls({
               <button
                 className="rounded bg-zinc-100 px-2 py-1 text-xs text-zinc-600 hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-400 dark:hover:bg-zinc-700"
                 onClick={onUndoLastAction}
+                type="button"
               >
                 Undo
               </button>
@@ -96,12 +97,14 @@ export function TakeoverControls({
                   className="rounded bg-green-500 px-2 py-1 text-white text-xs hover:bg-green-600 disabled:opacity-50"
                   disabled={isLoading}
                   onClick={handleRelease}
+                  type="button"
                 >
                   Release
                 </button>
                 <button
                   className="rounded bg-zinc-200 px-2 py-1 text-xs hover:bg-zinc-300 dark:bg-zinc-700"
                   onClick={() => setShowReleaseForm(false)}
+                  type="button"
                 >
                   Cancel
                 </button>
@@ -110,6 +113,7 @@ export function TakeoverControls({
               <button
                 className="rounded bg-green-100 px-2 py-1 text-green-700 text-xs hover:bg-green-200 dark:bg-green-900/30 dark:text-green-400"
                 onClick={() => setShowReleaseForm(true)}
+                type="button"
               >
                 Release Control
               </button>
@@ -126,6 +130,7 @@ export function TakeoverControls({
       className="flex items-center gap-2 rounded-lg border border-zinc-200 bg-zinc-100 px-3 py-1.5 text-xs hover:bg-zinc-200 disabled:opacity-50 dark:border-zinc-700 dark:bg-zinc-800 dark:hover:bg-zinc-700"
       disabled={isLoading}
       onClick={handleTakeover}
+      type="button"
     >
       <span>Take Control</span>
     </button>

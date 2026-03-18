@@ -1,16 +1,16 @@
 export interface User {
-  id: string;
-  clerkId: string;
-  email: string;
-  name: string | null;
   avatarUrl: string | null;
+  clerkId: string;
   createdAt: Date;
+  email: string;
+  id: string;
+  name: string | null;
   updatedAt: Date;
 }
 
 export interface UserSettings {
-  userId: string;
-  theme: "light" | "dark" | "system";
   defaultModel: string | null;
   notificationsEnabled: boolean;
+  theme: "light" | "dark" | "system";
+  userId: string;
 }

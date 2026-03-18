@@ -1,35 +1,89 @@
 // Base agent
-export { BaseAgent, resolveTools } from "./base-agent";
+
 export type {
   AgentContext,
   AgentExecutionResult,
   AgentMessage,
-  ToolCall,
   EventPublisherInterface,
+  ToolCall,
 } from "./base-agent";
-
-// Roles
-export { AGENT_ROLES, getAgentConfig, createAgent } from "./roles";
+export { BaseAgent, resolveTools } from "./base-agent";
+export type { CustomAgentSpec, ValidationResult } from "./custom-roles";
+// Custom roles
+export {
+  getCustomRole,
+  getCustomRoleSpec,
+  listCustomRoles,
+  parseAgentSpec,
+  registerCustomRole,
+  unregisterCustomRole,
+  validateAgentSpec,
+} from "./custom-roles";
 export type { AgentRoleConfig } from "./roles";
-export { OrchestratorAgent } from "./roles/orchestrator";
-export { DiscoveryAgent } from "./roles/discovery";
+// Roles
+export { AGENT_ROLES, createAgent, getAgentConfig } from "./roles";
 export { ArchitectAgent } from "./roles/architect";
-export { PlannerAgent } from "./roles/planner";
-export { FrontendCoderAgent } from "./roles/frontend-coder";
 export { BackendCoderAgent } from "./roles/backend-coder";
-export { IntegrationCoderAgent } from "./roles/integration-coder";
-export { TestEngineerAgent } from "./roles/test-engineer";
 export { CiLoopAgent } from "./roles/ci-loop";
-export { SecurityAuditorAgent } from "./roles/security-auditor";
 export { DeployEngineerAgent } from "./roles/deploy-engineer";
-
-// Tools
-export type { AgentToolDefinition, ToolExecutionContext, ToolResult } from "./tools/types";
-export { TOOL_REGISTRY, ToolRegistry, globalRegistry } from "./tools/registry";
-export { fileTools } from "./tools/file";
-export { terminalTools } from "./tools/terminal";
-export { gitTools } from "./tools/git";
-export { searchTools } from "./tools/search";
-export { browserTools } from "./tools/browser";
-export { agentMetaTools } from "./tools/agent-tools";
+export { DiscoveryAgent } from "./roles/discovery";
+export { FrontendCoderAgent } from "./roles/frontend-coder";
+export { IntegrationCoderAgent } from "./roles/integration-coder";
+export { OrchestratorAgent } from "./roles/orchestrator";
+export { PlannerAgent } from "./roles/planner";
+export { SecurityAuditorAgent } from "./roles/security-auditor";
+export { TestEngineerAgent } from "./roles/test-engineer";
+export {
+  agentMetaTools,
+  askUserSchema,
+  killAgentSchema,
+  readBlueprintSchema,
+  readBrainSchema,
+  spawnAgentSchema,
+} from "./tools/agent-tools";
+export {
+  browserOpenSchema,
+  browserScreenshotSchema,
+  browserTools,
+} from "./tools/browser";
+// Tool collections
+// Zod schemas for external validation
+export {
+  fileDeleteSchema,
+  fileEditSchema,
+  fileListSchema,
+  fileReadSchema,
+  fileTools,
+  fileWriteSchema,
+} from "./tools/file";
+export {
+  gitBranchSchema,
+  gitCommitSchema,
+  gitCreatePrSchema,
+  gitDiffSchema,
+  gitPushSchema,
+  gitStatusSchema,
+  gitTools,
+} from "./tools/git";
+// Tool registry
+export { globalRegistry, TOOL_REGISTRY, ToolRegistry } from "./tools/registry";
+// Sandbox execution
 export { execInSandbox } from "./tools/sandbox";
+export {
+  searchContentSchema,
+  searchFilesSchema,
+  searchSemanticSchema,
+  searchTools,
+} from "./tools/search";
+export {
+  terminalBackgroundSchema,
+  terminalExecSchema,
+  terminalTools,
+} from "./tools/terminal";
+// Tool types & helpers
+export type {
+  AgentToolDefinition,
+  ToolExecutionContext,
+  ToolResult,
+} from "./tools/types";
+export { defineTool } from "./tools/types";

@@ -1,27 +1,44 @@
-import { db } from "@prometheus/db";
-import { blueprints } from "@prometheus/db";
+import { blueprints, db } from "@prometheus/db";
 import { createLogger } from "@prometheus/logger";
-import { eq, and } from "drizzle-orm";
-import type { SemanticLayer, SearchResult } from "../layers/semantic";
-import type { KnowledgeGraphLayer, GraphQueryResult } from "../layers/knowledge-graph";
+import { and, eq } from "drizzle-orm";
 import type { EpisodicLayer, EpisodicMemory } from "../layers/episodic";
+import type {
+  GraphNode,
+  GraphQueryResult,
+  KnowledgeGraphLayer,
+} from "../layers/knowledge-graph";
 import type { ProceduralLayer, Procedure } from "../layers/procedural";
+import type { SearchResult, SemanticLayer } from "../layers/semantic";
 import type { WorkingMemoryLayer } from "../layers/working-memory";
 
 const logger = createLogger("project-brain:context");
 
 export interface AssembleRequest {
+  agentRole: string;
+  maxTokens: number;
   projectId: string;
   sessionId?: string;
   taskDescription: string;
-  agentRole: string;
-  maxTokens: number;
 }
 
 export interface AssembledContext {
+  /** Global context: blueprint, procedures, project conventions */
   global: string;
-  taskSpecific: string;
+  /** Breakdown of tokens per layer */
+  layerTokens: {
+    semantic: number;
+    episodic: number;
+    procedural: number;
+    working: number;
+    knowledgeGraph: number;
+    blueprint: number;
+    tools: number;
+  };
+  /** Session context: working memory, recent decisions */
   session: string;
+  /** Task-specific context: semantic search results, knowledge graph */
+  taskSpecific: string;
+  /** Tools context: agent role and capabilities */
   tools: string;
   totalTokensEstimate: number;
 }
@@ -31,62 +48,131 @@ function estimateTokens(text: string): number {
   return Math.ceil(text.length / 4);
 }
 
+/**
+ * Context Assembler: combines all 5 memory layers into a unified context
+ * that fits within the ~14K token budget.
+ *
+ * Memory Layers:
+ *  1. Semantic — vector search over code embeddings
+ *  2. Episodic — past decisions with outcomes
+ *  3. Procedural — learned how-to patterns
+ *  4. Working — session-scoped scratch memory
+ *  5. Knowledge Graph — dependency relationships
+ *
+ * Budget allocation (default ~14K tokens):
+ *  - Blueprint/Global: ~10% (1400 tokens)
+ *  - Semantic search:  ~40% (5600 tokens) — largest allocation for code context
+ *  - Knowledge Graph:  ~15% (2100 tokens)
+ *  - Episodic:         ~10% (1400 tokens)
+ *  - Procedural:        ~5% (700 tokens)
+ *  - Working memory:   ~10% (1400 tokens)
+ *  - Tools/Role:       ~10% (1400 tokens)
+ */
 export class ContextAssembler {
   constructor(
     private readonly semantic: SemanticLayer,
     private readonly knowledgeGraph: KnowledgeGraphLayer,
     private readonly episodic: EpisodicLayer,
     private readonly procedural: ProceduralLayer,
-    private readonly workingMemory: WorkingMemoryLayer,
+    private readonly workingMemory: WorkingMemoryLayer
   ) {}
 
   async assemble(request: AssembleRequest): Promise<AssembledContext> {
-    const { projectId, sessionId, taskDescription, agentRole, maxTokens } = request;
+    const { projectId, sessionId, taskDescription, agentRole, maxTokens } =
+      request;
 
-    // Budget allocation: global ~14%, task-specific ~57%, session ~14%, tools ~14%
+    // Budget allocation
     const budgets = {
-      global: Math.floor(maxTokens * 0.14),
-      taskSpecific: Math.floor(maxTokens * 0.57),
-      session: Math.floor(maxTokens * 0.14),
-      tools: Math.floor(maxTokens * 0.14),
+      blueprint: Math.floor(maxTokens * 0.1),
+      semantic: Math.floor(maxTokens * 0.4),
+      knowledgeGraph: Math.floor(maxTokens * 0.15),
+      episodic: Math.floor(maxTokens * 0.1),
+      procedural: Math.floor(maxTokens * 0.05),
+      working: Math.floor(maxTokens * 0.1),
+      tools: Math.floor(maxTokens * 0.1),
     };
 
-    // 1. Global context: blueprint + project procedures
-    const [blueprintContent, procedures] = await Promise.all([
+    // Fetch all layers in parallel for maximum throughput
+    const [
+      blueprintContent,
+      procedures,
+      semanticResults,
+      graphResults,
+      recentDecisions,
+      taskRelatedDecisions,
+      workingMem,
+    ] = await Promise.all([
       this.loadBlueprint(projectId),
       this.procedural.list(projectId),
-    ]);
-    const globalContext = this.buildGlobalContext(blueprintContent, procedures, budgets.global);
-
-    // 2. Task-specific context: semantic search + knowledge graph
-    const [semanticResults, graphResults] = await Promise.all([
       this.semantic.search(projectId, taskDescription, 20),
       this.knowledgeGraph.query(projectId, taskDescription),
+      this.episodic.getRecent(projectId, 10),
+      this.episodic.recall(projectId, taskDescription, 5),
+      sessionId ? this.workingMemory.getAll(sessionId) : Promise.resolve({}),
     ]);
 
     // Also look up dependency graph for top relevant files
-    const topFiles = [...new Set(semanticResults.slice(0, 5).map((r) => r.filePath))];
-    const dependencyNodes = await Promise.all(
-      topFiles.map((fp) => this.knowledgeGraph.getDependents(projectId, fp)),
-    );
-    const allDependents = dependencyNodes.flat();
-
-    const taskContext = this.buildTaskContext(
-      semanticResults,
-      graphResults,
-      allDependents,
-      budgets.taskSpecific,
-    );
-
-    // 3. Session context: recent episodic memories + working memory
-    const [recentDecisions, workingMem] = await Promise.all([
-      this.episodic.getRecent(projectId, 5),
-      sessionId ? this.workingMemory.getAll(sessionId) : Promise.resolve({}),
+    const topFiles = [
+      ...new Set(semanticResults.slice(0, 5).map((r) => r.filePath)),
+    ];
+    const [dependencyNodes, dependentNodes] = await Promise.all([
+      Promise.all(
+        topFiles.map((fp) => this.knowledgeGraph.getDependencies(projectId, fp))
+      ),
+      Promise.all(
+        topFiles.map((fp) => this.knowledgeGraph.getDependents(projectId, fp))
+      ),
     ]);
-    const sessionContext = this.buildSessionContext(recentDecisions, workingMem, budgets.session);
+    const allDependencies = dependencyNodes.flat();
+    const allDependents = dependentNodes.flat();
+
+    // 1. Global context: blueprint + procedures
+    const globalContext = this.buildGlobalContext(
+      blueprintContent,
+      procedures,
+      budgets.blueprint,
+      budgets.procedural
+    );
+
+    // 2. Task-specific context: semantic search + knowledge graph
+    const semanticContext = this.buildSemanticContext(
+      semanticResults,
+      budgets.semantic
+    );
+    const graphContext = this.buildGraphContext(
+      graphResults,
+      allDependencies,
+      allDependents,
+      budgets.knowledgeGraph
+    );
+    const taskContext = `${semanticContext}\n\n${graphContext}`;
+
+    // 3. Session context: episodic memories + working memory
+    const episodicContext = this.buildEpisodicContext(
+      recentDecisions,
+      taskRelatedDecisions,
+      budgets.episodic
+    );
+    const workingContext = this.buildWorkingContext(
+      workingMem,
+      budgets.working
+    );
+    const sessionContext =
+      episodicContext + (workingContext ? `\n\n${workingContext}` : "");
 
     // 4. Tools context: agent role description
     const toolsContext = this.buildToolsContext(agentRole, budgets.tools);
+
+    // Track token usage per layer
+    const layerTokens = {
+      semantic: estimateTokens(semanticContext),
+      episodic: estimateTokens(episodicContext),
+      procedural: estimateTokens(globalContext), // procedures are in global
+      working: estimateTokens(workingContext),
+      knowledgeGraph: estimateTokens(graphContext),
+      blueprint: estimateTokens(globalContext),
+      tools: estimateTokens(toolsContext),
+    };
 
     const totalEstimate =
       estimateTokens(globalContext) +
@@ -101,8 +187,11 @@ export class ContextAssembler {
         totalTokensEstimate: totalEstimate,
         semanticHits: semanticResults.length,
         graphNodes: graphResults.nodes.length,
+        episodicMemories: recentDecisions.length,
+        procedures: procedures.length,
+        workingMemKeys: Object.keys(workingMem).length,
       },
-      "Context assembled",
+      "Context assembled from all 5 memory layers"
     );
 
     return {
@@ -110,6 +199,7 @@ export class ContextAssembler {
       taskSpecific: taskContext,
       session: sessionContext,
       tools: toolsContext,
+      layerTokens,
       totalTokensEstimate: totalEstimate,
     };
   }
@@ -119,10 +209,15 @@ export class ContextAssembler {
       const result = await db
         .select()
         .from(blueprints)
-        .where(and(eq(blueprints.projectId, projectId), eq(blueprints.isActive, true)))
+        .where(
+          and(
+            eq(blueprints.projectId, projectId),
+            eq(blueprints.isActive, true)
+          )
+        )
         .limit(1);
 
-      return result.length > 0 ? result[0]!.content : null;
+      return result.length > 0 ? (result[0]?.content ?? null) : null;
     } catch (err) {
       logger.warn({ projectId, err }, "Failed to load blueprint");
       return null;
@@ -132,107 +227,214 @@ export class ContextAssembler {
   private buildGlobalContext(
     blueprintContent: string | null,
     procedures: Procedure[],
-    budgetTokens: number,
+    blueprintBudget: number,
+    proceduralBudget: number
   ): string {
     const parts: string[] = [];
 
     if (blueprintContent) {
       parts.push("## Project Blueprint");
-      parts.push(blueprintContent);
+      parts.push(this.truncate(blueprintContent, blueprintBudget * 4));
       parts.push("");
     }
 
     if (procedures.length > 0) {
-      parts.push("## Project Procedures");
+      parts.push("## Learned Procedures");
+      const procParts: string[] = [];
       for (const proc of procedures) {
-        const entry = `- ${proc.name}: ${proc.steps.join(" -> ")}`;
+        const entry = `- **${proc.name}**: ${proc.steps.join(" -> ")}`;
+        procParts.push(entry);
+      }
+      parts.push(this.truncate(procParts.join("\n"), proceduralBudget * 4));
+    }
+
+    return parts.join("\n");
+  }
+
+  private buildSemanticContext(
+    semanticResults: SearchResult[],
+    budgetTokens: number
+  ): string {
+    const parts: string[] = ["## Relevant Code (Semantic Search)"];
+    let usedChars = 0;
+    const maxChars = budgetTokens * 4;
+
+    for (const result of semanticResults) {
+      const entry = `\n### ${result.filePath} (relevance: ${(result.score * 100).toFixed(0)}%)\n\`\`\`\n${result.content}\n\`\`\``;
+      if (usedChars + entry.length > maxChars) {
+        break;
+      }
+      parts.push(entry);
+      usedChars += entry.length;
+    }
+
+    return parts.join("\n");
+  }
+
+  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: complex but well-structured logic
+  private buildGraphContext(
+    graphResults: GraphQueryResult,
+    dependencies: GraphNode[],
+    dependents: GraphNode[],
+    budgetTokens: number
+  ): string {
+    const parts: string[] = [];
+    let usedChars = 0;
+    const maxChars = budgetTokens * 4;
+
+    if (graphResults.nodes.length > 0) {
+      parts.push("## Knowledge Graph: Related Components");
+      for (const node of graphResults.nodes.slice(0, 15)) {
+        const entry = `- ${node.name} (${node.filePath}) [${node.type}]`;
+        if (usedChars + entry.length > maxChars) {
+          break;
+        }
         parts.push(entry);
+        usedChars += entry.length;
       }
     }
 
-    return this.truncate(parts.join("\n"), budgetTokens * 4);
-  }
-
-  private buildTaskContext(
-    semanticResults: SearchResult[],
-    graphResults: GraphQueryResult,
-    dependents: Array<{ name: string; filePath: string }>,
-    budgetTokens: number,
-  ): string {
-    const parts: string[] = ["## Relevant Code"];
-
-    for (const result of semanticResults.slice(0, 10)) {
-      parts.push(
-        `\n### ${result.filePath} (relevance: ${(result.score * 100).toFixed(0)}%)`,
-      );
-      parts.push("```");
-      parts.push(result.content);
-      parts.push("```");
+    if (graphResults.edges.length > 0) {
+      parts.push("\n### Relationships");
+      for (const edge of graphResults.edges.slice(0, 15)) {
+        const entry = `- ${edge.source} --[${edge.type}]--> ${edge.target}`;
+        if (usedChars + entry.length > maxChars) {
+          break;
+        }
+        parts.push(entry);
+        usedChars += entry.length;
+      }
     }
 
-    if (graphResults.nodes.length > 0) {
-      parts.push("\n## Related Components");
-      for (const node of graphResults.nodes.slice(0, 10)) {
-        parts.push(`- ${node.name} (${node.filePath}) [${node.type}]`);
+    if (dependencies.length > 0) {
+      parts.push("\n### Dependencies (files these depend on)");
+      const seen = new Set<string>();
+      for (const dep of dependencies.slice(0, 10)) {
+        if (seen.has(dep.filePath)) {
+          continue;
+        }
+        seen.add(dep.filePath);
+        const entry = `- ${dep.name} (${dep.filePath})`;
+        if (usedChars + entry.length > maxChars) {
+          break;
+        }
+        parts.push(entry);
+        usedChars += entry.length;
       }
     }
 
     if (dependents.length > 0) {
-      parts.push("\n## Files That Depend on Relevant Code");
+      parts.push("\n### Dependents (files that depend on relevant code)");
       const seen = new Set<string>();
       for (const dep of dependents.slice(0, 10)) {
-        if (seen.has(dep.filePath)) continue;
+        if (seen.has(dep.filePath)) {
+          continue;
+        }
         seen.add(dep.filePath);
-        parts.push(`- ${dep.name} (${dep.filePath})`);
+        const entry = `- ${dep.name} (${dep.filePath})`;
+        if (usedChars + entry.length > maxChars) {
+          break;
+        }
+        parts.push(entry);
+        usedChars += entry.length;
       }
     }
 
-    return this.truncate(parts.join("\n"), budgetTokens * 4);
+    return parts.join("\n");
   }
 
-  private buildSessionContext(
-    decisions: EpisodicMemory[],
-    workingMem: Record<string, unknown>,
-    budgetTokens: number,
+  private buildEpisodicContext(
+    recentDecisions: EpisodicMemory[],
+    taskRelated: EpisodicMemory[],
+    budgetTokens: number
   ): string {
     const parts: string[] = [];
+    const maxChars = budgetTokens * 4;
 
-    if (decisions.length > 0) {
-      parts.push("## Recent Decisions");
-      for (const d of decisions) {
-        parts.push(`- Decision: ${d.decision}`);
-        if (d.reasoning) parts.push(`  Reasoning: ${d.reasoning}`);
-        if (d.outcome) parts.push(`  Outcome: ${d.outcome}`);
+    // Merge and deduplicate
+    const seenIds = new Set<string>();
+    const allDecisions: EpisodicMemory[] = [];
+
+    // Task-related first (higher relevance)
+    for (const d of taskRelated) {
+      if (!seenIds.has(d.id)) {
+        seenIds.add(d.id);
+        allDecisions.push(d);
+      }
+    }
+    // Then recent
+    for (const d of recentDecisions) {
+      if (!seenIds.has(d.id)) {
+        seenIds.add(d.id);
+        allDecisions.push(d);
       }
     }
 
+    if (allDecisions.length > 0) {
+      parts.push("## Past Decisions & Outcomes (Episodic Memory)");
+      let usedChars = 0;
+      for (const d of allDecisions) {
+        const entry = [
+          `- **[${d.eventType}]** ${d.decision}`,
+          d.reasoning ? `  Reasoning: ${d.reasoning}` : null,
+          d.outcome ? `  Outcome: ${d.outcome}` : "  Outcome: (pending)",
+        ]
+          .filter(Boolean)
+          .join("\n");
+        if (usedChars + entry.length > maxChars) {
+          break;
+        }
+        parts.push(entry);
+        usedChars += entry.length;
+      }
+    }
+
+    return parts.join("\n");
+  }
+
+  private buildWorkingContext(
+    workingMem: Record<string, unknown>,
+    budgetTokens: number
+  ): string {
     const memKeys = Object.keys(workingMem);
-    if (memKeys.length > 0) {
-      parts.push("\n## Current Session State");
-      for (const key of memKeys) {
-        const val = workingMem[key];
-        const display = typeof val === "string" ? val : JSON.stringify(val);
-        parts.push(`- ${key}: ${display}`);
-      }
+    if (memKeys.length === 0) {
+      return "";
     }
 
-    return this.truncate(parts.join("\n"), budgetTokens * 4);
+    const parts: string[] = ["## Current Session State (Working Memory)"];
+    let usedChars = 0;
+    const maxChars = budgetTokens * 4;
+
+    for (const key of memKeys) {
+      const val = workingMem[key];
+      const display = typeof val === "string" ? val : JSON.stringify(val);
+      const entry = `- **${key}**: ${display}`;
+      if (usedChars + entry.length > maxChars) {
+        break;
+      }
+      parts.push(entry);
+      usedChars += entry.length;
+    }
+
+    return parts.join("\n");
   }
 
   private buildToolsContext(agentRole: string, budgetTokens: number): string {
     const roleDescriptions: Record<string, string> = {
       architect:
-        "You are the Architect agent. Focus on system design, file structure, and ensuring architectural consistency.",
+        "You are the Architect agent. Focus on system design, file structure, and ensuring architectural consistency. You have access to the knowledge graph for dependency analysis.",
       coder:
-        "You are the Coder agent. Write clean, tested, production-quality code following project conventions.",
+        "You are the Coder agent. Write clean, tested, production-quality code following project conventions. Reference the semantic search results for code patterns.",
       reviewer:
-        "You are the Code Reviewer agent. Look for bugs, security issues, performance problems, and convention violations.",
+        "You are the Code Reviewer agent. Look for bugs, security issues, performance problems, and convention violations. Use episodic memory to avoid repeating past mistakes.",
       tester:
-        "You are the Tester agent. Write comprehensive tests covering edge cases and error scenarios.",
+        "You are the Tester agent. Write comprehensive tests covering edge cases and error scenarios. Use procedural memory for testing patterns.",
       devops:
-        "You are the DevOps agent. Handle deployment, CI/CD, infrastructure, and monitoring configuration.",
+        "You are the DevOps agent. Handle deployment, CI/CD, infrastructure, and monitoring configuration. Reference the blueprint for infrastructure conventions.",
       planner:
-        "You are the Planner agent. Break down complex tasks into actionable steps and coordinate with other agents.",
+        "You are the Planner agent. Break down complex tasks into actionable steps and coordinate with other agents. Use episodic memory to inform planning decisions.",
+      orchestrator:
+        "You are the Orchestrator agent. Coordinate multi-agent workflows, delegate tasks, and ensure the overall plan is executed correctly.",
     };
 
     const description =
@@ -241,7 +443,9 @@ export class ContextAssembler {
   }
 
   private truncate(text: string, maxChars: number): string {
-    if (text.length <= maxChars) return text;
-    return text.slice(0, maxChars - 3) + "...";
+    if (text.length <= maxChars) {
+      return text;
+    }
+    return `${text.slice(0, maxChars - 3)}...`;
   }
 }

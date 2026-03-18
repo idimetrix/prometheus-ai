@@ -1,14 +1,19 @@
-import * as fs from "node:fs/promises";
-import * as os from "node:os";
+import { freemem, loadavg, totalmem } from "node:os";
 import { createLogger } from "@prometheus/logger";
 import type { ContainerManager } from "./container";
 import type { SandboxPool } from "./pool";
 
 const logger = createLogger("sandbox-manager:health");
 
+const WHITESPACE_RE = /\s+/;
+
 export interface HealthStatus {
-  status: "healthy" | "degraded" | "unhealthy";
-  uptime: number;
+  checks: Record<string, boolean>;
+  docker: {
+    available: boolean;
+    activeContainers: number;
+  };
+  mode: "docker" | "dev";
   pool: {
     total: number;
     active: number;
@@ -16,10 +21,7 @@ export interface HealthStatus {
     warmTarget: number;
     maxCapacity: number;
   };
-  docker: {
-    available: boolean;
-    activeContainers: number;
-  };
+  status: "healthy" | "degraded" | "unhealthy";
   system: {
     memoryUsedMb: number;
     memoryTotalMb: number;
@@ -29,6 +31,8 @@ export interface HealthStatus {
     diskFreeMb: number | null;
   };
   timestamp: string;
+  uptime: number;
+  version: string;
 }
 
 const startTime = Date.now();
@@ -40,6 +44,7 @@ export function createHealthChecker(
   containerManager: ContainerManager,
   pool: SandboxPool
 ) {
+  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: complex but well-structured logic
   return async (): Promise<HealthStatus> => {
     const poolStats = pool.getStats();
 
@@ -52,8 +57,8 @@ export function createHealthChecker(
     }
 
     // System memory info
-    const totalMem = os.totalmem();
-    const freeMem = os.freemem();
+    const totalMem = totalmem();
+    const freeMem = freemem();
     const usedMem = totalMem - freeMem;
     const memoryUsagePercent = Math.round((usedMem / totalMem) * 100);
 
@@ -71,7 +76,10 @@ export function createHealthChecker(
     // Determine overall health status
     let status: "healthy" | "degraded" | "unhealthy" = "healthy";
 
-    if (memoryUsagePercent > 95 || (diskUsagePercent !== null && diskUsagePercent > 95)) {
+    if (
+      memoryUsagePercent > 95 ||
+      (diskUsagePercent !== null && diskUsagePercent > 95)
+    ) {
       status = "unhealthy";
     } else if (
       memoryUsagePercent > 85 ||
@@ -85,8 +93,24 @@ export function createHealthChecker(
       status = status === "unhealthy" ? "unhealthy" : "degraded";
     }
 
+    // Check Redis connectivity
+    let redisOk = false;
+    try {
+      const { redis } = await import("@prometheus/queue");
+      const pong = await redis.ping();
+      redisOk = pong === "PONG";
+    } catch {
+      redisOk = false;
+    }
+
     return {
       status,
+      checks: {
+        docker: dockerAvailable,
+        redis: redisOk,
+      },
+      version: "0.1.0",
+      mode: containerManager.getMode(),
       uptime: Math.floor((Date.now() - startTime) / 1000),
       pool: {
         total: poolStats.total,
@@ -103,7 +127,7 @@ export function createHealthChecker(
         memoryUsedMb: Math.round(usedMem / 1024 / 1024),
         memoryTotalMb: Math.round(totalMem / 1024 / 1024),
         memoryUsagePercent,
-        loadAverage: os.loadavg().map((v) => Math.round(v * 100) / 100),
+        loadAverage: loadavg().map((v) => Math.round(v * 100) / 100),
         diskUsagePercent,
         diskFreeMb,
       },
@@ -115,7 +139,10 @@ export function createHealthChecker(
 /**
  * Get disk usage for the partition containing the sandbox base directory.
  */
-async function getDiskUsage(): Promise<{ usagePercent: number; freeMb: number }> {
+async function getDiskUsage(): Promise<{
+  usagePercent: number;
+  freeMb: number;
+}> {
   const { spawn } = await import("node:child_process");
 
   return new Promise((resolve, reject) => {
@@ -140,16 +167,17 @@ async function getDiskUsage(): Promise<{ usagePercent: number; freeMb: number }>
       }
 
       // Parse df output: Filesystem 1024-blocks Used Available Capacity Mounted
-      const parts = lines[1]!.split(/\s+/);
-      if (parts.length < 5) {
+      const parts = lines[1]?.split(WHITESPACE_RE);
+      if (!parts || parts.length < 5) {
         reject(new Error("Could not parse df output"));
         return;
       }
 
-      const usedKb = parseInt(parts[2]!, 10);
-      const availKb = parseInt(parts[3]!, 10);
+      const usedKb = Number.parseInt(parts[2] as string, 10);
+      const availKb = Number.parseInt(parts[3] as string, 10);
       const totalKb = usedKb + availKb;
-      const usagePercent = totalKb > 0 ? Math.round((usedKb / totalKb) * 100) : 0;
+      const usagePercent =
+        totalKb > 0 ? Math.round((usedKb / totalKb) * 100) : 0;
       const freeMb = Math.round(availKb / 1024);
 
       resolve({ usagePercent, freeMb });

@@ -12,9 +12,9 @@ vi.mock("@prometheus/logger", () => ({
 const mockPublishSessionEvent = vi.fn().mockResolvedValue(undefined);
 
 vi.mock("@prometheus/queue", () => ({
-  EventPublisher: vi.fn().mockImplementation(() => ({
-    publishSessionEvent: mockPublishSessionEvent,
-  })),
+  EventPublisher: class {
+    publishSessionEvent = mockPublishSessionEvent;
+  },
   QueueEvents: {
     AGENT_STATUS: "agent:status",
   },
@@ -43,24 +43,24 @@ const mockExecuteTask = vi.fn().mockResolvedValue({
 });
 
 vi.mock("../agent-loop", () => ({
-  AgentLoop: vi.fn().mockImplementation(() => ({
-    executeTask: mockExecuteTask,
-    pause: mockPause,
-    resume: mockResume,
-    stop: mockStop,
-    getCreditsConsumed: mockGetCreditsConsumed,
-  })),
+  AgentLoop: class {
+    executeTask = mockExecuteTask;
+    pause = mockPause;
+    resume = mockResume;
+    stop = mockStop;
+    getCreditsConsumed = mockGetCreditsConsumed;
+  },
 }));
 
 // Mock ParallelScheduler
 vi.mock("../parallel/scheduler", () => ({
-  ParallelScheduler: vi.fn().mockImplementation(() => ({
-    schedule: vi.fn().mockImplementation((tasks) => ({
+  ParallelScheduler: class {
+    schedule = vi.fn().mockImplementation((tasks) => ({
       waves: [tasks], // Single wave with all tasks
       criticalPath: tasks.map((t: any) => t.id),
       estimatedDuration: "5m",
-    })),
-  })),
+    }));
+  },
 }));
 
 import { FleetManager } from "../fleet-manager";

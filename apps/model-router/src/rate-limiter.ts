@@ -9,24 +9,40 @@ interface ProviderLimits {
 }
 
 interface RateLimitStatus {
-  requests: number;
   maxRequests: number;
+  maxTokens: number;
   remaining: number;
+  requests: number;
   resetMs: number;
   tokens: number;
-  maxTokens: number;
 }
 
 const PROVIDER_LIMITS: Record<string, ProviderLimits> = {
-  ollama: { maxRequests: Infinity, maxTokens: Infinity, windowMs: 60_000 },
+  ollama: {
+    maxRequests: Number.POSITIVE_INFINITY,
+    maxTokens: Number.POSITIVE_INFINITY,
+    windowMs: 60_000,
+  },
   cerebras: { maxRequests: 30, maxTokens: 1_000_000, windowMs: 60_000 },
   groq: { maxRequests: 30, maxTokens: 131_072, windowMs: 60_000 },
   gemini: { maxRequests: 15, maxTokens: 4_000_000, windowMs: 60_000 },
   openrouter: { maxRequests: 20, maxTokens: 200_000, windowMs: 60_000 },
-  mistral: { maxRequests: 2, maxTokens: Infinity, windowMs: 60_000 },
-  deepseek: { maxRequests: 60, maxTokens: Infinity, windowMs: 60_000 },
+  mistral: {
+    maxRequests: 2,
+    maxTokens: Number.POSITIVE_INFINITY,
+    windowMs: 60_000,
+  },
+  deepseek: {
+    maxRequests: 60,
+    maxTokens: Number.POSITIVE_INFINITY,
+    windowMs: 60_000,
+  },
   anthropic: { maxRequests: 50, maxTokens: 80_000, windowMs: 60_000 },
-  openai: { maxRequests: 60, maxTokens: Infinity, windowMs: 60_000 },
+  openai: {
+    maxRequests: 60,
+    maxTokens: Number.POSITIVE_INFINITY,
+    windowMs: 60_000,
+  },
 };
 
 /**
@@ -54,10 +70,14 @@ export class RateLimitManager {
    */
   async canMakeRequest(provider: string, modelKey: string): Promise<boolean> {
     const limits = this.limits[provider];
-    if (!limits) return false;
+    if (!limits) {
+      return false;
+    }
 
     // Ollama is local, unlimited
-    if (limits.maxRequests === Infinity) return true;
+    if (limits.maxRequests === Number.POSITIVE_INFINITY) {
+      return true;
+    }
 
     const key = this.requestKey(provider);
     const now = Date.now();
@@ -72,12 +92,15 @@ export class RateLimitManager {
     const count = (results?.[1]?.[1] as number) ?? 0;
 
     if (count >= limits.maxRequests) {
-      this.logger.warn({ provider, modelKey, count, max: limits.maxRequests }, "Rate limit reached");
+      this.logger.warn(
+        { provider, modelKey, count, max: limits.maxRequests },
+        "Rate limit reached"
+      );
       return false;
     }
 
     // Also check token budget if finite
-    if (limits.maxTokens !== Infinity) {
+    if (limits.maxTokens !== Number.POSITIVE_INFINITY) {
       const tokenKey = this.tokenKey(provider);
       const tokenPipeline = this.redis.pipeline();
       tokenPipeline.zremrangebyscore(tokenKey, 0, windowStart);
@@ -92,7 +115,10 @@ export class RateLimitManager {
       }
 
       if (totalTokens >= limits.maxTokens) {
-        this.logger.warn({ provider, totalTokens, max: limits.maxTokens }, "Token rate limit reached");
+        this.logger.warn(
+          { provider, totalTokens, max: limits.maxTokens },
+          "Token rate limit reached"
+        );
         return false;
       }
     }
@@ -104,9 +130,15 @@ export class RateLimitManager {
    * Record a request in the sliding window. Called after successfully
    * dispatching a request to a provider.
    */
-  async recordRequest(provider: string, modelKey: string, tokens: number = 0): Promise<void> {
+  async recordRequest(
+    provider: string,
+    modelKey: string,
+    tokens = 0
+  ): Promise<void> {
     const limits = this.limits[provider];
-    if (!limits || limits.maxRequests === Infinity) return;
+    if (!limits || limits.maxRequests === Number.POSITIVE_INFINITY) {
+      return;
+    }
 
     const now = Date.now();
     const uniqueId = `${now}:${Math.random().toString(36).slice(2, 8)}`;
@@ -118,9 +150,13 @@ export class RateLimitManager {
     pipeline.expire(requestKey, Math.ceil(limits.windowMs / 1000) + 5);
 
     // Record token usage if applicable
-    if (tokens > 0 && limits.maxTokens !== Infinity) {
+    if (tokens > 0 && limits.maxTokens !== Number.POSITIVE_INFINITY) {
       const tokenKey = this.tokenKey(provider);
-      const tokenMember = JSON.stringify({ id: uniqueId, tokens, model: modelKey });
+      const tokenMember = JSON.stringify({
+        id: uniqueId,
+        tokens,
+        model: modelKey,
+      });
       pipeline.zadd(tokenKey, now, tokenMember);
       pipeline.expire(tokenKey, Math.ceil(limits.windowMs / 1000) + 5);
     }
@@ -134,17 +170,30 @@ export class RateLimitManager {
    * Record token usage after receiving a response. Updates the token
    * tracking for the provider's sliding window.
    */
-  async recordTokenUsage(provider: string, modelKey: string, inputTokens: number, outputTokens: number): Promise<void> {
+  async recordTokenUsage(
+    provider: string,
+    modelKey: string,
+    inputTokens: number,
+    outputTokens: number
+  ): Promise<void> {
     const totalTokens = inputTokens + outputTokens;
-    if (totalTokens <= 0) return;
+    if (totalTokens <= 0) {
+      return;
+    }
 
     const limits = this.limits[provider];
-    if (!limits || limits.maxTokens === Infinity) return;
+    if (!limits || limits.maxTokens === Number.POSITIVE_INFINITY) {
+      return;
+    }
 
     const now = Date.now();
     const tokenKey = this.tokenKey(provider);
     const uniqueId = `${now}:usage:${Math.random().toString(36).slice(2, 8)}`;
-    const member = JSON.stringify({ id: uniqueId, tokens: totalTokens, model: modelKey });
+    const member = JSON.stringify({
+      id: uniqueId,
+      tokens: totalTokens,
+      model: modelKey,
+    });
 
     await this.redis.zadd(tokenKey, now, member);
   }
@@ -157,7 +206,7 @@ export class RateLimitManager {
     const now = Date.now();
 
     for (const [provider, limits] of Object.entries(this.limits)) {
-      if (limits.maxRequests === Infinity) {
+      if (limits.maxRequests === Number.POSITIVE_INFINITY) {
         status[provider] = {
           requests: 0,
           maxRequests: -1,
@@ -181,12 +230,13 @@ export class RateLimitManager {
 
       const count = (results?.[1]?.[1] as number) ?? 0;
       const oldestEntry = (results?.[2]?.[1] as string[]) ?? [];
-      const oldestTimestamp = oldestEntry.length >= 2 ? Number(oldestEntry[1]) : now;
-      const resetMs = Math.max(0, (oldestTimestamp + limits.windowMs) - now);
+      const oldestTimestamp =
+        oldestEntry.length >= 2 ? Number(oldestEntry[1]) : now;
+      const resetMs = Math.max(0, oldestTimestamp + limits.windowMs - now);
 
       // Get token usage
       let tokenCount = 0;
-      if (limits.maxTokens !== Infinity) {
+      if (limits.maxTokens !== Number.POSITIVE_INFINITY) {
         const tokenKey = this.tokenKey(provider);
         const tokenPipeline = this.redis.pipeline();
         tokenPipeline.zremrangebyscore(tokenKey, 0, windowStart);
@@ -209,7 +259,8 @@ export class RateLimitManager {
         remaining: Math.max(0, limits.maxRequests - count),
         resetMs,
         tokens: tokenCount,
-        maxTokens: limits.maxTokens === Infinity ? -1 : limits.maxTokens,
+        maxTokens:
+          limits.maxTokens === Number.POSITIVE_INFINITY ? -1 : limits.maxTokens,
       };
     }
 
@@ -220,7 +271,11 @@ export class RateLimitManager {
    * Wait until rate limit capacity is available for the given provider.
    * Returns the estimated wait time in ms, or 0 if capacity is available.
    */
-  async waitForCapacity(provider: string, modelKey: string, timeoutMs: number = 30_000): Promise<number> {
+  async waitForCapacity(
+    provider: string,
+    modelKey: string,
+    timeoutMs = 30_000
+  ): Promise<number> {
     const start = Date.now();
 
     while (Date.now() - start < timeoutMs) {

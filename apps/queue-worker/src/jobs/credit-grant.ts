@@ -48,12 +48,15 @@ export async function processCreditGrant(
   await db.insert(creditTransactions).values({
     id: transactionId,
     orgId,
-    type:
-      reason === "refund"
-        ? "refund"
-        : reason === "bonus"
-          ? "bonus"
-          : "subscription_grant",
+    type: (() => {
+      if (reason === "refund") {
+        return "refund" as const;
+      }
+      if (reason === "bonus") {
+        return "bonus" as const;
+      }
+      return "subscription_grant" as const;
+    })(),
     amount,
     balanceAfter: newBalance,
     description: buildDescription(

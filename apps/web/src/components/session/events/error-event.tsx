@@ -18,6 +18,7 @@ export function ErrorEvent({ event, onRetry }: ErrorEventProps) {
       <div className="mb-2 flex items-center gap-2">
         <div className="flex h-5 w-5 items-center justify-center rounded-full bg-red-500/20">
           <svg
+            aria-hidden="true"
             className="h-3 w-3 text-red-400"
             fill="none"
             stroke="currentColor"
@@ -60,6 +61,7 @@ export function ErrorEvent({ event, onRetry }: ErrorEventProps) {
         <button
           className="mt-2 rounded-lg border border-red-800/50 bg-red-950/50 px-3 py-1.5 font-medium text-red-400 text-xs transition-colors hover:bg-red-900/50"
           onClick={() => onRetry(event.id)}
+          type="button"
         >
           Retry
         </button>

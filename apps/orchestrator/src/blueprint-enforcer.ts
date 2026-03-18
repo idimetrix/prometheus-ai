@@ -13,6 +13,19 @@
  */
 
 import crypto from "node:crypto";
+
+// ─── Top-level regex constants ──────────────────────────────────────────
+const RAW_SQL_QUERY_RE =
+  /\bquery\s*\(\s*['"`](?:SELECT|INSERT|UPDATE|DELETE)\b/i;
+const REDUX_IMPORT_RE = /from\s+['"]redux['"]/;
+const NPM_YARN_INSTALL_RE = /npm install|yarn add/;
+const CONSOLE_LOG_RE = /console\.(log|warn|error|info)\s*\(/;
+const SNAKE_CASE_VAR_RE = /(?:const|let|var)\s+([a-z]+_[a-z_]+)/;
+const UUID_OR_RANDOM_RE = /uuid|crypto\.randomUUID|Math\.random/;
+const DB_SELECT_RE = /db\s*\.\s*select\s*\(\s*\)/;
+const NPM_YARN_COMMAND_RE = /^(npm|yarn)\s/;
+const TECH_STACK_SECTION_RE = /## Tech Stack.*?\n([\s\S]*?)(?=\n##|$)/;
+
 import { createLogger } from "@prometheus/logger";
 
 const logger = createLogger("orchestrator:blueprint-enforcer");
@@ -321,7 +334,7 @@ export class BlueprintEnforcer {
     // Check for ORM violations
     if (
       this.blueprint.techStack.ORM?.includes("Drizzle") &&
-      /\bquery\s*\(\s*['"`](?:SELECT|INSERT|UPDATE|DELETE)\b/i.test(content)
+      RAW_SQL_QUERY_RE.test(content)
     ) {
       violations.push({
         rule: "Tech Stack: ORM",
@@ -335,7 +348,7 @@ export class BlueprintEnforcer {
     // Check for state management violations
     if (
       this.blueprint.techStack.State?.includes("Zustand") &&
-      /from\s+['"]redux['"]/.test(content)
+      REDUX_IMPORT_RE.test(content)
     ) {
       violations.push({
         rule: "Tech Stack: State",
@@ -349,7 +362,7 @@ export class BlueprintEnforcer {
     // Check for package manager violations
     if (
       this.blueprint.techStack["Package Manager"]?.includes("pnpm") &&
-      /npm install|yarn add/.test(content)
+      NPM_YARN_INSTALL_RE.test(content)
     ) {
       violations.push({
         rule: "Tech Stack: Package Manager",
@@ -382,7 +395,7 @@ export class BlueprintEnforcer {
       if (
         (convLower.includes("use logger") ||
           convLower.includes("no console.log")) &&
-        /console\.(log|warn|error|info)\s*\(/.test(content)
+        CONSOLE_LOG_RE.test(content)
       ) {
         violations.push({
           rule: `Convention: ${conv}`,
@@ -398,7 +411,7 @@ export class BlueprintEnforcer {
       if (
         convLower.includes("camelcase") &&
         isCodeFile &&
-        /(?:const|let|var)\s+([a-z]+_[a-z_]+)/.test(content)
+        SNAKE_CASE_VAR_RE.test(content)
       ) {
         violations.push({
           rule: `Convention: ${conv}`,
@@ -413,7 +426,7 @@ export class BlueprintEnforcer {
       if (
         convLower.includes("generateid") &&
         isCodeFile &&
-        /uuid|crypto\.randomUUID|Math\.random/.test(content) &&
+        UUID_OR_RANDOM_RE.test(content) &&
         !content.includes("generateId")
       ) {
         violations.push({
@@ -447,22 +460,18 @@ export class BlueprintEnforcer {
         (ruleLower.includes("rls") || ruleLower.includes("org_id")) &&
         filePath &&
         !filePath.includes("schema") &&
-        !filePath.includes("migration")
+        !filePath.includes("migration") &&
+        DB_SELECT_RE.test(content) &&
+        !content.includes("orgId") &&
+        !content.includes("org_id")
       ) {
-        // Check for queries without org_id filter
-        if (
-          /db\s*\.\s*select\s*\(\s*\)/.test(content) &&
-          !content.includes("orgId") &&
-          !content.includes("org_id")
-        ) {
-          violations.push({
-            rule: `Architecture: ${rule}`,
-            description: "Database query may be missing org_id tenant filter",
-            severity: "warning",
-            file: filePath,
-            suggestion: "Ensure all queries include org_id for RLS compliance",
-          });
-        }
+        violations.push({
+          rule: `Architecture: ${rule}`,
+          description: "Database query may be missing org_id tenant filter",
+          severity: "warning",
+          file: filePath,
+          suggestion: "Ensure all queries include org_id for RLS compliance",
+        });
       }
     }
 
@@ -478,14 +487,14 @@ export class BlueprintEnforcer {
     // Check package manager
     if (
       this.blueprint.techStack["Package Manager"]?.includes("pnpm") &&
-      /^(npm|yarn)\s/.test(command)
+      NPM_YARN_COMMAND_RE.test(command)
     ) {
       violations.push({
         rule: "Tech Stack: Package Manager",
         description:
           "Command uses wrong package manager; use pnpm per blueprint",
         severity: "warning",
-        suggestion: command.replace(/^(npm|yarn)/, "pnpm"),
+        suggestion: command.replace(NPM_YARN_COMMAND_RE, "pnpm "),
       });
     }
 
@@ -496,7 +505,7 @@ export class BlueprintEnforcer {
 
   private parseTechStack(content: string): Record<string, string> {
     const techStack: Record<string, string> = {};
-    const match = content.match(/## Tech Stack.*?\n([\s\S]*?)(?=\n##|$)/);
+    const match = content.match(TECH_STACK_SECTION_RE);
     if (match?.[1]) {
       const lines = match[1].split("\n").filter((l) => l.startsWith("- "));
       for (const line of lines) {

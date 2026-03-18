@@ -1,17 +1,24 @@
+import {
+  agents,
+  creditBalances,
+  creditTransactions,
+  db,
+  modelUsage,
+  sessions,
+  tasks,
+} from "@prometheus/db";
 import { createLogger } from "@prometheus/logger";
+import type { AgentTaskData } from "@prometheus/queue";
 import { EventPublisher } from "@prometheus/queue";
-import { db } from "@prometheus/db";
-import { tasks, agents, sessions, creditBalances, creditTransactions, modelUsage } from "@prometheus/db";
 import { generateId } from "@prometheus/utils";
 import { eq, sql } from "drizzle-orm";
-import type { AgentTaskData } from "@prometheus/queue";
 
 interface ProcessResult {
-  success: boolean;
-  output: string;
-  filesChanged: string[];
-  tokensUsed: { input: number; output: number };
   creditsConsumed: number;
+  filesChanged: string[];
+  output: string;
+  success: boolean;
+  tokensUsed: { input: number; output: number };
 }
 
 export class TaskProcessor {
@@ -19,12 +26,22 @@ export class TaskProcessor {
   private readonly publisher = new EventPublisher();
 
   async process(taskData: AgentTaskData): Promise<ProcessResult> {
-    const { taskId, sessionId, projectId, orgId, userId, title, mode, agentRole } = taskData;
+    const {
+      taskId,
+      sessionId,
+      projectId,
+      orgId,
+      userId,
+      title,
+      mode,
+      agentRole,
+    } = taskData;
 
     this.logger.info({ taskId, sessionId, mode }, "Processing task: %s", title);
 
     // Update task status to running
-    await db.update(tasks)
+    await db
+      .update(tasks)
       .set({ status: "running", startedAt: new Date() })
       .where(eq(tasks.id, taskId));
 
@@ -47,7 +64,8 @@ export class TaskProcessor {
       });
 
       // Call orchestrator service to process the task
-      const orchestratorUrl = process.env.ORCHESTRATOR_URL ?? "http://localhost:4002";
+      const orchestratorUrl =
+        process.env.ORCHESTRATOR_URL ?? "http://localhost:4002";
       let result: ProcessResult;
 
       try {
@@ -66,22 +84,26 @@ export class TaskProcessor {
             agentRole,
             agentId,
           }),
-          signal: AbortSignal.timeout(3600000), // 1 hour timeout
+          signal: AbortSignal.timeout(3_600_000), // 1 hour timeout
         });
 
         if (response.ok) {
-          result = await response.json() as ProcessResult;
+          result = (await response.json()) as ProcessResult;
         } else {
           // Fallback: basic processing if orchestrator is unavailable
           result = await this.fallbackProcess(taskData, agentId);
         }
-      } catch (fetchError) {
-        this.logger.warn({ taskId }, "Orchestrator unavailable, using fallback processing");
+      } catch (_fetchError) {
+        this.logger.warn(
+          { taskId },
+          "Orchestrator unavailable, using fallback processing"
+        );
         result = await this.fallbackProcess(taskData, agentId);
       }
 
       // Update agent status
-      await db.update(agents)
+      await db
+        .update(agents)
         .set({
           status: "idle",
           tokensIn: result.tokensUsed.input,
@@ -91,7 +113,8 @@ export class TaskProcessor {
         .where(eq(agents.id, agentId));
 
       // Update task status to completed
-      await db.update(tasks)
+      await db
+        .update(tasks)
         .set({
           status: "completed",
           completedAt: new Date(),
@@ -138,11 +161,16 @@ export class TaskProcessor {
 
       return result;
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      this.logger.error({ taskId, error: errorMessage }, "Task processing failed");
+      const errorMessage =
+        error instanceof Error ? error.message : String(error);
+      this.logger.error(
+        { taskId, error: errorMessage },
+        "Task processing failed"
+      );
 
       // Update task status to failed
-      await db.update(tasks)
+      await db
+        .update(tasks)
         .set({ status: "failed" })
         .where(eq(tasks.id, taskId));
 
@@ -156,7 +184,10 @@ export class TaskProcessor {
     }
   }
 
-  private async fallbackProcess(taskData: AgentTaskData, agentId: string): Promise<ProcessResult> {
+  private async fallbackProcess(
+    taskData: AgentTaskData,
+    _agentId: string
+  ): Promise<ProcessResult> {
     // Basic processing when orchestrator is not available
     // Publishes thinking/progress events for the UI
     await this.publisher.publishSessionEvent(taskData.sessionId, {
@@ -180,13 +211,21 @@ export class TaskProcessor {
       output: `Task "${taskData.title}" processed (orchestrator fallback mode)`,
       filesChanged: [],
       tokensUsed: { input: 0, output: 0 },
-      creditsConsumed: taskData.creditsReserved > 0 ? Math.min(taskData.creditsReserved, 2) : 2,
+      creditsConsumed:
+        taskData.creditsReserved > 0
+          ? Math.min(taskData.creditsReserved, 2)
+          : 2,
     };
   }
 
-  private async consumeCredits(orgId: string, taskId: string, amount: number): Promise<void> {
+  private async consumeCredits(
+    orgId: string,
+    taskId: string,
+    amount: number
+  ): Promise<void> {
     try {
-      await db.update(creditBalances)
+      await db
+        .update(creditBalances)
         .set({
           balance: sql`GREATEST(${creditBalances.balance} - ${amount}, 0)`,
           updatedAt: new Date(),
@@ -218,12 +257,16 @@ export class TaskProcessor {
     });
 
     const allDone = pendingTasks.every(
-      (t) => t.status === "completed" || t.status === "failed" || t.status === "cancelled"
+      (t) =>
+        t.status === "completed" ||
+        t.status === "failed" ||
+        t.status === "cancelled"
     );
 
     if (allDone && pendingTasks.length > 0) {
       const anyFailed = pendingTasks.some((t) => t.status === "failed");
-      await db.update(sessions)
+      await db
+        .update(sessions)
         .set({
           status: anyFailed ? "failed" : "completed",
           endedAt: new Date(),

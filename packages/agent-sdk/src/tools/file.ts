@@ -1,64 +1,150 @@
-import type { AgentToolDefinition, ToolExecutionContext, ToolResult } from "./types";
+import { z } from "zod";
 import { execInSandbox } from "./sandbox";
+import type { AgentToolDefinition } from "./types";
+
+// ---------------------------------------------------------------------------
+// Zod Schemas
+// ---------------------------------------------------------------------------
+
+export const fileReadSchema = z
+  .object({
+    path: z.string().describe("File path relative to project root"),
+    startLine: z
+      .number()
+      .int()
+      .positive()
+      .optional()
+      .describe("Start line number (1-indexed)"),
+    endLine: z
+      .number()
+      .int()
+      .positive()
+      .optional()
+      .describe("End line number (1-indexed)"),
+  })
+  .strict();
+
+export const fileWriteSchema = z
+  .object({
+    path: z.string().describe("File path relative to project root"),
+    content: z.string().describe("Content to write to the file"),
+  })
+  .strict();
+
+export const fileEditSchema = z
+  .object({
+    path: z.string().describe("File path relative to project root"),
+    oldString: z.string().describe("Exact string to find and replace"),
+    newString: z.string().describe("Replacement string"),
+  })
+  .strict();
+
+export const fileDeleteSchema = z
+  .object({
+    path: z.string().describe("File path relative to project root"),
+  })
+  .strict();
+
+export const fileListSchema = z
+  .object({
+    path: z.string().describe("Directory path relative to project root"),
+    pattern: z
+      .string()
+      .optional()
+      .describe("Glob pattern to filter files (e.g., '*.ts')"),
+  })
+  .strict();
+
+// ---------------------------------------------------------------------------
+// Helper
+// ---------------------------------------------------------------------------
+
+function resolveProjectPath(workDir: string, relativePath: string): string {
+  if (relativePath.startsWith("/")) {
+    return relativePath;
+  }
+  return `${workDir}/${relativePath}`;
+}
+
+// ---------------------------------------------------------------------------
+// Tool Definitions
+// ---------------------------------------------------------------------------
 
 export const fileTools: AgentToolDefinition[] = [
   {
     name: "file_read",
-    description: "Read the contents of a file at the given path. Optionally specify a line range to read a subset.",
+    description:
+      "Read the contents of a file at the given path. Optionally specify a line range to read a subset.",
     inputSchema: {
       type: "object",
       properties: {
-        path: { type: "string", description: "File path relative to project root" },
-        startLine: { type: "number", description: "Start line number (1-indexed, optional)" },
-        endLine: { type: "number", description: "End line number (1-indexed, optional)" },
+        path: {
+          type: "string",
+          description: "File path relative to project root",
+        },
+        startLine: {
+          type: "number",
+          description: "Start line number (1-indexed, optional)",
+        },
+        endLine: {
+          type: "number",
+          description: "End line number (1-indexed, optional)",
+        },
       },
       required: ["path"],
     },
+    zodSchema: fileReadSchema,
     permissionLevel: "read",
     creditCost: 1,
     execute: async (input, ctx) => {
-      const filePath = resolveProjectPath(ctx.workDir, input.path as string);
-      const startLine = input.startLine as number | undefined;
-      const endLine = input.endLine as number | undefined;
+      const parsed = fileReadSchema.parse(input);
+      const filePath = resolveProjectPath(ctx.workDir, parsed.path);
 
       let command: string;
-      if (startLine !== undefined && endLine !== undefined) {
-        command = `sed -n '${startLine},${endLine}p' "${filePath}" | cat -n`;
-      } else if (startLine !== undefined) {
-        command = `tail -n +${startLine} "${filePath}" | cat -n`;
-      } else {
+      if (parsed.startLine !== undefined && parsed.endLine !== undefined) {
+        command = `sed -n '${parsed.startLine},${parsed.endLine}p' "${filePath}" | cat -n`;
+      } else if (parsed.startLine === undefined) {
         command = `cat -n "${filePath}"`;
+      } else {
+        command = `tail -n +${parsed.startLine} "${filePath}" | cat -n`;
       }
 
-      return execInSandbox(command, ctx);
+      return await execInSandbox(command, ctx);
     },
   },
   {
     name: "file_write",
-    description: "Write content to a file, creating it and any parent directories if they don't exist. Overwrites existing content.",
+    description:
+      "Write content to a file, creating it and any parent directories if they don't exist. Overwrites existing content.",
     inputSchema: {
       type: "object",
       properties: {
-        path: { type: "string", description: "File path relative to project root" },
-        content: { type: "string", description: "Content to write to the file" },
+        path: {
+          type: "string",
+          description: "File path relative to project root",
+        },
+        content: {
+          type: "string",
+          description: "Content to write to the file",
+        },
       },
       required: ["path", "content"],
     },
+    zodSchema: fileWriteSchema,
     permissionLevel: "write",
     creditCost: 2,
     execute: async (input, ctx) => {
-      const filePath = resolveProjectPath(ctx.workDir, input.path as string);
-      const content = input.content as string;
+      const parsed = fileWriteSchema.parse(input);
+      const filePath = resolveProjectPath(ctx.workDir, parsed.path);
       // Ensure parent directory exists, then write content via heredoc
-      const escapedContent = content.replace(/'/g, "'\\''");
-      const command = `mkdir -p "$(dirname "${filePath}")" && cat > "${filePath}" << 'PROMETHEUS_EOF'\n${content}\nPROMETHEUS_EOF`;
+      const command = `mkdir -p "$(dirname "${filePath}")" && cat > "${filePath}" << 'PROMETHEUS_EOF'\n${parsed.content}\nPROMETHEUS_EOF`;
 
       const result = await execInSandbox(command, ctx);
       if (result.success) {
         return {
           success: true,
-          output: `Successfully wrote ${content.length} bytes to ${input.path}`,
-          metadata: { path: input.path, bytesWritten: content.length },
+          output: `Successfully wrote ${parsed.content.length} bytes to ${parsed.path}`,
+          metadata: { path: parsed.path, bytesWritten: parsed.content.length },
         };
       }
       return result;
@@ -66,57 +152,70 @@ export const fileTools: AgentToolDefinition[] = [
   },
   {
     name: "file_edit",
-    description: "Replace a specific string in a file with new content. The old string must be an exact match.",
+    description:
+      "Replace a specific string in a file with new content. The old string must be an exact match.",
     inputSchema: {
       type: "object",
       properties: {
-        path: { type: "string", description: "File path relative to project root" },
-        oldString: { type: "string", description: "Exact string to find and replace" },
+        path: {
+          type: "string",
+          description: "File path relative to project root",
+        },
+        oldString: {
+          type: "string",
+          description: "Exact string to find and replace",
+        },
         newString: { type: "string", description: "Replacement string" },
       },
       required: ["path", "oldString", "newString"],
     },
+    zodSchema: fileEditSchema,
     permissionLevel: "write",
     creditCost: 2,
     execute: async (input, ctx) => {
-      const filePath = resolveProjectPath(ctx.workDir, input.path as string);
+      const parsed = fileEditSchema.parse(input);
+      const filePath = resolveProjectPath(ctx.workDir, parsed.path);
 
       // Read file, perform replacement, write back
-      // Using node-style approach via sandbox
       const readResult = await execInSandbox(`cat "${filePath}"`, ctx);
       if (!readResult.success) {
-        return { success: false, output: "", error: `Failed to read file: ${readResult.error}` };
-      }
-
-      const oldStr = input.oldString as string;
-      const newStr = input.newString as string;
-      const fileContent = readResult.output;
-
-      if (!fileContent.includes(oldStr)) {
         return {
           success: false,
           output: "",
-          error: `The string to replace was not found in ${input.path}. Make sure oldString is an exact match.`,
+          error: `Failed to read file: ${readResult.error}`,
         };
       }
 
-      const occurrences = fileContent.split(oldStr).length - 1;
+      const fileContent = readResult.output;
+
+      if (!fileContent.includes(parsed.oldString)) {
+        return {
+          success: false,
+          output: "",
+          error: `The string to replace was not found in ${parsed.path}. Make sure oldString is an exact match.`,
+        };
+      }
+
+      const occurrences = fileContent.split(parsed.oldString).length - 1;
       if (occurrences > 1) {
         return {
           success: false,
           output: "",
-          error: `Found ${occurrences} occurrences of oldString in ${input.path}. Provide more context to make the match unique.`,
+          error: `Found ${occurrences} occurrences of oldString in ${parsed.path}. Provide more context to make the match unique.`,
         };
       }
 
-      const updatedContent = fileContent.replace(oldStr, newStr);
+      const updatedContent = fileContent.replace(
+        parsed.oldString,
+        parsed.newString
+      );
       const writeCommand = `cat > "${filePath}" << 'PROMETHEUS_EOF'\n${updatedContent}\nPROMETHEUS_EOF`;
       const writeResult = await execInSandbox(writeCommand, ctx);
       if (writeResult.success) {
         return {
           success: true,
-          output: `Successfully edited ${input.path}`,
-          metadata: { path: input.path },
+          output: `Successfully edited ${parsed.path}`,
+          metadata: { path: parsed.path },
         };
       }
       return writeResult;
@@ -128,20 +227,25 @@ export const fileTools: AgentToolDefinition[] = [
     inputSchema: {
       type: "object",
       properties: {
-        path: { type: "string", description: "File path relative to project root" },
+        path: {
+          type: "string",
+          description: "File path relative to project root",
+        },
       },
       required: ["path"],
     },
+    zodSchema: fileDeleteSchema,
     permissionLevel: "write",
     creditCost: 1,
     execute: async (input, ctx) => {
-      const filePath = resolveProjectPath(ctx.workDir, input.path as string);
+      const parsed = fileDeleteSchema.parse(input);
+      const filePath = resolveProjectPath(ctx.workDir, parsed.path);
       const result = await execInSandbox(`rm -f "${filePath}"`, ctx);
       if (result.success) {
         return {
           success: true,
-          output: `Deleted ${input.path}`,
-          metadata: { path: input.path },
+          output: `Deleted ${parsed.path}`,
+          metadata: { path: parsed.path },
         };
       }
       return result;
@@ -149,34 +253,37 @@ export const fileTools: AgentToolDefinition[] = [
   },
   {
     name: "file_list",
-    description: "List files in a directory, optionally filtering with a glob pattern. Returns file names with types.",
+    description:
+      "List files in a directory, optionally filtering with a glob pattern. Returns file names with types.",
     inputSchema: {
       type: "object",
       properties: {
-        path: { type: "string", description: "Directory path relative to project root" },
-        pattern: { type: "string", description: "Glob pattern to filter files (e.g., '*.ts')" },
+        path: {
+          type: "string",
+          description: "Directory path relative to project root",
+        },
+        pattern: {
+          type: "string",
+          description: "Glob pattern to filter files (e.g., '*.ts')",
+        },
       },
       required: ["path"],
     },
+    zodSchema: fileListSchema,
     permissionLevel: "read",
     creditCost: 1,
     execute: async (input, ctx) => {
-      const dirPath = resolveProjectPath(ctx.workDir, input.path as string);
-      const pattern = input.pattern as string | undefined;
+      const parsed = fileListSchema.parse(input);
+      const dirPath = resolveProjectPath(ctx.workDir, parsed.path);
 
       let command: string;
-      if (pattern) {
-        command = `find "${dirPath}" -maxdepth 3 -name "${pattern}" -type f 2>/dev/null | head -200 | sort`;
+      if (parsed.pattern) {
+        command = `find "${dirPath}" -maxdepth 3 -name "${parsed.pattern}" -type f 2>/dev/null | head -200 | sort`;
       } else {
         command = `ls -la "${dirPath}" 2>/dev/null | head -200`;
       }
 
-      return execInSandbox(command, ctx);
+      return await execInSandbox(command, ctx);
     },
   },
 ];
-
-function resolveProjectPath(workDir: string, relativePath: string): string {
-  if (relativePath.startsWith("/")) return relativePath;
-  return `${workDir}/${relativePath}`;
-}
