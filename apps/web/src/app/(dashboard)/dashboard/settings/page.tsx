@@ -1,17 +1,52 @@
 "use client";
 
-import { useState } from "react";
+import { zodResolver } from "@hookform/resolvers/zod";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+  Badge,
+  Button,
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  Input,
+  Label,
+  Separator,
+  Switch,
+  Tabs,
+  TabsContent,
+  TabsList,
+  TabsTrigger,
+} from "@prometheus/ui";
+import { Copy, Key, Link2, Plus, Trash2 } from "lucide-react";
+import { useEffect, useState } from "react";
+import { useForm } from "react-hook-form";
+import { toast } from "sonner";
+import { z } from "zod";
 import { trpc } from "@/lib/trpc";
 
-const TABS = [
-  { id: "general", label: "General" },
-  { id: "integrations", label: "Integrations" },
-  { id: "apikeys", label: "API Keys" },
-  { id: "billing", label: "Billing" },
-  { id: "models", label: "Models" },
-] as const;
+const profileSchema = z.object({
+  name: z.string().min(1, "Name is required"),
+  notifyOnComplete: z.boolean(),
+  notifyOnFail: z.boolean(),
+});
 
-type TabId = (typeof TABS)[number]["id"];
+type ProfileFormValues = z.infer<typeof profileSchema>;
 
 const INTEGRATION_PROVIDERS = [
   { id: "github", name: "GitHub", desc: "Repository hosting and CI/CD" },
@@ -36,7 +71,11 @@ const MODEL_PROVIDERS = [
     name: "Google",
     models: ["gemini-2.0-flash", "gemini-2.0-pro"],
   },
-  { provider: "groq", name: "Groq", models: ["llama-3.3-70b", "mixtral-8x7b"] },
+  {
+    provider: "groq",
+    name: "Groq",
+    models: ["llama-3.3-70b", "mixtral-8x7b"],
+  },
   { provider: "cerebras", name: "Cerebras", models: ["llama-3.3-70b"] },
   {
     provider: "ollama",
@@ -46,12 +85,16 @@ const MODEL_PROVIDERS = [
 ];
 
 export default function SettingsPage() {
-  const [activeTab, setActiveTab] = useState<TabId>("general");
   const [newKeyName, setNewKeyName] = useState("");
   const [createdKey, setCreatedKey] = useState<string | null>(null);
-  const [_showKeyDialog, _setShowKeyDialog] = useState(false);
+  const [modelKeyDialogOpen, setModelKeyDialogOpen] = useState(false);
+  const [modelKeyProvider, setModelKeyProvider] = useState<{
+    provider: string;
+    name: string;
+    modelId: string;
+  } | null>(null);
+  const [modelApiKey, setModelApiKey] = useState("");
 
-  // Queries
   const apiKeysQuery = trpc.settings.getApiKeys.useQuery(undefined, {
     retry: false,
   });
@@ -71,8 +114,38 @@ export default function SettingsPage() {
     { retry: false }
   );
   const profileQuery = trpc.user.profile.useQuery(undefined, { retry: false });
+  const updateProfileMutation = trpc.user.updateProfile.useMutation();
 
-  // Mutations
+  const profileForm = useForm<ProfileFormValues>({
+    resolver: zodResolver(profileSchema),
+    defaultValues: {
+      name: "",
+      notifyOnComplete: true,
+      notifyOnFail: true,
+    },
+  });
+
+  // Populate form when profile data loads
+  useEffect(() => {
+    if (profileQuery.data) {
+      profileForm.reset({
+        name: profileQuery.data.name ?? profileQuery.data.email ?? "",
+        notifyOnComplete: true,
+        notifyOnFail: true,
+      });
+    }
+  }, [profileQuery.data, profileForm]);
+
+  async function handleProfileSubmit(values: ProfileFormValues) {
+    try {
+      await updateProfileMutation.mutateAsync(values);
+      toast.success("Profile updated");
+      profileQuery.refetch();
+    } catch {
+      toast.error("Failed to update profile");
+    }
+  }
+
   const createKeyMutation = trpc.settings.createApiKey.useMutation();
   const revokeKeyMutation = trpc.settings.revokeApiKey.useMutation();
   const connectIntMutation = trpc.integrations.connect.useMutation();
@@ -96,19 +169,16 @@ export default function SettingsPage() {
     setCreatedKey(result.key);
     setNewKeyName("");
     apiKeysQuery.refetch();
+    toast.success("API key created");
   }
 
   async function handleRevokeKey(keyId: string) {
-    // biome-ignore lint/suspicious/noAlert: confirm dialog is the appropriate UX for destructive action
-    if (!window.confirm("Are you sure? This cannot be undone.")) {
-      return;
-    }
     await revokeKeyMutation.mutateAsync({ keyId });
     apiKeysQuery.refetch();
+    toast.success("API key revoked");
   }
 
   async function handleConnectIntegration(provider: string) {
-    // In production this would open an OAuth flow
     await connectIntMutation.mutateAsync({
       provider: provider as
         | "github"
@@ -122,11 +192,13 @@ export default function SettingsPage() {
       credentials: { token: "placeholder" },
     });
     integrationsQuery.refetch();
+    toast.success(`${provider} connected`);
   }
 
   async function handleDisconnectIntegration(provider: string) {
     await disconnectIntMutation.mutateAsync({ provider });
     integrationsQuery.refetch();
+    toast.info(`${provider} disconnected`);
   }
 
   async function handleUpgrade(tier: "starter" | "pro" | "team" | "studio") {
@@ -136,330 +208,417 @@ export default function SettingsPage() {
     }
   }
 
+  function handleModelKeySubmit() {
+    if (modelKeyProvider && modelApiKey) {
+      setModelPrefMutation.mutate({
+        provider: modelKeyProvider.provider,
+        apiKey: modelApiKey,
+        modelId: modelKeyProvider.modelId,
+      });
+      toast.success(`${modelKeyProvider.name} API key saved`);
+    }
+    setModelKeyDialogOpen(false);
+    setModelApiKey("");
+    setModelKeyProvider(null);
+  }
+
   return (
     <div className="max-w-4xl space-y-6">
       <div>
-        <h1 className="font-bold text-2xl text-zinc-100">Settings</h1>
-        <p className="mt-1 text-sm text-zinc-500">
+        <h1 className="font-bold text-2xl text-foreground">Settings</h1>
+        <p className="mt-1 text-muted-foreground text-sm">
           Manage your account, integrations, and billing.
         </p>
       </div>
 
-      {/* Tab bar */}
-      <div className="flex gap-1 rounded-lg border border-zinc-800 bg-zinc-900/50 p-1">
-        {TABS.map((tab) => (
-          <button
-            className={`flex-1 rounded-md px-3 py-1.5 font-medium text-sm transition-colors ${
-              activeTab === tab.id
-                ? "bg-zinc-800 text-zinc-100"
-                : "text-zinc-500 hover:text-zinc-300"
-            }`}
-            key={tab.id}
-            onClick={() => setActiveTab(tab.id)}
-            type="button"
-          >
-            {tab.label}
-          </button>
-        ))}
-      </div>
+      <Tabs defaultValue="general">
+        <TabsList className="w-full">
+          <TabsTrigger className="flex-1" value="general">
+            General
+          </TabsTrigger>
+          <TabsTrigger className="flex-1" value="integrations">
+            Integrations
+          </TabsTrigger>
+          <TabsTrigger className="flex-1" value="apikeys">
+            API Keys
+          </TabsTrigger>
+          <TabsTrigger className="flex-1" value="billing">
+            Billing
+          </TabsTrigger>
+          <TabsTrigger className="flex-1" value="models">
+            Models
+          </TabsTrigger>
+        </TabsList>
 
-      {/* ── General ────────────────────────────────────────── */}
-      {activeTab === "general" && (
-        <div className="space-y-6">
-          <div className="rounded-xl border border-zinc-800 bg-zinc-900/50 p-6">
-            <h3 className="font-semibold text-sm text-zinc-200">Profile</h3>
-            <div className="mt-4 grid gap-4 md:grid-cols-2">
-              <div>
-                <span className="font-medium text-xs text-zinc-500">Name</span>
-                <div className="mt-1 text-sm text-zinc-300">
-                  {profileQuery.data?.name ??
-                    profileQuery.data?.email ??
-                    "Loading..."}
+        {/* General */}
+        <TabsContent className="space-y-6" value="general">
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-sm">Profile</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <form
+                className="space-y-4"
+                onSubmit={profileForm.handleSubmit(handleProfileSubmit)}
+              >
+                <div className="grid gap-4 md:grid-cols-2">
+                  <div className="space-y-2">
+                    <Label htmlFor="profile-name">Name</Label>
+                    <Input
+                      id="profile-name"
+                      {...profileForm.register("name")}
+                      placeholder="Your name"
+                    />
+                    {profileForm.formState.errors.name && (
+                      <p className="text-destructive text-xs">
+                        {profileForm.formState.errors.name.message}
+                      </p>
+                    )}
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="profile-email">Email</Label>
+                    <Input
+                      disabled
+                      id="profile-email"
+                      readOnly
+                      value={profileQuery.data?.email ?? "Loading..."}
+                    />
+                  </div>
                 </div>
-              </div>
-              <div>
-                <span className="font-medium text-xs text-zinc-500">Email</span>
-                <div className="mt-1 text-sm text-zinc-300">
-                  {profileQuery.data?.email ?? "Loading..."}
+
+                <Separator />
+
+                <div className="space-y-3">
+                  <Label className="text-muted-foreground text-xs">
+                    Notification Preferences
+                  </Label>
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <div className="text-foreground text-sm">
+                        Task completed
+                      </div>
+                      <div className="text-muted-foreground text-xs">
+                        Notify when a task finishes successfully
+                      </div>
+                    </div>
+                    <Switch
+                      checked={profileForm.watch("notifyOnComplete")}
+                      onCheckedChange={(checked) =>
+                        profileForm.setValue("notifyOnComplete", checked)
+                      }
+                    />
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <div className="text-foreground text-sm">Task failed</div>
+                      <div className="text-muted-foreground text-xs">
+                        Notify when a task encounters an error
+                      </div>
+                    </div>
+                    <Switch
+                      checked={profileForm.watch("notifyOnFail")}
+                      onCheckedChange={(checked) =>
+                        profileForm.setValue("notifyOnFail", checked)
+                      }
+                    />
+                  </div>
                 </div>
-              </div>
-            </div>
-          </div>
 
-          <div className="rounded-xl border border-zinc-800 bg-zinc-900/50 p-6">
-            <h3 className="font-semibold text-sm text-zinc-200">
-              Organization
-            </h3>
-            <p className="mt-2 text-sm text-zinc-500">
-              Organization settings are managed through Clerk. Click the avatar
-              in the sidebar to manage your organization.
-            </p>
-          </div>
-        </div>
-      )}
+                <div className="flex justify-end">
+                  <Button
+                    disabled={
+                      !profileForm.formState.isDirty ||
+                      updateProfileMutation.isPending
+                    }
+                    type="submit"
+                  >
+                    {updateProfileMutation.isPending
+                      ? "Saving..."
+                      : "Save Changes"}
+                  </Button>
+                </div>
+              </form>
+            </CardContent>
+          </Card>
 
-      {/* ── Integrations ───────────────────────────────────── */}
-      {activeTab === "integrations" && (
-        <div className="space-y-3">
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-sm">Organization</CardTitle>
+              <CardDescription>
+                Organization settings are managed through Clerk. Click the
+                avatar in the sidebar to manage your organization.
+              </CardDescription>
+            </CardHeader>
+          </Card>
+        </TabsContent>
+
+        {/* Integrations */}
+        <TabsContent className="space-y-3" value="integrations">
           {INTEGRATION_PROVIDERS.map((provider) => {
             const connected = integrations.find(
               (i) => i.provider === provider.id && i.status === "connected"
             );
             return (
-              <div
-                className="flex items-center justify-between rounded-xl border border-zinc-800 bg-zinc-900/50 p-4"
-                key={provider.id}
-              >
-                <div className="flex items-center gap-3">
-                  <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-zinc-800 font-bold text-sm text-zinc-400">
-                    {provider.name[0]}
-                  </div>
-                  <div>
-                    <div className="font-medium text-sm text-zinc-200">
-                      {provider.name}
+              <Card key={provider.id}>
+                <CardContent className="flex items-center justify-between p-4">
+                  <div className="flex items-center gap-3">
+                    <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-muted font-bold text-muted-foreground text-sm">
+                      {provider.name[0]}
                     </div>
-                    <div className="text-xs text-zinc-500">{provider.desc}</div>
+                    <div>
+                      <div className="font-medium text-foreground text-sm">
+                        {provider.name}
+                      </div>
+                      <div className="text-muted-foreground text-xs">
+                        {provider.desc}
+                      </div>
+                    </div>
                   </div>
-                </div>
-                {connected ? (
-                  <div className="flex items-center gap-2">
-                    <span className="flex items-center gap-1 text-green-400 text-xs">
-                      <span className="h-1.5 w-1.5 rounded-full bg-green-500" />
-                      Connected
-                    </span>
-                    <button
-                      className="rounded-lg border border-zinc-700 px-3 py-1 text-xs text-zinc-400 hover:bg-zinc-800"
-                      onClick={() => handleDisconnectIntegration(provider.id)}
-                      type="button"
+                  {connected ? (
+                    <div className="flex items-center gap-2">
+                      <Badge variant="success">
+                        <Link2 className="mr-1 h-3 w-3" />
+                        Connected
+                      </Badge>
+                      <Button
+                        onClick={() => handleDisconnectIntegration(provider.id)}
+                        size="sm"
+                        variant="outline"
+                      >
+                        Disconnect
+                      </Button>
+                    </div>
+                  ) : (
+                    <Button
+                      onClick={() => handleConnectIntegration(provider.id)}
+                      size="sm"
                     >
-                      Disconnect
-                    </button>
-                  </div>
-                ) : (
-                  <button
-                    className="rounded-lg bg-violet-600 px-3 py-1.5 font-medium text-white text-xs hover:bg-violet-700"
-                    onClick={() => handleConnectIntegration(provider.id)}
-                    type="button"
-                  >
-                    Connect
-                  </button>
-                )}
-              </div>
+                      Connect
+                    </Button>
+                  )}
+                </CardContent>
+              </Card>
             );
           })}
-        </div>
-      )}
+        </TabsContent>
 
-      {/* ── API Keys ───────────────────────────────────────── */}
-      {activeTab === "apikeys" && (
-        <div className="space-y-4">
-          {/* Create new key */}
-          <div className="rounded-xl border border-zinc-800 bg-zinc-900/50 p-4">
-            <h3 className="mb-3 font-semibold text-sm text-zinc-200">
-              Create API Key
-            </h3>
-            <div className="flex gap-2">
-              <input
-                className="flex-1 rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm text-zinc-200 outline-none placeholder:text-zinc-600 focus:border-violet-500"
-                onChange={(e) => setNewKeyName(e.target.value)}
-                placeholder="Key name (e.g., CI/CD Pipeline)"
-                type="text"
-                value={newKeyName}
-              />
-              <button
-                className="rounded-lg bg-violet-600 px-4 py-2 font-medium text-sm text-white hover:bg-violet-700 disabled:opacity-50"
-                disabled={!newKeyName.trim() || createKeyMutation.isPending}
-                onClick={handleCreateKey}
-                type="button"
-              >
-                Create
-              </button>
-            </div>
-
-            {/* Show newly created key */}
-            {createdKey && (
-              <div className="mt-3 rounded-lg border border-yellow-800/30 bg-yellow-950/20 p-3">
-                <div className="mb-1 font-medium text-xs text-yellow-400">
-                  Copy your API key now. It will not be shown again.
-                </div>
-                <div className="flex items-center gap-2">
-                  <code className="flex-1 break-all rounded bg-zinc-950 px-3 py-1.5 font-mono text-xs text-zinc-300">
-                    {createdKey}
-                  </code>
-                  <button
-                    className="shrink-0 rounded border border-zinc-700 px-2 py-1 text-xs text-zinc-400 hover:bg-zinc-800"
-                    onClick={() => {
-                      navigator.clipboard.writeText(createdKey);
-                    }}
-                    type="button"
-                  >
-                    Copy
-                  </button>
-                </div>
+        {/* API Keys */}
+        <TabsContent className="space-y-4" value="apikeys">
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-sm">Create API Key</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="flex gap-2">
+                <Input
+                  onChange={(e) => setNewKeyName(e.target.value)}
+                  placeholder="Key name (e.g., CI/CD Pipeline)"
+                  value={newKeyName}
+                />
+                <Button
+                  disabled={!newKeyName.trim() || createKeyMutation.isPending}
+                  onClick={handleCreateKey}
+                >
+                  <Plus className="mr-1 h-4 w-4" />
+                  Create
+                </Button>
               </div>
-            )}
-          </div>
 
-          {/* Key list */}
-          <div className="rounded-xl border border-zinc-800 bg-zinc-900/50">
-            {apiKeys.length === 0 ? (
-              <div className="p-8 text-center text-sm text-zinc-500">
-                No API keys created yet.
-              </div>
-            ) : (
-              <div className="divide-y divide-zinc-800">
-                {apiKeys.map((key) => (
-                  <div
-                    className="flex items-center justify-between px-4 py-3"
-                    key={key.id}
-                  >
-                    <div>
-                      <div className="font-medium text-sm text-zinc-200">
-                        {key.name}
-                      </div>
-                      <div className="mt-0.5 text-xs text-zinc-500">
-                        Created {new Date(key.createdAt).toLocaleDateString()}
-                        {key.lastUsed && (
-                          <>
-                            {" "}
-                            &middot; Last used{" "}
-                            {new Date(key.lastUsed).toLocaleDateString()}
-                          </>
-                        )}
-                      </div>
-                    </div>
-                    <button
-                      className="rounded-lg border border-red-800/50 px-3 py-1 text-red-400 text-xs hover:bg-red-950/30"
-                      onClick={() => handleRevokeKey(key.id)}
-                      type="button"
-                    >
-                      Revoke
-                    </button>
+              {createdKey && (
+                <div className="mt-3 rounded-lg border border-warning/30 bg-warning/5 p-3">
+                  <div className="mb-1 font-medium text-warning text-xs">
+                    Copy your API key now. It will not be shown again.
                   </div>
-                ))}
-              </div>
-            )}
-          </div>
-        </div>
-      )}
+                  <div className="flex items-center gap-2">
+                    <code className="flex-1 break-all rounded bg-muted px-3 py-1.5 font-mono text-foreground text-xs">
+                      {createdKey}
+                    </code>
+                    <Button
+                      onClick={() => {
+                        navigator.clipboard.writeText(createdKey);
+                        toast.success("Copied to clipboard");
+                      }}
+                      size="sm"
+                      variant="outline"
+                    >
+                      <Copy className="h-3 w-3" />
+                    </Button>
+                  </div>
+                </div>
+              )}
+            </CardContent>
+          </Card>
 
-      {/* ── Billing ────────────────────────────────────────── */}
-      {activeTab === "billing" && (
-        <div className="space-y-6">
-          {/* Current plan */}
-          <div className="rounded-xl border border-zinc-800 bg-zinc-900/50 p-6">
-            <div className="flex items-center justify-between">
+          <Card>
+            <CardContent className="p-0">
+              {apiKeys.length === 0 ? (
+                <div className="p-8 text-center text-muted-foreground text-sm">
+                  No API keys created yet.
+                </div>
+              ) : (
+                <div className="divide-y">
+                  {apiKeys.map((key) => (
+                    <div
+                      className="flex items-center justify-between px-4 py-3"
+                      key={key.id}
+                    >
+                      <div>
+                        <div className="flex items-center gap-2 font-medium text-foreground text-sm">
+                          <Key className="h-3.5 w-3.5 text-muted-foreground" />
+                          {key.name}
+                        </div>
+                        <div className="mt-0.5 text-muted-foreground text-xs">
+                          Created {new Date(key.createdAt).toLocaleDateString()}
+                          {key.lastUsed && (
+                            <>
+                              {" "}
+                              &middot; Last used{" "}
+                              {new Date(key.lastUsed).toLocaleDateString()}
+                            </>
+                          )}
+                        </div>
+                      </div>
+                      <AlertDialog>
+                        <AlertDialogTrigger asChild>
+                          <Button size="sm" variant="destructive">
+                            <Trash2 className="mr-1 h-3 w-3" />
+                            Revoke
+                          </Button>
+                        </AlertDialogTrigger>
+                        <AlertDialogContent>
+                          <AlertDialogHeader>
+                            <AlertDialogTitle>Revoke API Key</AlertDialogTitle>
+                            <AlertDialogDescription>
+                              Are you sure you want to revoke &quot;{key.name}
+                              &quot;? This cannot be undone. Any applications
+                              using this key will lose access.
+                            </AlertDialogDescription>
+                          </AlertDialogHeader>
+                          <AlertDialogFooter>
+                            <AlertDialogCancel>Cancel</AlertDialogCancel>
+                            <AlertDialogAction
+                              onClick={() => handleRevokeKey(key.id)}
+                            >
+                              Revoke
+                            </AlertDialogAction>
+                          </AlertDialogFooter>
+                        </AlertDialogContent>
+                      </AlertDialog>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        {/* Billing */}
+        <TabsContent className="space-y-6" value="billing">
+          <Card>
+            <CardContent className="flex items-center justify-between p-6">
               <div>
-                <h3 className="font-semibold text-sm text-zinc-200">
-                  Current Plan
-                </h3>
-                <div className="mt-2 font-bold text-2xl text-zinc-100">
+                <CardTitle className="text-sm">Current Plan</CardTitle>
+                <div className="mt-2 font-bold text-2xl text-foreground">
                   {plan?.name ?? "Hobby"}{" "}
-                  <span className="font-normal text-sm text-zinc-500">
+                  <span className="font-normal text-muted-foreground text-sm">
                     (Free)
                   </span>
                 </div>
-                <div className="mt-1 text-sm text-zinc-500">
+                <div className="mt-1 text-muted-foreground text-sm">
                   {plan?.creditsIncluded?.toLocaleString() ?? 50} credits/month
                   &middot; {plan?.maxParallelAgents ?? 1} parallel agents
                   &middot; {plan?.maxTasksPerDay ?? 5} tasks/day
                 </div>
               </div>
-              <button
-                className="rounded-lg bg-violet-600 px-4 py-2 font-medium text-sm text-white hover:bg-violet-700"
-                onClick={() => handleUpgrade("pro")}
-                type="button"
-              >
-                Upgrade
-              </button>
-            </div>
+              <Button onClick={() => handleUpgrade("pro")}>Upgrade</Button>
+            </CardContent>
             {plan?.features && plan.features.length > 0 && (
-              <div className="mt-4 flex flex-wrap gap-2">
-                {plan.features.map((feature) => (
-                  <span
-                    className="rounded-full border border-zinc-800 bg-zinc-950 px-3 py-1 text-xs text-zinc-400"
-                    key={feature}
-                  >
-                    {feature}
-                  </span>
-                ))}
-              </div>
+              <>
+                <Separator />
+                <CardContent className="flex flex-wrap gap-2 pt-4">
+                  {plan.features.map((feature) => (
+                    <Badge key={feature} variant="outline">
+                      {feature}
+                    </Badge>
+                  ))}
+                </CardContent>
+              </>
             )}
-          </div>
+          </Card>
 
-          {/* Credit balance */}
-          <div className="rounded-xl border border-zinc-800 bg-zinc-900/50 p-6">
-            <h3 className="font-semibold text-sm text-zinc-200">
-              Credit Balance
-            </h3>
-            <div className="mt-3 grid gap-4 md:grid-cols-3">
-              <div>
-                <div className="text-xs text-zinc-500">Available</div>
-                <div className="mt-1 font-bold text-2xl text-zinc-100">
-                  {balance?.available?.toLocaleString() ?? 0}
-                </div>
-              </div>
-              <div>
-                <div className="text-xs text-zinc-500">Reserved</div>
-                <div className="mt-1 font-bold text-2xl text-yellow-400">
-                  {balance?.reserved?.toLocaleString() ?? 0}
-                </div>
-              </div>
-              <div>
-                <div className="text-xs text-zinc-500">Total Balance</div>
-                <div className="mt-1 font-bold text-2xl text-zinc-100">
-                  {balance?.balance?.toLocaleString() ?? 0}
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {/* Transaction history */}
-          <div className="rounded-xl border border-zinc-800 bg-zinc-900/50">
-            <div className="border-zinc-800 border-b px-4 py-3">
-              <h3 className="font-semibold text-sm text-zinc-200">
-                Transaction History
-              </h3>
-            </div>
-            {transactions.length === 0 ? (
-              <div className="p-8 text-center text-sm text-zinc-500">
-                No transactions yet.
-              </div>
-            ) : (
-              <div className="divide-y divide-zinc-800">
-                {transactions.map((tx) => (
-                  <div
-                    className="flex items-center justify-between px-4 py-3"
-                    key={tx.id}
-                  >
-                    <div>
-                      <div className="text-sm text-zinc-300">
-                        {tx.description ?? tx.type}
-                      </div>
-                      <div className="mt-0.5 text-xs text-zinc-600">
-                        {new Date(tx.createdAt).toLocaleString()}
-                      </div>
-                    </div>
-                    <span
-                      className={`font-mono text-sm ${
-                        tx.amount > 0 ? "text-green-400" : "text-red-400"
-                      }`}
-                    >
-                      {tx.amount > 0 ? "+" : ""}
-                      {tx.amount}
-                    </span>
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-sm">Credit Balance</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="grid gap-4 md:grid-cols-3">
+                <div>
+                  <div className="text-muted-foreground text-xs">Available</div>
+                  <div className="mt-1 font-bold text-2xl text-foreground">
+                    {balance?.available?.toLocaleString() ?? 0}
                   </div>
-                ))}
+                </div>
+                <div>
+                  <div className="text-muted-foreground text-xs">Reserved</div>
+                  <div className="mt-1 font-bold text-2xl text-warning">
+                    {balance?.reserved?.toLocaleString() ?? 0}
+                  </div>
+                </div>
+                <div>
+                  <div className="text-muted-foreground text-xs">
+                    Total Balance
+                  </div>
+                  <div className="mt-1 font-bold text-2xl text-foreground">
+                    {balance?.balance?.toLocaleString() ?? 0}
+                  </div>
+                </div>
               </div>
-            )}
-          </div>
-        </div>
-      )}
+            </CardContent>
+          </Card>
 
-      {/* ── Models ─────────────────────────────────────────── */}
-      {activeTab === "models" && (
-        <div className="space-y-3">
-          <p className="text-sm text-zinc-500">
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-sm">Transaction History</CardTitle>
+            </CardHeader>
+            <CardContent className="p-0">
+              {transactions.length === 0 ? (
+                <div className="p-8 text-center text-muted-foreground text-sm">
+                  No transactions yet.
+                </div>
+              ) : (
+                <div className="divide-y">
+                  {transactions.map((tx) => (
+                    <div
+                      className="flex items-center justify-between px-4 py-3"
+                      key={tx.id}
+                    >
+                      <div>
+                        <div className="text-foreground text-sm">
+                          {tx.description ?? tx.type}
+                        </div>
+                        <div className="mt-0.5 text-muted-foreground text-xs">
+                          {new Date(tx.createdAt).toLocaleString()}
+                        </div>
+                      </div>
+                      <span
+                        className={`font-mono text-sm ${
+                          tx.amount > 0 ? "text-green-400" : "text-red-400"
+                        }`}
+                      >
+                        {tx.amount > 0 ? "+" : ""}
+                        {tx.amount}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        {/* Models */}
+        <TabsContent className="space-y-3" value="models">
+          <p className="text-muted-foreground text-sm">
             Configure model providers and API keys. PROMETHEUS routes to the
             best model for each task by default. Bring your own API keys to
             customize.
@@ -469,61 +628,84 @@ export default function SettingsPage() {
               (k) => k.provider === mp.provider
             );
             return (
-              <div
-                className="rounded-xl border border-zinc-800 bg-zinc-900/50 p-4"
-                key={mp.provider}
-              >
-                <div className="flex items-center justify-between">
+              <Card key={mp.provider}>
+                <CardContent className="flex items-center justify-between p-4">
                   <div>
-                    <div className="font-medium text-sm text-zinc-200">
+                    <div className="font-medium text-foreground text-sm">
                       {mp.name}
                     </div>
                     <div className="mt-1 flex gap-1.5">
                       {mp.models.map((model) => (
-                        <span
-                          className="rounded bg-zinc-800 px-2 py-0.5 font-mono text-[10px] text-zinc-400"
-                          key={model}
-                        >
+                        <Badge key={model} variant="secondary">
                           {model}
-                        </span>
+                        </Badge>
                       ))}
                     </div>
                   </div>
                   <div className="flex items-center gap-2">
                     {configured?.configured ? (
-                      <span className="flex items-center gap-1 text-green-400 text-xs">
-                        <span className="h-1.5 w-1.5 rounded-full bg-green-500" />
-                        Configured
-                      </span>
+                      <Badge variant="success">Configured</Badge>
                     ) : (
-                      <span className="text-xs text-zinc-500">
+                      <span className="text-muted-foreground text-xs">
                         Using default routing
                       </span>
                     )}
-                    <button
-                      className="rounded-lg border border-zinc-700 px-3 py-1 text-xs text-zinc-400 hover:bg-zinc-800"
+                    <Button
                       onClick={() => {
-                        // biome-ignore lint/suspicious/noAlert: prompt dialog for API key input
-                        const key = window.prompt(`Enter ${mp.name} API key:`);
-                        if (key) {
-                          setModelPrefMutation.mutate({
-                            provider: mp.provider,
-                            apiKey: key,
-                            modelId: mp.models[0],
-                          });
-                        }
+                        setModelKeyProvider({
+                          provider: mp.provider,
+                          name: mp.name,
+                          modelId: mp.models[0] ?? mp.provider,
+                        });
+                        setModelKeyDialogOpen(true);
                       }}
-                      type="button"
+                      size="sm"
+                      variant="outline"
                     >
                       {configured?.configured ? "Update Key" : "Add Key"}
-                    </button>
+                    </Button>
                   </div>
-                </div>
-              </div>
+                </CardContent>
+              </Card>
             );
           })}
-        </div>
-      )}
+        </TabsContent>
+      </Tabs>
+
+      {/* Model API Key Dialog */}
+      <Dialog onOpenChange={setModelKeyDialogOpen} open={modelKeyDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{modelKeyProvider?.name} API Key</DialogTitle>
+            <DialogDescription>
+              Enter your API key for {modelKeyProvider?.name}. This key is
+              encrypted and stored securely.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="py-4">
+            <Label htmlFor="api-key">API Key</Label>
+            <Input
+              className="mt-2"
+              id="api-key"
+              onChange={(e) => setModelApiKey(e.target.value)}
+              placeholder={`Enter ${modelKeyProvider?.name} API key`}
+              type="password"
+              value={modelApiKey}
+            />
+          </div>
+          <DialogFooter>
+            <Button
+              onClick={() => setModelKeyDialogOpen(false)}
+              variant="outline"
+            >
+              Cancel
+            </Button>
+            <Button disabled={!modelApiKey} onClick={handleModelKeySubmit}>
+              Save Key
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

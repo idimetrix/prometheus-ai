@@ -36,6 +36,7 @@ export const sessions = pgTable(
     index("sessions_project_id_idx").on(table.projectId),
     index("sessions_user_id_idx").on(table.userId),
     index("sessions_project_status_idx").on(table.projectId, table.status),
+    index("sessions_project_created_idx").on(table.projectId, table.startedAt),
   ]
 );
 

@@ -3,7 +3,12 @@ import { trpcServer } from "@hono/trpc-server";
 import type { AuthContext } from "@prometheus/auth";
 import { db, modelUsageLogs } from "@prometheus/db";
 import { createLogger } from "@prometheus/logger";
+import { initSentry, initTelemetry } from "@prometheus/telemetry";
 import { generateId } from "@prometheus/utils";
+
+await initTelemetry({ serviceName: "api" });
+initSentry({ serviceName: "api" });
+
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import {
@@ -16,6 +21,7 @@ import {
 } from "./middleware";
 import { appRouter } from "./routers";
 import { sseApp } from "./routes/sse";
+import { alertsWebhookApp } from "./routes/webhooks/alerts";
 import { clerkWebhookApp } from "./routes/webhooks/clerk";
 import { stripeWebhookApp } from "./routes/webhooks/stripe";
 import { createContext } from "./trpc";
@@ -122,6 +128,21 @@ app.get("/health", async (c) => {
   );
 });
 
+// Liveness probe — lightweight, just confirms process is responsive
+app.get("/live", (c) => c.json({ status: "ok" }));
+
+// Readiness probe — checks dependencies are connected
+app.get("/ready", async (c) => {
+  try {
+    const { db } = await import("@prometheus/db");
+    const { sql } = await import("drizzle-orm");
+    await db.execute(sql`SELECT 1`);
+    return c.json({ status: "ready" });
+  } catch {
+    return c.json({ status: "not ready" }, 503);
+  }
+});
+
 // ---------------------------------------------------------------------------
 // SSE endpoint
 // ---------------------------------------------------------------------------
@@ -133,6 +154,7 @@ app.route("/api/sse", sseApp);
 // ---------------------------------------------------------------------------
 app.route("/webhooks/stripe", stripeWebhookApp);
 app.route("/webhooks/clerk", clerkWebhookApp);
+app.route("/webhooks/alerts", alertsWebhookApp);
 
 // ---------------------------------------------------------------------------
 // Internal: model usage logging (called by model-router, fire-and-forget)
@@ -194,7 +216,7 @@ app.use(
 // ---------------------------------------------------------------------------
 app.get("/metrics", async (c) => {
   const { metricsRegistry } = await import("@prometheus/telemetry");
-  return c.text(metricsRegistry.render(), 200, {
+  return c.text(await metricsRegistry.render(), 200, {
     "Content-Type": "text/plain; charset=utf-8",
   });
 });

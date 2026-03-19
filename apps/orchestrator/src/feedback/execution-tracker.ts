@@ -1,9 +1,7 @@
 import { createLogger } from "@prometheus/logger";
+import { projectBrainClient } from "@prometheus/utils";
 
 const logger = createLogger("orchestrator:feedback");
-
-const PROJECT_BRAIN_URL =
-  process.env.PROJECT_BRAIN_URL ?? "http://localhost:4003";
 
 export interface ExecutionOutcome {
   agentRole: string;
@@ -156,10 +154,9 @@ export class ExecutionTracker {
       ? `${outcome.agentRole} completed ${outcome.taskType} in ${outcome.iterations} iterations`
       : `${outcome.agentRole} failed ${outcome.taskType}: ${outcome.errorType ?? "unknown"}`;
 
-    await fetch(`${PROJECT_BRAIN_URL}/memory/store`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
+    await projectBrainClient.post(
+      "/memory/store",
+      {
         projectId: outcome.projectId,
         type: "episodic",
         data: {
@@ -168,8 +165,8 @@ export class ExecutionTracker {
           reasoning: `Duration: ${outcome.duration}ms, Tokens: ${outcome.tokensUsed}, Files: ${outcome.filesChanged}`,
           outcome: outcome.success ? "success" : "failure",
         },
-      }),
-      signal: AbortSignal.timeout(5000),
-    });
+      },
+      { timeout: 5000 }
+    );
   }
 }

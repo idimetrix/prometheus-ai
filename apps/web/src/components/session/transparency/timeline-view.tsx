@@ -5,6 +5,7 @@ import { useSessionStore } from "@/stores/session.store";
 
 interface TimelineEntry {
   color: string;
+  detail?: string;
   id: string;
   label: string;
   relativeMs: number;
@@ -23,6 +24,9 @@ const TYPE_COLORS: Record<string, string> = {
   plan_update: "bg-indigo-500",
   task_status: "bg-emerald-500",
   error: "bg-red-500",
+  checkpoint: "bg-yellow-500",
+  confidence: "bg-purple-500",
+  credit_update: "bg-orange-500",
 };
 
 const TYPE_LABELS: Record<string, string> = {
@@ -36,6 +40,9 @@ const TYPE_LABELS: Record<string, string> = {
   plan_update: "Plan Update",
   task_status: "Status",
   error: "Error",
+  checkpoint: "Checkpoint",
+  confidence: "Confidence",
+  credit_update: "Credits",
 };
 
 export function TimelineView() {
@@ -49,16 +56,40 @@ export function TimelineView() {
 
     const baseTime = new Date(events[0]?.timestamp ?? 0).getTime();
 
-    return events.map(
-      (event): TimelineEntry => ({
+    return events.map((event): TimelineEntry => {
+      let detail: string | undefined;
+      const data = event.data as Record<string, unknown>;
+
+      if (event.type === "tool_call" && data.tool) {
+        detail = `${data.tool}(${JSON.stringify(data.args ?? {}).slice(0, 60)})`;
+      } else if (event.type === "tool_result" && data.tool) {
+        detail = `${data.tool}: ${data.success ? "ok" : "failed"}`;
+      } else if (event.type === "file_change" && data.filePath) {
+        detail = String(data.filePath);
+      } else if (event.type === "confidence") {
+        detail = `Score: ${Number(data.confidence ?? data.score ?? 0).toFixed(2)}`;
+      } else if (event.type === "reasoning" && data.content) {
+        detail = String(data.content).slice(0, 80);
+      } else if (event.type === "checkpoint") {
+        detail = String(data.reason ?? data.checkpointType ?? "");
+      } else if (event.type === "error" && data.error) {
+        detail = String(
+          typeof data.error === "string"
+            ? data.error
+            : ((data.error as Record<string, unknown>).message ?? "")
+        ).slice(0, 80);
+      }
+
+      return {
         id: event.id,
         type: event.type,
         label: TYPE_LABELS[event.type] ?? event.type.replace(/_/g, " "),
         timestamp: event.timestamp,
         relativeMs: new Date(event.timestamp).getTime() - baseTime,
         color: TYPE_COLORS[event.type] ?? "bg-zinc-500",
-      })
-    );
+        detail,
+      };
+    });
   }, [events]);
 
   useEffect(() => {
@@ -149,6 +180,11 @@ export function TimelineView() {
                             +{formatDuration(entry.relativeMs)}
                           </span>
                         </div>
+                        {entry.detail && (
+                          <div className="mt-0.5 truncate text-[10px] text-zinc-500">
+                            {entry.detail}
+                          </div>
+                        )}
                       </div>
                     </div>
                   </div>

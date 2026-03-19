@@ -11,6 +11,8 @@ permissions:
 jobs:
   pr-validation:
     runs-on: ubuntu-latest
+    env:
+      PR_TITLE: ${{ github.event.pull_request.title }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -18,8 +20,7 @@ jobs:
 
       - name: Check PR title format
         run: |
-          TITLE="${{ github.event.pull_request.title }}"
-          if ! echo "$TITLE" | grep -qE "^(feat|fix|chore|docs|refactor|test|ci|perf|build|style)(\(.+\))?: .+"; then
+          if ! echo "$PR_TITLE" | grep -qE "^(feat|fix|chore|docs|refactor|test|ci|perf|build|style)(\(.+\))?: .+"; then
             echo "::error::PR title must follow conventional commits format: type(scope): description"
             echo "Examples: feat(api): add user endpoint, fix(web): resolve login bug"
             exit 1
@@ -34,6 +35,16 @@ jobs:
           cache: pnpm
 
       - run: pnpm install --frozen-lockfile
+
+      - name: Check PR size
+        run: |
+          ADDITIONS=$(git diff --stat origin/${{ github.base_ref }}...HEAD | tail -1 | awk '{print $4}')
+          DELETIONS=$(git diff --stat origin/${{ github.base_ref }}...HEAD | tail -1 | awk '{print $6}')
+          TOTAL=$((${ADDITIONS:-0} + ${DELETIONS:-0}))
+          echo "Total lines changed: $TOTAL"
+          if [ "$TOTAL" -gt 2000 ]; then
+            echo "::warning::Large PR detected ($TOTAL lines changed). Consider splitting into smaller PRs."
+          fi
 
       - name: Check for lockfile changes
         run: |

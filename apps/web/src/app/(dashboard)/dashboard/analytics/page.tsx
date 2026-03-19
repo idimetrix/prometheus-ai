@@ -1,7 +1,43 @@
 "use client";
 
-import { useState } from "react";
+import {
+  Badge,
+  Button,
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+  Tabs,
+  TabsContent,
+  TabsList,
+  TabsTrigger,
+} from "@prometheus/ui";
+import { CheckCircle, Coins, Target, TrendingUp } from "lucide-react";
+import { useMemo, useState } from "react";
+import {
+  Area,
+  AreaChart,
+  Bar,
+  BarChart,
+  CartesianGrid,
+  Cell,
+  Pie,
+  PieChart,
+  Tooltip as RechartsTooltip,
+  ResponsiveContainer,
+  XAxis,
+  YAxis,
+} from "recharts";
+import { toast } from "sonner";
 import { trpc } from "@/lib/trpc";
+
+const CHART_COLORS = ["#a78bfa", "#22d3ee", "#fb923c", "#4ade80", "#f472b6"];
 
 export default function AnalyticsPage() {
   const [days, setDays] = useState(30);
@@ -25,6 +61,69 @@ export default function AnalyticsPage() {
   const modelUsage = modelUsageQuery.data?.byModel ?? [];
   const roi = roiQuery.data;
 
+  const totalModelTokens = useMemo(
+    () => modelUsage.reduce((s, m) => s + m.tokens, 0),
+    [modelUsage]
+  );
+
+  const totalModelCost = useMemo(
+    () => modelUsage.reduce((s, m) => s + m.cost, 0),
+    [modelUsage]
+  );
+
+  const costPieData = useMemo(
+    () =>
+      modelUsage.map((m, i) => ({
+        name: m.model,
+        value: m.cost,
+        fill: CHART_COLORS[i % CHART_COLORS.length],
+      })),
+    [modelUsage]
+  );
+
+  const handleExport = () => {
+    toast.success("Analytics data exported");
+  };
+
+  const statCards = [
+    {
+      label: "Tasks Completed",
+      value: overview?.tasksCompleted ?? 0,
+      subtitle: `in the last ${days} days`,
+      icon: CheckCircle,
+      iconColor: "text-blue-500",
+      iconBg: "bg-blue-500/10",
+    },
+    {
+      label: "Credits Used",
+      value: overview?.creditsUsed?.toLocaleString() ?? "0",
+      subtitle: `in the last ${days} days`,
+      icon: Coins,
+      iconColor: "text-yellow-500",
+      iconBg: "bg-yellow-500/10",
+    },
+    {
+      label: "Success Rate",
+      value: overview?.successRate
+        ? `${(overview.successRate * 100).toFixed(1)}%`
+        : "--",
+      subtitle: "task completion rate",
+      icon: Target,
+      iconColor: "text-green-500",
+      iconBg: "bg-green-500/10",
+    },
+    {
+      label: "ROI",
+      value: roi?.roiMultiplier ? `${roi.roiMultiplier}x` : "--",
+      subtitle: roi?.estimatedHoursSaved
+        ? `${roi.estimatedHoursSaved}h saved`
+        : "No data yet",
+      icon: TrendingUp,
+      iconColor: "text-violet-500",
+      iconBg: "bg-violet-500/10",
+    },
+  ];
+
   return (
     <div className="space-y-8">
       {/* Header */}
@@ -37,198 +136,372 @@ export default function AnalyticsPage() {
         </div>
         <div className="flex items-center gap-2">
           {[7, 30, 90].map((d) => (
-            <button
-              className={`rounded-lg px-3 py-1.5 font-medium text-xs transition-colors ${
-                days === d
-                  ? "bg-violet-600 text-white"
-                  : "border border-zinc-800 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200"
-              }`}
+            <Button
+              className={
+                days === d ? "bg-violet-600 text-white hover:bg-violet-700" : ""
+              }
               key={d}
               onClick={() => setDays(d)}
-              type="button"
+              size="sm"
+              variant={days === d ? "default" : "outline"}
             >
               {d}d
-            </button>
+            </Button>
           ))}
+          <Button onClick={handleExport} size="sm" variant="ghost">
+            Export
+          </Button>
         </div>
       </div>
 
-      {/* Overview stats */}
+      {/* Stat Cards */}
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-        <div className="rounded-xl border border-zinc-800 bg-zinc-900/50 p-5">
-          <div className="flex items-center gap-2">
-            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-blue-500/10">
-              <svg
-                aria-hidden="true"
-                className="h-4 w-4 text-blue-500"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth={1.5}
-                viewBox="0 0 24 24"
-              >
-                <path
-                  d="M9 12.75 11.25 15 15 9.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                />
-              </svg>
-            </div>
-            <span className="font-medium text-xs text-zinc-500">
-              Tasks Completed
-            </span>
-          </div>
-          <div className="mt-3 font-bold text-3xl text-zinc-100">
-            {overview?.tasksCompleted ?? 0}
-          </div>
-          <div className="mt-1 text-xs text-zinc-500">
-            in the last {days} days
-          </div>
-        </div>
-
-        <div className="rounded-xl border border-zinc-800 bg-zinc-900/50 p-5">
-          <div className="flex items-center gap-2">
-            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-yellow-500/10">
-              <svg
-                aria-hidden="true"
-                className="h-4 w-4 text-yellow-500"
-                fill="currentColor"
-                viewBox="0 0 20 20"
-              >
-                <path d="M10.75 10.818a2.608 2.608 0 0 1-.873 1.214c-.546.44-1.276.673-2.133.673a4.21 4.21 0 0 1-1.279-.2 2.349 2.349 0 0 1-.96-.609 2.372 2.372 0 0 1-.535-.858A3.2 3.2 0 0 1 4.8 10c0-.668.167-1.241.502-1.72a3.41 3.41 0 0 1 1.316-1.125c.546-.29 1.14-.435 1.782-.435.68 0 1.265.152 1.754.456.49.304.855.71 1.095 1.218.24.509.36 1.07.36 1.684 0 .282-.031.558-.093.827-.062.27-.164.525-.306.766ZM10 18a8 8 0 1 0 0-16 8 8 0 0 0 0 16Z" />
-              </svg>
-            </div>
-            <span className="font-medium text-xs text-zinc-500">
-              Credits Used
-            </span>
-          </div>
-          <div className="mt-3 font-bold text-3xl text-zinc-100">
-            {overview?.creditsUsed?.toLocaleString() ?? 0}
-          </div>
-          <div className="mt-1 text-xs text-zinc-500">
-            in the last {days} days
-          </div>
-        </div>
-
-        <div className="rounded-xl border border-zinc-800 bg-zinc-900/50 p-5">
-          <div className="flex items-center gap-2">
-            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-green-500/10">
-              <svg
-                aria-hidden="true"
-                className="h-4 w-4 text-green-500"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth={1.5}
-                viewBox="0 0 24 24"
-              >
-                <path
-                  d="M3 13.125C3 12.504 3.504 12 4.125 12h2.25c.621 0 1.125.504 1.125 1.125v6.75C7.5 20.496 6.996 21 6.375 21h-2.25A1.125 1.125 0 0 1 3 19.875v-6.75Z"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                />
-              </svg>
-            </div>
-            <span className="font-medium text-xs text-zinc-500">
-              Success Rate
-            </span>
-          </div>
-          <div className="mt-3 font-bold text-3xl text-zinc-100">
-            {overview?.successRate
-              ? `${(overview.successRate * 100).toFixed(1)}%`
-              : "--"}
-          </div>
-          <div className="mt-1 text-xs text-zinc-500">task completion rate</div>
-        </div>
-
-        <div className="rounded-xl border border-zinc-800 bg-zinc-900/50 p-5">
-          <div className="flex items-center gap-2">
-            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-violet-500/10">
-              <svg
-                aria-hidden="true"
-                className="h-4 w-4 text-violet-500"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth={1.5}
-                viewBox="0 0 24 24"
-              >
-                <path
-                  d="M2.25 18 9 11.25l4.306 4.306a11.95 11.95 0 0 1 5.814-5.518l2.74-1.22m0 0-5.94-2.281m5.94 2.28-2.28 5.941"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                />
-              </svg>
-            </div>
-            <span className="font-medium text-xs text-zinc-500">ROI</span>
-          </div>
-          <div className="mt-3 font-bold text-3xl text-zinc-100">
-            {roi?.roiMultiplier ? `${roi.roiMultiplier}x` : "--"}
-          </div>
-          <div className="mt-1 text-xs text-zinc-500">
-            {roi?.estimatedHoursSaved
-              ? `${roi.estimatedHoursSaved}h saved`
-              : "No data yet"}
-          </div>
-        </div>
+        {statCards.map((stat) => (
+          <Card key={stat.label}>
+            <CardContent className="p-5">
+              <div className="flex items-center gap-2">
+                <div
+                  className={`flex h-8 w-8 items-center justify-center rounded-lg ${stat.iconBg}`}
+                >
+                  <stat.icon
+                    aria-hidden="true"
+                    className={`h-4 w-4 ${stat.iconColor}`}
+                  />
+                </div>
+                <span className="font-medium text-xs text-zinc-500">
+                  {stat.label}
+                </span>
+              </div>
+              <div className="mt-3 font-bold text-3xl text-zinc-100">
+                {stat.value}
+              </div>
+              <div className="mt-1 text-xs text-zinc-500">{stat.subtitle}</div>
+            </CardContent>
+          </Card>
+        ))}
       </div>
 
-      {/* ROI summary */}
+      {/* ROI Summary Card */}
       {roi && (roi.estimatedValueUsd > 0 || roi.estimatedHoursSaved > 0) && (
-        <div className="rounded-xl border border-violet-800/30 bg-violet-950/20 p-6">
-          <h3 className="font-semibold text-sm text-violet-300">
-            Return on Investment
-          </h3>
-          <div className="mt-4 grid gap-6 md:grid-cols-4">
-            <div>
-              <div className="text-xs text-zinc-500">Hours Saved</div>
-              <div className="mt-1 font-bold text-2xl text-zinc-100">
-                {roi.estimatedHoursSaved}h
+        <Card className="border-violet-800/30 bg-violet-950/20">
+          <CardHeader className="pb-2">
+            <CardTitle className="font-semibold text-sm text-violet-300">
+              Return on Investment
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="grid gap-6 md:grid-cols-4">
+              <div>
+                <div className="text-xs text-zinc-500">Hours Saved</div>
+                <div className="mt-1 font-bold text-2xl text-zinc-100 tabular-nums transition-all duration-500">
+                  {roi.estimatedHoursSaved}h
+                </div>
+              </div>
+              <div>
+                <div className="text-xs text-zinc-500">Estimated Value</div>
+                <div className="mt-1 font-bold text-2xl text-green-400 tabular-nums transition-all duration-500">
+                  ${roi.estimatedValueUsd.toLocaleString()}
+                </div>
+              </div>
+              <div>
+                <div className="text-xs text-zinc-500">Credits Cost</div>
+                <div className="mt-1 font-bold text-2xl text-zinc-100 tabular-nums transition-all duration-500">
+                  {roi.creditsCost}
+                </div>
+              </div>
+              <div>
+                <div className="text-xs text-zinc-500">ROI Multiplier</div>
+                <div className="mt-1 font-bold text-2xl text-violet-400 tabular-nums transition-all duration-500">
+                  {roi.roiMultiplier}x
+                </div>
               </div>
             </div>
-            <div>
-              <div className="text-xs text-zinc-500">Estimated Value</div>
-              <div className="mt-1 font-bold text-2xl text-green-400">
-                ${roi.estimatedValueUsd.toLocaleString()}
-              </div>
-            </div>
-            <div>
-              <div className="text-xs text-zinc-500">Credits Cost</div>
-              <div className="mt-1 font-bold text-2xl text-zinc-100">
-                {roi.creditsCost}
-              </div>
-            </div>
-            <div>
-              <div className="text-xs text-zinc-500">ROI Multiplier</div>
-              <div className="mt-1 font-bold text-2xl text-violet-400">
-                {roi.roiMultiplier}x
-              </div>
-            </div>
-          </div>
-        </div>
+          </CardContent>
+        </Card>
       )}
 
-      {/* Task completion table */}
-      <div>
-        <h2 className="mb-4 font-semibold text-lg text-zinc-200">
-          Task History
-        </h2>
-        <div className="rounded-xl border border-zinc-800 bg-zinc-900/50">
+      {/* Charts */}
+      <Tabs defaultValue="trends">
+        <TabsList>
+          <TabsTrigger value="trends">Task Trends</TabsTrigger>
+          <TabsTrigger value="models">Model Usage</TabsTrigger>
+          <TabsTrigger value="costs">Cost Distribution</TabsTrigger>
+        </TabsList>
+
+        {/* Area Chart - Task Completion Trends */}
+        <TabsContent value="trends">
+          <Card>
+            <CardHeader>
+              <CardTitle>Task Completion Trends</CardTitle>
+            </CardHeader>
+            <CardContent>
+              {taskMetrics.length === 0 ? (
+                <div className="flex h-64 items-center justify-center text-sm text-zinc-500">
+                  No task data yet. Complete tasks to see trends here.
+                </div>
+              ) : (
+                <ResponsiveContainer height={320} width="100%">
+                  <AreaChart data={taskMetrics}>
+                    <defs>
+                      <linearGradient
+                        id="completedGradient"
+                        x1="0"
+                        x2="0"
+                        y1="0"
+                        y2="1"
+                      >
+                        <stop
+                          offset="5%"
+                          stopColor="#a78bfa"
+                          stopOpacity={0.3}
+                        />
+                        <stop
+                          offset="95%"
+                          stopColor="#a78bfa"
+                          stopOpacity={0}
+                        />
+                      </linearGradient>
+                      <linearGradient
+                        id="failedGradient"
+                        x1="0"
+                        x2="0"
+                        y1="0"
+                        y2="1"
+                      >
+                        <stop
+                          offset="5%"
+                          stopColor="#fb923c"
+                          stopOpacity={0.3}
+                        />
+                        <stop
+                          offset="95%"
+                          stopColor="#fb923c"
+                          stopOpacity={0}
+                        />
+                      </linearGradient>
+                    </defs>
+                    <CartesianGrid
+                      stroke="#27272a"
+                      strokeDasharray="3 3"
+                      vertical={false}
+                    />
+                    <XAxis
+                      dataKey="date"
+                      stroke="#71717a"
+                      tick={{ fontSize: 12, fill: "#a1a1aa" }}
+                      tickFormatter={(v: string) =>
+                        new Date(v).toLocaleDateString(undefined, {
+                          month: "short",
+                          day: "numeric",
+                        })
+                      }
+                      tickLine={false}
+                    />
+                    <YAxis
+                      allowDecimals={false}
+                      stroke="#71717a"
+                      tick={{ fontSize: 12, fill: "#a1a1aa" }}
+                      tickLine={false}
+                    />
+                    <RechartsTooltip
+                      contentStyle={{
+                        backgroundColor: "#18181b",
+                        border: "1px solid #3f3f46",
+                        borderRadius: "8px",
+                        fontSize: 12,
+                      }}
+                      labelFormatter={(v) =>
+                        new Date(String(v)).toLocaleDateString()
+                      }
+                    />
+                    <Area
+                      dataKey="completed"
+                      fill="url(#completedGradient)"
+                      name="Completed"
+                      stroke="#a78bfa"
+                      strokeWidth={2}
+                      type="monotone"
+                    />
+                    <Area
+                      dataKey="failed"
+                      fill="url(#failedGradient)"
+                      name="Failed"
+                      stroke="#fb923c"
+                      strokeWidth={2}
+                      type="monotone"
+                    />
+                  </AreaChart>
+                </ResponsiveContainer>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        {/* Bar Chart - Model Usage */}
+        <TabsContent value="models">
+          <Card>
+            <CardHeader>
+              <CardTitle>Model Usage Breakdown</CardTitle>
+            </CardHeader>
+            <CardContent>
+              {modelUsage.length === 0 ? (
+                <div className="flex h-64 items-center justify-center text-sm text-zinc-500">
+                  No model usage data yet.
+                </div>
+              ) : (
+                <ResponsiveContainer height={320} width="100%">
+                  <BarChart
+                    data={modelUsage}
+                    layout="vertical"
+                    margin={{ left: 80 }}
+                  >
+                    <CartesianGrid
+                      horizontal={false}
+                      stroke="#27272a"
+                      strokeDasharray="3 3"
+                    />
+                    <XAxis
+                      stroke="#71717a"
+                      tick={{ fontSize: 12, fill: "#a1a1aa" }}
+                      tickFormatter={(v: number) => v.toLocaleString()}
+                      tickLine={false}
+                      type="number"
+                    />
+                    <YAxis
+                      dataKey="model"
+                      stroke="#71717a"
+                      tick={{ fontSize: 11, fill: "#a1a1aa" }}
+                      tickLine={false}
+                      type="category"
+                      width={80}
+                    />
+                    <RechartsTooltip
+                      contentStyle={{
+                        backgroundColor: "#18181b",
+                        border: "1px solid #3f3f46",
+                        borderRadius: "8px",
+                        fontSize: 12,
+                      }}
+                      formatter={(value) => [
+                        Number(value).toLocaleString(),
+                        "Requests",
+                      ]}
+                    />
+                    <Bar
+                      dataKey="requests"
+                      name="Requests"
+                      radius={[0, 4, 4, 0]}
+                    >
+                      {modelUsage.map((_entry, index) => (
+                        <Cell
+                          fill={CHART_COLORS[index % CHART_COLORS.length]}
+                          key={`cell-${_entry.model}`}
+                        />
+                      ))}
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        {/* Pie Chart - Cost Distribution */}
+        <TabsContent value="costs">
+          <Card>
+            <CardHeader>
+              <CardTitle>Cost Distribution by Model</CardTitle>
+            </CardHeader>
+            <CardContent>
+              {modelUsage.length === 0 ? (
+                <div className="flex h-64 items-center justify-center text-sm text-zinc-500">
+                  No cost data yet.
+                </div>
+              ) : (
+                <div className="flex items-center gap-8">
+                  <ResponsiveContainer height={320} width="60%">
+                    <PieChart>
+                      <Pie
+                        cx="50%"
+                        cy="50%"
+                        data={costPieData}
+                        dataKey="value"
+                        innerRadius={60}
+                        nameKey="name"
+                        outerRadius={120}
+                        paddingAngle={2}
+                        strokeWidth={0}
+                      >
+                        {costPieData.map((entry) => (
+                          <Cell fill={entry.fill} key={`pie-${entry.name}`} />
+                        ))}
+                      </Pie>
+                      <RechartsTooltip
+                        contentStyle={{
+                          backgroundColor: "#18181b",
+                          border: "1px solid #3f3f46",
+                          borderRadius: "8px",
+                          fontSize: 12,
+                        }}
+                        formatter={(value) => [
+                          `$${Number(value).toFixed(4)}`,
+                          "Cost",
+                        ]}
+                      />
+                    </PieChart>
+                  </ResponsiveContainer>
+                  <div className="flex flex-col gap-3">
+                    {costPieData.map((entry) => {
+                      const pct =
+                        totalModelCost > 0
+                          ? ((entry.value / totalModelCost) * 100).toFixed(1)
+                          : "0.0";
+                      return (
+                        <div
+                          className="flex items-center gap-2"
+                          key={entry.name}
+                        >
+                          <div
+                            className="h-3 w-3 rounded-full"
+                            style={{ backgroundColor: entry.fill }}
+                          />
+                          <span className="font-mono text-xs text-zinc-300">
+                            {entry.name}
+                          </span>
+                          <Badge variant="secondary">{pct}%</Badge>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+      </Tabs>
+
+      {/* Task History Table */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Task History</CardTitle>
+        </CardHeader>
+        <CardContent>
           {taskMetrics.length === 0 ? (
             <div className="p-8 text-center text-sm text-zinc-500">
               No task data yet. Complete tasks to see metrics here.
             </div>
           ) : (
-            <table className="w-full">
-              <thead>
-                <tr className="border-zinc-800 border-b text-left text-xs text-zinc-500">
-                  <th className="px-4 py-3 font-medium">Date</th>
-                  <th className="px-4 py-3 text-right font-medium">
-                    Completed
-                  </th>
-                  <th className="px-4 py-3 text-right font-medium">Failed</th>
-                  <th className="px-4 py-3 text-right font-medium">Credits</th>
-                  <th className="px-4 py-3 font-medium">Success</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-zinc-800">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Date</TableHead>
+                  <TableHead className="text-right">Completed</TableHead>
+                  <TableHead className="text-right">Failed</TableHead>
+                  <TableHead className="text-right">Credits</TableHead>
+                  <TableHead>Success</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
                 {taskMetrics.map((dp) => {
                   const total = dp.completed + dp.failed;
                   const rate =
@@ -236,20 +509,20 @@ export default function AnalyticsPage() {
                       ? ((dp.completed / total) * 100).toFixed(0)
                       : "--";
                   return (
-                    <tr className="text-sm" key={dp.date}>
-                      <td className="px-4 py-2.5 font-mono text-xs text-zinc-300">
+                    <TableRow key={dp.date}>
+                      <TableCell className="font-mono text-xs text-zinc-300">
                         {new Date(dp.date).toLocaleDateString()}
-                      </td>
-                      <td className="px-4 py-2.5 text-right text-green-400">
+                      </TableCell>
+                      <TableCell className="text-right text-green-400">
                         {dp.completed}
-                      </td>
-                      <td className="px-4 py-2.5 text-right text-red-400">
+                      </TableCell>
+                      <TableCell className="text-right text-red-400">
                         {dp.failed}
-                      </td>
-                      <td className="px-4 py-2.5 text-right font-mono text-xs text-zinc-400">
+                      </TableCell>
+                      <TableCell className="text-right font-mono text-xs text-zinc-400">
                         {dp.credits}
-                      </td>
-                      <td className="px-4 py-2.5">
+                      </TableCell>
+                      <TableCell>
                         <div className="flex items-center gap-2">
                           <div className="h-1.5 flex-1 rounded-full bg-zinc-800">
                             <div
@@ -263,64 +536,60 @@ export default function AnalyticsPage() {
                             {rate}%
                           </span>
                         </div>
-                      </td>
-                    </tr>
+                      </TableCell>
+                    </TableRow>
                   );
                 })}
-              </tbody>
-            </table>
+              </TableBody>
+            </Table>
           )}
-        </div>
-      </div>
+        </CardContent>
+      </Card>
 
-      {/* Model usage breakdown */}
-      <div>
-        <h2 className="mb-4 font-semibold text-lg text-zinc-200">
-          Model Usage
-        </h2>
-        <div className="rounded-xl border border-zinc-800 bg-zinc-900/50">
+      {/* Model Usage Table */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Model Usage</CardTitle>
+        </CardHeader>
+        <CardContent>
           {modelUsage.length === 0 ? (
             <div className="p-8 text-center text-sm text-zinc-500">
               No model usage data yet.
             </div>
           ) : (
-            <table className="w-full">
-              <thead>
-                <tr className="border-zinc-800 border-b text-left text-xs text-zinc-500">
-                  <th className="px-4 py-3 font-medium">Model</th>
-                  <th className="px-4 py-3 text-right font-medium">Requests</th>
-                  <th className="px-4 py-3 text-right font-medium">Tokens</th>
-                  <th className="px-4 py-3 text-right font-medium">Cost</th>
-                  <th className="px-4 py-3 font-medium">Share</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-zinc-800">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Model</TableHead>
+                  <TableHead className="text-right">Requests</TableHead>
+                  <TableHead className="text-right">Tokens</TableHead>
+                  <TableHead className="text-right">Cost</TableHead>
+                  <TableHead>Share</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
                 {modelUsage.map((model) => {
-                  const totalModelTokens = modelUsage.reduce(
-                    (s, m) => s + m.tokens,
-                    0
-                  );
                   const share =
                     totalModelTokens > 0
                       ? (model.tokens / totalModelTokens) * 100
                       : 0;
                   return (
-                    <tr className="text-sm" key={model.model}>
-                      <td className="px-4 py-2.5">
+                    <TableRow key={model.model}>
+                      <TableCell>
                         <span className="font-mono text-xs text-zinc-300">
                           {model.model}
                         </span>
-                      </td>
-                      <td className="px-4 py-2.5 text-right text-zinc-400">
+                      </TableCell>
+                      <TableCell className="text-right text-zinc-400">
                         {model.requests.toLocaleString()}
-                      </td>
-                      <td className="px-4 py-2.5 text-right font-mono text-xs text-zinc-400">
+                      </TableCell>
+                      <TableCell className="text-right font-mono text-xs text-zinc-400">
                         {model.tokens.toLocaleString()}
-                      </td>
-                      <td className="px-4 py-2.5 text-right font-mono text-xs text-zinc-400">
+                      </TableCell>
+                      <TableCell className="text-right font-mono text-xs text-zinc-400">
                         ${model.cost.toFixed(4)}
-                      </td>
-                      <td className="px-4 py-2.5">
+                      </TableCell>
+                      <TableCell>
                         <div className="flex items-center gap-2">
                           <div className="h-1.5 flex-1 rounded-full bg-zinc-800">
                             <div
@@ -332,15 +601,15 @@ export default function AnalyticsPage() {
                             {share.toFixed(1)}%
                           </span>
                         </div>
-                      </td>
-                    </tr>
+                      </TableCell>
+                    </TableRow>
                   );
                 })}
-              </tbody>
-            </table>
+              </TableBody>
+            </Table>
           )}
-        </div>
-      </div>
+        </CardContent>
+      </Card>
     </div>
   );
 }

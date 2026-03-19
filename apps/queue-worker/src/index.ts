@@ -1,3 +1,4 @@
+import { createServer } from "node:http";
 import { createLogger } from "@prometheus/logger";
 import type {
   AgentTaskData,
@@ -9,6 +10,7 @@ import type {
   UsageRollupData,
 } from "@prometheus/queue";
 import { createRedisConnection } from "@prometheus/queue";
+import { initSentry, initTelemetry } from "@prometheus/telemetry";
 import { Queue, Worker } from "bullmq";
 import { processCleanupSandbox } from "./jobs/cleanup-sandbox";
 import { processCreditGrant } from "./jobs/credit-grant";
@@ -17,9 +19,18 @@ import { processIndexProject } from "./jobs/index-project";
 import { processUsageRollup } from "./jobs/usage-rollup";
 import { processNotification } from "./notifications";
 import { TaskProcessor } from "./processor";
+import { setupScheduledJobs } from "./scheduler";
+
+await initTelemetry({ serviceName: "queue-worker" });
+initSentry({ serviceName: "queue-worker" });
 
 const logger = createLogger("queue-worker");
 const processor = new TaskProcessor();
+
+// Register scheduled/repeatable jobs
+setupScheduledJobs().catch((err) => {
+  logger.error({ err }, "Failed to setup scheduled jobs");
+});
 
 // ========== Worker Concurrency Configuration ==========
 const concurrency = {
@@ -283,9 +294,41 @@ logger.info(
   "Queue Workers started"
 );
 
+// ========== Health Endpoints ==========
+const healthPort = Number(process.env.HEALTH_PORT ?? 4007);
+const healthServer = createServer((req, res) => {
+  if (req.url === "/health") {
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(
+      JSON.stringify({
+        status: "ok",
+        service: "queue-worker",
+        workers: Object.keys(workers),
+      })
+    );
+    return;
+  }
+  if (req.url === "/live") {
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ status: "ok" }));
+    return;
+  }
+  if (req.url === "/ready") {
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ status: "ready" }));
+    return;
+  }
+  res.writeHead(404);
+  res.end();
+});
+healthServer.listen(healthPort, () => {
+  logger.info({ port: healthPort }, "Health server running");
+});
+
 // ========== Graceful Shutdown ==========
 const shutdown = async () => {
   logger.info("Shutting down workers...");
+  healthServer.close();
   await Promise.allSettled(
     Object.values(workers).map(({ worker }) => worker.close())
   );

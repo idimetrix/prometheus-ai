@@ -5,6 +5,8 @@ import { EventPublisher, QueueEvents } from "@prometheus/queue";
 import type { AgentMode, AgentRole } from "@prometheus/types";
 import { eq } from "drizzle-orm";
 import { type CILoopResult, CILoopRunner } from "./ci-loop/ci-loop-runner";
+import { PropertyTesting } from "./ci-loop/property-testing";
+import { classifyTask } from "./embedding-classifier";
 import { GeneratorEvaluator } from "./patterns/generator-evaluator";
 import { SpecFirst } from "./patterns/spec-first";
 import {
@@ -647,6 +649,27 @@ Instructions:
     results.push(testResult);
     await this.publishPhaseUpdate("testing", "completed");
 
+    // Phase 5.5: SpecFirst validation — verify implementation matches specs
+    if (specResult.specs) {
+      await this.publishPhaseUpdate("spec_validation", "running");
+      const validationResult = await specFirst.validateImplementation(
+        agentLoop,
+        specResult.specs
+      );
+      if (!validationResult.success) {
+        this.logger.warn(
+          "Spec validation found mismatches, feeding back to coding agent"
+        );
+        // Re-run the coding agent to fix spec mismatches
+        const fixResult = await agentLoop.executeTask(
+          `Fix the following spec validation issues:\n\n${validationResult.output}\n\nEnsure the implementation matches the generated specifications.`,
+          "backend_coder"
+        );
+        results.push(fixResult);
+      }
+      await this.publishPhaseUpdate("spec_validation", "completed");
+    }
+
     // Phase 6: CI Loop
     await this.publishPhaseUpdate("ci_loop", "running");
     const ciRunner = new CILoopRunner(20);
@@ -664,6 +687,42 @@ Instructions:
       "ci_loop",
       ciResult.passed ? "completed" : "failed"
     );
+
+    // Phase 6.5: Property-based testing hardening (only if CI passed)
+    if (ciResult.passed && allChangedFiles.length > 0) {
+      await this.publishPhaseUpdate("property_testing", "running");
+      const propertyTesting = new PropertyTesting();
+      const propertyResult = await propertyTesting.generate(
+        agentLoop,
+        allChangedFiles.filter(
+          (f) => f.endsWith(".ts") && !f.includes(".test.")
+        )
+      );
+      results.push({
+        success: propertyResult.failed === 0,
+        output: `Property Testing: ${propertyResult.generated} files, ${propertyResult.passed} passed, ${propertyResult.failed} failed`,
+        filesChanged: [],
+        tokensUsed: { input: 0, output: 0 },
+        toolCalls: 0,
+        steps: 0,
+        creditsConsumed: 0,
+      });
+      await this.publishPhaseUpdate("property_testing", "completed");
+
+      // If property tests failed, re-run CI loop to fix them
+      if (propertyResult.failed > 0) {
+        const propFixResult = await ciRunner.run(agentLoop);
+        results.push({
+          success: propFixResult.passed,
+          output: `Property Test Fix Loop: ${propFixResult.passed ? "PASSED" : "FAILED"} after ${propFixResult.iterations} iterations`,
+          filesChanged: [],
+          tokensUsed: { input: 0, output: 0 },
+          toolCalls: 0,
+          steps: 0,
+          creditsConsumed: 0,
+        });
+      }
+    }
 
     // Phase 7: Security audit
     await this.publishPhaseUpdate("security", "running");
@@ -857,18 +916,54 @@ Instructions:
   }
 
   /**
-   * Two-stage task routing: regex pre-filter then LLM disambiguation.
-   * Stage 1 collects all regex matches with confidence scores.
-   * Stage 2 uses the agent loop to disambiguate when results are ambiguous.
+   * Three-stage task routing:
+   * 1. Embedding-based classification (primary) via model-router
+   * 2. Regex pre-filter (fallback when embeddings unavailable)
+   * 3. LLM disambiguation for ambiguous results
    */
   async routeTask(
     taskDescription: string,
     _projectContext?: string,
     agentLoop?: import("./agent-loop").AgentLoop
   ): Promise<TaskRoutingResult> {
-    const description = taskDescription.toLowerCase();
+    // Stage 1: Try embedding-based classification first
+    try {
+      const classification = await classifyTask(taskDescription);
 
-    // Stage 1: Regex pre-filter — collect all matches with scores
+      if (
+        classification.role !== "ambiguous" &&
+        classification.confidence >= 0.6
+      ) {
+        this.logger.info(
+          {
+            role: classification.role,
+            confidence: classification.confidence.toFixed(4),
+          },
+          "Task routed via embedding classification"
+        );
+        return {
+          agentRole: classification.role,
+          confidence: classification.confidence,
+          reasoning: `Embedding-based: ${classification.reasoning}`,
+        };
+      }
+
+      // Ambiguous embedding result — fall through to regex + LLM disambiguation
+      if (classification.role === "ambiguous") {
+        this.logger.info(
+          "Embedding classification ambiguous, falling through to regex + LLM"
+        );
+      }
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      this.logger.warn(
+        { error: msg },
+        "Embedding classification unavailable, falling back to regex routing"
+      );
+    }
+
+    // Stage 2: Regex pre-filter — collect all matches with scores
+    const description = taskDescription.toLowerCase();
     const candidates: TaskRoutingResult[] = [];
 
     const matchers: Array<{
@@ -951,7 +1046,7 @@ Instructions:
       return candidates[0] as TaskRoutingResult;
     }
 
-    // Stage 2: LLM disambiguation for ambiguous cases
+    // Stage 3: LLM disambiguation for ambiguous cases
     if (candidates.length > 1 && agentLoop) {
       const candidateList = candidates
         .slice(0, 3)

@@ -32,6 +32,7 @@ export const tasks = pgTable(
     index("tasks_project_id_idx").on(table.projectId),
     index("tasks_org_id_status_idx").on(table.orgId, table.status),
     index("tasks_project_status_idx").on(table.projectId, table.status),
+    index("tasks_session_status_idx").on(table.sessionId, table.status),
   ]
 );
 

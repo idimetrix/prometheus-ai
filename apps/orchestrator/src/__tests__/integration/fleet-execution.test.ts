@@ -1,5 +1,49 @@
 import { describe, expect, it, vi } from "vitest";
 
+vi.mock("@prometheus/db", () => ({
+  db: {
+    select: vi.fn().mockReturnValue({
+      from: vi.fn().mockReturnValue({
+        where: vi.fn().mockResolvedValue([]),
+      }),
+    }),
+    update: vi.fn().mockReturnValue({
+      set: vi.fn().mockReturnValue({
+        where: vi.fn().mockResolvedValue(undefined),
+      }),
+    }),
+    insert: vi.fn().mockReturnValue({
+      values: vi.fn().mockResolvedValue(undefined),
+    }),
+  },
+  tasks: {},
+  agents: {},
+  sessions: {},
+}));
+
+vi.mock("@prometheus/utils", () => ({
+  generateId: vi.fn((prefix: string) => `${prefix}_mock`),
+  orchestratorClient: { post: vi.fn() },
+  modelRouterClient: { post: vi.fn(), getCircuitState: vi.fn(() => "closed") },
+  projectBrainClient: { get: vi.fn() },
+}));
+
+vi.mock("@prometheus/telemetry", () => ({
+  withSpan: (_name: string, fn: (span: unknown) => unknown) =>
+    fn({ setAttribute: vi.fn() }),
+  initTelemetry: vi.fn(),
+  initSentry: vi.fn(),
+}));
+
+vi.mock("@prometheus/logger", () => ({
+  createLogger: () => ({
+    info: vi.fn(),
+    error: vi.fn(),
+    warn: vi.fn(),
+    debug: vi.fn(),
+  }),
+}));
+
 vi.mock("@prometheus/queue", () => ({
   EventPublisher: class {
     publishSessionEvent = vi.fn().mockResolvedValue(undefined);

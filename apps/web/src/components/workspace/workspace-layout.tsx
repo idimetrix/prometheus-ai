@@ -1,5 +1,6 @@
 "use client";
 
+import { AnimatePresence, motion } from "framer-motion";
 import {
   type ReactNode,
   useCallback,
@@ -34,6 +35,58 @@ function ResizeHandle({ direction, gridArea, onMouseDown }: ResizeHandleProps) {
     />
   );
 }
+
+interface PanelHeaderProps {
+  collapsed: boolean;
+  onToggle: () => void;
+  title: string;
+}
+
+function PanelHeader({ title, collapsed, onToggle }: PanelHeaderProps) {
+  return (
+    <div className="flex items-center justify-between border-zinc-800 border-b bg-zinc-900/80 px-3 py-1.5">
+      <span className="font-medium text-xs text-zinc-400 uppercase tracking-wider">
+        {title}
+      </span>
+      <button
+        className="rounded p-0.5 text-zinc-600 transition-colors hover:bg-zinc-800 hover:text-zinc-300"
+        onClick={onToggle}
+        title={collapsed ? `Show ${title}` : `Hide ${title}`}
+        type="button"
+      >
+        <svg
+          aria-hidden="true"
+          className="h-3.5 w-3.5"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth={2}
+          viewBox="0 0 24 24"
+        >
+          {collapsed ? (
+            <path
+              d="M12 4.5v15m7.5-7.5h-15"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          ) : (
+            <path
+              d="M19.5 12h-15"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          )}
+        </svg>
+      </button>
+    </div>
+  );
+}
+
+const panelAnimation = {
+  initial: { opacity: 0 },
+  animate: { opacity: 1 },
+  exit: { opacity: 0 },
+  transition: { duration: 0.15, ease: "easeInOut" as const },
+};
 
 const MIN_FILE_TREE = 260;
 const MIN_AGENT_PANEL = 360;
@@ -171,14 +224,22 @@ export function WorkspaceLayout({
       }}
     >
       {/* File Tree */}
-      {!sidebarCollapsed && fileTree && (
-        <div
-          className="overflow-hidden border-zinc-800 border-r"
-          style={{ gridArea: "filetree" }}
-        >
-          {fileTree}
-        </div>
-      )}
+      <AnimatePresence>
+        {!sidebarCollapsed && fileTree && (
+          <motion.div
+            className="flex flex-col overflow-hidden border-zinc-800 border-r"
+            style={{ gridArea: "filetree" }}
+            {...panelAnimation}
+          >
+            <PanelHeader
+              collapsed={sidebarCollapsed}
+              onToggle={toggleSidebar}
+              title="Files"
+            />
+            <div className="flex-1 overflow-hidden">{fileTree}</div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* File Tree Resize Handle */}
       {!sidebarCollapsed && (
@@ -189,9 +250,17 @@ export function WorkspaceLayout({
         />
       )}
 
-      {/* Center Content */}
-      <div className="min-w-0 overflow-hidden" style={{ gridArea: "center" }}>
-        {center}
+      {/* Center Content (Code Editor) */}
+      <div
+        className="flex min-w-0 flex-col overflow-hidden"
+        style={{ gridArea: "center" }}
+      >
+        <PanelHeader
+          collapsed={false}
+          onToggle={toggleTerminal}
+          title="Editor"
+        />
+        <div className="flex-1 overflow-hidden">{center}</div>
       </div>
 
       {/* Agent Panel Resize Handle */}
@@ -204,14 +273,22 @@ export function WorkspaceLayout({
       )}
 
       {/* Agent Activity Panel */}
-      {!agentPanelCollapsed && agentPanel && (
-        <div
-          className="overflow-hidden border-zinc-800 border-l"
-          style={{ gridArea: "agentpanel" }}
-        >
-          {agentPanel}
-        </div>
-      )}
+      <AnimatePresence>
+        {!agentPanelCollapsed && agentPanel && (
+          <motion.div
+            className="flex flex-col overflow-hidden border-zinc-800 border-l"
+            style={{ gridArea: "agentpanel" }}
+            {...panelAnimation}
+          >
+            <PanelHeader
+              collapsed={agentPanelCollapsed}
+              onToggle={toggleAgentPanel}
+              title="Agent"
+            />
+            <div className="flex-1 overflow-hidden">{agentPanel}</div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* Terminal Resize Handle */}
       {!terminalCollapsed && (
@@ -223,14 +300,22 @@ export function WorkspaceLayout({
       )}
 
       {/* Terminal */}
-      {!terminalCollapsed && terminal && (
-        <div
-          className="overflow-hidden border-zinc-800 border-t"
-          style={{ gridArea: "terminal" }}
-        >
-          {terminal}
-        </div>
-      )}
+      <AnimatePresence>
+        {!terminalCollapsed && terminal && (
+          <motion.div
+            className="flex flex-col overflow-hidden border-zinc-800 border-t"
+            style={{ gridArea: "terminal" }}
+            {...panelAnimation}
+          >
+            <PanelHeader
+              collapsed={terminalCollapsed}
+              onToggle={toggleTerminal}
+              title="Terminal"
+            />
+            <div className="flex-1 overflow-hidden">{terminal}</div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* Panel Toggle Bar */}
       <div className="pointer-events-none fixed right-4 bottom-4 z-10 flex gap-2">

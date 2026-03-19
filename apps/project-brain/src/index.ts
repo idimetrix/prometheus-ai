@@ -1,6 +1,11 @@
 import { serve } from "@hono/node-server";
 import { createLogger } from "@prometheus/logger";
+import { initSentry, initTelemetry } from "@prometheus/telemetry";
 import { Hono } from "hono";
+
+await initTelemetry({ serviceName: "project-brain" });
+initSentry({ serviceName: "project-brain" });
+
 import { ConventionExtractor } from "./analyzers/convention-extractor";
 import { BlueprintAutoUpdater } from "./blueprint/auto-updater";
 import { BlueprintEnforcer } from "./blueprint/enforcer";
@@ -98,6 +103,12 @@ app.get("/health", async (c) => {
     allHealthy ? 200 : 503
   );
 });
+
+// Liveness probe — lightweight, just confirms process is responsive
+app.get("/live", (c) => c.json({ status: "ok" }));
+
+// Readiness probe — can accept traffic
+app.get("/ready", (c) => c.json({ status: "ready" }));
 
 // ---- Context Assembly ----
 
@@ -626,7 +637,7 @@ app.post("/domain-knowledge/query", async (c) => {
 
 app.get("/metrics", async (c) => {
   const { metricsRegistry } = await import("@prometheus/telemetry");
-  return c.text(metricsRegistry.render(), 200, {
+  return c.text(await metricsRegistry.render(), 200, {
     "Content-Type": "text/plain; charset=utf-8",
   });
 });

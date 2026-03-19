@@ -24,15 +24,14 @@ route:
 
 receivers:
   - name: "default"
-    # Configure webhook/email/Slack as needed:
-    # webhook_configs:
-    #   - url: "http://api:4000/webhooks/alerts"
-    #     send_resolved: true
+    webhook_configs:
+      - url: "http://api:4000/webhooks/alerts"
+        send_resolved: true
 
   - name: "critical"
-    # webhook_configs:
-    #   - url: "http://api:4000/webhooks/alerts"
-    #     send_resolved: true
+    webhook_configs:
+      - url: "http://api:4000/webhooks/alerts"
+        send_resolved: true
 
 # Inhibition rules — prevent warning alerts when critical already firing
 inhibit_rules:

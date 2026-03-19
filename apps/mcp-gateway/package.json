@@ -19,6 +19,7 @@
     "@prometheus/logger": "workspace:*",
     "@prometheus/plugins": "workspace:*",
     "@prometheus/queue": "workspace:*",
+    "@prometheus/telemetry": "workspace:*",
     "@prometheus/types": "workspace:*",
     "@prometheus/utils": "workspace:*"
   },

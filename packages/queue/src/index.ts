@@ -21,6 +21,7 @@ export {
   indexingQueue,
   notificationQueue,
   type QueueName,
+  reconciliationQueue,
   usageRollupQueue,
 } from "./queues";
 export { OrgRateLimiter, type RateLimitResult } from "./rate-limiter";
@@ -32,6 +33,7 @@ export {
   DEFAULT_DLQ_CONFIG,
   type DeadLetterQueueConfig,
   type GenerateEmbeddingsData,
+  getPriorityForTier,
   getRateLimitForTier,
   // Backward compat aliases
   type IndexingJobData,

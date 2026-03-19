@@ -16,6 +16,7 @@
     "@hono/node-server": "^1.19.11",
     "dockerode": "^4.0.9",
     "@prometheus/logger": "workspace:*",
+    "@prometheus/telemetry": "workspace:*",
     "@prometheus/types": "workspace:*",
     "@prometheus/queue": "workspace:*",
     "@prometheus/utils": "workspace:*"

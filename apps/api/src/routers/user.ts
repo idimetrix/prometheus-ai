@@ -13,6 +13,49 @@ export const userRouter = router({
     return user ?? null;
   }),
 
+  updateProfile: protectedProcedure
+    .input(
+      z.object({
+        name: z.string().min(1),
+        notifyOnComplete: z.boolean(),
+        notifyOnFail: z.boolean(),
+      })
+    )
+    .mutation(async ({ input, ctx }) => {
+      const user = await ctx.db.query.users.findFirst({
+        where: eq(users.clerkId, ctx.auth.userId),
+        columns: { id: true },
+      });
+      if (!user) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "User not found" });
+      }
+
+      await ctx.db
+        .update(users)
+        .set({ name: input.name })
+        .where(eq(users.clerkId, ctx.auth.userId));
+
+      const existing = await ctx.db.query.userSettings.findFirst({
+        where: eq(userSettings.userId, user.id),
+      });
+
+      if (existing) {
+        await ctx.db
+          .update(userSettings)
+          .set({
+            notificationsEnabled: input.notifyOnComplete || input.notifyOnFail,
+          })
+          .where(eq(userSettings.userId, user.id));
+      } else {
+        await ctx.db.insert(userSettings).values({
+          userId: user.id,
+          notificationsEnabled: input.notifyOnComplete || input.notifyOnFail,
+        });
+      }
+
+      return { success: true };
+    }),
+
   updateSettings: protectedProcedure
     .input(
       z.object({

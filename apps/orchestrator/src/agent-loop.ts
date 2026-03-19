@@ -1,7 +1,10 @@
 import type { AgentExecutionResult, BaseAgent } from "@prometheus/agent-sdk";
+import { db, sessionEvents } from "@prometheus/db";
 import { createLogger } from "@prometheus/logger";
 import { EventPublisher, QueueEvents } from "@prometheus/queue";
+import { withSpan } from "@prometheus/telemetry";
 import type { AgentRole } from "@prometheus/types";
+import { generateId, projectBrainClient } from "@prometheus/utils";
 import type { ConfidenceResult } from "./confidence";
 import { SessionMemory } from "./continuity/session-memory";
 import {
@@ -29,9 +32,6 @@ interface ProjectBrainContext {
   sprintState: string | null;
 }
 
-const PROJECT_BRAIN_URL =
-  process.env.PROJECT_BRAIN_URL ?? "http://localhost:4003";
-
 /**
  * AgentLoop is now a thin wrapper around the ExecutionEngine.
  * It manages session-level state (pause/resume/cancel), loads context
@@ -56,6 +56,13 @@ export class AgentLoop {
   private tokenBatchTimer: ReturnType<typeof setTimeout> | null = null;
   private fileChangeBatch: Array<{ tool: string; filePath: string }> = [];
   private fileChangeBatchTimer: ReturnType<typeof setTimeout> | null = null;
+  private eventPersistBatch: Array<{
+    type: string;
+    data: Record<string, unknown>;
+    agentRole?: string;
+    timestamp: string;
+  }> = [];
+  private eventPersistTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(
     sessionId: string,
@@ -109,25 +116,11 @@ export class AgentLoop {
     };
 
     try {
-      const response = await fetch(
-        `${PROJECT_BRAIN_URL}/api/projects/${this.projectId}/context`,
-        {
-          headers: { "Content-Type": "application/json" },
-          signal: AbortSignal.timeout(10_000),
-        }
+      const response = await projectBrainClient.get<ProjectBrainContext>(
+        `/api/projects/${this.projectId}/context`
       );
-
-      if (!response.ok) {
-        this.logger.warn(
-          { status: response.status },
-          "Failed to load Project Brain context, continuing without it"
-        );
-        return defaultCtx;
-      }
-
-      const data = (await response.json()) as ProjectBrainContext;
       this.logger.info("Loaded Project Brain context");
-      return data;
+      return response.data;
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
       this.logger.warn(
@@ -145,7 +138,20 @@ export class AgentLoop {
    * Delegates to ExecutionEngine.execute() and translates events
    * into Redis pub/sub messages for the frontend.
    */
-  async executeTask(
+  executeTask(
+    taskDescription: string,
+    agentRole: string,
+    options?: ExecutionOptions
+  ): Promise<AgentExecutionResult> {
+    return withSpan(`agent.executeTask.${agentRole}`, (span) => {
+      span.setAttribute("session.id", this.sessionId);
+      span.setAttribute("agent.role", agentRole);
+      span.setAttribute("project.id", this.projectId);
+      return this._executeTaskInner(taskDescription, agentRole, options);
+    });
+  }
+
+  private async _executeTaskInner(
     taskDescription: string,
     agentRole: string,
     options?: ExecutionOptions
@@ -309,7 +315,7 @@ export class AgentLoop {
       iteration.result = result;
       this.iterations.push(iteration);
       this.status = "idle";
-      this.activeAgent = null;
+      this.cleanup();
 
       // Publish completion event
       await this.eventPublisher.publishSessionEvent(this.sessionId, {
@@ -381,7 +387,7 @@ export class AgentLoop {
       };
       this.iterations.push(iteration);
       this.status = "idle";
-      this.activeAgent = null;
+      this.cleanup();
 
       // Publish error event
       await this.eventPublisher.publishSessionEvent(this.sessionId, {
@@ -564,6 +570,46 @@ export class AgentLoop {
       default:
         break;
     }
+
+    // Batch-persist events to DB for session replay (fire-and-forget)
+    this.eventPersistBatch.push({
+      type: event.type,
+      data: event as unknown as Record<string, unknown>,
+      agentRole,
+      timestamp: event.timestamp,
+    });
+    if (!this.eventPersistTimer) {
+      this.eventPersistTimer = setTimeout(() => {
+        this.flushEventPersistBatch();
+      }, 500);
+    }
+  }
+
+  private flushEventPersistBatch(): void {
+    const batch = [...this.eventPersistBatch];
+    this.eventPersistBatch = [];
+    this.eventPersistTimer = null;
+    if (batch.length === 0) {
+      return;
+    }
+
+    const rows = batch.map((evt) => ({
+      id: generateId("evt"),
+      sessionId: this.sessionId,
+      type: evt.type as "agent_output",
+      data: evt.data,
+      agentRole: evt.agentRole ?? null,
+      timestamp: new Date(evt.timestamp),
+    }));
+
+    db.insert(sessionEvents)
+      .values(rows)
+      .catch((err) => {
+        this.logger.warn(
+          { err, count: rows.length },
+          "Event batch persist failed"
+        );
+      });
   }
 
   private waitForResume(): Promise<void> {
@@ -592,5 +638,30 @@ export class AgentLoop {
   stop(): void {
     this.status = "stopped";
     this.logger.info("Agent loop stopped");
+  }
+
+  /**
+   * Clean up resources: clear batch timers, flush pending batches.
+   * Called after task completion (success or error).
+   */
+  cleanup(): void {
+    if (this.tokenBatchTimer) {
+      clearTimeout(this.tokenBatchTimer);
+      this.tokenBatchTimer = null;
+      this.tokenBatchBuffer = "";
+    }
+    if (this.fileChangeBatchTimer) {
+      clearTimeout(this.fileChangeBatchTimer);
+      this.fileChangeBatchTimer = null;
+      this.fileChangeBatch = [];
+    }
+    if (this.eventPersistTimer) {
+      clearTimeout(this.eventPersistTimer);
+      this.eventPersistTimer = null;
+    }
+    // Flush any remaining events to DB
+    this.flushEventPersistBatch();
+    this.activeAgent = null;
+    this.logger.debug("Agent loop cleaned up");
   }
 }

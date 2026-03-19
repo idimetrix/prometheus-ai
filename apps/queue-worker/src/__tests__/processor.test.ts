@@ -39,8 +39,18 @@ vi.mock("@prometheus/db", () => ({
   modelUsage: {},
 }));
 
+const mockOrchestratorPost = vi.fn();
+
 vi.mock("@prometheus/utils", () => ({
   generateId: vi.fn((prefix: string) => `${prefix}_mock123`),
+  orchestratorClient: {
+    post: (...args: unknown[]) => mockOrchestratorPost(...args),
+  },
+}));
+
+vi.mock("@prometheus/telemetry", () => ({
+  withSpan: (_name: string, fn: (span: unknown) => unknown) =>
+    fn({ setAttribute: vi.fn() }),
 }));
 
 const mockPublishSessionEvent = vi.fn().mockResolvedValue(undefined);
@@ -59,10 +69,6 @@ vi.mock("@prometheus/logger", () => ({
     debug: vi.fn(),
   }),
 }));
-
-// Mock fetch globally
-const mockFetch = vi.fn();
-vi.stubGlobal("fetch", mockFetch);
 
 import type { AgentTaskData } from "@prometheus/queue";
 import { TaskProcessor } from "../processor";
@@ -86,20 +92,20 @@ describe("TaskProcessor", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    mockOrchestratorPost.mockReset();
     processor = new TaskProcessor();
     mockFindMany.mockResolvedValue([]);
   });
 
   it("updates task status to running at start", async () => {
-    mockFetch.mockResolvedValueOnce({
-      ok: true,
-      json: async () => ({
+    mockOrchestratorPost.mockResolvedValueOnce({
+      data: {
         success: true,
         output: "Fixed the bug",
         filesChanged: ["src/login.ts"],
         tokensUsed: { input: 100, output: 50 },
         creditsConsumed: 5,
-      }),
+      },
     });
     mockFindMany.mockResolvedValueOnce([{ status: "completed" }]); // checkSessionCompletion
 
@@ -112,15 +118,14 @@ describe("TaskProcessor", () => {
   });
 
   it("publishes running status event", async () => {
-    mockFetch.mockResolvedValueOnce({
-      ok: true,
-      json: async () => ({
+    mockOrchestratorPost.mockResolvedValueOnce({
+      data: {
         success: true,
         output: "Done",
         filesChanged: [],
         tokensUsed: { input: 0, output: 0 },
         creditsConsumed: 0,
-      }),
+      },
     });
     mockFindMany.mockResolvedValueOnce([{ status: "completed" }]);
 
@@ -136,15 +141,14 @@ describe("TaskProcessor", () => {
   });
 
   it("creates agent instance record", async () => {
-    mockFetch.mockResolvedValueOnce({
-      ok: true,
-      json: async () => ({
+    mockOrchestratorPost.mockResolvedValueOnce({
+      data: {
         success: true,
         output: "Done",
         filesChanged: [],
         tokensUsed: { input: 0, output: 0 },
         creditsConsumed: 0,
-      }),
+      },
     });
     mockFindMany.mockResolvedValueOnce([{ status: "completed" }]);
 
@@ -155,32 +159,36 @@ describe("TaskProcessor", () => {
   });
 
   it("calls orchestrator service and processes response", async () => {
-    mockFetch.mockResolvedValueOnce({
-      ok: true,
-      json: async () => ({
+    mockOrchestratorPost.mockResolvedValueOnce({
+      data: {
         success: true,
         output: "Fixed login bug by adding null check",
         filesChanged: ["src/login.ts"],
         tokensUsed: { input: 500, output: 200 },
         creditsConsumed: 5,
-      }),
+      },
     });
     mockFindMany.mockResolvedValueOnce([{ status: "completed" }]);
 
     const result = await processor.process(baseTaskData);
 
     expect(result.success).toBe(true);
-    expect(result.output).toContain("Fixed login bug");
+    expect(result.output).toContain("Fixed login bug by adding null check");
     expect(result.filesChanged).toContain("src/login.ts");
     expect(result.creditsConsumed).toBe(5);
-    expect(mockFetch).toHaveBeenCalledWith(
-      expect.stringContaining("/process"),
-      expect.objectContaining({ method: "POST" })
+    expect(mockOrchestratorPost).toHaveBeenCalledWith(
+      "/process",
+      expect.objectContaining({
+        taskId: "task_1",
+        sessionId: "ses_1",
+      })
     );
   });
 
   it("falls back to fallback processing when orchestrator returns non-ok", async () => {
-    mockFetch.mockResolvedValueOnce({ ok: false, status: 500 });
+    mockOrchestratorPost.mockRejectedValueOnce(
+      new Error("Orchestrator returned 500")
+    );
     mockFindMany.mockResolvedValueOnce([{ status: "completed" }]);
 
     const result = await processor.process(baseTaskData);
@@ -190,7 +198,7 @@ describe("TaskProcessor", () => {
   });
 
   it("falls back when fetch throws (orchestrator unavailable)", async () => {
-    mockFetch.mockRejectedValueOnce(new Error("Connection refused"));
+    mockOrchestratorPost.mockRejectedValueOnce(new Error("Connection refused"));
     mockFindMany.mockResolvedValueOnce([{ status: "completed" }]);
 
     const result = await processor.process(baseTaskData);
@@ -200,7 +208,7 @@ describe("TaskProcessor", () => {
   });
 
   it("fallback returns 2 credits consumed for default", async () => {
-    mockFetch.mockRejectedValueOnce(new Error("timeout"));
+    mockOrchestratorPost.mockRejectedValueOnce(new Error("timeout"));
     mockFindMany.mockResolvedValueOnce([{ status: "completed" }]);
 
     const result = await processor.process(baseTaskData);
@@ -208,7 +216,7 @@ describe("TaskProcessor", () => {
   });
 
   it("fallback uses creditsReserved (capped at 2) when set", async () => {
-    mockFetch.mockRejectedValueOnce(new Error("timeout"));
+    mockOrchestratorPost.mockRejectedValueOnce(new Error("timeout"));
     mockFindMany.mockResolvedValueOnce([{ status: "completed" }]);
 
     const taskWithReserved = { ...baseTaskData, creditsReserved: 5 };
@@ -217,15 +225,14 @@ describe("TaskProcessor", () => {
   });
 
   it("updates task status to completed on success", async () => {
-    mockFetch.mockResolvedValueOnce({
-      ok: true,
-      json: async () => ({
+    mockOrchestratorPost.mockResolvedValueOnce({
+      data: {
         success: true,
         output: "Done",
         filesChanged: [],
         tokensUsed: { input: 100, output: 50 },
         creditsConsumed: 3,
-      }),
+      },
     });
     mockFindMany.mockResolvedValueOnce([{ status: "completed" }]);
 
@@ -238,15 +245,14 @@ describe("TaskProcessor", () => {
   });
 
   it("publishes completion event with output details", async () => {
-    mockFetch.mockResolvedValueOnce({
-      ok: true,
-      json: async () => ({
+    mockOrchestratorPost.mockResolvedValueOnce({
+      data: {
         success: true,
         output: "All tests pass",
         filesChanged: ["src/test.ts"],
         tokensUsed: { input: 200, output: 100 },
         creditsConsumed: 4,
-      }),
+      },
     });
     mockFindMany.mockResolvedValueOnce([{ status: "completed" }]);
 
@@ -266,15 +272,14 @@ describe("TaskProcessor", () => {
   });
 
   it("consumes credits when creditsConsumed > 0", async () => {
-    mockFetch.mockResolvedValueOnce({
-      ok: true,
-      json: async () => ({
+    mockOrchestratorPost.mockResolvedValueOnce({
+      data: {
         success: true,
         output: "Done",
         filesChanged: [],
         tokensUsed: { input: 100, output: 50 },
         creditsConsumed: 5,
-      }),
+      },
     });
     mockFindMany.mockResolvedValueOnce([{ status: "completed" }]);
 
@@ -286,15 +291,14 @@ describe("TaskProcessor", () => {
   });
 
   it("records model usage when tokens > 0", async () => {
-    mockFetch.mockResolvedValueOnce({
-      ok: true,
-      json: async () => ({
+    mockOrchestratorPost.mockResolvedValueOnce({
+      data: {
         success: true,
         output: "Done",
         filesChanged: [],
         tokensUsed: { input: 500, output: 250 },
         creditsConsumed: 3,
-      }),
+      },
     });
     mockFindMany.mockResolvedValueOnce([{ status: "completed" }]);
 
@@ -305,15 +309,14 @@ describe("TaskProcessor", () => {
   });
 
   it("checks session completion after task processing", async () => {
-    mockFetch.mockResolvedValueOnce({
-      ok: true,
-      json: async () => ({
+    mockOrchestratorPost.mockResolvedValueOnce({
+      data: {
         success: true,
         output: "Done",
         filesChanged: [],
         tokensUsed: { input: 0, output: 0 },
         creditsConsumed: 0,
-      }),
+      },
     });
     // All tasks are done
     mockFindMany.mockResolvedValueOnce([
@@ -328,15 +331,14 @@ describe("TaskProcessor", () => {
   });
 
   it("sets session to failed when any task failed", async () => {
-    mockFetch.mockResolvedValueOnce({
-      ok: true,
-      json: async () => ({
+    mockOrchestratorPost.mockResolvedValueOnce({
+      data: {
         success: true,
         output: "Done",
         filesChanged: [],
         tokensUsed: { input: 0, output: 0 },
         creditsConsumed: 0,
-      }),
+      },
     });
     mockFindMany.mockResolvedValueOnce([
       { status: "completed" },
@@ -350,15 +352,14 @@ describe("TaskProcessor", () => {
   });
 
   it("does not complete session when tasks are still pending", async () => {
-    mockFetch.mockResolvedValueOnce({
-      ok: true,
-      json: async () => ({
+    mockOrchestratorPost.mockResolvedValueOnce({
+      data: {
         success: true,
         output: "Done",
         filesChanged: [],
         tokensUsed: { input: 0, output: 0 },
         creditsConsumed: 0,
-      }),
+      },
     });
     mockFindMany.mockResolvedValueOnce([
       { status: "completed" },
@@ -372,10 +373,7 @@ describe("TaskProcessor", () => {
   });
 
   it("uses fallback processing when orchestrator response is invalid", async () => {
-    mockFetch.mockResolvedValueOnce({
-      ok: true,
-      json: () => Promise.reject(new Error("Parse error")),
-    });
+    mockOrchestratorPost.mockRejectedValueOnce(new Error("Parse error"));
 
     // Should not throw - uses fallback processing
     const result = await processor.process(baseTaskData);
@@ -384,10 +382,9 @@ describe("TaskProcessor", () => {
   });
 
   it("publishes completion event even with fallback", async () => {
-    mockFetch.mockResolvedValueOnce({
-      ok: false,
-      status: 500,
-    });
+    mockOrchestratorPost.mockRejectedValueOnce(
+      new Error("Orchestrator returned 500")
+    );
 
     const result = await processor.process(baseTaskData);
     expect(result.success).toBe(true);

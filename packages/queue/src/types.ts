@@ -53,7 +53,7 @@ export interface DeadLetterQueueConfig {
 
 export const DEFAULT_DLQ_CONFIG: DeadLetterQueueConfig = {
   maxRetries: 5,
-  queueSuffix: ":dlq",
+  queueSuffix: "-dlq",
   ttlMs: 7 * 24 * 60 * 60 * 1000, // 7 days
 };
 
@@ -76,6 +76,21 @@ export const RateLimits: Record<string, RateLimitConfig> = {
 
 export function getRateLimitForTier(tier: PlanTier): RateLimitConfig {
   return (RateLimits[tier] ?? RateLimits.hobby) as RateLimitConfig;
+}
+
+// ========== Priority by Plan Tier ==========
+const TIER_PRIORITY_MAP: Record<string, JobPriority> = {
+  enterprise: JobPriority.CRITICAL,
+  studio: JobPriority.HIGH,
+  team: JobPriority.HIGH,
+  pro: JobPriority.NORMAL,
+  starter: JobPriority.NORMAL,
+  hobby: JobPriority.LOW,
+};
+
+/** Get BullMQ priority value for a plan tier (lower = higher priority) */
+export function getPriorityForTier(tier: PlanTier): JobPriority {
+  return (TIER_PRIORITY_MAP[tier] ?? JobPriority.NORMAL) as JobPriority;
 }
 
 // ========== Job Data Types ==========

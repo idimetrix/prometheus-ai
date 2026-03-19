@@ -1,10 +1,16 @@
 import { agentMetaTools } from "./agent-tools";
+import { astGrepTools } from "./ast-grep";
 import { browserTools } from "./browser";
+import { browserAutomationTools } from "./browser-automation";
 import { fileTools } from "./file";
 import { gitTools } from "./git";
+import { lspTools } from "./lsp";
+import { openhandsEditTools } from "./openhands-edit";
 import { searchTools } from "./search";
+import { semgrepTools } from "./semgrep";
 import { terminalTools } from "./terminal";
 import type { AgentToolDefinition } from "./types";
+import { zoektTools } from "./zoekt";
 
 export const TOOL_REGISTRY: Record<string, AgentToolDefinition> = {};
 
@@ -19,7 +25,13 @@ registerTools(terminalTools);
 registerTools(gitTools);
 registerTools(searchTools);
 registerTools(browserTools);
+registerTools(browserAutomationTools);
 registerTools(agentMetaTools);
+registerTools(lspTools);
+registerTools(astGrepTools);
+registerTools(zoektTools);
+registerTools(semgrepTools);
+registerTools(openhandsEditTools);
 
 /**
  * ToolRegistry class for programmatic tool management.

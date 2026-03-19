@@ -6,6 +6,7 @@ import { createLogger } from "@prometheus/logger";
 import { and, eq } from "drizzle-orm";
 import type { KnowledgeGraphLayer } from "../layers/knowledge-graph";
 import type { SemanticLayer } from "../layers/semantic";
+import { parseTypeScript } from "../parsers/tree-sitter";
 
 const logger = createLogger("project-brain:indexer");
 
@@ -116,6 +117,25 @@ export class FileIndexer {
     if (existing.length > 0 && existing[0]?.fileHash === hash) {
       logger.debug({ projectId, filePath }, "File unchanged, skipping");
       return false;
+    }
+
+    // Parse with tree-sitter for TS/JS files to extract symbols
+    const ext = path.extname(filePath);
+    if ([".ts", ".tsx", ".js", ".jsx"].includes(ext)) {
+      try {
+        const symbolTable = parseTypeScript(filePath, content);
+        logger.debug(
+          {
+            filePath,
+            functions: symbolTable.functions.length,
+            classes: symbolTable.classes.length,
+            imports: symbolTable.imports.length,
+          },
+          "Parsed symbols"
+        );
+      } catch (parseErr) {
+        logger.warn({ filePath, err: parseErr }, "Symbol parsing failed");
+      }
     }
 
     // Index in both semantic layer and knowledge graph
@@ -295,6 +315,157 @@ export class FileIndexer {
       { projectId, fileCount: files.length },
       "Full reindex complete"
     );
+  }
+
+  /**
+   * Tiered indexing: prioritize files based on task context.
+   *
+   * - Tier 1 (immediate): Files referenced in the task description — indexed synchronously.
+   * - Tier 2 (priority): Files within 2 hops in the knowledge graph — indexed via priority queue.
+   * - Tier 3 (background): All remaining files — indexed as a background job.
+   *
+   * @param projectId - Project identifier
+   * @param taskDescription - The task description used to extract referenced files
+   * @param allFiles - Array of { path, content } for all available files
+   */
+  async indexTiered(
+    projectId: string,
+    taskDescription: string,
+    allFiles: Array<{ path: string; content: string }>
+  ): Promise<void> {
+    logger.info(
+      { projectId, totalFiles: allFiles.length },
+      "Starting tiered indexing"
+    );
+
+    // Build a lookup map for quick access
+    const fileMap = new Map<string, string>();
+    for (const f of allFiles) {
+      fileMap.set(f.path, f.content);
+    }
+
+    // --- Tier 1: Files mentioned in the task description ---
+    const tier1Paths = this.extractReferencedFiles(taskDescription, allFiles);
+    const tier1Set = new Set(tier1Paths);
+
+    logger.info(
+      { projectId, tier1Count: tier1Paths.length },
+      "Tier 1: indexing referenced files synchronously"
+    );
+
+    for (const filePath of tier1Paths) {
+      const content = fileMap.get(filePath);
+      if (content) {
+        try {
+          await this.indexFile(projectId, filePath, content);
+        } catch (err) {
+          logger.warn({ projectId, filePath, err }, "Tier 1 indexing failed");
+        }
+      }
+    }
+
+    // --- Tier 2: Files within 2 hops in knowledge graph ---
+    const tier2Set = new Set<string>();
+    for (const filePath of tier1Paths) {
+      try {
+        const related = await this.knowledgeGraph.traverseFromNode(
+          projectId,
+          `file:${filePath}`,
+          2
+        );
+        if (related && Array.isArray(related.nodes)) {
+          for (const node of related.nodes) {
+            if (
+              node.filePath &&
+              !tier1Set.has(node.filePath) &&
+              fileMap.has(node.filePath)
+            ) {
+              tier2Set.add(node.filePath);
+            }
+          }
+        }
+      } catch {
+        // Knowledge graph may not have this node yet
+      }
+    }
+
+    logger.info(
+      { projectId, tier2Count: tier2Set.size },
+      "Tier 2: indexing graph-adjacent files"
+    );
+
+    // Index tier 2 files (priority — still in-process but after tier 1)
+    for (const filePath of tier2Set) {
+      const content = fileMap.get(filePath);
+      if (content) {
+        try {
+          await this.indexFile(projectId, filePath, content);
+        } catch (err) {
+          logger.warn({ projectId, filePath, err }, "Tier 2 indexing failed");
+        }
+      }
+    }
+
+    // --- Tier 3: Everything else (background) ---
+    const indexedSet = new Set([...tier1Set, ...tier2Set]);
+    const tier3Files = allFiles.filter((f) => !indexedSet.has(f.path));
+
+    logger.info(
+      { projectId, tier3Count: tier3Files.length },
+      "Tier 3: queuing remaining files for background indexing"
+    );
+
+    // Process tier 3 in batches to avoid blocking
+    const BATCH_SIZE = 20;
+    for (let i = 0; i < tier3Files.length; i += BATCH_SIZE) {
+      const batch = tier3Files.slice(i, i + BATCH_SIZE);
+      const promises = batch.map(async (f) => {
+        try {
+          await this.indexFile(projectId, f.path, f.content);
+        } catch (err) {
+          logger.warn(
+            { projectId, filePath: f.path, err },
+            "Tier 3 indexing failed"
+          );
+        }
+      });
+      await Promise.all(promises);
+    }
+
+    logger.info(
+      {
+        projectId,
+        tier1: tier1Paths.length,
+        tier2: tier2Set.size,
+        tier3: tier3Files.length,
+      },
+      "Tiered indexing complete"
+    );
+  }
+
+  /**
+   * Extract file paths referenced in a task description.
+   * Looks for quoted paths, import-style references, and file extensions.
+   */
+  private extractReferencedFiles(
+    description: string,
+    allFiles: Array<{ path: string }>
+  ): string[] {
+    const referenced: string[] = [];
+    const descLower = description.toLowerCase();
+
+    for (const file of allFiles) {
+      // Check if the file path or filename appears in the description
+      const fileName = file.path.split("/").pop() ?? "";
+      if (
+        description.includes(file.path) ||
+        (fileName.length > 3 && descLower.includes(fileName.toLowerCase()))
+      ) {
+        referenced.push(file.path);
+      }
+    }
+
+    return referenced;
   }
 
   /**

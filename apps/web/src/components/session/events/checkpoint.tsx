@@ -85,6 +85,36 @@ export function Checkpoint({
         </div>
       )}
 
+      {/* Affected files */}
+      {Array.isArray(event.data.affectedFiles) &&
+        (event.data.affectedFiles as string[]).length > 0 && (
+          <div className="mb-3">
+            <div className="mb-1 font-medium text-[10px] text-zinc-500">
+              Affected Files
+            </div>
+            <div className="max-h-24 overflow-auto rounded border border-zinc-800 bg-zinc-950 p-2">
+              {(event.data.affectedFiles as string[]).map((f) => (
+                <div
+                  className="truncate font-mono text-[10px] text-zinc-400"
+                  key={f}
+                >
+                  {f}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+      {/* Cost info */}
+      {event.data.creditsConsumed != null && (
+        <div className="mb-3 flex items-center gap-2 text-[10px] text-zinc-500">
+          <span>Credits consumed:</span>
+          <span className="font-medium text-zinc-300">
+            {String(event.data.creditsConsumed)}
+          </span>
+        </div>
+      )}
+
       {/* Modify text area */}
       {action === "modify" && (
         <div className="mb-3">

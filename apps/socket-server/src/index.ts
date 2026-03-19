@@ -1,6 +1,7 @@
 import { createServer } from "node:http";
 import { createLogger } from "@prometheus/logger";
 import { createRedisConnection } from "@prometheus/queue";
+import { initSentry } from "@prometheus/telemetry";
 import { createAdapter } from "@socket.io/redis-adapter";
 import { Server } from "socket.io";
 import { authMiddleware } from "./auth";
@@ -8,8 +9,26 @@ import { setupFleetNamespace } from "./namespaces/fleet";
 import { setupNotificationNamespace } from "./namespaces/notifications";
 import { setupSessionNamespace } from "./namespaces/sessions";
 
+initSentry({ serviceName: "socket-server" });
+
 const logger = createLogger("socket-server");
-const httpServer = createServer();
+const httpServer = createServer((req, res) => {
+  if (req.url === "/health") {
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ status: "ok", service: "socket-server" }));
+    return;
+  }
+  if (req.url === "/live") {
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ status: "ok" }));
+    return;
+  }
+  if (req.url === "/ready") {
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ status: "ready" }));
+    return;
+  }
+});
 
 const io = new Server(httpServer, {
   cors: {

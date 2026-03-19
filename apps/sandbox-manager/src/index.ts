@@ -1,12 +1,17 @@
 import { serve } from "@hono/node-server";
 import { createLogger } from "@prometheus/logger";
+import { initSentry, initTelemetry } from "@prometheus/telemetry";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { ContainerManager } from "./container";
 import { GitOperations } from "./git-ops";
 import { createHealthChecker } from "./health";
 import { SandboxPool } from "./pool";
+import { screenshotRoute } from "./routes/screenshot";
 import { validateTimeout } from "./security";
+
+await initTelemetry({ serviceName: "sandbox-manager" });
+initSentry({ serviceName: "sandbox-manager" });
 
 const logger = createLogger("sandbox-manager");
 const app = new Hono();
@@ -25,6 +30,12 @@ app.get("/health", async (c) => {
   const statusCode = health.status === "unhealthy" ? 503 : 200;
   return c.json(health, statusCode);
 });
+
+// Liveness probe — lightweight, just confirms process is responsive
+app.get("/live", (c) => c.json({ status: "ok" }));
+
+// Readiness probe — can accept traffic
+app.get("/ready", (c) => c.json({ status: "ready" }));
 
 // ---- Pool stats ----
 
@@ -317,6 +328,9 @@ app.get("/sandbox/:id", (c) => {
     lastUsedAt: info.lastUsedAt.toISOString(),
   });
 });
+
+// ---- Screenshots (Playwright) ----
+app.route("/", screenshotRoute);
 
 // ---- Startup ----
 

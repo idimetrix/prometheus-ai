@@ -25,6 +25,10 @@ export const creditTransactions = pgTable(
     index("credit_transactions_org_id_idx").on(table.orgId),
     index("credit_transactions_org_type_idx").on(table.orgId, table.type),
     index("credit_transactions_task_id_idx").on(table.taskId),
+    index("credit_transactions_org_created_idx").on(
+      table.orgId,
+      table.createdAt
+    ),
   ]
 );
 

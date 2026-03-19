@@ -17,6 +17,7 @@
     "@prometheus/db": "workspace:*",
     "@prometheus/queue": "workspace:*",
     "@prometheus/logger": "workspace:*",
+    "@prometheus/telemetry": "workspace:*",
     "@prometheus/types": "workspace:*",
     "drizzle-orm": "^0.45.1"
   },

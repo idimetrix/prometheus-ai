@@ -1,3 +1,5 @@
+export type { ChatMessage } from "./use-agent-chat";
+export { useAgentChat } from "./use-agent-chat";
 export { useSessionSocket } from "./use-session-socket";
 export { useSessionStream } from "./use-session-stream";
 export type { ShortcutAction } from "./use-shortcuts";

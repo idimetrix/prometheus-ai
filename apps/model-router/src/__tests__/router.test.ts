@@ -139,6 +139,16 @@ vi.mock("@prometheus/logger", () => ({
   }),
 }));
 
+vi.mock("@prometheus/telemetry", () => ({
+  withSpan: (_name: string, fn: (span: unknown) => unknown) =>
+    fn({ setAttribute: vi.fn() }),
+  metricsRegistry: { render: vi.fn().mockResolvedValue("") },
+}));
+
+vi.mock("@prometheus/queue", () => ({
+  redis: { ping: vi.fn().mockResolvedValue("PONG") },
+}));
+
 import type { RouteRequest } from "../router";
 import { ModelRouterService } from "../router";
 

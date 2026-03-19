@@ -1,5 +1,5 @@
 import { createLogger } from "@prometheus/logger";
-import { generateId } from "@prometheus/utils";
+import { generateId, sandboxManagerClient } from "@prometheus/utils";
 
 const logger = createLogger("orchestrator:git:worktree");
 
@@ -17,13 +17,7 @@ export interface WorktreeInfo {
  * parallel execution.
  */
 export class WorktreeManager {
-  private readonly sandboxManagerUrl: string;
   private readonly activeWorktrees = new Map<string, WorktreeInfo>();
-
-  constructor() {
-    this.sandboxManagerUrl =
-      process.env.SANDBOX_MANAGER_URL ?? "http://localhost:4006";
-  }
 
   /**
    * Create a new worktree for a task. The worktree is a lightweight
@@ -312,29 +306,48 @@ export class WorktreeManager {
     return this.activeWorktrees.size;
   }
 
+  /**
+   * Push a worktree's branch to the remote.
+   */
+  async push(
+    projectId: string,
+    taskId: string,
+    remote = "origin"
+  ): Promise<{ pushed: boolean; error?: string }> {
+    const info = this.activeWorktrees.get(taskId);
+    if (!info) {
+      return { pushed: false, error: "No worktree found" };
+    }
+
+    try {
+      await this.execInSandbox(
+        projectId,
+        `cd ${info.path} && git push ${remote} ${info.branch}`
+      );
+      logger.info({ taskId, branch: info.branch }, "Branch pushed to remote");
+      return { pushed: true };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      logger.warn({ taskId, error: msg }, "Push failed");
+      return { pushed: false, error: msg };
+    }
+  }
+
   private async execInSandbox(
     projectId: string,
     command: string
   ): Promise<string> {
-    const response = await fetch(`${this.sandboxManagerUrl}/exec`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ projectId, command }),
-      signal: AbortSignal.timeout(30_000),
-    });
-
-    if (!response.ok) {
-      throw new Error(`Sandbox exec failed: ${response.status}`);
-    }
-
-    const data = (await response.json()) as {
+    const response = await sandboxManagerClient.post<{
       output: string;
       exitCode: number;
-    };
-    if (data.exitCode !== 0) {
-      throw new Error(`Command failed (exit ${data.exitCode}): ${data.output}`);
+    }>("/exec", { projectId, command });
+
+    if (response.data.exitCode !== 0) {
+      throw new Error(
+        `Command failed (exit ${response.data.exitCode}): ${response.data.output}`
+      );
     }
 
-    return data.output;
+    return response.data.output;
   }
 }

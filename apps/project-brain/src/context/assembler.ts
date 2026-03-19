@@ -11,14 +11,32 @@ import type { ProceduralLayer, Procedure } from "../layers/procedural";
 import type { RerankableResult, Reranker } from "../layers/reranker";
 import type { SearchResult, SemanticLayer } from "../layers/semantic";
 import type { WorkingMemoryLayer } from "../layers/working-memory";
+import { Mem0Sync } from "../memory/mem0-sync";
 
 const logger = createLogger("project-brain:context");
+
+/**
+ * Get the token budget for a given slot type.
+ * Different model slots have different context window sizes.
+ */
+export function getTokenBudget(slotType: string): number {
+  switch (slotType) {
+    case "longContext":
+      return 100_000;
+    case "think":
+      return 20_000;
+    default:
+      return 14_000;
+  }
+}
 
 export interface AssembleRequest {
   agentRole: string;
   maxTokens: number;
   projectId: string;
   sessionId?: string;
+  /** Optional slot type for dynamic context window management. */
+  slotType?: string;
   taskDescription: string;
 }
 
@@ -34,7 +52,10 @@ export interface AssembledContext {
     knowledgeGraph: number;
     blueprint: number;
     tools: number;
+    preferences: number;
   };
+  /** User/project preferences from Mem0 */
+  preferences: string;
   /** Session context: working memory, recent decisions */
   session: string;
   /** Task-specific context: semantic search results, knowledge graph */
@@ -73,6 +94,7 @@ export class ContextAssembler {
   private readonly procedural: ProceduralLayer;
   private readonly workingMemory: WorkingMemoryLayer;
   private readonly reranker: Reranker;
+  private readonly mem0Sync: Mem0Sync;
 
   constructor(
     semantic: SemanticLayer,
@@ -80,7 +102,8 @@ export class ContextAssembler {
     episodic: EpisodicLayer,
     procedural: ProceduralLayer,
     workingMemory: WorkingMemoryLayer,
-    reranker: Reranker
+    reranker: Reranker,
+    mem0Sync?: Mem0Sync
   ) {
     this.semantic = semantic;
     this.knowledgeGraph = knowledgeGraph;
@@ -88,14 +111,20 @@ export class ContextAssembler {
     this.procedural = procedural;
     this.workingMemory = workingMemory;
     this.reranker = reranker;
+    this.mem0Sync = mem0Sync ?? new Mem0Sync();
   }
 
   async assemble(request: AssembleRequest): Promise<AssembledContext> {
-    const { projectId, sessionId, taskDescription, agentRole, maxTokens } =
+    const { projectId, sessionId, taskDescription, agentRole, slotType } =
       request;
 
+    // Use slotType-based budget if provided, otherwise fall back to maxTokens
+    const effectiveMaxTokens = slotType
+      ? getTokenBudget(slotType)
+      : request.maxTokens;
+
     // Adaptive budget allocation based on agent role
-    const budgets = this.getAdaptiveBudget(agentRole, maxTokens);
+    const budgets = this.getAdaptiveBudget(agentRole, effectiveMaxTokens);
 
     // ─── PASS 1: Lightweight references (IDs + scores, ~50 tokens each) ───
     // Fetch all layers in parallel for maximum throughput
@@ -107,6 +136,7 @@ export class ContextAssembler {
       recentDecisions,
       taskRelatedDecisions,
       workingMem,
+      preferences,
     ] = await Promise.all([
       this.loadBlueprint(projectId),
       this.procedural.list(projectId),
@@ -115,6 +145,7 @@ export class ContextAssembler {
       this.episodic.getRecent(projectId, 10),
       this.episodic.recall(projectId, taskDescription, 5),
       sessionId ? this.workingMemory.getAll(sessionId) : Promise.resolve({}),
+      this.loadPreferences(projectId, taskDescription),
     ]);
 
     // Rerank semantic results using role-based boost paths
@@ -191,6 +222,13 @@ export class ContextAssembler {
     // 4. Tools context: agent role description
     const toolsContext = this.buildToolsContext(agentRole, budgets.tools);
 
+    // 5. Preferences context from Mem0 (12% of budget)
+    const preferencesBudget = Math.floor(effectiveMaxTokens * 0.12);
+    const preferencesContext = this.buildPreferencesContext(
+      preferences,
+      preferencesBudget
+    );
+
     // Track token usage per layer
     const layerTokens = {
       semantic: estimateTokens(semanticContext),
@@ -200,26 +238,30 @@ export class ContextAssembler {
       knowledgeGraph: estimateTokens(graphContext),
       blueprint: estimateTokens(globalContext),
       tools: estimateTokens(toolsContext),
+      preferences: estimateTokens(preferencesContext),
     };
 
     const totalEstimate =
       estimateTokens(globalContext) +
       estimateTokens(taskContext) +
       estimateTokens(sessionContext) +
-      estimateTokens(toolsContext);
+      estimateTokens(toolsContext) +
+      estimateTokens(preferencesContext);
 
     logger.info(
       {
         projectId,
         agentRole,
+        slotType: slotType ?? "default",
         totalTokensEstimate: totalEstimate,
         semanticHits: rerankedResults.length,
         graphNodes: graphResults.nodes.length,
         episodicMemories: recentDecisions.length,
         procedures: procedures.length,
         workingMemKeys: Object.keys(workingMem).length,
+        preferences: preferences.length,
       },
-      "Context assembled from all 5 memory layers"
+      "Context assembled from all memory layers"
     );
 
     return {
@@ -227,9 +269,46 @@ export class ContextAssembler {
       taskSpecific: taskContext,
       session: sessionContext,
       tools: toolsContext,
+      preferences: preferencesContext,
       layerTokens,
       totalTokensEstimate: totalEstimate,
     };
+  }
+
+  private async loadPreferences(
+    projectId: string,
+    taskDescription: string
+  ): Promise<string[]> {
+    try {
+      return await this.mem0Sync.getPreferences(projectId, taskDescription);
+    } catch (err) {
+      logger.warn({ projectId, err }, "Failed to load preferences from Mem0");
+      return [];
+    }
+  }
+
+  private buildPreferencesContext(
+    preferences: string[],
+    budgetTokens: number
+  ): string {
+    if (preferences.length === 0) {
+      return "";
+    }
+
+    const parts: string[] = ["## User/Project Preferences (Mem0)"];
+    let usedChars = 0;
+    const maxChars = budgetTokens * 4;
+
+    for (const pref of preferences) {
+      const entry = `- ${pref}`;
+      if (usedChars + entry.length > maxChars) {
+        break;
+      }
+      parts.push(entry);
+      usedChars += entry.length;
+    }
+
+    return parts.join("\n");
   }
 
   private async loadBlueprint(projectId: string): Promise<string | null> {

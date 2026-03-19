@@ -1,5 +1,6 @@
 import { serve } from "@hono/node-server";
 import { createLogger } from "@prometheus/logger";
+import { initSentry, initTelemetry } from "@prometheus/telemetry";
 import type { AgentMode, AgentRole } from "@prometheus/types";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
@@ -7,6 +8,9 @@ import { CheckpointManager } from "./checkpoint";
 import { SessionManager } from "./session-manager";
 import { TakeoverManager } from "./takeover";
 import { TaskRouter } from "./task-router";
+
+await initTelemetry({ serviceName: "orchestrator" });
+initSentry({ serviceName: "orchestrator" });
 
 const logger = createLogger("orchestrator");
 
@@ -29,6 +33,12 @@ app.get("/health", (c) =>
     timestamp: new Date().toISOString(),
   })
 );
+
+// Liveness probe — lightweight, just confirms process is responsive
+app.get("/live", (c) => c.json({ status: "ok" }));
+
+// Readiness probe — can accept traffic
+app.get("/ready", (c) => c.json({ status: "ready" }));
 
 // ─── Process Task (called by queue worker) ──────────────────────
 
@@ -289,7 +299,7 @@ app.post("/sessions/:id/release", async (c) => {
 app.get("/metrics", async (c) => {
   const { metricsRegistry, metrics } = await import("@prometheus/telemetry");
   metrics.activeSessions.set({}, sessionManager.getActiveSessionCount());
-  return c.text(metricsRegistry.render(), 200, {
+  return c.text(await metricsRegistry.render(), 200, {
     "Content-Type": "text/plain; charset=utf-8",
   });
 });

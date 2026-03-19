@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { Toaster } from "sonner";
 import { Providers } from "./providers";
 import "./globals.css";
 
@@ -15,8 +16,19 @@ export default function RootLayout({
 }) {
   return (
     <html className="dark" lang="en" suppressHydrationWarning>
-      <body className="min-h-screen bg-zinc-950 font-sans text-zinc-100 antialiased">
+      <body className="min-h-screen bg-background font-sans text-foreground antialiased">
         <Providers>{children}</Providers>
+        <Toaster
+          position="bottom-right"
+          theme="dark"
+          toastOptions={{
+            style: {
+              background: "hsl(var(--color-card))",
+              border: "1px solid hsl(var(--color-border))",
+              color: "hsl(var(--color-foreground))",
+            },
+          }}
+        />
       </body>
     </html>
   );

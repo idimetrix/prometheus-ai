@@ -1,5 +1,6 @@
 import { serve } from "@hono/node-server";
 import { createLogger } from "@prometheus/logger";
+import { initSentry } from "@prometheus/telemetry";
 import { decrypt, encrypt } from "@prometheus/utils";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
@@ -15,6 +16,8 @@ import { registerSentryAdapter } from "./adapters/sentry";
 import { registerSlackAdapter } from "./adapters/slack";
 import { registerVercelAdapter } from "./adapters/vercel";
 import { ToolRegistry } from "./registry";
+
+initSentry({ serviceName: "mcp-gateway" });
 
 const logger = createLogger("mcp-gateway");
 const app = new Hono();
@@ -104,6 +107,12 @@ app.get("/health", async (c) => {
     allHealthy ? 200 : 503
   );
 });
+
+// Liveness probe — lightweight, just confirms process is responsive
+app.get("/live", (c) => c.json({ status: "ok" }));
+
+// Readiness probe — can accept traffic
+app.get("/ready", (c) => c.json({ status: "ready" }));
 
 // ---- Tool Discovery ----
 

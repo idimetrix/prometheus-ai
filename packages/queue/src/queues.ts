@@ -133,6 +133,16 @@ export const creditGrantQueue = new Queue<CreditGrantData>("credit-grant", {
   }),
 });
 
+/** Credit reconciliation queue */
+export const reconciliationQueue = new Queue("credit-reconciliation", {
+  connection: redis,
+  defaultJobOptions: buildJobOptions(RetryPolicies.standard, {
+    removeOnComplete: 500,
+    removeOnFail: 1000,
+    priority: JobPriority.NORMAL,
+  }),
+});
+
 // Re-export the old billingQueue name for backward compat
 export const billingQueue = creditGrantQueue;
 
@@ -173,6 +183,7 @@ export const ALL_QUEUES = {
   "cleanup-sandbox": cleanupSandboxQueue,
   "usage-rollup": usageRollupQueue,
   "credit-grant": creditGrantQueue,
+  "credit-reconciliation": reconciliationQueue,
 } as const;
 
 export type QueueName = keyof typeof ALL_QUEUES;

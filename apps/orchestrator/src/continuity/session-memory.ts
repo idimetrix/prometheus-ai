@@ -1,9 +1,7 @@
 import { createLogger } from "@prometheus/logger";
+import { projectBrainClient } from "@prometheus/utils";
 
 const logger = createLogger("orchestrator:continuity");
-
-const PROJECT_BRAIN_URL =
-  process.env.PROJECT_BRAIN_URL ?? "http://localhost:4003";
 
 export interface SessionSummary {
   blockers: string[];
@@ -35,45 +33,32 @@ export class SessionMemory {
     logger.info({ sessionId, projectId }, "Loading prior session context");
 
     try {
-      const response = await fetch(
-        `${PROJECT_BRAIN_URL}/sessions/${sessionId}/load-prior`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ projectId }),
-          signal: AbortSignal.timeout(10_000),
-        }
+      const response = await projectBrainClient.post<{ loadedCount: number }>(
+        `/sessions/${sessionId}/load-prior`,
+        { projectId }
       );
 
-      if (response.ok) {
-        const data = (await response.json()) as { loadedCount: number };
+      // Also fetch recent episodic memories for context
+      let context = "";
+      try {
+        const memResponse = await projectBrainClient.get<{
+          memories: Array<{ decision: string; outcome?: string }>;
+        }>(`/memory/${projectId}?type=episodic&limit=10`, { timeout: 5000 });
 
-        // Also fetch recent episodic memories for context
-        const memResponse = await fetch(
-          `${PROJECT_BRAIN_URL}/memory/${projectId}?type=episodic&limit=10`,
-          { signal: AbortSignal.timeout(5000) }
-        );
-
-        let context = "";
-        if (memResponse.ok) {
-          const memData = (await memResponse.json()) as {
-            memories: Array<{ decision: string; outcome?: string }>;
-          };
-          if (memData.memories.length > 0) {
-            context = memData.memories
-              .map(
-                (m) => `- ${m.decision}${m.outcome ? ` (${m.outcome})` : ""}`
-              )
-              .join("\n");
-          }
+        if (memResponse.data.memories.length > 0) {
+          context = memResponse.data.memories
+            .map((m) => `- ${m.decision}${m.outcome ? ` (${m.outcome})` : ""}`)
+            .join("\n");
         }
-
-        return {
-          loaded: data.loadedCount > 0,
-          priorSessions: data.loadedCount,
-          context,
-        };
+      } catch {
+        // Non-critical: episodic memory fetch failure
       }
+
+      return {
+        loaded: response.data.loadedCount > 0,
+        priorSessions: response.data.loadedCount,
+        context,
+      };
     } catch (err) {
       logger.warn({ err }, "Failed to load prior session context");
     }
@@ -105,18 +90,10 @@ export class SessionMemory {
         .filter(Boolean)
         .join("\n");
 
-      await fetch(
-        `${PROJECT_BRAIN_URL}/sessions/${summary.sessionId}/persist`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            projectId: summary.projectId,
-            summary: summaryText,
-          }),
-          signal: AbortSignal.timeout(10_000),
-        }
-      );
+      await projectBrainClient.post(`/sessions/${summary.sessionId}/persist`, {
+        projectId: summary.projectId,
+        summary: summaryText,
+      });
     } catch (err) {
       logger.warn({ err }, "Failed to save session summary");
     }
@@ -131,19 +108,13 @@ export class SessionMemory {
     limit = 5
   ): Promise<string[]> {
     try {
-      const response = await fetch(
-        `${PROJECT_BRAIN_URL}/memory/${projectId}?type=episodic&query=${encodeURIComponent(query)}&limit=${limit}`,
-        {
-          signal: AbortSignal.timeout(5000),
-        }
+      const response = await projectBrainClient.get<{
+        memories: Array<{ decision: string }>;
+      }>(
+        `/memory/${projectId}?type=episodic&query=${encodeURIComponent(query)}&limit=${limit}`,
+        { timeout: 5000 }
       );
-
-      if (response.ok) {
-        const data = (await response.json()) as {
-          memories: Array<{ decision: string }>;
-        };
-        return data.memories.map((m) => m.decision);
-      }
+      return response.data.memories.map((m) => m.decision);
     } catch {
       // Silent failure for non-critical feature
     }

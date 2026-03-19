@@ -10,7 +10,8 @@ import {
 import { createLogger } from "@prometheus/logger";
 import type { AgentTaskData } from "@prometheus/queue";
 import { EventPublisher } from "@prometheus/queue";
-import { generateId } from "@prometheus/utils";
+import { withSpan } from "@prometheus/telemetry";
+import { generateId, orchestratorClient } from "@prometheus/utils";
 import { eq, sql } from "drizzle-orm";
 
 interface ProcessResult {
@@ -25,7 +26,16 @@ export class TaskProcessor {
   private readonly logger = createLogger("queue-worker:processor");
   private readonly publisher = new EventPublisher();
 
-  async process(taskData: AgentTaskData): Promise<ProcessResult> {
+  process(taskData: AgentTaskData): Promise<ProcessResult> {
+    return withSpan("queue.process", (span) => {
+      span.setAttribute("task.id", taskData.taskId);
+      span.setAttribute("session.id", taskData.sessionId);
+      span.setAttribute("task.mode", taskData.mode);
+      return this._processInner(taskData);
+    });
+  }
+
+  private async _processInner(taskData: AgentTaskData): Promise<ProcessResult> {
     const {
       taskId,
       sessionId,
@@ -64,15 +74,12 @@ export class TaskProcessor {
       });
 
       // Call orchestrator service to process the task
-      const orchestratorUrl =
-        process.env.ORCHESTRATOR_URL ?? "http://localhost:4002";
       let result: ProcessResult;
 
       try {
-        const response = await fetch(`${orchestratorUrl}/process`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
+        const response = await orchestratorClient.post<ProcessResult>(
+          "/process",
+          {
             taskId,
             sessionId,
             projectId,
@@ -83,16 +90,9 @@ export class TaskProcessor {
             mode,
             agentRole,
             agentId,
-          }),
-          signal: AbortSignal.timeout(3_600_000), // 1 hour timeout
-        });
-
-        if (response.ok) {
-          result = (await response.json()) as ProcessResult;
-        } else {
-          // Fallback: basic processing if orchestrator is unavailable
-          result = await this.fallbackProcess(taskData, agentId);
-        }
+          }
+        );
+        result = response.data;
       } catch (_fetchError) {
         this.logger.warn(
           { taskId },
