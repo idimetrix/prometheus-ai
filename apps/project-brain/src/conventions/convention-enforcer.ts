@@ -14,6 +14,10 @@ import type {
 
 const logger = createLogger("project-brain:convention-enforcer");
 
+/** Matches imports of interface-prefixed names that could use `import type` */
+const INTERFACE_IMPORT_RE =
+  /^import\s+\{\s*(I[A-Z][a-zA-Z]*(?:\s*,\s*I[A-Z][a-zA-Z]*)*)\s*\}\s+from/;
+
 // ---- Regex constants for enforcement checks ----
 const FILE_EXT_RE = /\.\w+$/;
 const KEBAB_CASE_RE = /^[a-z][a-z0-9]*(-[a-z0-9]+)*$/;
@@ -325,14 +329,37 @@ export class ConventionEnforcer {
   }
 
   private checkTypeImports(
-    _conv: Convention,
-    _code: string
+    conv: Convention,
+    code: string
   ): ConventionViolation[] {
-    // Type-only import detection requires full type analysis.
-    // For now, this is a placeholder that returns no violations.
-    // Future: integrate with TypeScript compiler API to detect
-    // imports that are only used as types and should use `import type`.
-    return [];
+    // Heuristic: if the project convention is to use `import type`,
+    // flag regular imports of known type-only patterns (interfaces, types).
+    if (conv.confidence < 0.6) {
+      return [];
+    }
+
+    const violations: ConventionViolation[] = [];
+    const importLines = code.split("\n");
+    for (let i = 0; i < importLines.length; i++) {
+      const line = importLines[i] ?? "";
+      // Skip lines that already use `import type`
+      if (line.includes("import type")) {
+        continue;
+      }
+      // Flag imports that only import names starting with uppercase I (interface convention)
+      const match = line.match(INTERFACE_IMPORT_RE);
+      if (match) {
+        violations.push({
+          category: conv.category,
+          conventionPattern: conv.pattern,
+          severity: "info",
+          message: `Consider using \`import type\` for type-only imports: ${match[1]}`,
+          line: i + 1,
+          suggestion: line.replace("import {", "import type {"),
+        });
+      }
+    }
+    return violations;
   }
 
   private checkLoggerUsage(

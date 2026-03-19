@@ -422,7 +422,14 @@ serve({ fetch: app.fetch, port }, () => {
   logger.info({ port }, "Model Router running");
 });
 
+export type {
+  ExperimentConfig,
+  ExperimentMetrics,
+  ExperimentResults,
+} from "./ab-testing";
+export { ABTestManager } from "./ab-testing";
 export { BYOModelManager } from "./byo-model";
 export { CascadeRouter } from "./cascade";
+export { PromptCacheManager } from "./prompt-cache";
 export { RateLimitManager } from "./rate-limiter";
 export { ModelRouterService } from "./router";

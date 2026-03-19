@@ -11,6 +11,10 @@ export {
   formatKeyboardShortcut,
   useKeyboardShortcuts,
 } from "./use-keyboard-shortcuts";
+export type { OptimisticMessage } from "./use-optimistic-message";
+export { useOptimisticMessage } from "./use-optimistic-message";
+export type { PresenceStatus, PresenceUser } from "./use-presence";
+export { usePresence } from "./use-presence";
 export { useSessionSocket } from "./use-session-socket";
 export { useSessionStream } from "./use-session-stream";
 export type { ShortcutAction } from "./use-shortcuts";

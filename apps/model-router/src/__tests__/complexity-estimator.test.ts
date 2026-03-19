@@ -185,18 +185,18 @@ describe("ComplexityEstimator", () => {
       expect(result.score).toBeLessThanOrEqual(5);
       // The actual slot depends on the score
       const slotMap: Record<number, string> = {
-        1: "fast",
-        2: "balanced",
-        3: "capable",
-        4: "strong",
-        5: "flagship",
+        1: "fastLoop",
+        2: "default",
+        3: "default",
+        4: "think",
+        5: "premium",
       };
       expect(result.recommendedSlot).toBe(slotMap[result.score]);
     });
 
     it("returns a valid slot for all complexity levels", () => {
       const estimator = new ComplexityEstimator();
-      const validSlots = ["fast", "balanced", "capable", "strong", "flagship"];
+      const validSlots = ["fastLoop", "default", "think", "premium"];
 
       // Test with various inputs
       const inputs = [

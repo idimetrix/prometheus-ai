@@ -19,3 +19,5 @@ export type {
   ToolCallEvent,
   ToolResultEvent,
 } from "./execution-events";
+export type { ApprovalResult, ApprovalTier } from "./tool-approval";
+export { ToolApprovalGate } from "./tool-approval";
