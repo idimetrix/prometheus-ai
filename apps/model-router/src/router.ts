@@ -5,6 +5,7 @@ import {
   PROVIDER_ENDPOINTS,
 } from "@prometheus/ai";
 import { createLogger } from "@prometheus/logger";
+import { withSpan } from "@prometheus/telemetry";
 import { generateId } from "@prometheus/utils";
 import { ResponseCache } from "./cache";
 import { ModelScorer } from "./model-scorer";
@@ -66,6 +67,12 @@ const SLOT_CONFIGS: Record<string, SlotConfig> = {
     primary: "cerebras/qwen3-235b",
     fallbacks: ["groq/llama-3.3-70b-versatile"],
     description: "Fastest available model for speculative tool pre-execution",
+  },
+  embeddings: {
+    primary: "voyage/voyage-code-3",
+    fallbacks: ["ollama/nomic-embed-text"],
+    description:
+      "Text embedding generation for semantic search and classification",
   },
 };
 
@@ -228,7 +235,15 @@ export class ModelRouterService {
    * Route a completion request using the slot-based system.
    * This is the primary routing method used by the orchestrator.
    */
-  async route(request: RouteRequest): Promise<RouteResponse> {
+  route(request: RouteRequest): Promise<RouteResponse> {
+    return withSpan(`model-router.route.${request.slot}`, (span) => {
+      span.setAttribute("slot", request.slot);
+      span.setAttribute("message_count", request.messages.length);
+      return this._routeInner(request);
+    });
+  }
+
+  private async _routeInner(request: RouteRequest): Promise<RouteResponse> {
     const slotConfig = SLOT_CONFIGS[request.slot];
     if (!slotConfig) {
       throw new Error(
@@ -237,7 +252,7 @@ export class ModelRouterService {
     }
 
     // Check cache for non-streaming requests
-    const cachedResponse = this.cache.get(
+    const cachedResponse = await this.cache.get(
       request.slot,
       request.messages as Array<{ role: string; content: string }>,
       request.options?.tools as unknown[] | undefined
@@ -253,7 +268,7 @@ export class ModelRouterService {
       const result = await this.tryModel(overrideModel, request, 1);
       if (result) {
         // Cache the successful response
-        this.cache.set(
+        await this.cache.set(
           request.slot,
           request.messages as Array<{ role: string; content: string }>,
           request.options?.tools as unknown[] | undefined,
@@ -905,4 +920,141 @@ export class ModelRouterService {
   getSlotConfigs(): Record<string, SlotConfig> {
     return { ...SLOT_CONFIGS };
   }
+}
+
+// ─── Embedding Support ────────────────────────────────────────────────
+
+const OLLAMA_URL = process.env.OLLAMA_BASE_URL ?? "http://localhost:11434";
+const VOYAGE_API_BASE = "https://api.voyageai.com/v1";
+
+export interface EmbeddingResponse {
+  dimensions: number;
+  embedding: number[];
+  model: string;
+}
+
+interface OllamaEmbeddingResult {
+  embedding: number[];
+}
+
+const embeddingLogger = createLogger("model-router:embedding");
+
+async function generateVoyageEmbedding(
+  model: string,
+  input: string
+): Promise<EmbeddingResponse | null> {
+  const apiKey = process.env.VOYAGE_API_KEY;
+  if (!apiKey) {
+    return null;
+  }
+
+  const response = await fetch(`${VOYAGE_API_BASE}/embeddings`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify({
+      model: model.replace("voyage/", ""),
+      input: [input],
+      input_type: "document",
+    }),
+    signal: AbortSignal.timeout(30_000),
+  });
+
+  if (!response.ok) {
+    return null;
+  }
+
+  const data = (await response.json()) as {
+    data: Array<{ embedding: number[] }>;
+    model: string;
+  };
+
+  const embedding = data.data[0]?.embedding;
+  if (!embedding?.length) {
+    return null;
+  }
+
+  return { embedding, model, dimensions: embedding.length };
+}
+
+async function generateOllamaEmbedding(
+  model: string,
+  input: string
+): Promise<EmbeddingResponse | null> {
+  const ollamaModel = model.replace("ollama/", "");
+  const response = await fetch(`${OLLAMA_URL}/api/embeddings`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ model: ollamaModel, prompt: input }),
+    signal: AbortSignal.timeout(30_000),
+  });
+
+  if (!response.ok) {
+    return null;
+  }
+
+  const data = (await response.json()) as OllamaEmbeddingResult;
+  if (!data.embedding?.length) {
+    return null;
+  }
+
+  return {
+    embedding: data.embedding,
+    model,
+    dimensions: data.embedding.length,
+  };
+}
+
+/**
+ * Generate an embedding vector for the given text. Tries the primary model
+ * from the embeddings slot config (voyage-code-3), then falls back through
+ * the fallback chain (Ollama nomic-embed-text).
+ */
+export async function routeEmbedding(
+  text: string | string[]
+): Promise<EmbeddingResponse> {
+  const slotConfig = SLOT_CONFIGS.embeddings;
+  if (!slotConfig) {
+    throw new Error("Embeddings slot not configured");
+  }
+
+  const candidates = [slotConfig.primary, ...slotConfig.fallbacks];
+  const input = Array.isArray(text) ? text.join(" ") : text;
+
+  for (const model of candidates) {
+    try {
+      let result: EmbeddingResponse | null = null;
+
+      if (model.startsWith("voyage/")) {
+        result = await generateVoyageEmbedding(model, input);
+      } else {
+        result = await generateOllamaEmbedding(model, input);
+      }
+
+      if (result) {
+        embeddingLogger.debug(
+          { model, dimensions: result.dimensions },
+          "Embedding generated"
+        );
+        return result;
+      }
+
+      embeddingLogger.warn(
+        { model },
+        "Embedding model returned empty result, trying fallback"
+      );
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      embeddingLogger.warn(
+        { model, error: msg },
+        "Embedding model failed, trying fallback"
+      );
+    }
+  }
+
+  throw new Error(
+    `All embedding models exhausted. Tried: ${candidates.join(", ")}`
+  );
 }

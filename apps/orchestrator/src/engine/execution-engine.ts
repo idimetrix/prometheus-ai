@@ -17,8 +17,10 @@ import {
 } from "@prometheus/agent-sdk";
 import { createLogger } from "@prometheus/logger";
 import type { AgentRole } from "@prometheus/types";
+import { AgentError, modelRouterClient } from "@prometheus/utils";
 import { BlueprintEnforcer } from "../blueprint-enforcer";
 import { type ConfidenceResult, ConfidenceScorer } from "../confidence";
+import { ContextCompressor } from "../context/context-compressor";
 import { SecretsScanner } from "../guardian/secrets-scanner";
 import { SelfReview } from "../self-review";
 import { classifyToolDependencies } from "../tool-dependency";
@@ -38,9 +40,6 @@ import type {
   ToolResultEvent,
 } from "./execution-events";
 import { QualityGate } from "./quality-gate";
-
-const MODEL_ROUTER_URL =
-  process.env.MODEL_ROUTER_URL ?? "http://localhost:4004";
 
 const BLOCKER_THRESHOLD = 3;
 
@@ -127,6 +126,8 @@ export const ExecutionEngine = {
     }
 
     const agent = roleConfig.create();
+    const allowedTools = new Set(agent.getAllowedTools());
+
     const agentContext: AgentContext = {
       sessionId: ctx.sessionId,
       projectId: ctx.projectId,
@@ -161,6 +162,7 @@ export const ExecutionEngine = {
     const secretsScanner = new SecretsScanner();
     const selfReview = new SelfReview();
     const qualityGate = new QualityGate();
+    const contextCompressor = new ContextCompressor();
 
     await blueprintEnforcer.loadForProject(ctx.projectId).catch((err) => {
       logger.warn({ err }, "Blueprint loading failed");
@@ -171,6 +173,23 @@ export const ExecutionEngine = {
       agent.addUserMessage(
         `[System] Blueprint constraints for this project:\n${blueprintContext}`
       );
+    }
+
+    // Load project conventions from Project Brain
+    try {
+      const convResponse = await import("@prometheus/utils").then((u) =>
+        u.projectBrainClient.get<{ conventions: string }>(
+          `/conventions/${ctx.projectId}`,
+          { timeout: 5000 }
+        )
+      );
+      if (convResponse.data.conventions) {
+        agent.addUserMessage(
+          `[System] Project conventions:\n${convResponse.data.conventions}`
+        );
+      }
+    } catch {
+      // Non-critical: conventions unavailable
     }
 
     // Execution state
@@ -193,6 +212,58 @@ export const ExecutionEngine = {
     const { maxIterations, temperature, maxTokens } = ctx.options;
 
     for (let i = 0; i < maxIterations; i++) {
+      // Every 5 iterations, check if context compression is needed
+      if (i > 0 && i % 5 === 0) {
+        const currentMessages = agent.getMessages().map((m) => ({
+          role: m.role,
+          content: m.content ?? "",
+          toolCallId: m.toolCallId,
+          toolCalls: m.toolCalls,
+        }));
+
+        if (contextCompressor.shouldCompress(currentMessages)) {
+          logger.info(
+            { iteration: i, messageCount: currentMessages.length },
+            "Compressing agent context (token budget exceeded)"
+          );
+
+          try {
+            const compressionResult =
+              await contextCompressor.compress(currentMessages);
+
+            if (compressionResult.ratio < 1.0) {
+              // Inject a summary of compressed history as a system message
+              const summaryMsg = compressionResult.compressedMessages.find(
+                (m) =>
+                  m.role === "system" &&
+                  m.content.startsWith("[Compressed conversation history]")
+              );
+
+              if (summaryMsg) {
+                agent.addUserMessage(
+                  `[System] Context window compressed to stay within token budget.\n${summaryMsg.content}`
+                );
+              }
+
+              logger.info(
+                {
+                  originalTokens: compressionResult.originalTokens,
+                  compressedTokens: compressionResult.compressedTokens,
+                  ratio: compressionResult.ratio.toFixed(2),
+                },
+                "Context compression applied"
+              );
+            }
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            logger.warn(
+              { error: msg },
+              "Context compression failed, continuing without compression"
+            );
+          }
+        }
+      }
+
       // Build messages for LLM
       const messages = agent.getMessages().map((m) => ({
         role: m.role,
@@ -224,21 +295,33 @@ export const ExecutionEngine = {
 
       let streamingSucceeded = false;
       try {
-        const routeResponse = await fetch(`${MODEL_ROUTER_URL}/route`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            slot,
-            messages,
-            options: {
-              stream: true,
-              tools: toolDefs.length > 0 ? toolDefs : undefined,
-              temperature,
-              maxTokens,
-            },
-          }),
-          signal: AbortSignal.timeout(120_000),
-        });
+        // Check circuit breaker before attempting LLM call
+        if (modelRouterClient.getCircuitState() === "open") {
+          throw new AgentError(
+            "Model router circuit breaker is open — service unavailable",
+            "STUCK",
+            { recoverable: true }
+          );
+        }
+
+        const routeResponse = await fetch(
+          `${process.env.MODEL_ROUTER_URL ?? "http://localhost:4004"}/route`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              slot,
+              messages,
+              options: {
+                stream: true,
+                tools: toolDefs.length > 0 ? toolDefs : undefined,
+                temperature,
+                maxTokens,
+              },
+            }),
+            signal: AbortSignal.timeout(120_000),
+          }
+        );
 
         if (!routeResponse.ok) {
           const errBody = await routeResponse.text();
@@ -595,6 +678,28 @@ export const ExecutionEngine = {
                 checkpointType: "large_change",
                 reason: `Destructive command detected: ${tc.args.command}`,
                 affectedFiles: [],
+              })
+            );
+            return events;
+          }
+
+          // RBAC: check if tool is allowed for this agent role
+          if (allowedTools.size > 0 && !allowedTools.has(tc.name)) {
+            agent.addToolResult(
+              tc.id,
+              JSON.stringify({
+                success: false,
+                error: `Tool "${tc.name}" is not permitted for role "${ctx.agentRole}". Allowed tools: ${Array.from(allowedTools).join(", ")}`,
+              })
+            );
+            events.push(
+              makeEvent<ToolResultEvent>({
+                type: "tool_result",
+                toolCallId: tc.id,
+                toolName: tc.name,
+                success: false,
+                output: "",
+                error: `RBAC denied: ${tc.name} not in allowed tools for ${ctx.agentRole}`,
               })
             );
             return events;

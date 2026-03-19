@@ -14,6 +14,16 @@ const DEFAULT_CPU_LIMIT = 1;
 const DEFAULT_MEMORY_MB = 2048;
 const DEFAULT_DISK_MB = 10_240;
 
+/** Default network allowlist for package registries */
+const DEFAULT_NETWORK_ALLOWLIST = [
+  "registry.npmjs.org",
+  "pypi.org",
+  "files.pythonhosted.org",
+  "crates.io",
+  "static.crates.io",
+  "index.crates.io",
+];
+
 interface DockerSandbox {
   containerId: string;
   instance: SandboxInstance;
@@ -117,6 +127,11 @@ export class DockerProvider implements SandboxProvider {
     };
 
     this.sandboxes.set(id, { containerId, instance });
+
+    // Apply network allowlist via iptables if specified
+    if (config.networkEnabled !== false && config.networkAllowlist) {
+      await this.applyNetworkAllowlist(containerId, config.networkAllowlist);
+    }
 
     logger.info(
       { sandboxId: id, containerId: containerId.slice(0, 12) },
@@ -248,6 +263,56 @@ export class DockerProvider implements SandboxProvider {
       child.on("close", (code) => resolve(code === 0));
       child.on("error", () => resolve(false));
     });
+  }
+
+  /**
+   * Apply iptables-based network allowlist to a container.
+   *
+   * Drops all outbound traffic except to explicitly allowed domains.
+   * The default allowlist includes npm, pip, and cargo registries.
+   */
+  private async applyNetworkAllowlist(
+    containerId: string,
+    allowlist: string[]
+  ): Promise<void> {
+    const domains = [...DEFAULT_NETWORK_ALLOWLIST, ...allowlist];
+    const uniqueDomains = [...new Set(domains)];
+
+    // Set default DROP policy for OUTPUT chain
+    await this.spawnDocker([
+      "exec",
+      containerId,
+      "sh",
+      "-c",
+      "iptables -P OUTPUT DROP 2>/dev/null; " +
+        // Allow loopback
+        "iptables -A OUTPUT -o lo -j ACCEPT 2>/dev/null; " +
+        // Allow established/related connections
+        "iptables -A OUTPUT -m state --state ESTABLISHED,RELATED -j ACCEPT 2>/dev/null; " +
+        // Allow DNS (needed to resolve allowlisted domains)
+        "iptables -A OUTPUT -p udp --dport 53 -j ACCEPT 2>/dev/null; " +
+        "iptables -A OUTPUT -p tcp --dport 53 -j ACCEPT 2>/dev/null",
+    ]);
+
+    // Add allowlist rules for each domain
+    for (const domain of uniqueDomains) {
+      await this.spawnDocker([
+        "exec",
+        containerId,
+        "sh",
+        "-c",
+        `iptables -A OUTPUT -p tcp -d "${domain}" --dport 443 -j ACCEPT 2>/dev/null; ` +
+          `iptables -A OUTPUT -p tcp -d "${domain}" --dport 80 -j ACCEPT 2>/dev/null`,
+      ]);
+    }
+
+    logger.info(
+      {
+        containerId: containerId.slice(0, 12),
+        allowlistSize: uniqueDomains.length,
+      },
+      "Network allowlist applied via iptables"
+    );
   }
 
   /**

@@ -19,6 +19,7 @@ export const codeEmbeddings = pgTable(
     chunkIndex: integer("chunk_index").notNull().default(0),
     content: text("content").notNull(),
     embedding: vector("embedding", { dimensions: 768 }),
+    embedding1024: vector("embedding_1024", { dimensions: 1024 }),
     embedding256: vector("embedding_256", { dimensions: 256 }),
     symbolType: text("symbol_type", {
       enum: [
@@ -47,6 +48,10 @@ export const codeEmbeddings = pgTable(
     index("code_embeddings_embedding_idx").using(
       "hnsw",
       table.embedding.op("vector_cosine_ops")
+    ),
+    index("code_embeddings_embedding_1024_idx").using(
+      "hnsw",
+      table.embedding1024.op("vector_cosine_ops")
     ),
     index("code_embeddings_embedding_256_idx").using(
       "hnsw",

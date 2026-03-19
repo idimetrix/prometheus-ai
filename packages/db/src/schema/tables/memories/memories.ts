@@ -19,6 +19,7 @@ export const agentMemories = pgTable(
     memoryType: memoryTypeEnum("memory_type").notNull(),
     content: text("content").notNull(),
     embedding: vector("embedding", { dimensions: 768 }),
+    embedding1024: vector("embedding_1024", { dimensions: 1024 }),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),
@@ -32,6 +33,10 @@ export const agentMemories = pgTable(
     index("agent_memories_embedding_idx").using(
       "hnsw",
       table.embedding.op("vector_cosine_ops")
+    ),
+    index("agent_memories_embedding_1024_idx").using(
+      "hnsw",
+      table.embedding1024.op("vector_cosine_ops")
     ),
   ]
 );

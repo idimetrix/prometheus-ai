@@ -20,7 +20,7 @@
     "@prometheus/telemetry": "workspace:*",
     "@prometheus/types": "workspace:*",
     "@prometheus/utils": "workspace:*",
-    "ioredis": "5.9.3"
+    "ioredis": "5.10.1"
   },
   "devDependencies": {
     "@prometheus/config-typescript": "workspace:*",

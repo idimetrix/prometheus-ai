@@ -75,6 +75,9 @@ function getProviderKey(provider: ModelProvider): string {
   if (provider === "ollama") {
     return "ollama";
   }
+  if (provider === "litellm") {
+    return process.env.LITELLM_API_KEY ?? "sk-prometheus-litellm-dev";
+  }
 
   const envVar = PROVIDER_ENV_KEYS[provider];
   const key = process.env[envVar];

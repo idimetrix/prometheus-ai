@@ -14,7 +14,9 @@ export type ModelProvider =
   | "mistral"
   | "deepseek"
   | "anthropic"
-  | "openai";
+  | "openai"
+  | "voyage"
+  | "litellm";
 
 export type ModelTier = 0 | 1 | 2 | 3 | 4;
 
@@ -71,6 +73,8 @@ export const PROVIDER_ENDPOINTS: Record<ModelProvider, string> = {
   deepseek: "https://api.deepseek.com/v1",
   anthropic: "https://api.anthropic.com/v1",
   openai: "https://api.openai.com/v1",
+  voyage: "https://api.voyageai.com/v1",
+  litellm: process.env.LITELLM_URL ?? "http://localhost:4010",
 };
 
 // ---------------------------------------------------------------------------
@@ -86,6 +90,8 @@ export const PROVIDER_ENV_KEYS: Record<ModelProvider, string> = {
   deepseek: "DEEPSEEK_API_KEY",
   anthropic: "ANTHROPIC_API_KEY",
   openai: "OPENAI_API_KEY",
+  voyage: "VOYAGE_API_KEY",
+  litellm: "LITELLM_API_KEY",
 };
 
 // ---------------------------------------------------------------------------
@@ -461,6 +467,38 @@ export const MODEL_REGISTRY: Record<string, ModelConfig> = {
     50,
     80_000,
     8192
+  ),
+
+  // =========================================================================
+  // Voyage AI: Embeddings & Reranking
+  // =========================================================================
+  "voyage/voyage-code-3": m(
+    "voyage",
+    "voyage-code-3",
+    "Voyage Code 3 (1024d, 32K ctx)",
+    2,
+    32_000,
+    0.000_000_06,
+    0,
+    ["embeddings", "code"],
+    300,
+    null,
+    null,
+    false
+  ),
+  "voyage/rerank-2.5": m(
+    "voyage",
+    "rerank-2.5",
+    "Voyage Rerank 2.5",
+    2,
+    32_000,
+    0.000_000_05,
+    0,
+    ["code"],
+    100,
+    null,
+    null,
+    false
   ),
 
   // =========================================================================

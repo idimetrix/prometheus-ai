@@ -22,7 +22,7 @@ export interface SandboxProvider {
   /** Check whether a sandbox is healthy and responsive */
   isHealthy(sandboxId: string): Promise<boolean>;
   /** Unique name for this provider */
-  readonly name: "docker" | "firecracker" | "dev";
+  readonly name: "docker" | "firecracker" | "dev" | "gvisor";
 
   /** Read a file from a sandbox */
   readFile(sandboxId: string, path: string): Promise<string>;
@@ -35,15 +35,17 @@ export interface SandboxConfig {
   cpuLimit?: number;
   diskMb?: number;
   memoryMb?: number;
+  networkAllowlist?: string[];
   networkEnabled?: boolean;
   projectId: string;
+  trustLevel?: "untrusted" | "semi-trusted" | "lightweight" | "dev";
 }
 
 export interface SandboxInstance {
   containerId: string;
   createdAt: Date;
   id: string;
-  provider: "docker" | "firecracker" | "dev";
+  provider: "docker" | "firecracker" | "dev" | "gvisor";
   status: "running" | "stopped" | "error";
   workDir: string;
 }

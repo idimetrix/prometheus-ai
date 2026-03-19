@@ -1,11 +1,16 @@
 import { serve } from "@hono/node-server";
 import { createLogger } from "@prometheus/logger";
+import { initSentry, initTelemetry } from "@prometheus/telemetry";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { streamSSE } from "hono/streaming";
 import { BYOModelManager } from "./byo-model";
+import { CascadeRouter } from "./cascade";
 import { RateLimitManager } from "./rate-limiter";
-import { ModelRouterService } from "./router";
+import { ModelRouterService, routeEmbedding } from "./router";
+
+await initTelemetry({ serviceName: "model-router" });
+initSentry({ serviceName: "model-router" });
 
 const logger = createLogger("model-router");
 const app = new Hono();
@@ -14,6 +19,7 @@ app.use("/*", cors());
 
 const rateLimiter = new RateLimitManager();
 const routerService = new ModelRouterService(rateLimiter);
+const cascadeRouter = new CascadeRouter(routerService);
 const byoManager = new BYOModelManager();
 
 // ─── Health Check (verifies connectivity to all configured providers) ──
@@ -73,6 +79,12 @@ app.get("/health", async (c) => {
     );
   }
 });
+
+// Liveness probe — lightweight, just confirms process is responsive
+app.get("/live", (c) => c.json({ status: "ok" }));
+
+// Readiness probe — can accept traffic
+app.get("/ready", (c) => c.json({ status: "ready" }));
 
 // ─── Models listing ─────────────────────────────────────────────
 
@@ -156,6 +168,32 @@ app.post("/route", async (c) => {
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);
     logger.error({ error: msg }, "Route request failed");
+    return c.json({ error: msg }, 500);
+  }
+});
+
+// ─── Embeddings Endpoint ─────────────────────────────────────────
+
+app.post("/v1/embeddings", async (c) => {
+  try {
+    const body = await c.req.json();
+    const { input } = body as { input: string | string[]; model?: string };
+
+    if (!input) {
+      return c.json(
+        { error: "'input' field is required (string or string[])" },
+        400
+      );
+    }
+
+    const result = await routeEmbedding(input);
+    return c.json({
+      data: [{ embedding: result.embedding, index: 0 }],
+      model: result.model,
+    });
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    logger.error({ error: msg }, "Embedding request failed");
     return c.json({ error: msg }, 500);
   }
 });
@@ -335,11 +373,43 @@ app.get("/v1/byo/providers", (c) => {
   return c.json({ data: providers });
 });
 
+// ─── Cascade Routing ─────────────────────────────────────────
+
+app.post("/v1/cascade/route", async (c) => {
+  try {
+    const body = await c.req.json();
+    const { slot, messages } = body;
+
+    if (!(slot && messages && Array.isArray(messages))) {
+      return c.json(
+        { error: "Request must include 'slot' and 'messages'" },
+        400
+      );
+    }
+
+    const result = await cascadeRouter.route({
+      slot,
+      messages,
+      options: body.options,
+    });
+    return c.json(result);
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    logger.error({ error: msg }, "Cascade route request failed");
+    return c.json({ error: msg }, 500);
+  }
+});
+
+app.get("/v1/cascade/metrics", (c) => {
+  const metrics = cascadeRouter.getMetrics();
+  return c.json({ data: metrics });
+});
+
 // ─── Prometheus Metrics ──────────────────────────────────────
 
 app.get("/metrics", async (c) => {
   const { metricsRegistry } = await import("@prometheus/telemetry");
-  return c.text(metricsRegistry.render(), 200, {
+  return c.text(await metricsRegistry.render(), 200, {
     "Content-Type": "text/plain; charset=utf-8",
   });
 });
@@ -353,5 +423,6 @@ serve({ fetch: app.fetch, port }, () => {
 });
 
 export { BYOModelManager } from "./byo-model";
+export { CascadeRouter } from "./cascade";
 export { RateLimitManager } from "./rate-limiter";
 export { ModelRouterService } from "./router";

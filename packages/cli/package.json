@@ -1,0 +1,28 @@
+{
+  "name": "@prometheus/cli",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "prometheus": "./dist/index.js"
+  },
+  "scripts": {
+    "build": "tsup src/index.ts --format esm --dts",
+    "dev": "tsx src/index.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "chalk": "^5.6.2",
+    "commander": "^14.0.3",
+    "eventsource": "^4.1.0",
+    "inquirer": "^13.3.2",
+    "ora": "^9.3.0"
+  },
+  "devDependencies": {
+    "@prometheus/config-typescript": "workspace:*",
+    "@types/eventsource": "^3.0.0",
+    "tsup": "^8.5.1",
+    "tsx": "^4.21.0",
+    "typescript": "^5.9.3"
+  }
+}

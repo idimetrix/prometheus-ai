@@ -1,0 +1,87 @@
+name: Prometheus Agent Review
+
+on:
+  workflow_call:
+    inputs:
+      project_id:
+        required: true
+        type: string
+      api_url:
+        required: false
+        type: string
+        default: "https://api.prometheus.dev"
+      mode:
+        required: false
+        type: string
+        default: "task"
+    secrets:
+      PROMETHEUS_API_KEY:
+        required: true
+
+jobs:
+  agent-review:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Get changed files
+        id: changed
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
+            FILES=$(git diff --name-only "origin/$GITHUB_BASE_REF...HEAD" | tr '\n' ',')
+          else
+            FILES=$(git diff --name-only HEAD~1 HEAD | tr '\n' ',')
+          fi
+          echo "files=$FILES" >> "$GITHUB_OUTPUT"
+        env:
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
+          GITHUB_BASE_REF: ${{ github.base_ref }}
+
+      - name: Submit to Prometheus
+        id: submit
+        run: |
+          RESPONSE=$(curl -s -X POST "${API_URL}/api/trpc/tasks.submit" \
+            -H "Authorization: Bearer ${API_KEY}" \
+            -H "Content-Type: application/json" \
+            -d "{
+              \"json\": {
+                \"projectId\": \"${PROJECT_ID}\",
+                \"title\": \"CI Review\",
+                \"description\": \"Review changes in: ${CHANGED_FILES}\",
+                \"mode\": \"${MODE}\"
+              }
+            }")
+          echo "response=$RESPONSE" >> "$GITHUB_OUTPUT"
+          TASK_ID=$(echo "$RESPONSE" | jq -r '.result.data.json.taskId // empty')
+          echo "task_id=$TASK_ID" >> "$GITHUB_OUTPUT"
+        env:
+          API_URL: ${{ inputs.api_url }}
+          API_KEY: ${{ secrets.PROMETHEUS_API_KEY }}
+          PROJECT_ID: ${{ inputs.project_id }}
+          CHANGED_FILES: ${{ steps.changed.outputs.files }}
+          MODE: ${{ inputs.mode }}
+
+      - name: Wait for completion
+        if: steps.submit.outputs.task_id != ''
+        timeout-minutes: 10
+        run: |
+          TASK_ID="${{ steps.submit.outputs.task_id }}"
+          echo "Waiting for task $TASK_ID to complete..."
+          for i in $(seq 1 60); do
+            STATUS=$(curl -s "${API_URL}/api/trpc/tasks.get?input={\"json\":{\"taskId\":\"$TASK_ID\"}}" \
+              -H "Authorization: Bearer ${API_KEY}" \
+              | jq -r '.result.data.json.status // "unknown"')
+            echo "Status: $STATUS"
+            if [ "$STATUS" = "completed" ] || [ "$STATUS" = "failed" ]; then
+              break
+            fi
+            sleep 10
+          done
+          if [ "$STATUS" = "failed" ]; then
+            echo "::warning::Prometheus agent task failed"
+          fi
+        env:
+          API_URL: ${{ inputs.api_url }}
+          API_KEY: ${{ secrets.PROMETHEUS_API_KEY }}

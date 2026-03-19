@@ -21,6 +21,14 @@ export {
   webEnvSchema,
 } from "./env";
 export {
+  AgentError,
+  CreditError,
+  ModelRouterError,
+  PrometheusError,
+  SandboxError,
+} from "./errors";
+export { GitHubClient } from "./github-client";
+export {
   chunk,
   clamp,
   debounce,
@@ -40,4 +48,11 @@ export { HttpClient, HttpClientError } from "./http-client";
 export { generateId } from "./id";
 export type { RetryOptions } from "./retry";
 export { retry } from "./retry";
+export { decryptSopsValue, loadSopsFile } from "./secrets";
+export {
+  modelRouterClient,
+  orchestratorClient,
+  projectBrainClient,
+  sandboxManagerClient,
+} from "./service-clients";
 export { slugify } from "./slug";

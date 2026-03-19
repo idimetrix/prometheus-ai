@@ -1,3 +1,9 @@
+export type {
+  AuthorizationTuple,
+  CheckResult,
+  ListObjectsResult,
+} from "./fga-client";
+export { FgaClient } from "./fga-client";
 export { authMiddleware } from "./middleware";
 export type {
   CreateOrgParams,

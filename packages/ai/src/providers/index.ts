@@ -19,3 +19,5 @@ export {
   createProvider,
   LLMProvider,
 } from "./provider";
+export type { VoyageEmbeddingResult, VoyageRerankResult } from "./voyage";
+export { createVoyageClient, VoyageClient } from "./voyage";

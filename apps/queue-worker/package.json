@@ -18,7 +18,9 @@
     "@prometheus/queue": "workspace:*",
     "@prometheus/ai": "workspace:*",
     "@prometheus/logger": "workspace:*",
+    "@prometheus/telemetry": "workspace:*",
     "@prometheus/utils": "workspace:*",
+    "@prometheus/workflow": "workspace:*",
     "drizzle-orm": "^0.45.1"
   },
   "devDependencies": {

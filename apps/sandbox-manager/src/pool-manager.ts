@@ -19,7 +19,7 @@ interface PooledInstance {
   instance: SandboxInstance;
   lastUsedAt: Date;
   projectId: string | null;
-  providerName: "docker" | "firecracker" | "dev";
+  providerName: "docker" | "firecracker" | "dev" | "gvisor";
 }
 
 export interface PoolManagerMetrics {
@@ -78,7 +78,7 @@ export class PoolManager {
    * Initialize the pool: pre-warm sandboxes and start health check / cleanup timers.
    */
   async initialize(
-    defaultProvider?: "docker" | "firecracker" | "dev"
+    defaultProvider?: "docker" | "firecracker" | "dev" | "gvisor"
   ): Promise<void> {
     const providerName = defaultProvider ?? this.getDefaultProviderName();
     const provider = this.providers.get(providerName);
@@ -126,13 +126,37 @@ export class PoolManager {
   }
 
   /**
+   * Select the appropriate provider based on trust level.
+   */
+  private resolveProviderFromTrustLevel(
+    trustLevel?: "untrusted" | "semi-trusted" | "lightweight" | "dev"
+  ): "docker" | "firecracker" | "dev" | "gvisor" | undefined {
+    if (!trustLevel) {
+      return undefined;
+    }
+    const trustMap: Record<
+      string,
+      "docker" | "firecracker" | "dev" | "gvisor"
+    > = {
+      untrusted: "firecracker",
+      "semi-trusted": "gvisor",
+      lightweight: "docker",
+      dev: "dev",
+    };
+    return trustMap[trustLevel];
+  }
+
+  /**
    * Acquire a sandbox from the pool or create a new one.
    */
   async acquire(
     config: SandboxConfig,
-    preferredProvider?: "docker" | "firecracker" | "dev"
+    preferredProvider?: "docker" | "firecracker" | "dev" | "gvisor"
   ): Promise<SandboxInstance> {
-    const providerName = preferredProvider ?? this.getDefaultProviderName();
+    const providerName =
+      preferredProvider ??
+      this.resolveProviderFromTrustLevel(config.trustLevel) ??
+      this.getDefaultProviderName();
     const provider = this.providers.get(providerName);
     if (!provider) {
       throw new Error(`Provider "${providerName}" is not registered`);
@@ -482,7 +506,11 @@ export class PoolManager {
     }
   }
 
-  private getDefaultProviderName(): "docker" | "firecracker" | "dev" {
+  private getDefaultProviderName():
+    | "docker"
+    | "firecracker"
+    | "dev"
+    | "gvisor" {
     // Prefer providers in order: docker > firecracker > dev
     if (this.providers.has("docker")) {
       return "docker";

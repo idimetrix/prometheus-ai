@@ -34,6 +34,8 @@ export type {
   EmbeddingResult,
   StreamChunk,
   StreamCompletionResult,
+  VoyageEmbeddingResult,
+  VoyageRerankResult,
 } from "./providers";
 // ---------------------------------------------------------------------------
 // Providers
@@ -49,7 +51,9 @@ export {
   createOpenAIProvider,
   createOpenRouterProvider,
   createProvider,
+  createVoyageClient,
   LLMProvider,
+  VoyageClient,
 } from "./providers";
 export type { ResolvedRoute, RouteRequest } from "./routing";
 // ---------------------------------------------------------------------------
