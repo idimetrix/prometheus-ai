@@ -23,6 +23,17 @@ const PATH_OVERRIDES: { prefix: string; multiplier: number }[] = [
   { prefix: "/api/sse/", multiplier: 3 },
 ];
 
+// ---------------------------------------------------------------------------
+// Per-endpoint (tRPC path) rate limits (requests per minute)
+// These take precedence over tier-based limits when the tRPC path matches.
+// ---------------------------------------------------------------------------
+const ENDPOINT_LIMITS: Record<string, number> = {
+  "sessions.create": 5, // 5/min
+  "apiKeys.create": 3, // 3/min
+  "projects.create": 10, // 10/min
+  "sessions.sendMessage": 60, // 60/min (inference)
+};
+
 const WINDOW_MS = 60_000; // 1-minute sliding window
 
 // ---------------------------------------------------------------------------
@@ -35,9 +46,12 @@ const WINDOW_MS = 60_000; // 1-minute sliding window
 
 async function slidingWindowCheck(
   orgId: string,
-  limit: number
+  limit: number,
+  keySuffix?: string
 ): Promise<{ allowed: boolean; remaining: number; resetMs: number }> {
-  const key = `ratelimit:${orgId}`;
+  const key = keySuffix
+    ? `ratelimit:${orgId}:${keySuffix}`
+    : `ratelimit:${orgId}`;
   const now = Date.now();
   const windowStart = now - WINDOW_MS;
 
@@ -88,6 +102,39 @@ function resolveLimit(tierLimit: number, path: string): number {
 }
 
 // ---------------------------------------------------------------------------
+// Extract tRPC procedure path from the request URL.
+// tRPC paths look like `/trpc/sessions.create` or `/api/trpc/projects.create`
+// ---------------------------------------------------------------------------
+function extractTrpcPath(urlPath: string): string | undefined {
+  const trpcIdx = urlPath.indexOf("/trpc/");
+  if (trpcIdx === -1) {
+    return undefined;
+  }
+  const procedurePath = urlPath.slice(trpcIdx + 6).split("?")[0];
+  return procedurePath || undefined;
+}
+
+// ---------------------------------------------------------------------------
+// Resolve per-endpoint limit. Returns the endpoint limit and procedure name
+// if a match is found, or undefined if no endpoint-specific limit applies.
+// ---------------------------------------------------------------------------
+function resolveEndpointLimit(
+  urlPath: string
+): { limit: number; procedure: string } | undefined {
+  const procedure = extractTrpcPath(urlPath);
+  if (!procedure) {
+    return undefined;
+  }
+
+  const limit = ENDPOINT_LIMITS[procedure];
+  if (limit === undefined) {
+    return undefined;
+  }
+
+  return { limit, procedure };
+}
+
+// ---------------------------------------------------------------------------
 // Hono middleware
 // ---------------------------------------------------------------------------
 
@@ -112,15 +159,55 @@ export function rateLimitMiddleware(): MiddlewareHandler {
     const tierLimit = TIER_LIMITS[planTier] ?? TIER_LIMITS.hobby;
     const effectiveLimit = resolveLimit(tierLimit, c.req.path);
 
+    // Check per-endpoint limit first (stricter, keyed separately)
+    const endpointOverride = resolveEndpointLimit(c.req.path);
+    if (endpointOverride) {
+      const endpointCheck = await slidingWindowCheck(
+        orgId,
+        endpointOverride.limit,
+        endpointOverride.procedure
+      );
+
+      c.header("X-RateLimit-Limit", String(endpointOverride.limit));
+      c.header("X-RateLimit-Remaining", String(endpointCheck.remaining));
+      c.header(
+        "X-RateLimit-Reset",
+        String(Math.ceil(endpointCheck.resetMs / 1000))
+      );
+
+      if (!endpointCheck.allowed) {
+        logger.warn(
+          {
+            orgId,
+            planTier,
+            procedure: endpointOverride.procedure,
+            limit: endpointOverride.limit,
+          },
+          "Per-endpoint rate limit exceeded"
+        );
+        return c.json(
+          {
+            error: "Too Many Requests",
+            message: `Rate limit of ${endpointOverride.limit} requests per minute exceeded for ${endpointOverride.procedure}.`,
+            retryAfterMs: endpointCheck.resetMs - Date.now(),
+          },
+          429
+        );
+      }
+    }
+
+    // Check global tier-based limit
     const { allowed, remaining, resetMs } = await slidingWindowCheck(
       orgId,
       effectiveLimit
     );
 
-    // Always attach rate-limit headers
-    c.header("X-RateLimit-Limit", String(effectiveLimit));
-    c.header("X-RateLimit-Remaining", String(remaining));
-    c.header("X-RateLimit-Reset", String(Math.ceil(resetMs / 1000)));
+    // Always attach rate-limit headers (only if not already set by endpoint check)
+    if (!endpointOverride) {
+      c.header("X-RateLimit-Limit", String(effectiveLimit));
+      c.header("X-RateLimit-Remaining", String(remaining));
+      c.header("X-RateLimit-Reset", String(Math.ceil(resetMs / 1000)));
+    }
 
     if (!allowed) {
       logger.warn({ orgId, planTier, effectiveLimit }, "Rate limit exceeded");

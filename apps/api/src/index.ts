@@ -20,6 +20,7 @@ import {
   requestLoggingMiddleware,
   securityHeaders,
 } from "./middleware";
+import { generateOpenAPISpec } from "./openapi";
 import { appRouter } from "./routers";
 import { sseApp } from "./routes/sse";
 import { alertsWebhookApp } from "./routes/webhooks/alerts";
@@ -147,6 +148,14 @@ app.get("/ready", async (c) => {
   } catch {
     return c.json({ status: "not ready" }, 503);
   }
+});
+
+// ---------------------------------------------------------------------------
+// OpenAPI spec — serves the generated spec as JSON
+// ---------------------------------------------------------------------------
+app.get("/docs", (c) => {
+  const spec = generateOpenAPISpec();
+  return c.json(spec);
 });
 
 // ---------------------------------------------------------------------------

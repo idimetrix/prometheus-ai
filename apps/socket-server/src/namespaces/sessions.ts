@@ -6,6 +6,45 @@ const logger = createLogger("socket-server:sessions");
 
 const SESSION_EVENTS_CHANNEL_RE = /^session:(.+):events$/;
 
+// ---------------------------------------------------------------------------
+// Per-socket message rate limiter (sliding window, 1-second granularity)
+// ---------------------------------------------------------------------------
+const MAX_MESSAGES_PER_SECOND = 50;
+
+interface RateWindow {
+  count: number;
+  windowStart: number;
+}
+
+const socketRateMap = new Map<string, RateWindow>();
+
+/**
+ * Check whether a socket has exceeded the message rate limit.
+ * Uses a simple sliding window counter per socket per second.
+ * Returns `true` if the message should be allowed, `false` if it should be dropped.
+ */
+function checkSocketRateLimit(socketId: string): boolean {
+  const now = Date.now();
+  const window = socketRateMap.get(socketId);
+
+  if (!window || now - window.windowStart >= 1000) {
+    // New window
+    socketRateMap.set(socketId, { count: 1, windowStart: now });
+    return true;
+  }
+
+  window.count++;
+  if (window.count > MAX_MESSAGES_PER_SECOND) {
+    return false;
+  }
+  return true;
+}
+
+/** Clean up rate tracking state for a disconnected socket */
+function cleanupSocketRate(socketId: string): void {
+  socketRateMap.delete(socketId);
+}
+
 export function setupSessionNamespace(namespace: Namespace) {
   const subscriber = createRedisConnection();
   const publisher = createRedisConnection();
@@ -73,6 +112,18 @@ export function setupSessionNamespace(namespace: Namespace) {
         content: string;
         metadata?: Record<string, unknown>;
       }) => {
+        if (!checkSocketRateLimit(socket.id)) {
+          socket.emit("rate_limit_warning", {
+            message: `Message rate limit exceeded (${MAX_MESSAGES_PER_SECOND} msg/s). Message dropped.`,
+            timestamp: new Date().toISOString(),
+          });
+          logger.warn(
+            { userId, socketId: socket.id },
+            "Socket message rate limit exceeded, dropping message"
+          );
+          return;
+        }
+
         const channel = `session:${data.sessionId}:commands`;
         const message = JSON.stringify({
           type: "user_message",
@@ -96,6 +147,14 @@ export function setupSessionNamespace(namespace: Namespace) {
     socket.on(
       "terminal_command",
       (data: { sessionId: string; command: string }) => {
+        if (!checkSocketRateLimit(socket.id)) {
+          socket.emit("rate_limit_warning", {
+            message: `Message rate limit exceeded (${MAX_MESSAGES_PER_SECOND} msg/s). Message dropped.`,
+            timestamp: new Date().toISOString(),
+          });
+          return;
+        }
+
         const channel = `session:${data.sessionId}:commands`;
         publisher.publish(
           channel,
@@ -307,6 +366,7 @@ export function setupSessionNamespace(namespace: Namespace) {
 
     // ---- disconnect: Cleanup ----
     socket.on("disconnect", () => {
+      cleanupSocketRate(socket.id);
       logger.debug(
         { userId, socketId: socket.id },
         "Client disconnected from sessions"

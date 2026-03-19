@@ -3,7 +3,12 @@ export type {
   CheckResult,
   ListObjectsResult,
 } from "./fga-client";
-export { FgaClient } from "./fga-client";
+export {
+  checkProjectPermission,
+  FgaClient,
+  grantProjectPermission,
+  revokeProjectPermission,
+} from "./fga-client";
 export { authMiddleware } from "./middleware";
 export type {
   CreateOrgParams,

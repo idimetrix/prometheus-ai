@@ -3,13 +3,186 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useUIStore } from "@/stores/ui.store";
 
+const WHITESPACE_RE = /\s+/;
+
 interface CommandAction {
   description?: string;
   group: string;
   handler: () => void;
   id: string;
+  keywords?: string[];
   label: string;
   shortcut?: string;
+}
+
+/**
+ * Natural-language phrase mappings. Each entry maps a set of common phrases
+ * (and their variations) to a command action ID. When the user types a
+ * natural-language query like "run tests" or "deploy my app", the matcher
+ * boosts the corresponding command so it appears first in the results.
+ */
+const NL_PHRASE_MAP: Array<{ actionId: string; phrases: string[] }> = [
+  {
+    actionId: "run-tests",
+    phrases: [
+      "run tests",
+      "run the tests",
+      "execute tests",
+      "test my code",
+      "start tests",
+      "run test suite",
+    ],
+  },
+  {
+    actionId: "open-file",
+    phrases: [
+      "open file",
+      "open a file",
+      "edit file",
+      "go to file",
+      "find file",
+      "open document",
+    ],
+  },
+  {
+    actionId: "search",
+    phrases: [
+      "search for",
+      "search",
+      "find",
+      "look for",
+      "grep",
+      "search codebase",
+      "search code",
+    ],
+  },
+  {
+    actionId: "deploy",
+    phrases: [
+      "deploy",
+      "deploy app",
+      "deploy my app",
+      "push to production",
+      "ship it",
+      "release",
+      "deploy to staging",
+      "deploy to prod",
+    ],
+  },
+  {
+    actionId: "new-session",
+    phrases: [
+      "new session",
+      "start session",
+      "create session",
+      "begin session",
+      "start a new session",
+      "new agent session",
+    ],
+  },
+  {
+    actionId: "switch-project",
+    phrases: [
+      "switch project",
+      "change project",
+      "go to project",
+      "open project",
+      "select project",
+    ],
+  },
+  {
+    actionId: "toggle-theme",
+    phrases: [
+      "toggle theme",
+      "switch theme",
+      "dark mode",
+      "light mode",
+      "change theme",
+      "toggle dark mode",
+    ],
+  },
+  {
+    actionId: "open-settings",
+    phrases: [
+      "open settings",
+      "settings",
+      "preferences",
+      "configure",
+      "configuration",
+      "go to settings",
+    ],
+  },
+  {
+    actionId: "view-shortcuts",
+    phrases: [
+      "keyboard shortcuts",
+      "shortcuts",
+      "keybindings",
+      "hotkeys",
+      "show shortcuts",
+      "view shortcuts",
+    ],
+  },
+];
+
+/**
+ * Score an action against a natural-language query. Returns a relevance
+ * score between 0 and 1, where 1 is a perfect phrase match. The scoring
+ * considers exact phrase matches, partial matches, and keyword overlap.
+ */
+function nlMatchScore(query: string, action: CommandAction): number {
+  const lower = query.toLowerCase().trim();
+  if (!lower) {
+    return 0;
+  }
+
+  // Check phrase map for this action
+  const mapping = NL_PHRASE_MAP.find((m) => m.actionId === action.id);
+  if (mapping) {
+    for (const phrase of mapping.phrases) {
+      // Exact match or query contains the phrase
+      if (lower === phrase || lower.includes(phrase)) {
+        return 1;
+      }
+      // Phrase contains the query (partial input)
+      if (phrase.includes(lower)) {
+        return 0.8;
+      }
+    }
+  }
+
+  // Check keyword matches from the action's keywords array
+  if (action.keywords) {
+    for (const kw of action.keywords) {
+      if (lower.includes(kw.toLowerCase())) {
+        return 0.6;
+      }
+    }
+  }
+
+  // Fall back to label/description substring matching
+  const labelMatch = action.label.toLowerCase().includes(lower);
+  const descMatch = action.description?.toLowerCase().includes(lower);
+  if (labelMatch) {
+    return 0.5;
+  }
+  if (descMatch) {
+    return 0.3;
+  }
+
+  // Token overlap: check how many words from the query appear in the label
+  const queryTokens = lower.split(WHITESPACE_RE);
+  const labelTokens = action.label.toLowerCase().split(WHITESPACE_RE);
+  const descTokens = (action.description ?? "")
+    .toLowerCase()
+    .split(WHITESPACE_RE);
+  const allTargetTokens = new Set([...labelTokens, ...descTokens]);
+  const matchCount = queryTokens.filter((t) => allTargetTokens.has(t)).length;
+  if (matchCount > 0) {
+    return (matchCount / queryTokens.length) * 0.4;
+  }
+
+  return 0;
 }
 
 export function WorkspaceCommandPalette() {
@@ -28,6 +201,7 @@ export function WorkspaceCommandPalette() {
         id: "switch-project",
         label: "Switch Project",
         group: "Navigation",
+        keywords: ["change", "go to", "select", "project"],
         handler: () => {
           window.dispatchEvent(new CustomEvent("prometheus:switch-project"));
         },
@@ -37,6 +211,7 @@ export function WorkspaceCommandPalette() {
         label: "New Session",
         description: "Start a new agent session",
         group: "Create",
+        keywords: ["begin", "create", "start", "session"],
         handler: () => {
           window.dispatchEvent(new CustomEvent("prometheus:new-session"));
         },
@@ -47,6 +222,7 @@ export function WorkspaceCommandPalette() {
         description: `Currently: ${theme}`,
         group: "Preferences",
         shortcut: "Cmd+Shift+T",
+        keywords: ["dark mode", "light mode", "theme"],
         handler: () => {
           setTheme(theme === "dark" ? "light" : "dark");
         },
@@ -55,6 +231,7 @@ export function WorkspaceCommandPalette() {
         id: "open-settings",
         label: "Open Settings",
         group: "Navigation",
+        keywords: ["preferences", "configure", "configuration"],
         handler: () => {
           window.dispatchEvent(new CustomEvent("prometheus:open-settings"));
         },
@@ -63,8 +240,51 @@ export function WorkspaceCommandPalette() {
         id: "view-shortcuts",
         label: "View Keyboard Shortcuts",
         group: "Help",
+        keywords: ["hotkeys", "keybindings", "shortcuts"],
         handler: () => {
           window.dispatchEvent(new CustomEvent("prometheus:show-shortcuts"));
+        },
+      },
+      {
+        id: "run-tests",
+        label: "Run Tests",
+        description: "Execute the project test suite",
+        group: "Actions",
+        keywords: ["test", "execute", "suite"],
+        handler: () => {
+          window.dispatchEvent(new CustomEvent("prometheus:run-tests"));
+        },
+      },
+      {
+        id: "open-file",
+        label: "Open File",
+        description: "Open a file by name",
+        group: "Navigation",
+        keywords: ["edit", "go to", "find file"],
+        shortcut: "Cmd+P",
+        handler: () => {
+          window.dispatchEvent(new CustomEvent("prometheus:open-file"));
+        },
+      },
+      {
+        id: "search",
+        label: "Search Codebase",
+        description: "Search for text across files",
+        group: "Navigation",
+        keywords: ["grep", "find", "look for"],
+        shortcut: "Cmd+Shift+F",
+        handler: () => {
+          window.dispatchEvent(new CustomEvent("prometheus:search"));
+        },
+      },
+      {
+        id: "deploy",
+        label: "Deploy",
+        description: "Deploy the project to a target environment",
+        group: "Actions",
+        keywords: ["ship", "release", "push", "production", "staging"],
+        handler: () => {
+          window.dispatchEvent(new CustomEvent("prometheus:deploy"));
         },
       },
     ],
@@ -76,12 +296,24 @@ export function WorkspaceCommandPalette() {
       return actions;
     }
     const lower = query.toLowerCase();
-    return actions.filter(
-      (a) =>
-        a.label.toLowerCase().includes(lower) ||
-        a.description?.toLowerCase().includes(lower) ||
-        a.group.toLowerCase().includes(lower)
-    );
+
+    // Score each action using NL matching + substring matching
+    const scored = actions
+      .map((action) => {
+        const nl = nlMatchScore(query, action);
+        // Also check basic substring matching on label/description/group
+        const substringMatch =
+          action.label.toLowerCase().includes(lower) ||
+          action.description?.toLowerCase().includes(lower) ||
+          action.group.toLowerCase().includes(lower) ||
+          action.keywords?.some((kw) => kw.toLowerCase().includes(lower));
+        const score = Math.max(nl, substringMatch ? 0.2 : 0);
+        return { action, score };
+      })
+      .filter((entry) => entry.score > 0)
+      .sort((a, b) => b.score - a.score);
+
+    return scored.map((entry) => entry.action);
   }, [actions, query]);
 
   const grouped = useMemo(() => {
