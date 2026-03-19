@@ -139,10 +139,10 @@ sseApp.get("/sessions/:sessionId/stream", async (c) => {
             });
         }
 
-        // Heartbeat every 15 seconds to keep connection alive
+        // Heartbeat every 30 seconds to keep connection alive
         const heartbeatInterval = setInterval(() => {
           enqueue(": heartbeat\n\n");
-        }, 15_000);
+        }, 30_000);
 
         // Subscribe to session events for live updates
         subscriber.subscribe(channel, (err) => {

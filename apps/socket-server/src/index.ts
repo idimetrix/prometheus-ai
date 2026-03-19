@@ -3,6 +3,10 @@ import { createLogger } from "@prometheus/logger";
 import { createRedisConnection } from "@prometheus/queue";
 import { initSentry } from "@prometheus/telemetry";
 import { createAdapter } from "@socket.io/redis-adapter";
+// MessagePack binary protocol for improved WebSocket performance (Phase 5.3)
+// Reduces payload size by ~30-40% compared to JSON for typical messages.
+// Install: pnpm add @socket.io/msgpack-parser
+// import { createParser } from "@socket.io/msgpack-parser";
 import { Server } from "socket.io";
 import { authMiddleware } from "./auth";
 import { setupFleetNamespace } from "./namespaces/fleet";
@@ -39,6 +43,11 @@ const io = new Server(httpServer, {
   pingInterval: 25_000,
   pingTimeout: 20_000,
   maxHttpBufferSize: 1_048_576, // 1MB
+  // Enable MessagePack binary protocol for reduced payload size.
+  // Requires @socket.io/msgpack-parser on both server and client.
+  // Client must also use: import { createParser } from "@socket.io/msgpack-parser";
+  //   const socket = io({ parser: createParser() });
+  // parser: createParser(),
 });
 
 // Per-user connection tracking (max 5 connections per user)

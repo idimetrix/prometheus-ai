@@ -14,6 +14,8 @@ spec:
     metadata:
       labels:
         app: api
+      annotations:
+        container.apparmor.security.beta.kubernetes.io/api: runtime/default
     spec:
       containers:
         - name: api

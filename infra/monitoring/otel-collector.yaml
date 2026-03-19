@@ -23,6 +23,18 @@ processors:
         value: prometheus
         action: upsert
 
+  tail_sampling:
+    decision_wait: 10s
+    num_traces: 100
+    expected_new_traces_per_sec: 10
+    policies:
+      - name: errors-always
+        type: status_code
+        status_code: {status_codes: [ERROR]}
+      - name: success-sampled
+        type: probabilistic
+        probabilistic: {sampling_percentage: 10}
+
   filter/health:
     spans:
       exclude:
@@ -61,7 +73,7 @@ service:
   pipelines:
     traces:
       receivers: [otlp]
-      processors: [memory_limiter, filter/health, batch, resource]
+      processors: [memory_limiter, filter/health, tail_sampling, batch, resource]
       exporters: [otlphttp/tempo]
 
     metrics:
