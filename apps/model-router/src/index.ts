@@ -29,8 +29,8 @@ app.get("/health", async (c) => {
     const checks: Record<string, boolean> = {};
 
     const providerHealth = await routerService.checkProviderHealth();
-    const allHealthy = Object.values(providerHealth).every((h) => h);
-    const anyHealthy = Object.values(providerHealth).some((h) => h);
+    const allHealthy = Object.values(providerHealth).every((h) => h.healthy);
+    const anyHealthy = Object.values(providerHealth).some((h) => h.healthy);
     checks.providers = anyHealthy;
 
     // Check Redis connectivity

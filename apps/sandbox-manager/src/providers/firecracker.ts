@@ -316,18 +316,8 @@ export class FirecrackerProvider implements SandboxProvider {
     command: string,
     timeout: number
   ): Promise<{ exitCode: number; output: string; stderr: string }> {
-    // In production, this would use a guest agent (e.g., vsock-based)
-    // to run commands inside the microVM
-    const response = await this.apiCall("POST", `/vms/${vm.vmId}/exec`, {
-      command,
-      timeout_ms: timeout,
-    });
-
-    return {
-      exitCode: (response as { exit_code?: number })?.exit_code ?? 0,
-      output: (response as { stdout?: string })?.stdout ?? "",
-      stderr: (response as { stderr?: string })?.stderr ?? "",
-    };
+    // Use vsock guest agent to run commands inside the microVM
+    return await this.vsockExec(vm, command, timeout);
   }
 
   private async writeFileInVm(
@@ -335,7 +325,7 @@ export class FirecrackerProvider implements SandboxProvider {
     path: string,
     content: string
   ): Promise<void> {
-    await this.apiCall("PUT", `/vms/${vm.vmId}/files`, {
+    await this.apiCall("PUT", `/vms/${vm.vmId}/agent/files`, {
       path,
       content,
       mode: "0644",
@@ -343,45 +333,111 @@ export class FirecrackerProvider implements SandboxProvider {
   }
 
   private async readFileInVm(vm: FirecrackerVm, path: string): Promise<string> {
-    const response = await this.apiCall("GET", `/vms/${vm.vmId}/files`, {
-      path,
-    });
+    const response = await this.apiCall(
+      "POST",
+      `/vms/${vm.vmId}/agent/files/read`,
+      { path }
+    );
     return (response as { content?: string })?.content ?? "";
   }
 
   /**
-   * Stub for Firecracker HTTP API calls.
-   *
-   * In production, this would use fetch() to call the Firecracker
-   * management daemon's REST API via Unix socket or TCP.
+   * Make an HTTP request to the Firecracker management daemon REST API.
+   * Uses fetch() with a 10s timeout via AbortSignal.
    */
-  private apiCall(
-    _method: string,
-    _path: string,
-    _body?: Record<string, unknown>
+  private async apiCall(
+    method: string,
+    path: string,
+    body?: Record<string, unknown>
   ): Promise<unknown> {
-    // Stub implementation — in production replace with:
-    //
-    // const url = `${this.apiBase}${_path}`;
-    // const response = await fetch(url, {
-    //   method: _method,
-    //   headers: { "Content-Type": "application/json" },
-    //   body: _body ? JSON.stringify(_body) : undefined,
-    //   signal: AbortSignal.timeout(10_000),
-    // });
-    //
-    // if (!response.ok) {
-    //   throw new Error(`Firecracker API ${_method} ${_path}: ${response.status}`);
-    // }
-    //
-    // return response.json();
+    const url = `${this.apiBase}${path}`;
 
-    logger.debug(
-      { method: _method, path: _path },
-      "Firecracker API call (stubbed)"
-    );
+    logger.debug({ method, path, url }, "Firecracker API request");
 
-    return Promise.resolve({});
+    try {
+      const response = await fetch(url, {
+        method,
+        headers: { "Content-Type": "application/json" },
+        body: body ? JSON.stringify(body) : undefined,
+        signal: AbortSignal.timeout(10_000),
+      });
+
+      if (!response.ok) {
+        const errorBody = await response.text().catch(() => "");
+        throw new Error(
+          `Firecracker API ${method} ${path} failed (${response.status}): ${errorBody}`
+        );
+      }
+
+      // Some Firecracker endpoints return 204 No Content
+      const contentType = response.headers.get("content-type");
+      if (
+        response.status === 204 ||
+        !contentType?.includes("application/json")
+      ) {
+        return {};
+      }
+
+      return await response.json();
+    } catch (error) {
+      if (error instanceof Error && error.name === "TimeoutError") {
+        throw new Error(
+          `Firecracker API ${method} ${path} timed out after 10s`
+        );
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * Send a command to the guest agent via vsock.
+   * The guest agent listens on a vsock port and accepts JSON-encoded commands.
+   */
+  private async vsockExec(
+    vm: FirecrackerVm,
+    command: string,
+    timeout: number
+  ): Promise<{ exitCode: number; output: string; stderr: string }> {
+    // The vsock guest agent is accessed via the management daemon's proxy endpoint.
+    // This avoids needing direct vsock socket access from the host process.
+    const response = await this.apiCall("POST", `/vms/${vm.vmId}/agent/exec`, {
+      command,
+      timeout_ms: timeout,
+      working_dir: "/workspace",
+    });
+
+    const result = response as {
+      exit_code?: number;
+      stderr?: string;
+      stdout?: string;
+    };
+
+    return {
+      exitCode: result.exit_code ?? 0,
+      output: result.stdout ?? "",
+      stderr: result.stderr ?? "",
+    };
+  }
+
+  /**
+   * Ping the guest agent to verify VM health.
+   */
+  async pingGuestAgent(sandboxId: string): Promise<boolean> {
+    const vm = this.vms.get(sandboxId);
+    if (!vm) {
+      return false;
+    }
+
+    try {
+      const response = await this.apiCall(
+        "GET",
+        `/vms/${vm.vmId}/agent/health`
+      );
+      const result = response as { healthy?: boolean };
+      return result.healthy === true;
+    } catch {
+      return false;
+    }
   }
 
   private async addToWarmPool(): Promise<void> {

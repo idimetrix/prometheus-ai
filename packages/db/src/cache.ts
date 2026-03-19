@@ -4,14 +4,17 @@ const logger = createLogger("db:cache");
 
 interface CacheOptions {
   prefix?: string;
+  tags?: string[];
   ttlSeconds?: number;
 }
 
 interface RedisLike {
   del: (...args: string[]) => Promise<unknown>;
   get: (key: string) => Promise<string | null>;
+  sadd: (key: string, ...members: string[]) => Promise<unknown>;
   scan: (cursor: string, ...args: unknown[]) => Promise<[string, string[]]>;
   set: (...args: unknown[]) => Promise<unknown>;
+  smembers: (key: string) => Promise<string[]>;
 }
 
 const DEFAULT_TTL = 300;
@@ -136,7 +139,7 @@ export async function getCached<T>(
   fetcher: () => Promise<T>,
   options: CacheOptions = {}
 ): Promise<T> {
-  const { prefix = "db", ttlSeconds = DEFAULT_TTL } = options;
+  const { prefix = "db", ttlSeconds = DEFAULT_TTL, tags } = options;
   const cacheKey = `${prefix}:${key}`;
 
   // L1 lookup
@@ -171,12 +174,86 @@ export async function getCached<T>(
   if (redisClient) {
     try {
       await redisClient.set(cacheKey, serialized, "EX", ttlSeconds);
+
+      // Register tags for this key so we can invalidate by tag later
+      if (tags && tags.length > 0) {
+        await setCacheTag(cacheKey, tags);
+      }
     } catch (err) {
       logger.debug({ err, key: cacheKey }, "L2 cache write failed");
     }
   }
 
   return result;
+}
+
+// ---------------------------------------------------------------------------
+// Tag-based invalidation
+// ---------------------------------------------------------------------------
+
+const TAG_KEY_PREFIX = "cache:tag:";
+
+/**
+ * Associate a cache key with one or more tags. Each tag is stored as a Redis
+ * set containing all keys that belong to that tag. This enables O(K)
+ * invalidation (where K = number of keys per tag) instead of O(N) SCAN.
+ */
+export async function setCacheTag(key: string, tags: string[]): Promise<void> {
+  if (!redisClient || tags.length === 0) {
+    return;
+  }
+
+  try {
+    const promises = tags.map((tag) =>
+      redisClient?.sadd(`${TAG_KEY_PREFIX}${tag}`, key)
+    );
+    await Promise.all(promises);
+    logger.debug({ key, tags }, "Cache tags registered");
+  } catch (err) {
+    logger.debug({ err, key, tags }, "Failed to register cache tags");
+  }
+}
+
+/**
+ * Invalidate all cache keys associated with a tag. Fetches the key set from
+ * Redis, deletes every key (both L1 and L2), then removes the tag set itself.
+ * Runs in O(K) where K is the number of keys in the tag — no SCAN required.
+ */
+export async function invalidateByTag(tag: string): Promise<number> {
+  const tagKey = `${TAG_KEY_PREFIX}${tag}`;
+
+  // Always clear matching L1 entries by iterating the tag's known keys
+  if (!redisClient) {
+    logger.debug({ tag }, "No Redis client, tag invalidation skipped");
+    return 0;
+  }
+
+  try {
+    const keys = await redisClient.smembers(tagKey);
+    if (keys.length === 0) {
+      return 0;
+    }
+
+    // Delete all cached keys from L1
+    for (const key of keys) {
+      l1.delete(key);
+    }
+
+    // Delete all cached keys from L2 in a single call
+    await redisClient.del(...keys);
+
+    // Delete the tag set itself
+    await redisClient.del(tagKey);
+
+    logger.debug(
+      { tag, deletedCount: keys.length },
+      "Tag-based cache invalidation complete"
+    );
+    return keys.length;
+  } catch (err) {
+    logger.debug({ err, tag }, "Tag-based cache invalidation failed");
+    return 0;
+  }
 }
 
 // ---------------------------------------------------------------------------

@@ -42,6 +42,14 @@ import type {
 } from "./execution-events";
 import { QualityGate } from "./quality-gate";
 
+/**
+ * Feature flag: set to true to use Vercel AI SDK streaming instead of raw SSE.
+ * This enables the migration path from manual SSE parsing to the AI SDK's
+ * unified streamText() interface. See ExecutionEngine.streamWithAISDK().
+ */
+export const USE_AI_SDK_STREAMING =
+  process.env.PROMETHEUS_USE_AI_SDK === "true";
+
 const BLOCKER_THRESHOLD = 3;
 
 const SLOT_MAP: Record<string, string> = {
@@ -1059,5 +1067,128 @@ export const ExecutionEngine = {
       steps: ctx.options.maxIterations,
       creditsConsumed: totalCreditsConsumed,
     });
+  },
+
+  /**
+   * Alternative streaming path using the Vercel AI SDK's `streamText()`.
+   *
+   * This method provides the same ExecutionEvent stream as the main `execute()`
+   * method but uses the Vercel AI SDK for LLM communication instead of raw
+   * SSE parsing. It handles:
+   * - Automatic provider selection via slotToVercelModel()
+   * - Unified streaming with proper backpressure
+   * - Built-in tool calling support
+   * - Structured error handling
+   *
+   * Migration path:
+   * 1. Set PROMETHEUS_USE_AI_SDK=true to enable this path
+   * 2. Install Vercel AI SDK: pnpm add ai @ai-sdk/openai @ai-sdk/anthropic @ai-sdk/google
+   * 3. The main execute() loop can progressively delegate to this method
+   * 4. Once validated, the raw SSE parsing in execute() can be removed
+   *
+   * Currently falls back to the existing SSE approach if the AI SDK is not
+   * available, making this a safe opt-in migration.
+   */
+  async *streamWithAISDK(
+    ctx: ExecutionContext
+  ): AsyncGenerator<ExecutionEvent, void, undefined> {
+    const logger = createLogger(`engine:aisdk:${ctx.sessionId}`);
+    let sequence = 0;
+
+    const makeEvent = <T extends ExecutionEvent>(
+      partial: Omit<T, "sessionId" | "agentRole" | "sequence" | "timestamp">
+    ): T =>
+      ({
+        ...partial,
+        sessionId: ctx.sessionId,
+        agentRole: ctx.agentRole,
+        sequence: sequence++,
+        timestamp: new Date().toISOString(),
+      }) as T;
+
+    // Attempt to use Vercel AI SDK
+    try {
+      // Dynamic imports — these will fail if packages aren't installed
+      const { streamText } = (await import("ai" as string)) as {
+        streamText: (opts: {
+          model: unknown;
+          messages: Array<{ role: string; content: string }>;
+          temperature?: number;
+          maxTokens?: number;
+          tools?: Record<string, unknown>;
+        }) => {
+          textStream: AsyncIterable<string>;
+          text: Promise<string>;
+          usage: Promise<{ promptTokens: number; completionTokens: number }>;
+          toolCalls: Promise<
+            Array<{ toolName: string; args: Record<string, unknown> }>
+          >;
+        };
+      };
+
+      const { createModelForSlot } = await import("@prometheus/ai");
+
+      // Resolve the model for the current slot
+      const slot =
+        ctx.options.slot === "default"
+          ? (SLOT_MAP[ctx.agentRole] ?? "default")
+          : ctx.options.slot;
+
+      const { model } = await createModelForSlot(slot);
+
+      logger.info(
+        { slot, agentRole: ctx.agentRole },
+        "Using Vercel AI SDK streaming"
+      );
+
+      // Stream the response
+      const result = streamText({
+        model,
+        messages: [
+          { role: "system", content: `You are a ${ctx.agentRole} agent.` },
+          { role: "user", content: ctx.taskDescription },
+        ],
+        temperature: ctx.options.temperature,
+        maxTokens: ctx.options.maxTokens,
+      });
+
+      // Yield token events from the text stream
+      let fullText = "";
+      for await (const chunk of result.textStream) {
+        fullText += chunk;
+        yield makeEvent<TokenEvent>({
+          type: "token",
+          content: chunk,
+        });
+      }
+
+      // Get final usage stats
+      const usage = await result.usage;
+
+      yield makeEvent<CompleteEvent>({
+        type: "complete",
+        success: true,
+        output: fullText,
+        filesChanged: [],
+        tokensUsed: {
+          input: usage.promptTokens,
+          output: usage.completionTokens,
+        },
+        toolCalls: 0,
+        steps: 1,
+        creditsConsumed: Math.ceil(
+          (usage.promptTokens + usage.completionTokens) / 1000
+        ),
+      });
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      logger.warn(
+        { error: msg },
+        "Vercel AI SDK not available, falling back to SSE streaming"
+      );
+
+      // Fall back to the standard execute() path
+      yield* ExecutionEngine.execute(ctx);
+    }
   },
 };

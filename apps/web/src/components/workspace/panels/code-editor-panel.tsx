@@ -1,7 +1,7 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import { useMemo } from "react";
+import { useCallback, useMemo } from "react";
 import { useSessionStore } from "@/stores/session.store";
 
 const CodeMirrorEditor = dynamic(
@@ -27,6 +27,7 @@ export function CodeEditorPanel() {
   const setActiveFile = useSessionStore((s) => s.setActiveFile);
   const closeFile = useSessionStore((s) => s.closeFile);
   const events = useSessionStore((s) => s.events);
+  const addEvent = useSessionStore((s) => s.addEvent);
 
   const fileContent = useMemo(() => {
     if (!activeFilePath) {
@@ -56,6 +57,38 @@ export function CodeEditorPanel() {
     }
     return getExtension(activeFilePath);
   }, [activeFilePath]);
+
+  const handleChange = useCallback(
+    (content: string) => {
+      if (!activeFilePath) {
+        return;
+      }
+      // Store the updated content as a session event for local state tracking
+      addEvent({
+        id: `edit-${Date.now()}`,
+        type: "code_change",
+        timestamp: new Date().toISOString(),
+        data: { path: activeFilePath, content },
+      });
+    },
+    [activeFilePath, addEvent]
+  );
+
+  const handleSave = useCallback(
+    (content: string) => {
+      if (!activeFilePath) {
+        return;
+      }
+      // Persist the save via a session event (the backend would pick this up)
+      addEvent({
+        id: `save-${Date.now()}`,
+        type: "file_save",
+        timestamp: new Date().toISOString(),
+        data: { path: activeFilePath, content },
+      });
+    },
+    [activeFilePath, addEvent]
+  );
 
   if (openFiles.length === 0) {
     return (
@@ -119,7 +152,8 @@ export function CodeEditorPanel() {
         ) : (
           <CodeMirrorEditor
             extension={extension}
-            readOnly
+            onChange={handleChange}
+            onSave={handleSave}
             value={fileContent}
           />
         )}

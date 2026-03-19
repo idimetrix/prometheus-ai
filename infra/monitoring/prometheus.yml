@@ -2,10 +2,37 @@ global:
   scrape_interval: 15s
   evaluation_interval: 15s
   scrape_timeout: 10s
+  # External labels for cross-cluster identification
+  external_labels:
+    cluster: prometheus-prod
+    environment: production
+
+# Enable native histograms and exemplar storage for trace correlation
+storage:
+  tsdb:
+    out_of_order_time_window: 30m
+  exemplars:
+    max_exemplars: 100000
+
+# Tracing: send Prometheus's own traces to the OTel collector
+tracing:
+  endpoint: "otel-collector.prometheus.svc.cluster.local:4317"
+  insecure: true
+  sampling_fraction: 0.1
+
+# Remote write for long-term storage (Thanos/Mimir)
+# Uncomment for production:
+# remote_write:
+#   - url: "http://mimir.prometheus.svc.cluster.local:9009/api/v1/push"
+#     send_exemplars: true
+#     queue_config:
+#       max_samples_per_send: 5000
+#       batch_send_deadline: 5s
 
 # Alert rules
 rule_files:
   - "alert_rules.yml"
+  - "alerts.yaml"
 
 # Alertmanager configuration
 alerting:
@@ -58,10 +85,71 @@ scrape_configs:
     static_configs:
       - targets: ["socket-server:4001"]
 
-  - job_name: "queue-worker"
+  - job_name: "queue-worker-agent"
     metrics_path: /metrics
     static_configs:
-      - targets: ["queue-worker:4010"]
+      - targets: ["queue-worker-agent:4010"]
+    relabel_configs:
+      - target_label: worker_pool
+        replacement: agent
+
+  - job_name: "queue-worker-background"
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["queue-worker-background:4011"]
+    relabel_configs:
+      - target_label: worker_pool
+        replacement: background
+
+  - job_name: "queue-worker-billing"
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["queue-worker-billing:4012"]
+    relabel_configs:
+      - target_label: worker_pool
+        replacement: billing
+
+  # ─── Per-Org / Per-Role Label Enrichment ─────────────────────
+  # Metrics from services that include org_id/role in their labels
+  # are relabeled here for multi-tenant dashboards.
+
+  - job_name: "api-per-org"
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["api:4000"]
+    scrape_interval: 30s
+    metric_relabel_configs:
+      - source_labels: [org_id]
+        target_label: org_id
+        action: replace
+      - source_labels: [user_role]
+        target_label: role
+        action: replace
+      # Drop high-cardinality labels we don't need in Prometheus
+      - regex: "user_id|session_id"
+        action: labeldrop
+
+  # ─── Distributed Tracing (Exemplars + Trace Context) ─────────
+  # Scrape OpenTelemetry collector for trace-to-metric correlation
+
+  - job_name: "otel-collector"
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["otel-collector.prometheus.svc.cluster.local:8888"]
+    scrape_interval: 15s
+
+  - job_name: "tempo"
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["tempo.prometheus.svc.cluster.local:3200"]
+    scrape_interval: 30s
+
+  # ─── Loki (Log Aggregation Metrics) ─────────────────────────
+
+  - job_name: "loki"
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["loki.prometheus.svc.cluster.local:3100"]
 
   # ─── Health check probing (via blackbox exporter, optional) ───
 

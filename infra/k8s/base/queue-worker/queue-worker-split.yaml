@@ -1,0 +1,272 @@
+# Queue Worker Pool Isolation
+# Split the monolithic queue-worker into 3 specialized deployments
+# to prevent noisy-neighbor issues between queue types.
+---
+# ═══════════════════════════════════════════════════════════════
+# Agent Worker — handles agent-tasks, enterprise-tasks
+# High CPU/memory: AI agent workloads are compute-intensive
+# ═══════════════════════════════════════════════════════════════
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: queue-worker-agent
+  namespace: prometheus
+  labels:
+    app: queue-worker-agent
+    pool: agent
+spec:
+  replicas: 4
+  selector:
+    matchLabels:
+      app: queue-worker-agent
+  template:
+    metadata:
+      labels:
+        app: queue-worker-agent
+        pool: agent
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "4010"
+    spec:
+      terminationGracePeriodSeconds: 120
+      containers:
+        - name: queue-worker-agent
+          image: ghcr.io/prometheus/queue-worker:latest
+          env:
+            - name: WORKER_POOL
+              value: "agent"
+            - name: QUEUE_NAMES
+              value: "agent-tasks,enterprise-tasks"
+            - name: CONCURRENCY
+              value: "5"
+            - name: WORKER_METRICS_PORT
+              value: "4010"
+          envFrom:
+            - configMapRef:
+                name: app-config
+            - secretRef:
+                name: app-secrets
+          resources:
+            requests:
+              cpu: "1"
+              memory: 2Gi
+            limits:
+              cpu: "2"
+              memory: 4Gi
+          readinessProbe:
+            exec:
+              command: ["node", "-e", "process.exit(0)"]
+            initialDelaySeconds: 10
+            periodSeconds: 30
+          livenessProbe:
+            exec:
+              command: ["node", "-e", "process.exit(0)"]
+            initialDelaySeconds: 30
+            periodSeconds: 60
+            failureThreshold: 3
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: DoNotSchedule
+          labelSelector:
+            matchLabels:
+              app: queue-worker-agent
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 2
+      maxUnavailable: 1
+---
+# ═══════════════════════════════════════════════════════════════
+# Background Worker — handles embeddings, indexing, cleanup
+# Medium resources: batch processing, can tolerate some latency
+# ═══════════════════════════════════════════════════════════════
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: queue-worker-background
+  namespace: prometheus
+  labels:
+    app: queue-worker-background
+    pool: background
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: queue-worker-background
+  template:
+    metadata:
+      labels:
+        app: queue-worker-background
+        pool: background
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "4011"
+    spec:
+      terminationGracePeriodSeconds: 300
+      containers:
+        - name: queue-worker-background
+          image: ghcr.io/prometheus/queue-worker:latest
+          env:
+            - name: WORKER_POOL
+              value: "background"
+            - name: QUEUE_NAMES
+              value: "embeddings,indexing,cleanup"
+            - name: CONCURRENCY
+              value: "10"
+            - name: WORKER_METRICS_PORT
+              value: "4011"
+          envFrom:
+            - configMapRef:
+                name: app-config
+            - secretRef:
+                name: app-secrets
+          resources:
+            requests:
+              cpu: 500m
+              memory: 1Gi
+            limits:
+              cpu: "1"
+              memory: 2Gi
+          readinessProbe:
+            exec:
+              command: ["node", "-e", "process.exit(0)"]
+            initialDelaySeconds: 10
+            periodSeconds: 30
+          livenessProbe:
+            exec:
+              command: ["node", "-e", "process.exit(0)"]
+            initialDelaySeconds: 30
+            periodSeconds: 60
+            failureThreshold: 3
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: DoNotSchedule
+          labelSelector:
+            matchLabels:
+              app: queue-worker-background
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+---
+# ═══════════════════════════════════════════════════════════════
+# Billing Worker — handles credit-grant, reconciliation
+# Fixed 2 replicas: billing must be reliable, never over-scaled
+# ═══════════════════════════════════════════════════════════════
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: queue-worker-billing
+  namespace: prometheus
+  labels:
+    app: queue-worker-billing
+    pool: billing
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: queue-worker-billing
+  template:
+    metadata:
+      labels:
+        app: queue-worker-billing
+        pool: billing
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "4012"
+    spec:
+      terminationGracePeriodSeconds: 180
+      containers:
+        - name: queue-worker-billing
+          image: ghcr.io/prometheus/queue-worker:latest
+          env:
+            - name: WORKER_POOL
+              value: "billing"
+            - name: QUEUE_NAMES
+              value: "credit-grant,reconciliation"
+            - name: CONCURRENCY
+              value: "3"
+            - name: WORKER_METRICS_PORT
+              value: "4012"
+          envFrom:
+            - configMapRef:
+                name: app-config
+            - secretRef:
+                name: app-secrets
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              cpu: 500m
+              memory: 1Gi
+          readinessProbe:
+            exec:
+              command: ["node", "-e", "process.exit(0)"]
+            initialDelaySeconds: 10
+            periodSeconds: 30
+          livenessProbe:
+            exec:
+              command: ["node", "-e", "process.exit(0)"]
+            initialDelaySeconds: 30
+            periodSeconds: 60
+            failureThreshold: 3
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+---
+# ═══════════════════════════════════════════════════════════════
+# Services for each worker pool (metrics endpoints)
+# ═══════════════════════════════════════════════════════════════
+apiVersion: v1
+kind: Service
+metadata:
+  name: queue-worker-agent
+  namespace: prometheus
+  labels:
+    app: queue-worker-agent
+spec:
+  type: ClusterIP
+  ports:
+    - port: 4010
+      targetPort: 4010
+      name: metrics
+  selector:
+    app: queue-worker-agent
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: queue-worker-background
+  namespace: prometheus
+  labels:
+    app: queue-worker-background
+spec:
+  type: ClusterIP
+  ports:
+    - port: 4011
+      targetPort: 4011
+      name: metrics
+  selector:
+    app: queue-worker-background
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: queue-worker-billing
+  namespace: prometheus
+  labels:
+    app: queue-worker-billing
+spec:
+  type: ClusterIP
+  ports:
+    - port: 4012
+      targetPort: 4012
+      name: metrics
+  selector:
+    app: queue-worker-billing

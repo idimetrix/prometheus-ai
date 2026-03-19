@@ -31,6 +31,10 @@ data:
   DATABASE_HOST: "postgres.prometheus.svc.cluster.local"
   DATABASE_PORT: "5432"
   DATABASE_NAME: "prometheus"
+  # Read replica for read-heavy queries (Patroni HA)
+  DATABASE_READ_HOST: "patroni-replica.prometheus.svc.cluster.local"
+  DATABASE_READ_PORT: "5432"
+  DATABASE_READ_URL: "postgresql://prometheus:CHANGE_ME@patroni-replica.prometheus.svc.cluster.local:5432/prometheus"
 ---
 apiVersion: v1
 kind: Secret

@@ -1,0 +1,61 @@
+# KEDA ScaledObject for background worker pool
+# Scales based on embeddings, indexing, and cleanup queue depths
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: queue-worker-background-scaler
+  namespace: prometheus
+  labels:
+    app: queue-worker-background
+spec:
+  scaleTargetRef:
+    name: queue-worker-background
+  minReplicaCount: 2
+  maxReplicaCount: 8
+  pollingInterval: 15
+  cooldownPeriod: 180
+  advanced:
+    restoreToOriginalReplicaCount: true
+    horizontalPodAutoscalerConfig:
+      behavior:
+        scaleDown:
+          stabilizationWindowSeconds: 300
+          policies:
+            - type: Pods
+              value: 1
+              periodSeconds: 120
+        scaleUp:
+          stabilizationWindowSeconds: 30
+          policies:
+            - type: Pods
+              value: 2
+              periodSeconds: 60
+  triggers:
+    # Embeddings queue — scales aggressively since embedding
+    # jobs are I/O-bound (waiting on LLM API calls)
+    - type: redis
+      metadata:
+        address: redis.prometheus.svc.cluster.local:6379
+        listName: "bull:embeddings:wait"
+        listLength: "10"
+        activationListLength: "2"
+      authenticationRef:
+        name: redis-auth
+    # Indexing queue — moderate scaling
+    - type: redis
+      metadata:
+        address: redis.prometheus.svc.cluster.local:6379
+        listName: "bull:indexing:wait"
+        listLength: "15"
+        activationListLength: "3"
+      authenticationRef:
+        name: redis-auth
+    # Cleanup queue — least aggressive scaling
+    - type: redis
+      metadata:
+        address: redis.prometheus.svc.cluster.local:6379
+        listName: "bull:cleanup:wait"
+        listLength: "20"
+        activationListLength: "5"
+      authenticationRef:
+        name: redis-auth

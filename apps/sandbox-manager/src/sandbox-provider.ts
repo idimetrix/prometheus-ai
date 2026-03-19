@@ -19,13 +19,26 @@ export interface SandboxProvider {
     timeout?: number
   ): Promise<ExecResult>;
 
+  /** Install packages inside a sandbox */
+  installPackages?(sandboxId: string, packages: string[]): Promise<void>;
+
   /** Check whether a sandbox is healthy and responsive */
   isHealthy(sandboxId: string): Promise<boolean>;
+
+  /** List files in a directory inside a sandbox */
+  listFiles?(sandboxId: string, path: string): Promise<string[]>;
+
   /** Unique name for this provider */
-  readonly name: "docker" | "firecracker" | "dev" | "gvisor";
+  readonly name: "docker" | "firecracker" | "dev" | "gvisor" | "e2b";
 
   /** Read a file from a sandbox */
   readFile(sandboxId: string, path: string): Promise<string>;
+
+  /** Restore a sandbox from a snapshot, returns the new instance */
+  restore?(snapshotId: string): Promise<SandboxInstance>;
+
+  /** Take a snapshot of a sandbox, returns snapshot ID */
+  snapshot?(sandboxId: string): Promise<string>;
 
   /** Write a file inside a sandbox */
   writeFile(sandboxId: string, path: string, content: string): Promise<void>;
@@ -45,7 +58,7 @@ export interface SandboxInstance {
   containerId: string;
   createdAt: Date;
   id: string;
-  provider: "docker" | "firecracker" | "dev" | "gvisor";
+  provider: "docker" | "firecracker" | "dev" | "gvisor" | "e2b";
   status: "running" | "stopped" | "error";
   workDir: string;
 }

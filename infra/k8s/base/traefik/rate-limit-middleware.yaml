@@ -1,0 +1,116 @@
+# ─── Global Rate Limiting (Traefik-level) ──────────────────────────────────────
+# Applied at the edge before requests reach application pods.
+# This supplements the per-user Redis-based rate limiting in the API middleware.
+# ---------------------------------------------------------------------------
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: global-rate-limit
+  namespace: prometheus
+  labels:
+    app.kubernetes.io/part-of: prometheus
+    app.kubernetes.io/component: rate-limiting
+spec:
+  rateLimit:
+    # Sustained average: 50 requests/sec per source IP
+    average: 50
+    # Allow short bursts up to 100 requests/sec
+    burst: 100
+    period: 1s
+    sourceCriterion:
+      ipStrategy:
+        depth: 1
+        excludedIPs:
+          # Trust first proxy hop (e.g., cloud LB)
+          - "127.0.0.1/32"
+---
+# Stricter rate limit for authentication endpoints
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: auth-rate-limit
+  namespace: prometheus
+  labels:
+    app.kubernetes.io/part-of: prometheus
+    app.kubernetes.io/component: rate-limiting
+spec:
+  rateLimit:
+    average: 10
+    burst: 20
+    period: 1s
+    sourceCriterion:
+      ipStrategy:
+        depth: 1
+---
+# Rate limit for API mutation endpoints (POST/PUT/PATCH/DELETE)
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: mutation-rate-limit
+  namespace: prometheus
+  labels:
+    app.kubernetes.io/part-of: prometheus
+    app.kubernetes.io/component: rate-limiting
+spec:
+  rateLimit:
+    average: 30
+    burst: 60
+    period: 1s
+    sourceCriterion:
+      ipStrategy:
+        depth: 1
+---
+# DDoS protection — very aggressive limit for unknown/unauthenticated traffic
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: ddos-protection
+  namespace: prometheus
+  labels:
+    app.kubernetes.io/part-of: prometheus
+    app.kubernetes.io/component: rate-limiting
+spec:
+  rateLimit:
+    average: 5
+    burst: 10
+    period: 1s
+    sourceCriterion:
+      ipStrategy:
+        depth: 1
+---
+# Chain middleware: rate limiting + security headers
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: secure-rate-limit-chain
+  namespace: prometheus
+  labels:
+    app.kubernetes.io/part-of: prometheus
+    app.kubernetes.io/component: rate-limiting
+spec:
+  chain:
+    middlewares:
+      - name: global-rate-limit
+      - name: security-headers
+---
+# Security headers middleware (complementary to rate limiting)
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: security-headers
+  namespace: prometheus
+  labels:
+    app.kubernetes.io/part-of: prometheus
+    app.kubernetes.io/component: security
+spec:
+  headers:
+    frameDeny: true
+    contentTypeNosniff: true
+    browserXssFilter: true
+    referrerPolicy: "strict-origin-when-cross-origin"
+    customResponseHeaders:
+      X-Content-Type-Options: "nosniff"
+      X-Frame-Options: "DENY"
+      Strict-Transport-Security: "max-age=63072000; includeSubDomains; preload"
+      X-XSS-Protection: "1; mode=block"
+      Permissions-Policy: "camera=(), microphone=(), geolocation=()"

@@ -14,6 +14,7 @@ export interface GitCommitOptions {
   authorName?: string;
   files?: string[];
   message: string;
+  signingKey?: string;
 }
 
 export interface GitDiffResult {
@@ -359,6 +360,236 @@ export class GitOperations {
       10_000
     );
     return result.stdout.trim();
+  }
+
+  /**
+   * Sparse checkout for large repos -- only check out specified paths.
+   */
+  async sparseCheckout(
+    sandboxId: string,
+    repoUrl: string,
+    paths: string[]
+  ): Promise<void> {
+    const workDir = "/workspace/repo";
+    const safeRepoUrl = encodeShellArg(repoUrl);
+
+    logger.info(
+      { sandboxId, repoUrl, pathCount: paths.length },
+      "Starting sparse checkout"
+    );
+
+    // Initialize a new repo with sparse checkout enabled
+    const initResult = await this.containerManager.exec(
+      sandboxId,
+      `mkdir -p ${workDir} && cd ${workDir} && git init && git remote add origin ${safeRepoUrl}`,
+      30_000
+    );
+    if (initResult.exitCode !== 0) {
+      throw new Error(`Sparse checkout init failed: ${initResult.stderr}`);
+    }
+
+    // Enable sparse checkout
+    const sparseResult = await this.containerManager.exec(
+      sandboxId,
+      `cd ${workDir} && git sparse-checkout init --cone`,
+      15_000
+    );
+    if (sparseResult.exitCode !== 0) {
+      throw new Error(`Sparse checkout init failed: ${sparseResult.stderr}`);
+    }
+
+    // Set the paths to check out
+    const safePaths = paths.map(encodeShellArg).join(" ");
+    const setResult = await this.containerManager.exec(
+      sandboxId,
+      `cd ${workDir} && git sparse-checkout set ${safePaths}`,
+      15_000
+    );
+    if (setResult.exitCode !== 0) {
+      throw new Error(`Sparse checkout set failed: ${setResult.stderr}`);
+    }
+
+    // Fetch and checkout
+    const fetchResult = await this.containerManager.exec(
+      sandboxId,
+      `cd ${workDir} && git fetch --depth=1 origin main && git checkout main`,
+      120_000
+    );
+    if (fetchResult.exitCode !== 0) {
+      // Try master as fallback
+      const fallbackResult = await this.containerManager.exec(
+        sandboxId,
+        `cd ${workDir} && git fetch --depth=1 origin master && git checkout master`,
+        120_000
+      );
+      if (fallbackResult.exitCode !== 0) {
+        throw new Error(
+          `Sparse checkout fetch failed: ${fallbackResult.stderr}`
+        );
+      }
+    }
+
+    // Configure safe directory
+    await this.containerManager.exec(
+      sandboxId,
+      `git config --global --add safe.directory ${workDir}`,
+      10_000
+    );
+
+    logger.info({ sandboxId, repoUrl, paths }, "Sparse checkout completed");
+  }
+
+  /**
+   * Create a git worktree for parallel branch work.
+   */
+  async worktreeCreate(
+    sandboxId: string,
+    branch: string,
+    path: string
+  ): Promise<void> {
+    const repoDir = "/workspace/repo";
+    const safeBranch = encodeShellArg(branch);
+    const safePath = encodeShellArg(path);
+
+    logger.info({ sandboxId, branch, path }, "Creating git worktree");
+
+    // Check if branch exists
+    const checkResult = await this.containerManager.exec(
+      sandboxId,
+      `cd ${repoDir} && git rev-parse --verify ${safeBranch} 2>/dev/null`,
+      10_000
+    );
+
+    let cmd: string;
+    if (checkResult.exitCode === 0) {
+      // Branch exists -- create worktree from existing branch
+      cmd = `cd ${repoDir} && git worktree add ${safePath} ${safeBranch}`;
+    } else {
+      // Branch doesn't exist -- create worktree with new branch
+      cmd = `cd ${repoDir} && git worktree add -b ${safeBranch} ${safePath}`;
+    }
+
+    const result = await this.containerManager.exec(sandboxId, cmd, 30_000);
+
+    if (result.exitCode !== 0) {
+      throw new Error(`Worktree creation failed: ${result.stderr}`);
+    }
+
+    // Configure safe directory for the worktree path
+    await this.containerManager.exec(
+      sandboxId,
+      `git config --global --add safe.directory ${safePath}`,
+      10_000
+    );
+
+    logger.info({ sandboxId, branch, path }, "Git worktree created");
+  }
+
+  /**
+   * Create a GPG-signed commit.
+   */
+  async commitSigned(
+    sandboxId: string,
+    options: GitCommitOptions & { signingKey: string }
+  ): Promise<string> {
+    const { message, files, authorName, authorEmail, signingKey } = options;
+    const workDir = "/workspace/repo";
+
+    // Import the GPG key
+    const importResult = await this.containerManager.exec(
+      sandboxId,
+      `echo ${encodeShellArg(signingKey)} | gpg --batch --import`,
+      15_000
+    );
+    if (importResult.exitCode !== 0) {
+      throw new Error(`GPG key import failed: ${importResult.stderr}`);
+    }
+
+    // Configure git to use GPG signing
+    await this.containerManager.exec(
+      sandboxId,
+      `cd ${workDir} && git config commit.gpgsign true`,
+      10_000
+    );
+
+    // Get the key ID from the imported key
+    const keyIdResult = await this.containerManager.exec(
+      sandboxId,
+      "gpg --list-secret-keys --keyid-format LONG | grep sec | head -1 | awk '{print $2}' | cut -d'/' -f2",
+      10_000
+    );
+    const keyId = keyIdResult.stdout.trim();
+    if (keyId) {
+      await this.containerManager.exec(
+        sandboxId,
+        `cd ${workDir} && git config user.signingkey ${encodeShellArg(keyId)}`,
+        10_000
+      );
+    }
+
+    // Configure author
+    if (authorName) {
+      await this.containerManager.exec(
+        sandboxId,
+        `cd ${workDir} && git config user.name ${encodeShellArg(authorName)}`,
+        10_000
+      );
+    }
+    if (authorEmail) {
+      await this.containerManager.exec(
+        sandboxId,
+        `cd ${workDir} && git config user.email ${encodeShellArg(authorEmail)}`,
+        10_000
+      );
+    }
+
+    // Stage files
+    if (files && files.length > 0) {
+      const safeFiles = files.map(encodeShellArg).join(" ");
+      const addResult = await this.containerManager.exec(
+        sandboxId,
+        `cd ${workDir} && git add ${safeFiles}`,
+        30_000
+      );
+      if (addResult.exitCode !== 0) {
+        throw new Error(`Failed to stage files: ${addResult.stderr}`);
+      }
+    } else {
+      const addResult = await this.containerManager.exec(
+        sandboxId,
+        `cd ${workDir} && git add -A`,
+        30_000
+      );
+      if (addResult.exitCode !== 0) {
+        throw new Error(`Failed to stage files: ${addResult.stderr}`);
+      }
+    }
+
+    // Signed commit
+    const commitResult = await this.containerManager.exec(
+      sandboxId,
+      `cd ${workDir} && git commit -S -m ${encodeShellArg(message)}`,
+      30_000
+    );
+
+    if (commitResult.exitCode !== 0) {
+      throw new Error(`Signed commit failed: ${commitResult.stderr}`);
+    }
+
+    // Get commit SHA
+    const shaResult = await this.containerManager.exec(
+      sandboxId,
+      `cd ${workDir} && git rev-parse HEAD`,
+      10_000
+    );
+
+    const commitSha = shaResult.stdout.trim();
+    logger.info(
+      { sandboxId, commitSha, signed: true },
+      "Signed commit created"
+    );
+
+    return commitSha;
   }
 
   /**

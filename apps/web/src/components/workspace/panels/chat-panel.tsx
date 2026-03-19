@@ -1,117 +1,209 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { cn } from "@prometheus/ui";
+import { useVirtualizer } from "@tanstack/react-virtual";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { ChatInputEnhanced } from "@/components/chat/chat-input-enhanced";
+import { StreamingMessage } from "@/components/chat/streaming-message";
+import type { SuggestedAction } from "@/components/chat/suggested-actions";
+import {
+  DEFAULT_SUGGESTIONS,
+  POST_COMPLETION_SUGGESTIONS,
+  POST_ERROR_SUGGESTIONS,
+  SuggestedActions,
+} from "@/components/chat/suggested-actions";
+import { ToolCallInline } from "@/components/chat/tool-call-inline";
+import type { ChatMessage, ToolCallData } from "@/stores/chat.store";
+import { useChatStore } from "@/stores/chat.store";
 
-export type ChatRole = "user" | "agent" | "system";
+// ── Types ───────────────────────────────────────────────────────
 
-export interface ChatMessage {
-  content: string;
-  id: string;
-  role: ChatRole;
-  timestamp: string;
-}
+export type ChatRole = "user" | "assistant" | "system";
 
 interface ChatPanelProps {
-  isTyping?: boolean;
-  messages?: ChatMessage[];
+  className?: string;
+  conversationId: string;
+  disabled?: boolean;
   onSendMessage: (content: string) => void;
 }
 
-const ROLE_STYLES: Record<ChatRole, { badge: string; bubble: string }> = {
-  user: {
-    badge: "bg-violet-500/20 text-violet-300",
-    bubble: "bg-violet-500/10 border-violet-500/20 ml-8",
-  },
-  agent: {
-    badge: "bg-green-500/20 text-green-300",
-    bubble: "bg-zinc-900/50 border-zinc-800 mr-8",
-  },
-  system: {
-    badge: "bg-blue-500/20 text-blue-300",
-    bubble: "bg-blue-500/5 border-blue-500/20",
-  },
-};
+// ── Message row component ───────────────────────────────────────
 
-function TypingIndicator() {
+function MessageRow({ message }: { message: ChatMessage }) {
   return (
-    <div className="mr-8 flex items-center gap-1.5 rounded-lg border border-zinc-800 bg-zinc-900/50 px-3 py-2">
-      <span className="inline-block h-1.5 w-1.5 animate-bounce rounded-full bg-zinc-500" />
-      <span
-        className="inline-block h-1.5 w-1.5 animate-bounce rounded-full bg-zinc-500"
-        style={{ animationDelay: "0.15s" }}
+    <div className="px-3 py-1.5">
+      <StreamingMessage
+        agentRole={message.agentRole}
+        content={message.content}
+        isStreaming={false}
+        model={message.model}
+        role={message.role}
       />
-      <span
-        className="inline-block h-1.5 w-1.5 animate-bounce rounded-full bg-zinc-500"
-        style={{ animationDelay: "0.3s" }}
-      />
+
+      {/* Tool calls */}
+      {message.toolCalls && message.toolCalls.length > 0 && (
+        <div className="mt-1 mr-8 ml-0">
+          {message.toolCalls.map((tc: ToolCallData) => (
+            <ToolCallInline key={tc.id} toolCall={tc} />
+          ))}
+        </div>
+      )}
     </div>
   );
 }
 
-function MessageBubble({ message }: { message: ChatMessage }) {
-  const styles = ROLE_STYLES[message.role] ?? ROLE_STYLES.agent;
+// ── Streaming row ───────────────────────────────────────────────
 
+function StreamingRow({ content, model }: { content: string; model?: string }) {
   return (
-    <div className={`rounded-lg border p-3 ${styles.bubble}`}>
-      <div className="mb-1 flex items-center gap-2">
-        <span
-          className={`rounded-full px-2 py-0.5 font-medium text-[10px] ${styles.badge}`}
-        >
-          {message.role}
-        </span>
-        <span className="ml-auto text-[10px] text-zinc-600">
-          {new Date(message.timestamp).toLocaleTimeString([], {
-            hour: "2-digit",
-            minute: "2-digit",
-          })}
-        </span>
-      </div>
-      <div className="whitespace-pre-wrap text-xs text-zinc-300 leading-relaxed">
-        {message.content}
-      </div>
+    <div className="px-3 py-1.5">
+      <StreamingMessage content={content} isStreaming model={model} />
     </div>
   );
 }
+
+// ── Smart suggestions logic ─────────────────────────────────────
+
+function getSuggestions(messages: ChatMessage[]): SuggestedAction[] {
+  if (messages.length === 0) {
+    return DEFAULT_SUGGESTIONS;
+  }
+
+  const lastMessage = messages.at(-1);
+  if (!lastMessage) {
+    return DEFAULT_SUGGESTIONS;
+  }
+
+  // After an error, suggest fixes
+  if (
+    lastMessage.role === "system" ||
+    lastMessage.content.toLowerCase().includes("error") ||
+    lastMessage.content.toLowerCase().includes("failed")
+  ) {
+    return POST_ERROR_SUGGESTIONS;
+  }
+
+  // After assistant completion, suggest next steps
+  if (lastMessage.role === "assistant") {
+    const content = lastMessage.content.toLowerCase();
+    if (
+      content.includes("complete") ||
+      content.includes("done") ||
+      content.includes("finished")
+    ) {
+      return POST_COMPLETION_SUGGESTIONS;
+    }
+  }
+
+  return DEFAULT_SUGGESTIONS;
+}
+
+// ── Virtual row content ─────────────────────────────────────────
+
+function VirtualRowContent({
+  isStreaming,
+  msg,
+  activeStreamingMessages,
+  streamingIdx,
+}: {
+  activeStreamingMessages: Array<{ content: string; model?: string }>;
+  isStreaming: boolean;
+  msg: ChatMessage | undefined;
+  streamingIdx: number;
+}) {
+  if (isStreaming) {
+    return (
+      <StreamingRow
+        content={activeStreamingMessages[streamingIdx]?.content ?? ""}
+        model={activeStreamingMessages[streamingIdx]?.model}
+      />
+    );
+  }
+
+  if (msg) {
+    return <MessageRow message={msg} />;
+  }
+
+  return null;
+}
+
+// ── Main component ──────────────────────────────────────────────
 
 export function ChatPanel({
-  messages = [],
+  conversationId,
   onSendMessage,
-  isTyping = false,
+  disabled = false,
+  className,
 }: ChatPanelProps) {
-  const [input, setInput] = useState("");
-  const scrollRef = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<HTMLTextAreaElement>(null);
+  const { conversations, streamingMessages, ensureConversation } =
+    useChatStore();
 
-  const handleSend = useCallback(() => {
-    const trimmed = input.trim();
-    if (!trimmed) {
-      return;
-    }
-    onSendMessage(trimmed);
-    setInput("");
-    inputRef.current?.focus();
-  }, [input, onSendMessage]);
+  const [userScrolledUp, setUserScrolledUp] = useState(false);
+  const parentRef = useRef<HTMLDivElement>(null);
 
-  const handleKeyDown = useCallback(
-    (e: React.KeyboardEvent) => {
-      if (e.key === "Enter" && !e.shiftKey) {
-        e.preventDefault();
-        handleSend();
-      }
-    },
-    [handleSend]
+  // Ensure conversation exists
+  useEffect(() => {
+    ensureConversation(conversationId);
+  }, [conversationId, ensureConversation]);
+
+  const conversation = conversations.get(conversationId);
+  const messages = conversation?.messages ?? [];
+
+  // Get all streaming messages for this conversation
+  const activeStreamingMessages = useMemo(
+    () => Array.from(streamingMessages.values()).filter((sm) => sm.isStreaming),
+    [streamingMessages]
   );
 
-  // Auto-scroll to bottom on new messages or typing indicator
+  // Total row count = messages + streaming messages
+  const totalCount = messages.length + activeStreamingMessages.length;
+
+  // Virtualizer
+  const virtualizer = useVirtualizer({
+    count: totalCount,
+    getScrollElement: () => parentRef.current,
+    estimateSize: () => 120,
+    overscan: 5,
+  });
+
+  // Auto-scroll to bottom when new messages arrive
   useEffect(() => {
-    const el = scrollRef.current;
-    if (el) {
-      el.scrollTop = el.scrollHeight;
+    if (!userScrolledUp && totalCount > 0) {
+      virtualizer.scrollToIndex(totalCount - 1, { align: "end" });
     }
+  }, [totalCount, userScrolledUp, virtualizer]);
+
+  // Track user scroll position
+  const handleScroll = useCallback(() => {
+    const el = parentRef.current;
+    if (!el) {
+      return;
+    }
+    const isNearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 100;
+    setUserScrolledUp(!isNearBottom);
   }, []);
 
+  const handleSend = useCallback(
+    (content: string) => {
+      onSendMessage(content);
+      setUserScrolledUp(false);
+    },
+    [onSendMessage]
+  );
+
+  const handleSuggestedAction = useCallback(
+    (action: SuggestedAction) => {
+      const content = action.command ?? action.label;
+      onSendMessage(content);
+      setUserScrolledUp(false);
+    },
+    [onSendMessage]
+  );
+
+  const suggestions = getSuggestions(messages);
+
   return (
-    <div className="flex h-full flex-col">
+    <div className={cn("flex h-full flex-col", className)}>
       {/* Header */}
       <div className="border-zinc-800 border-b px-3 py-2">
         <h3 className="font-medium text-xs text-zinc-400 uppercase tracking-wider">
@@ -119,44 +211,83 @@ export function ChatPanel({
         </h3>
       </div>
 
-      {/* Messages */}
-      <div className="flex-1 overflow-y-auto p-3" ref={scrollRef}>
-        {messages.length === 0 && !isTyping ? (
-          <div className="flex h-full items-center justify-center text-xs text-zinc-600">
-            No messages yet. Start a conversation.
+      {/* Virtualized message list */}
+      <div
+        className="flex-1 overflow-y-auto"
+        onScroll={handleScroll}
+        ref={parentRef}
+      >
+        {totalCount === 0 ? (
+          <div className="flex h-full flex-col items-center justify-center gap-3 p-6">
+            <div className="text-xs text-zinc-600">
+              No messages yet. Start a conversation.
+            </div>
+            <SuggestedActions
+              onSelect={handleSuggestedAction}
+              suggestions={DEFAULT_SUGGESTIONS}
+            />
           </div>
         ) : (
-          <div className="space-y-3">
-            {messages.map((msg) => (
-              <MessageBubble key={msg.id} message={msg} />
-            ))}
-            {isTyping && <TypingIndicator />}
+          <div
+            className="relative w-full"
+            style={{ height: `${virtualizer.getTotalSize()}px` }}
+          >
+            {virtualizer.getVirtualItems().map((virtualRow) => {
+              const isStreaming = virtualRow.index >= messages.length;
+              const streamingIdx = virtualRow.index - messages.length;
+              const msg = isStreaming ? undefined : messages[virtualRow.index];
+
+              return (
+                <div
+                  className="absolute top-0 left-0 w-full"
+                  data-index={virtualRow.index}
+                  key={virtualRow.key}
+                  ref={virtualizer.measureElement}
+                  style={{
+                    transform: `translateY(${virtualRow.start}px)`,
+                  }}
+                >
+                  <VirtualRowContent
+                    activeStreamingMessages={activeStreamingMessages}
+                    isStreaming={isStreaming}
+                    msg={msg}
+                    streamingIdx={streamingIdx}
+                  />
+                </div>
+              );
+            })}
           </div>
         )}
       </div>
 
-      {/* Input */}
-      <div className="border-zinc-800 border-t p-3">
-        <div className="flex gap-2">
-          <textarea
-            className="flex-1 resize-none rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-white placeholder-zinc-500 focus:border-violet-500 focus:outline-none"
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={handleKeyDown}
-            placeholder="Type a message... (Shift+Enter for newline)"
-            ref={inputRef}
-            rows={2}
-            value={input}
-          />
+      {/* Scroll-to-bottom indicator */}
+      {userScrolledUp && totalCount > 0 && (
+        <div className="flex justify-center border-zinc-800 border-t py-1">
           <button
-            className="shrink-0 self-end rounded-lg bg-violet-600 px-4 py-2 font-medium text-sm text-white transition-colors hover:bg-violet-500 disabled:cursor-not-allowed disabled:opacity-40"
-            disabled={!input.trim()}
-            onClick={handleSend}
+            className="rounded-full bg-zinc-800 px-3 py-1 text-[10px] text-zinc-400 transition-colors hover:bg-zinc-700 hover:text-zinc-200"
+            onClick={() => {
+              virtualizer.scrollToIndex(totalCount - 1, { align: "end" });
+              setUserScrolledUp(false);
+            }}
             type="button"
           >
-            Send
+            Scroll to bottom
           </button>
         </div>
-      </div>
+      )}
+
+      {/* Suggested actions */}
+      {!disabled && messages.length > 0 && (
+        <div className="border-zinc-800 border-t px-3 py-2">
+          <SuggestedActions
+            onSelect={handleSuggestedAction}
+            suggestions={suggestions}
+          />
+        </div>
+      )}
+
+      {/* Enhanced input */}
+      <ChatInputEnhanced disabled={disabled} onSend={handleSend} />
     </div>
   );
 }

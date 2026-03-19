@@ -230,6 +230,24 @@ function getActiveProviders(): Set<ModelProvider> {
   return providers;
 }
 
+interface CircuitBreakerState {
+  failureCount: number;
+  lastFailureAt: number;
+  openedAt: number;
+  recoveryProbeScheduled: boolean;
+  /** Sliding window of recent request timestamps and their outcomes */
+  requestLog: Array<{ timestamp: number; success: boolean; latencyMs: number }>;
+  state: "closed" | "open" | "half-open";
+  totalRequests: number;
+}
+
+/** Maximum number of entries kept in the sliding window */
+const CIRCUIT_BREAKER_WINDOW_SIZE = 100;
+/** Error rate threshold (0–1) above which the circuit opens */
+const CIRCUIT_BREAKER_ERROR_THRESHOLD = 0.3;
+/** How long the circuit stays open before allowing a recovery probe */
+const CIRCUIT_BREAKER_RECOVERY_TIMEOUT_MS = 60_000;
+
 export class ModelRouterService {
   private readonly logger = createLogger("model-router:service");
   private readonly cache: ResponseCache;
@@ -242,10 +260,146 @@ export class ModelRouterService {
   >();
   private readonly healthCacheTtlMs = 30_000; // 30 seconds
 
+  /** Per-provider circuit breaker state */
+  private readonly circuitBreakers = new Map<string, CircuitBreakerState>();
+
   constructor(rateLimiter: RateLimitManager) {
     this.rateLimiter = rateLimiter;
     this.cache = new ResponseCache();
     this.scorer = new ModelScorer();
+  }
+
+  // ─── Circuit Breaker Methods ──────────────────────────────────────────
+
+  /**
+   * Retrieve or initialize the circuit breaker state for a provider.
+   */
+  private getCircuitBreaker(provider: string): CircuitBreakerState {
+    let cb = this.circuitBreakers.get(provider);
+    if (!cb) {
+      cb = {
+        state: "closed",
+        failureCount: 0,
+        totalRequests: 0,
+        lastFailureAt: 0,
+        openedAt: 0,
+        recoveryProbeScheduled: false,
+        requestLog: [],
+      };
+      this.circuitBreakers.set(provider, cb);
+    }
+    return cb;
+  }
+
+  /**
+   * Record a provider failure. Opens the circuit when the sliding-window
+   * error rate exceeds the configured threshold.
+   */
+  private recordProviderFailure(provider: string, latencyMs = 0): void {
+    const cb = this.getCircuitBreaker(provider);
+    const now = Date.now();
+
+    cb.failureCount++;
+    cb.totalRequests++;
+    cb.lastFailureAt = now;
+    cb.requestLog.push({ timestamp: now, success: false, latencyMs });
+
+    // Trim to sliding window
+    if (cb.requestLog.length > CIRCUIT_BREAKER_WINDOW_SIZE) {
+      cb.requestLog = cb.requestLog.slice(-CIRCUIT_BREAKER_WINDOW_SIZE);
+    }
+
+    // Calculate error rate over the window
+    const failures = cb.requestLog.filter((r) => !r.success).length;
+    const errorRate = failures / cb.requestLog.length;
+
+    if (errorRate > CIRCUIT_BREAKER_ERROR_THRESHOLD && cb.state === "closed") {
+      cb.state = "open";
+      cb.openedAt = now;
+      cb.recoveryProbeScheduled = false;
+      this.logger.warn(
+        {
+          provider,
+          errorRate: errorRate.toFixed(2),
+          failures,
+          window: cb.requestLog.length,
+        },
+        "Circuit breaker opened for provider"
+      );
+    }
+
+    // If we were in half-open and got another failure, re-open
+    if (cb.state === "half-open") {
+      cb.state = "open";
+      cb.openedAt = now;
+      cb.recoveryProbeScheduled = false;
+      this.logger.warn(
+        { provider },
+        "Circuit breaker re-opened after failed recovery probe"
+      );
+    }
+  }
+
+  /**
+   * Record a provider success. Closes the circuit when a recovery probe
+   * succeeds while in half-open state.
+   */
+  private recordProviderSuccess(provider: string, latencyMs = 0): void {
+    const cb = this.getCircuitBreaker(provider);
+    const now = Date.now();
+
+    cb.totalRequests++;
+    cb.requestLog.push({ timestamp: now, success: true, latencyMs });
+
+    // Trim to sliding window
+    if (cb.requestLog.length > CIRCUIT_BREAKER_WINDOW_SIZE) {
+      cb.requestLog = cb.requestLog.slice(-CIRCUIT_BREAKER_WINDOW_SIZE);
+    }
+
+    // Successful recovery probe → close the circuit
+    if (cb.state === "half-open") {
+      cb.state = "closed";
+      cb.failureCount = 0;
+      cb.recoveryProbeScheduled = false;
+      this.logger.info(
+        { provider },
+        "Circuit breaker closed after successful recovery probe"
+      );
+    }
+  }
+
+  /**
+   * Returns false if the circuit is open and the recovery timeout has not
+   * yet elapsed. When the timeout has elapsed the circuit transitions to
+   * half-open so a single probe request can pass through.
+   */
+  isProviderAvailable(provider: string): boolean {
+    const cb = this.circuitBreakers.get(provider);
+    if (!cb || cb.state === "closed") {
+      return true;
+    }
+
+    if (cb.state === "half-open") {
+      // Allow one probe through
+      return true;
+    }
+
+    // state === "open"
+    const now = Date.now();
+    const elapsed = now - cb.openedAt;
+
+    if (elapsed >= CIRCUIT_BREAKER_RECOVERY_TIMEOUT_MS) {
+      // Transition to half-open, allow a single recovery probe
+      cb.state = "half-open";
+      cb.recoveryProbeScheduled = true;
+      this.logger.info(
+        { provider, elapsedMs: elapsed },
+        "Circuit breaker transitioning to half-open"
+      );
+      return true;
+    }
+
+    return false;
   }
 
   /**
@@ -339,25 +493,32 @@ export class ModelRouterService {
         continue;
       }
 
+      const startMs = Date.now();
       const result = await this.tryModel(modelKey, request, attempts);
+      const latencyMs = Date.now() - startMs;
+
       if (!result) {
         this.scorer.recordOutcome({
           modelKey,
           slotName: request.slot,
           success: false,
-          latencyMs: 0,
+          latencyMs,
           costUsd: 0,
+          taskType: request.options?.taskId,
         });
         continue;
       }
 
-      // Record success for adaptive scoring
+      // Record success with actual latency and quality signal from options
       this.scorer.recordOutcome({
         modelKey: result.model,
         slotName: request.slot,
         success: true,
-        latencyMs: 0, // Could track timing
+        latencyMs,
         costUsd: result.usage.cost_usd,
+        qualitySignal: (request.options as Record<string, unknown> | undefined)
+          ?.qualitySignal as number | undefined,
+        taskType: request.options?.taskId,
       });
 
       // Cache the successful response
@@ -463,9 +624,19 @@ export class ModelRouterService {
       "Routing completion request"
     );
 
+    // Circuit breaker check — skip providers whose circuit is open
+    if (!this.isProviderAvailable(config.provider)) {
+      this.logger.info(
+        { modelKey, provider: config.provider },
+        "Provider circuit breaker open, skipping"
+      );
+      return null;
+    }
+
     // Record request against rate limiter
     await this.rateLimiter.recordRequest(config.provider, modelKey);
 
+    const requestStartMs = Date.now();
     try {
       const response = await client.chat.completions.create({
         model: config.id,
@@ -509,6 +680,9 @@ export class ModelRouterService {
         },
         "Completion succeeded"
       );
+
+      // Record success in circuit breaker
+      this.recordProviderSuccess(config.provider, Date.now() - requestStartMs);
 
       // Fire-and-forget model usage logging
       this.logModelUsage({
@@ -557,6 +731,8 @@ export class ModelRouterService {
         { model: modelKey, error: msg, attempt: attemptNumber },
         "Completion request failed"
       );
+      // Record failure in circuit breaker
+      this.recordProviderFailure(config.provider, Date.now() - requestStartMs);
       return null;
     }
   }
@@ -762,18 +938,89 @@ export class ModelRouterService {
 
   /**
    * Check health of all providers used in slot configs.
-   * Uses a cache to avoid hammering provider endpoints.
+   * Uses a cache to avoid hammering provider endpoints and incorporates
+   * circuit breaker state and sliding-window latency percentiles.
    */
-  async checkProviderHealth(): Promise<Record<string, boolean>> {
+  async checkProviderHealth(): Promise<
+    Record<
+      string,
+      {
+        healthy: boolean;
+        circuitBreaker: {
+          state: "closed" | "open" | "half-open";
+          errorRate: number;
+          totalRequests: number;
+          latencyP50Ms: number;
+          latencyP95Ms: number;
+          latencyP99Ms: number;
+        };
+      }
+    >
+  > {
     const providers = getActiveProviders();
-    const results: Record<string, boolean> = {};
+    const results: Record<
+      string,
+      {
+        healthy: boolean;
+        circuitBreaker: {
+          state: "closed" | "open" | "half-open";
+          errorRate: number;
+          totalRequests: number;
+          latencyP50Ms: number;
+          latencyP95Ms: number;
+          latencyP99Ms: number;
+        };
+      }
+    > = {};
     const now = Date.now();
 
     const checks = Array.from(providers).map(async (provider) => {
+      // Compute circuit breaker stats for this provider
+      const cb = this.getCircuitBreaker(provider);
+      const failures = cb.requestLog.filter((r) => !r.success).length;
+      const errorRate =
+        cb.requestLog.length > 0 ? failures / cb.requestLog.length : 0;
+
+      // Compute latency percentiles from the sliding window
+      const latencies = cb.requestLog
+        .filter((r) => r.success && r.latencyMs > 0)
+        .map((r) => r.latencyMs)
+        .sort((a, b) => a - b);
+
+      const percentile = (arr: number[], p: number): number => {
+        if (arr.length === 0) {
+          return 0;
+        }
+        const idx = Math.ceil((p / 100) * arr.length) - 1;
+        return arr[Math.max(0, idx)] ?? 0;
+      };
+
+      const cbStats = {
+        state: cb.state,
+        errorRate,
+        totalRequests: cb.totalRequests,
+        latencyP50Ms: percentile(latencies, 50),
+        latencyP95Ms: percentile(latencies, 95),
+        latencyP99Ms: percentile(latencies, 99),
+      };
+
+      // If circuit is open, mark as unhealthy immediately
+      if (!this.isProviderAvailable(provider)) {
+        results[provider] = { healthy: false, circuitBreaker: cbStats };
+        this.providerHealthCache.set(provider, {
+          healthy: false,
+          checkedAt: now,
+        });
+        return;
+      }
+
       // Check cache
       const cached = this.providerHealthCache.get(provider);
       if (cached && now - cached.checkedAt < this.healthCacheTtlMs) {
-        results[provider] = cached.healthy;
+        results[provider] = {
+          healthy: cached.healthy,
+          circuitBreaker: cbStats,
+        };
         return;
       }
 
@@ -784,7 +1031,7 @@ export class ModelRouterService {
             signal: AbortSignal.timeout(5000),
           }).catch(() => null);
           const healthy = resp?.ok ?? false;
-          results[provider] = healthy;
+          results[provider] = { healthy, circuitBreaker: cbStats };
           this.providerHealthCache.set(provider, { healthy, checkedAt: now });
           return;
         }
@@ -805,7 +1052,7 @@ export class ModelRouterService {
         const hasKey = envKey ? !!process.env[envKey] : false;
 
         if (!hasKey) {
-          results[provider] = false;
+          results[provider] = { healthy: false, circuitBreaker: cbStats };
           this.providerHealthCache.set(provider, {
             healthy: false,
             checkedAt: now,
@@ -826,17 +1073,17 @@ export class ModelRouterService {
             resp !== null &&
             (resp.ok || resp.status === 401 || resp.status === 403);
           // 401/403 means endpoint is reachable but key may be bad -- still "reachable"
-          results[provider] = healthy;
+          results[provider] = { healthy, circuitBreaker: cbStats };
           this.providerHealthCache.set(provider, { healthy, checkedAt: now });
         } else {
-          results[provider] = false;
+          results[provider] = { healthy: false, circuitBreaker: cbStats };
           this.providerHealthCache.set(provider, {
             healthy: false,
             checkedAt: now,
           });
         }
       } catch {
-        results[provider] = false;
+        results[provider] = { healthy: false, circuitBreaker: cbStats };
         this.providerHealthCache.set(provider, {
           healthy: false,
           checkedAt: now,

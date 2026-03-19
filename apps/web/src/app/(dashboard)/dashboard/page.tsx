@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { useEffect } from "react";
+import { MetricCard } from "@/components/dashboard/metric-card";
 import { trpc } from "@/lib/trpc";
 import { useDashboardStore } from "@/stores/dashboard.store";
 
@@ -157,87 +158,57 @@ export default function DashboardPage() {
         </div>
       ) : (
         <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-          <Card className="border-zinc-800 bg-zinc-900/50 p-5">
-            <CardContent className="p-0">
-              <div className="flex items-center gap-2">
-                <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-green-500/10">
-                  <Cpu className="h-4 w-4 text-green-500" />
-                </div>
-                <span className="font-medium text-xs text-zinc-500">
-                  Active Agents
-                </span>
-              </div>
-              <div className="mt-3 font-bold text-3xl text-zinc-100">
-                {activeAgents}
-              </div>
-              <div className="mt-1 text-xs text-zinc-500">
-                Running right now
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card className="border-zinc-800 bg-zinc-900/50 p-5">
-            <CardContent className="p-0">
-              <div className="flex items-center gap-2">
-                <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-yellow-500/10">
-                  <Coins className="h-4 w-4 text-yellow-500" />
-                </div>
-                <span className="font-medium text-xs text-zinc-500">
-                  Credits Remaining
-                </span>
-              </div>
-              <div className="mt-3 font-bold text-3xl text-zinc-100">
-                {balance?.available?.toLocaleString() ?? creditBalance}
-              </div>
-              <div className="mt-1 text-xs text-zinc-500">
-                {balance?.reserved
-                  ? `${balance.reserved} reserved`
-                  : "Available to use"}
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card className="border-zinc-800 bg-zinc-900/50 p-5">
-            <CardContent className="p-0">
-              <div className="flex items-center gap-2">
-                <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-blue-500/10">
-                  <CheckCircle className="h-4 w-4 text-blue-500" />
-                </div>
-                <span className="font-medium text-xs text-zinc-500">
-                  Tasks Today
-                </span>
-              </div>
-              <div className="mt-3 font-bold text-3xl text-zinc-100">
-                {overview?.tasksCompleted ?? 0}
-              </div>
-              <div className="mt-1 text-xs text-zinc-500">
-                {overview?.successRate
-                  ? `${(overview.successRate * 100).toFixed(0)}% success rate`
-                  : "No tasks yet"}
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card className="border-zinc-800 bg-zinc-900/50 p-5">
-            <CardContent className="p-0">
-              <div className="flex items-center gap-2">
-                <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-violet-500/10">
-                  <FolderOpen className="h-4 w-4 text-violet-500" />
-                </div>
-                <span className="font-medium text-xs text-zinc-500">
-                  Active Projects
-                </span>
-              </div>
-              <div className="mt-3 font-bold text-3xl text-zinc-100">
-                {overview?.activeProjects ?? 0}
-              </div>
-              <div className="mt-1 text-xs text-zinc-500">
-                {overview?.sessionsCreated
-                  ? `${overview.sessionsCreated} sessions`
-                  : "Create one to start"}
-              </div>
-            </CardContent>
-          </Card>
+          <MetricCard
+            icon={Cpu}
+            iconBg="bg-green-500/10"
+            iconColor="text-green-500"
+            label="Active Agents"
+            subtitle="Running right now"
+            trend={[0, 1, 2, 1, 3, 2, activeAgents]}
+            trendDirection={activeAgents > 0 ? "up" : "flat"}
+            value={activeAgents}
+          />
+          <MetricCard
+            icon={Coins}
+            iconBg="bg-yellow-500/10"
+            iconColor="text-yellow-500"
+            label="Credits Remaining"
+            subtitle={
+              balance?.reserved
+                ? `${balance.reserved} reserved`
+                : "Available to use"
+            }
+            trendDirection={
+              balance?.available && balance.available > 0 ? "flat" : "down"
+            }
+            value={balance?.available?.toLocaleString() ?? creditBalance}
+          />
+          <MetricCard
+            icon={CheckCircle}
+            iconBg="bg-blue-500/10"
+            iconColor="text-blue-500"
+            label="Tasks Today"
+            subtitle={
+              overview?.successRate
+                ? `${(overview.successRate * 100).toFixed(0)}% success rate`
+                : "No tasks yet"
+            }
+            trendDirection={(overview?.tasksCompleted ?? 0) > 0 ? "up" : "flat"}
+            value={overview?.tasksCompleted ?? 0}
+          />
+          <MetricCard
+            icon={FolderOpen}
+            iconBg="bg-violet-500/10"
+            iconColor="text-violet-500"
+            label="Active Projects"
+            subtitle={
+              overview?.sessionsCreated
+                ? `${overview.sessionsCreated} sessions`
+                : "Create one to start"
+            }
+            trendDirection={(overview?.activeProjects ?? 0) > 0 ? "up" : "flat"}
+            value={overview?.activeProjects ?? 0}
+          />
         </div>
       )}
 

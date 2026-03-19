@@ -9,6 +9,7 @@ import {
   Flame,
   Hash,
 } from "lucide-react";
+import { useFleetStore } from "@/stores/fleet.store";
 
 function formatTokenCount(tokens: number): string {
   if (tokens > 1_000_000) {
@@ -33,20 +34,42 @@ interface FleetDashboardProps {
 }
 
 export function FleetDashboard({
-  activeCount,
-  burnRate,
+  activeCount: propActiveCount,
+  burnRate: propBurnRate,
   completedTasks,
   failedTasks,
   progressPct,
-  totalAgents,
+  totalAgents: propTotalAgents,
   totalCredits,
   totalTasks,
   totalTokens,
 }: FleetDashboardProps) {
+  // Wire to real-time data from fleet store (WebSocket-driven)
+  const storeStats = useFleetStore((s) => s.stats);
+  const storeAgents = useFleetStore((s) => s.agents);
+  const storeBurnRate = useFleetStore((s) => s.creditBurnRate);
+
+  // Prefer real-time store data when agents exist, fall back to props
+  const hasRealtimeData = storeAgents.size > 0;
+  const activeCount = hasRealtimeData ? storeStats.active : propActiveCount;
+  const totalAgents = hasRealtimeData ? storeStats.total : propTotalAgents;
+  const burnRate = hasRealtimeData
+    ? storeBurnRate.ratePerMinute.toFixed(1)
+    : propBurnRate;
+
+  // Build live agent status indicators from store
+  const agentStatuses = hasRealtimeData
+    ? Array.from(storeAgents.values()).map((a) => ({
+        id: a.id,
+        role: a.role,
+        status: a.status,
+      }))
+    : [];
+
   return (
     <div className="space-y-4">
       {/* Real-time metrics bar */}
-      <div className="flex items-center gap-4 rounded-lg border border-zinc-800 bg-zinc-900/50 px-4 py-3">
+      <div className="flex flex-wrap items-center gap-4 rounded-lg border border-zinc-800 bg-zinc-900/50 px-4 py-3">
         <div className="flex items-center gap-1.5">
           <span className="relative flex h-2 w-2">
             {activeCount > 0 && (
@@ -84,6 +107,36 @@ export function FleetDashboard({
           </span>
         </div>
       </div>
+
+      {/* Live agent status indicators (from WebSocket) */}
+      {agentStatuses.length > 0 && (
+        <div className="flex flex-wrap items-center gap-2 rounded-lg border border-zinc-800/50 bg-zinc-900/30 px-3 py-2">
+          <span className="text-[10px] text-zinc-600 uppercase tracking-wider">
+            Live Agents:
+          </span>
+          {agentStatuses.map((agent) => {
+            let statusDot = "bg-blue-500";
+            if (agent.status === "working") {
+              statusDot = "animate-pulse bg-green-500";
+            } else if (agent.status === "idle") {
+              statusDot = "bg-zinc-500";
+            } else if (agent.status === "failed") {
+              statusDot = "bg-red-500";
+            }
+
+            return (
+              <div
+                className="flex items-center gap-1 rounded-full border border-zinc-800 px-2 py-0.5"
+                key={agent.id}
+              >
+                <span className={`h-1.5 w-1.5 rounded-full ${statusDot}`} />
+                <span className="text-[10px] text-zinc-400">{agent.role}</span>
+                <span className="text-[9px] text-zinc-600">{agent.status}</span>
+              </div>
+            );
+          })}
+        </div>
+      )}
 
       {/* Stat cards */}
       <div className="grid gap-4 md:grid-cols-5">

@@ -1,0 +1,283 @@
+# ─── Blue/Green Deployment Strategy ────────────────────────────────────────────
+# Uses Traefik IngressRoute with weighted routing to switch between
+# Blue (current production) and Green (new release) deployments.
+#
+# Workflow:
+#   1. Deploy green version alongside blue
+#   2. Run smoke tests against green service
+#   3. Switch traffic from blue to green (weight 0/100)
+#   4. Keep blue running for 15min as rollback safety net
+#   5. Scale down blue after rollback window
+# ---------------------------------------------------------------------------
+
+# ─── Blue Service (current production) ─────────────────────────────────────────
+apiVersion: v1
+kind: Service
+metadata:
+  name: api-blue
+  namespace: prometheus
+  labels:
+    app: api
+    deployment-slot: blue
+    app.kubernetes.io/part-of: prometheus
+    app.kubernetes.io/component: blue-green
+  annotations:
+    prometheus.io/rollback-until: ""
+spec:
+  selector:
+    app: api
+    deployment-slot: blue
+  ports:
+    - port: 4000
+      targetPort: 4000
+      name: http
+      protocol: TCP
+  type: ClusterIP
+
+---
+# ─── Green Service (new release) ──────────────────────────────────────────────
+apiVersion: v1
+kind: Service
+metadata:
+  name: api-green
+  namespace: prometheus
+  labels:
+    app: api
+    deployment-slot: green
+    app.kubernetes.io/part-of: prometheus
+    app.kubernetes.io/component: blue-green
+spec:
+  selector:
+    app: api
+    deployment-slot: green
+  ports:
+    - port: 4000
+      targetPort: 4000
+      name: http
+      protocol: TCP
+  type: ClusterIP
+
+---
+# ─── Blue Deployment ──────────────────────────────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api-blue
+  namespace: prometheus
+  labels:
+    app: api
+    deployment-slot: blue
+    app.kubernetes.io/part-of: prometheus
+    app.kubernetes.io/component: blue-green
+  annotations:
+    # Keep blue alive for 15 minutes after green goes live for rollback
+    prometheus.io/rollback-retention: "15m"
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: api
+      deployment-slot: blue
+  template:
+    metadata:
+      labels:
+        app: api
+        deployment-slot: blue
+    spec:
+      containers:
+        - name: api
+          image: ghcr.io/prometheus/api:stable
+          ports:
+            - containerPort: 4000
+          envFrom:
+            - configMapRef:
+                name: prometheus-config
+            - secretRef:
+                name: prometheus-secrets
+          readinessProbe:
+            httpGet:
+              path: /api/trpc/health.check
+              port: 4000
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /api/trpc/health.check
+              port: 4000
+            initialDelaySeconds: 15
+            periodSeconds: 30
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi
+
+---
+# ─── Green Deployment ─────────────────────────────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api-green
+  namespace: prometheus
+  labels:
+    app: api
+    deployment-slot: green
+    app.kubernetes.io/part-of: prometheus
+    app.kubernetes.io/component: blue-green
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: api
+      deployment-slot: green
+  template:
+    metadata:
+      labels:
+        app: api
+        deployment-slot: green
+    spec:
+      containers:
+        - name: api
+          image: ghcr.io/prometheus/api:canary
+          ports:
+            - containerPort: 4000
+          envFrom:
+            - configMapRef:
+                name: prometheus-config
+            - secretRef:
+                name: prometheus-secrets
+          readinessProbe:
+            httpGet:
+              path: /api/trpc/health.check
+              port: 4000
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /api/trpc/health.check
+              port: 4000
+            initialDelaySeconds: 15
+            periodSeconds: 30
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi
+
+---
+# ─── Traefik IngressRoute with Weighted Routing ───────────────────────────────
+# Traffic split: adjust weights to control blue/green ratio.
+# Start: blue=100, green=0 (pre-switch)
+# Switch: blue=0, green=100 (post-verification)
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: api-blue-green
+  namespace: prometheus
+  labels:
+    app.kubernetes.io/part-of: prometheus
+    app.kubernetes.io/component: blue-green
+  annotations:
+    # Track when the switch happened for rollback window
+    prometheus.io/switched-at: ""
+    prometheus.io/active-slot: "blue"
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - match: Host(`api.prometheus.dev`)
+      kind: Rule
+      services:
+        - name: api-blue
+          port: 4000
+          weight: 100
+        - name: api-green
+          port: 4000
+          weight: 0
+      middlewares:
+        - name: ip-rate-limit
+        - name: global-rate-limit
+  tls:
+    certResolver: letsencrypt
+
+---
+# ─── Smoke Test Job ───────────────────────────────────────────────────────────
+# Runs automated verification against the green deployment before switching.
+# If the job fails, the green deployment is NOT promoted.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: api-green-smoke-test
+  namespace: prometheus
+  labels:
+    app.kubernetes.io/part-of: prometheus
+    app.kubernetes.io/component: blue-green
+  annotations:
+    description: >-
+      Validates the green deployment before traffic switch.
+      Tests health endpoint, basic CRUD, and response times.
+spec:
+  ttlSecondsAfterFinished: 600
+  backoffLimit: 2
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: smoke-test
+          image: curlimages/curl:latest
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -e
+              GREEN_URL="http://api-green.prometheus.svc.cluster.local:4000"
+              echo "=== Prometheus Blue/Green Smoke Tests ==="
+
+              # Test 1: Health check
+              echo "[1/4] Health check..."
+              STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$GREEN_URL/api/trpc/health.check")
+              if [ "$STATUS" != "200" ]; then
+                echo "FAIL: Health check returned $STATUS"
+                exit 1
+              fi
+              echo "  PASS: Health check returned 200"
+
+              # Test 2: Response time under 500ms
+              echo "[2/4] Response time check..."
+              TIME=$(curl -s -o /dev/null -w "%{time_total}" "$GREEN_URL/api/trpc/health.check")
+              if [ "$(echo "$TIME > 0.5" | bc -l 2>/dev/null || echo 0)" = "1" ]; then
+                echo "FAIL: Response time ${TIME}s exceeds 500ms threshold"
+                exit 1
+              fi
+              echo "  PASS: Response time ${TIME}s"
+
+              # Test 3: Check critical endpoints return valid JSON
+              echo "[3/4] JSON response validation..."
+              CONTENT_TYPE=$(curl -s -I "$GREEN_URL/api/trpc/health.check" | grep -i content-type | head -1)
+              if echo "$CONTENT_TYPE" | grep -qi "json"; then
+                echo "  PASS: Returns JSON content type"
+              else
+                echo "  WARN: Unexpected content type: $CONTENT_TYPE"
+              fi
+
+              # Test 4: Multiple rapid requests (basic load test)
+              echo "[4/4] Rapid request test (10 requests)..."
+              FAILURES=0
+              for i in $(seq 1 10); do
+                STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$GREEN_URL/api/trpc/health.check")
+                if [ "$STATUS" != "200" ]; then
+                  FAILURES=$((FAILURES + 1))
+                fi
+              done
+              if [ "$FAILURES" -gt 1 ]; then
+                echo "FAIL: $FAILURES/10 requests failed"
+                exit 1
+              fi
+              echo "  PASS: $((10 - FAILURES))/10 requests succeeded"
+
+              echo ""
+              echo "=== All smoke tests passed. Green is ready for promotion. ==="

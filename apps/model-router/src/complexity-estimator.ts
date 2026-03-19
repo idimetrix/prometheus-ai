@@ -94,13 +94,13 @@ const FILE_TYPE_WEIGHTS: Record<string, number> = {
   ".tf": 1.5,
 };
 
-/** Slot recommendations by complexity score */
+/** Slot recommendations by complexity score — aligned with router SLOT_CONFIGS */
 const SLOT_MAP: Record<number, string> = {
-  1: "fast",
-  2: "balanced",
-  3: "capable",
-  4: "strong",
-  5: "flagship",
+  1: "fastLoop",
+  2: "default",
+  3: "default",
+  4: "think",
+  5: "premium",
 };
 
 export interface ComplexitySignals {

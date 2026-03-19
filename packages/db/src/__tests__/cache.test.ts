@@ -33,6 +33,10 @@ function createMockRedis() {
     scan: vi
       .fn<(cursor: string, ...args: unknown[]) => Promise<[string, string[]]>>()
       .mockResolvedValue(["0", []]),
+    sadd: vi
+      .fn<(key: string, ...members: string[]) => Promise<unknown>>()
+      .mockResolvedValue(1),
+    smembers: vi.fn<(key: string) => Promise<string[]>>().mockResolvedValue([]),
   };
 }
 

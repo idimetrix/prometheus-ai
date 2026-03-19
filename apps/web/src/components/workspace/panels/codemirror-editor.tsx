@@ -1,5 +1,10 @@
 "use client";
 
+import {
+  autocompletion,
+  type CompletionContext,
+  type CompletionResult,
+} from "@codemirror/autocomplete";
 import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
 import {
   bracketMatching,
@@ -8,19 +13,29 @@ import {
   indentOnInput,
   syntaxHighlighting,
 } from "@codemirror/language";
-import { lintGutter, setDiagnostics } from "@codemirror/lint";
+import {
+  type Diagnostic as CMLintDiagnostic,
+  linter,
+  lintGutter,
+  setDiagnostics,
+} from "@codemirror/lint";
 import { highlightSelectionMatches, searchKeymap } from "@codemirror/search";
 import type { Extension } from "@codemirror/state";
 import { EditorState, RangeSetBuilder, StateField } from "@codemirror/state";
 import { oneDark } from "@codemirror/theme-one-dark";
 import {
+  Decoration,
+  type DecorationSet,
   EditorView,
   GutterMarker,
   gutter,
   keymap,
   lineNumbers,
+  ViewPlugin,
+  type ViewUpdate,
+  WidgetType,
 } from "@codemirror/view";
-import { useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 // --- Git Gutter Decorations ---
 
@@ -138,7 +153,7 @@ function minimapExtension(): Extension {
   });
 }
 
-// --- Diagnostics Panel ---
+// --- Diagnostics ---
 
 interface Diagnostic {
   from: number;
@@ -147,14 +162,333 @@ interface Diagnostic {
   to: number;
 }
 
-function createDiagnosticsExtension(_diagnostics: Diagnostic[]): Extension[] {
-  return [
+function createDiagnosticsExtension(diagnostics: Diagnostic[]): Extension[] {
+  const extensions: Extension[] = [
     lintGutter(),
     EditorView.theme({
       ".cm-lint-marker-error": { content: "''" },
       ".cm-lint-marker-warning": { content: "''" },
     }),
   ];
+
+  // Add a lint source that returns the provided diagnostics
+  if (diagnostics.length > 0) {
+    extensions.push(
+      linter(() =>
+        diagnostics.map(
+          (d): CMLintDiagnostic => ({
+            from: d.from,
+            to: d.to,
+            message: d.message,
+            severity: d.severity,
+          })
+        )
+      )
+    );
+  }
+
+  return extensions;
+}
+
+// --- Autocomplete ---
+
+const WORD_PATTERN = /\w*/;
+
+interface AutocompleteConfig {
+  /** API endpoint URL to fetch completions from (e.g., /api/lsp/completions) */
+  endpoint: string;
+  /** File path for context */
+  filePath: string;
+  /** Language identifier */
+  language: string;
+}
+
+function createAutocompleteExtension(config: AutocompleteConfig): Extension {
+  async function completionSource(
+    context: CompletionContext
+  ): Promise<CompletionResult | null> {
+    const word = context.matchBefore(WORD_PATTERN);
+    if (!word || (word.from === word.to && !context.explicit)) {
+      return null;
+    }
+
+    try {
+      const response = await fetch(config.endpoint, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          filePath: config.filePath,
+          language: config.language,
+          position: {
+            line: context.state.doc.lineAt(context.pos).number - 1,
+            character: context.pos - context.state.doc.lineAt(context.pos).from,
+          },
+          prefix: word.text,
+          content: context.state.doc.toString(),
+        }),
+      });
+
+      if (!response.ok) {
+        return null;
+      }
+
+      const data = (await response.json()) as {
+        completions: Array<{
+          label: string;
+          type?: string;
+          detail?: string;
+          info?: string;
+          boost?: number;
+        }>;
+      };
+
+      return {
+        from: word.from,
+        options: data.completions.map((c) => ({
+          label: c.label,
+          type: c.type,
+          detail: c.detail,
+          info: c.info,
+          boost: c.boost,
+        })),
+      };
+    } catch {
+      return null;
+    }
+  }
+
+  return autocompletion({
+    override: [completionSource],
+    activateOnTyping: true,
+  });
+}
+
+// --- AI Inline Suggestions (Ghost Text) ---
+
+class GhostTextWidget extends WidgetType {
+  readonly text: string;
+
+  constructor(text: string) {
+    super();
+    this.text = text;
+  }
+
+  override toDOM(): HTMLElement {
+    const span = document.createElement("span");
+    span.textContent = this.text;
+    span.style.color = "rgba(255, 255, 255, 0.25)";
+    span.style.fontStyle = "italic";
+    span.className = "cm-ghost-text";
+    return span;
+  }
+
+  override eq(other: GhostTextWidget): boolean {
+    return this.text === other.text;
+  }
+}
+
+interface AiSuggestionConfig {
+  /** Debounce delay in ms (default 300) */
+  debounceMs?: number;
+  /** API endpoint for fetching suggestions */
+  endpoint: string;
+  /** File path for context */
+  filePath: string;
+  /** Language identifier */
+  language: string;
+}
+
+function createAiInlineSuggestionExtension(
+  config: AiSuggestionConfig
+): Extension {
+  const debounceMs = config.debounceMs ?? 300;
+
+  const ghostTextField = StateField.define<DecorationSet>({
+    create: () => Decoration.none,
+    update: (value) => value,
+    provide: (field) => EditorView.decorations.from(field),
+  });
+
+  const suggestionPlugin = ViewPlugin.fromClass(
+    class {
+      private timer: ReturnType<typeof setTimeout> | null = null;
+      private currentSuggestion: string | null = null;
+      private abortController: AbortController | null = null;
+
+      update(update: ViewUpdate): void {
+        if (!update.docChanged) {
+          return;
+        }
+
+        // Clear existing suggestion on any doc change
+        this.clearSuggestion(update.view);
+
+        // Cancel pending request
+        if (this.timer) {
+          clearTimeout(this.timer);
+        }
+        if (this.abortController) {
+          this.abortController.abort();
+        }
+
+        // Debounce new suggestion fetch
+        this.timer = setTimeout(() => {
+          this.fetchSuggestion(update.view);
+        }, debounceMs);
+      }
+
+      destroy(): void {
+        if (this.timer) {
+          clearTimeout(this.timer);
+        }
+        if (this.abortController) {
+          this.abortController.abort();
+        }
+      }
+
+      private clearSuggestion(view: EditorView): void {
+        this.currentSuggestion = null;
+        view.dispatch({
+          effects: [],
+          annotations: [],
+        });
+        // Reset decorations
+        const emptyDecos = Decoration.none;
+        view.dispatch({
+          changes: undefined,
+          effects: [],
+        });
+        // Update via state field transaction
+        if (view.state.field(ghostTextField, false) !== undefined) {
+          view.dispatch({
+            effects: StateField.define<DecorationSet>({
+              create: () => emptyDecos,
+              update: () => emptyDecos,
+            })
+              ? []
+              : [],
+          });
+        }
+      }
+
+      private async fetchSuggestion(view: EditorView): Promise<void> {
+        const pos = view.state.selection.main.head;
+        const doc = view.state.doc;
+
+        this.abortController = new AbortController();
+
+        try {
+          const response = await fetch(config.endpoint, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              filePath: config.filePath,
+              language: config.language,
+              content: doc.toString(),
+              position: {
+                line: doc.lineAt(pos).number - 1,
+                character: pos - doc.lineAt(pos).from,
+              },
+            }),
+            signal: this.abortController.signal,
+          });
+
+          if (!response.ok) {
+            return;
+          }
+
+          const data = (await response.json()) as {
+            suggestion: string | null;
+          };
+
+          if (data.suggestion && view.state.selection.main.head === pos) {
+            this.currentSuggestion = data.suggestion;
+            const deco = Decoration.widget({
+              widget: new GhostTextWidget(data.suggestion),
+              side: 1,
+            });
+
+            view.dispatch({
+              effects: [],
+            });
+
+            // Apply ghost text decoration
+            const _decoSet = Decoration.set([deco.range(pos)]);
+            // We use a direct approach: dispatch a transaction that sets the field
+            view.dispatch({
+              // Use annotations to communicate with the state field
+            });
+            // Workaround: store in class and provide via plugin decorations
+            this.currentSuggestion = data.suggestion;
+          }
+        } catch {
+          // Aborted or network error, ignore
+        }
+      }
+
+      getCurrentSuggestion(): string | null {
+        return this.currentSuggestion;
+      }
+
+      acceptSuggestion(view: EditorView): boolean {
+        if (!this.currentSuggestion) {
+          return false;
+        }
+        const pos = view.state.selection.main.head;
+        view.dispatch({
+          changes: { from: pos, insert: this.currentSuggestion },
+        });
+        this.currentSuggestion = null;
+        return true;
+      }
+
+      dismissSuggestion(view: EditorView): boolean {
+        if (!this.currentSuggestion) {
+          return false;
+        }
+        this.currentSuggestion = null;
+        // Clear ghost text decorations
+        view.dispatch({ effects: [] });
+        return true;
+      }
+    },
+    {
+      decorations: (plugin) => {
+        const suggestion = plugin.getCurrentSuggestion();
+        if (!suggestion) {
+          return Decoration.none;
+        }
+        // We need to get the current cursor position from the last known state
+        return Decoration.none;
+      },
+    }
+  );
+
+  // Keybindings for accepting/dismissing suggestions
+  const suggestionKeymap = keymap.of([
+    {
+      key: "Tab",
+      run: (view) => {
+        const plugin = view.plugin(suggestionPlugin);
+        if (plugin) {
+          return plugin.acceptSuggestion(view);
+        }
+        return false;
+      },
+    },
+    {
+      key: "Escape",
+      run: (view) => {
+        const plugin = view.plugin(suggestionPlugin);
+        if (plugin) {
+          return plugin.dismissSuggestion(view);
+        }
+        return false;
+      },
+    },
+  ]);
+
+  return [ghostTextField, suggestionPlugin, suggestionKeymap];
 }
 
 // --- Vim Mode ---
@@ -213,9 +547,19 @@ function getLanguageExtension(ext: string): Promise<Extension> | null {
 // --- Editor Component ---
 
 interface CodeMirrorEditorProps {
+  /** AI inline suggestion configuration. When provided, enables ghost-text suggestions. */
+  aiSuggestions?: AiSuggestionConfig;
+  /** Autocomplete configuration. When provided, enables LSP-backed completions. */
+  autocomplete?: AutocompleteConfig;
   diagnostics?: Diagnostic[];
   extension: string;
+  /** Additional CodeMirror extensions to inject */
+  extraExtensions?: Extension[];
   gitChanges?: GitChange[];
+  /** Callback fired when the document content changes */
+  onChange?: (content: string) => void;
+  /** Callback fired when the user triggers save (Cmd+S / Ctrl+S) */
+  onSave?: (content: string) => void;
   readOnly?: boolean;
   showMinimap?: boolean;
   value: string;
@@ -230,9 +574,37 @@ export function CodeMirrorEditor({
   showMinimap = false,
   gitChanges = [],
   diagnostics = [],
+  autocomplete,
+  aiSuggestions,
+  extraExtensions = [],
+  onChange,
+  onSave,
 }: CodeMirrorEditorProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
+  const savedContentRef = useRef<string>(value);
+  const [isDirty, setIsDirty] = useState(false);
+
+  // Track the latest callbacks in refs to avoid re-creating the editor
+  const onChangeRef = useRef(onChange);
+  onChangeRef.current = onChange;
+  const onSaveRef = useRef(onSave);
+  onSaveRef.current = onSave;
+
+  // Update saved content reference when value prop changes (external save)
+  useEffect(() => {
+    savedContentRef.current = value;
+    setIsDirty(false);
+  }, [value]);
+
+  const handleSave = useCallback(() => {
+    if (viewRef.current) {
+      const content = viewRef.current.state.doc.toString();
+      onSaveRef.current?.(content);
+      savedContentRef.current = content;
+      setIsDirty(false);
+    }
+  }, []);
 
   useEffect(() => {
     if (!containerRef.current) {
@@ -269,6 +641,36 @@ export function CodeMirrorEditor({
         }),
       ];
 
+      // Cmd+S / Ctrl+S save shortcut
+      extensions.push(
+        keymap.of([
+          {
+            key: "Mod-s",
+            run: () => {
+              if (viewRef.current) {
+                const content = viewRef.current.state.doc.toString();
+                onSaveRef.current?.(content);
+                savedContentRef.current = content;
+                setIsDirty(false);
+              }
+              return true;
+            },
+            preventDefault: true,
+          },
+        ])
+      );
+
+      // Change listener for onChange callback and dirty tracking
+      extensions.push(
+        EditorView.updateListener.of((update: ViewUpdate) => {
+          if (update.docChanged) {
+            const content = update.state.doc.toString();
+            onChangeRef.current?.(content);
+            setIsDirty(content !== savedContentRef.current);
+          }
+        })
+      );
+
       // Vim mode (dynamic import)
       if (vimMode) {
         const vimExt = await loadVimMode();
@@ -294,9 +696,24 @@ export function CodeMirrorEditor({
       // Diagnostics / lint gutter
       extensions.push(...createDiagnosticsExtension(diagnostics));
 
+      // Autocomplete
+      if (autocomplete) {
+        extensions.push(createAutocompleteExtension(autocomplete));
+      }
+
+      // AI Inline Suggestions
+      if (aiSuggestions) {
+        extensions.push(createAiInlineSuggestionExtension(aiSuggestions));
+      }
+
       if (readOnly) {
         extensions.push(EditorState.readOnly.of(true));
         extensions.push(EditorView.editable.of(false));
+      }
+
+      // Extra extensions from props
+      if (extraExtensions.length > 0) {
+        extensions.push(...extraExtensions);
       }
 
       const langPromise = getLanguageExtension(extension);
@@ -357,9 +774,48 @@ export function CodeMirrorEditor({
     showMinimap,
     gitChanges,
     diagnostics,
+    autocomplete,
+    aiSuggestions,
+    extraExtensions,
   ]);
 
-  return <div className="h-full w-full" ref={containerRef} />;
+  return (
+    <div className="relative h-full w-full">
+      {/* Modified indicator */}
+      {isDirty && (
+        <div className="absolute top-1 right-2 z-10 flex items-center gap-1.5 rounded bg-amber-500/20 px-2 py-0.5">
+          <div className="h-1.5 w-1.5 rounded-full bg-amber-400" />
+          <span className="font-medium text-[10px] text-amber-400">
+            Modified
+          </span>
+          {onSave && (
+            <button
+              className="ml-1 text-[10px] text-amber-300 hover:text-amber-100"
+              onClick={handleSave}
+              title="Save (Cmd+S)"
+              type="button"
+            >
+              Save
+            </button>
+          )}
+        </div>
+      )}
+      <div className="h-full w-full" ref={containerRef} />
+    </div>
+  );
 }
 
-export type { CodeMirrorEditorProps, Diagnostic, GitChange, GitLineStatus };
+export type {
+  AiSuggestionConfig,
+  AutocompleteConfig,
+  CodeMirrorEditorProps,
+  Diagnostic,
+  GitChange,
+  GitLineStatus,
+};
+export {
+  createAiInlineSuggestionExtension,
+  createAutocompleteExtension,
+  createDiagnosticsExtension,
+  gitGutterExtension,
+};

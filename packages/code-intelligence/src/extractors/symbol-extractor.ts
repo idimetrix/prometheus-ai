@@ -44,12 +44,18 @@ export interface ExtractedSymbol {
   name: string;
   /** Parent symbol name, if nested (e.g., method inside a class) */
   parent?: string;
+  /** Source module for re-exports (e.g., "./utils") */
+  reExportSource?: string;
+  /** Full function/method signature (e.g., "(a: string, b: number) => boolean") */
+  signature?: string;
   /** Start column (0-indexed) */
   startColumn: number;
   /** Start line (0-indexed) */
   startLine: number;
   /** The full text of the symbol's defining node */
   text: string;
+  /** Type annotation or return type */
+  typeInfo?: string;
 }
 
 /**
@@ -219,6 +225,161 @@ function isNodeExported(node: Node): boolean {
 }
 
 /**
+ * Extract function/method signature from a tree-sitter node.
+ * Returns the parameter list and return type as a string.
+ */
+function extractSignature(node: Node): string | undefined {
+  const params = node.childForFieldName("parameters");
+  const returnType = node.childForFieldName("return_type");
+
+  if (!params) {
+    return undefined;
+  }
+
+  let sig = params.text;
+  if (returnType) {
+    sig += `: ${returnType.text}`;
+  }
+
+  return sig;
+}
+
+/**
+ * Extract type information from a node.
+ * For type aliases, interfaces, and variables with type annotations.
+ */
+function extractTypeInfo(node: Node, kind: SymbolKind): string | undefined {
+  if (kind === "type_alias") {
+    // Type alias: the value after '='
+    const value = node.childForFieldName("value");
+    if (value) {
+      return value.text;
+    }
+  }
+
+  if (kind === "interface") {
+    // Interface body
+    const body = node.childForFieldName("body");
+    if (body) {
+      return body.text;
+    }
+  }
+
+  if (kind === "function" || kind === "method") {
+    const returnType = node.childForFieldName("return_type");
+    if (returnType) {
+      return returnType.text;
+    }
+  }
+
+  if (kind === "variable") {
+    // Check for type annotation on variable declarator
+    for (const child of node.children) {
+      if (child.type === "variable_declarator") {
+        const typeAnnotation = child.childForFieldName("type");
+        if (typeAnnotation) {
+          return typeAnnotation.text;
+        }
+      }
+    }
+  }
+
+  return undefined;
+}
+
+/**
+ * Extract class hierarchy info (extends/implements).
+ */
+function extractClassHierarchy(node: Node): {
+  extendsClass?: string;
+  implementsInterfaces?: string[];
+} {
+  const result: { extendsClass?: string; implementsInterfaces?: string[] } = {};
+
+  for (const child of node.children) {
+    if (child.type === "extends_clause" || child.type === "class_heritage") {
+      // The extends target is typically the first type identifier
+      const typeNode = child.childForFieldName("value") ?? child.children[1];
+      if (typeNode) {
+        result.extendsClass = typeNode.text;
+      }
+    }
+
+    if (child.type === "implements_clause") {
+      result.implementsInterfaces = [];
+      for (const impl of child.children) {
+        if (impl.type === "type_identifier" || impl.type === "generic_type") {
+          result.implementsInterfaces.push(impl.text);
+        }
+      }
+    }
+  }
+
+  return result;
+}
+
+/**
+ * Extract re-export source from an export statement node.
+ * Detects patterns like: export { X } from './y'
+ */
+function extractReExportSource(node: Node): string | undefined {
+  // Check if this is a re-export (export ... from '...')
+  if (node.type !== "export_statement") {
+    return undefined;
+  }
+
+  const source = node.childForFieldName("source");
+  if (source) {
+    // Remove quotes from the string literal
+    return source.text.replace(/^["']|["']$/g, "");
+  }
+
+  // Fallback: look for a string child after 'from'
+  let foundFrom = false;
+  for (const child of node.children) {
+    if (child.type === "from") {
+      foundFrom = true;
+      continue;
+    }
+    if (foundFrom && child.type === "string") {
+      return child.text.replace(/^["']|["']$/g, "");
+    }
+  }
+
+  return undefined;
+}
+
+/**
+ * Check if a node is a dynamic import expression.
+ */
+function isDynamicImport(node: Node): boolean {
+  return (
+    node.type === "call_expression" &&
+    node.children.length > 0 &&
+    node.children[0]?.type === "import"
+  );
+}
+
+/**
+ * Extract dynamic import source from a call expression.
+ */
+function extractDynamicImportSource(node: Node): string | undefined {
+  if (!isDynamicImport(node)) {
+    return undefined;
+  }
+
+  const args = node.childForFieldName("arguments");
+  if (args && args.children.length > 1) {
+    const firstArg = args.children[1];
+    if (firstArg?.type === "string") {
+      return firstArg.text.replace(/^["']|["']$/g, "");
+    }
+  }
+
+  return undefined;
+}
+
+/**
  * Walk the AST and collect symbols.
  */
 function walkTree(
@@ -231,10 +392,63 @@ function walkTree(
   const overrides = LANGUAGE_NODE_OVERRIDES[language] ?? {};
   const kind = overrides[node.type] ?? NODE_TYPE_TO_SYMBOL_KIND[node.type];
 
+  // Handle dynamic imports as a special case
+  if (isDynamicImport(node)) {
+    const source = extractDynamicImportSource(node);
+    if (source) {
+      symbols.push({
+        name: source,
+        kind: "import",
+        startLine: node.startPosition.row,
+        endLine: node.endPosition.row,
+        startColumn: node.startPosition.column,
+        endColumn: node.endPosition.column,
+        text: node.text,
+        parent: parentName,
+        isExported: false,
+        metadata: { isDynamic: true },
+        reExportSource: undefined,
+      });
+    }
+  }
+
   if (kind) {
     const name =
       extractNodeName(node) ?? `<anonymous:${node.startPosition.row}>`;
     const isExported = isNodeExported(node) || checkGoExport(name, language);
+
+    // Extract signature for functions and methods
+    const signature =
+      kind === "function" || kind === "method"
+        ? extractSignature(node)
+        : undefined;
+
+    // Extract type information
+    const typeInfo = extractTypeInfo(node, kind);
+
+    // Extract re-export source for export statements
+    const reExportSource =
+      kind === "export" ? extractReExportSource(node) : undefined;
+
+    // Extract class hierarchy
+    const hierarchy =
+      kind === "class" || kind === "interface"
+        ? extractClassHierarchy(node)
+        : undefined;
+
+    const metadata: Record<string, unknown> = {};
+    if (hierarchy?.extendsClass) {
+      metadata.extends = hierarchy.extendsClass;
+    }
+    if (
+      hierarchy?.implementsInterfaces &&
+      hierarchy.implementsInterfaces.length > 0
+    ) {
+      metadata.implements = hierarchy.implementsInterfaces;
+    }
+    if (reExportSource) {
+      metadata.reExportSource = reExportSource;
+    }
 
     symbols.push({
       name,
@@ -246,10 +460,13 @@ function walkTree(
       text: node.text,
       parent: parentName,
       isExported,
-      metadata: {},
+      metadata,
+      signature,
+      typeInfo,
+      reExportSource,
     });
 
-    // For classes, walk children with this as parent
+    // For classes/interfaces, walk children with this as parent
     if (kind === "class" || kind === "interface") {
       for (const child of node.children) {
         const childSymbols = walkTree(child, language, name);

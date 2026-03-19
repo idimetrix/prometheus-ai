@@ -8,6 +8,7 @@ import { blueprintsEnhancedRouter } from "./blueprints-enhanced";
 import { brainRouter } from "./brain";
 import { codeAnalysisRouter } from "./code-analysis";
 import { fleetRouter } from "./fleet";
+import { gdprRouter } from "./gdpr";
 import { healthRouter } from "./health";
 import { integrationsRouter } from "./integrations";
 import { pluginsRouter } from "./plugins";
@@ -37,6 +38,7 @@ export const appRouter = router({
   codeAnalysis: codeAnalysisRouter,
   audit: auditRouter,
   blueprintsEnhanced: blueprintsEnhancedRouter,
+  gdpr: gdprRouter,
 });
 
 export type AppRouter = typeof appRouter;

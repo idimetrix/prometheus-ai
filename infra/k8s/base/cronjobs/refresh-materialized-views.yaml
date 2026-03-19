@@ -1,0 +1,57 @@
+# Materialized View Refresh CronJob
+# Refreshes all analytics materialized views every 15 minutes
+# using CONCURRENTLY to avoid blocking read queries.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: refresh-materialized-views
+  namespace: prometheus
+  labels:
+    app: refresh-materialized-views
+    purpose: analytics
+spec:
+  schedule: "*/15 * * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 5
+  startingDeadlineSeconds: 120
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      activeDeadlineSeconds: 600
+      template:
+        metadata:
+          labels:
+            app: refresh-materialized-views
+        spec:
+          restartPolicy: OnFailure
+          securityContext:
+            runAsNonRoot: true
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: refresh-views
+              image: postgres:16-alpine
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  set -e
+                  echo "[mv-refresh] Starting materialized view refresh at $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+                  psql "$DATABASE_URL" -c "SELECT refresh_all_materialized_views();"
+
+                  echo "[mv-refresh] Refresh complete at $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+              envFrom:
+                - secretRef:
+                    name: app-secrets
+              resources:
+                requests:
+                  cpu: 100m
+                  memory: 128Mi
+                limits:
+                  cpu: 500m
+                  memory: 256Mi
+              securityContext:
+                readOnlyRootFilesystem: true
+                runAsNonRoot: true

@@ -23,6 +23,8 @@ import {
 const logger = createLogger("project-brain:hybrid-search");
 
 const ZOEKT_URL = process.env.ZOEKT_URL ?? "http://localhost:6070";
+const SANDBOX_MANAGER_URL =
+  process.env.SANDBOX_MANAGER_URL ?? "http://localhost:4006";
 const VOYAGE_API_BASE = "https://api.voyageai.com/v1";
 
 export interface HybridSearchOptions {
@@ -218,11 +220,11 @@ export class HybridSearch {
     };
   }
 
-  private searchAstGrep(
-    _projectId: string,
+  private async searchAstGrep(
+    projectId: string,
     patterns: string[],
-    _maxResults: number
-  ): { methodResult: SearchMethodResult; latencyMs: number } {
+    maxResults: number
+  ): Promise<{ methodResult: SearchMethodResult; latencyMs: number }> {
     const start = Date.now();
 
     if (patterns.length === 0) {
@@ -232,13 +234,84 @@ export class HybridSearch {
       };
     }
 
-    // ast-grep search would be invoked through sandbox-manager
-    // For now, return empty results as ast-grep requires a working directory
+    const allResults: SearchMethodResult["results"] = [];
+
+    for (const pattern of patterns) {
+      try {
+        const command = `sg run --pattern '${pattern.replace(/'/g, "'\\''")}' --json`;
+
+        const response = await fetch(
+          `${SANDBOX_MANAGER_URL}/sandbox/${encodeURIComponent(projectId)}/exec`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ command, timeout: 10_000 }),
+            signal: AbortSignal.timeout(15_000),
+          }
+        );
+
+        if (!response.ok) {
+          logger.warn(
+            { status: response.status, pattern },
+            "ast-grep sandbox exec failed"
+          );
+          continue;
+        }
+
+        const execResult = (await response.json()) as {
+          exitCode: number;
+          stdout: string;
+          stderr: string;
+        };
+
+        if (execResult.exitCode !== 0) {
+          logger.debug(
+            { pattern, stderr: execResult.stderr.slice(0, 200) },
+            "ast-grep pattern returned non-zero exit"
+          );
+          continue;
+        }
+
+        const matches = JSON.parse(execResult.stdout) as Array<{
+          file: string;
+          range: {
+            start: { line: number; column: number };
+            end: { line: number; column: number };
+          };
+          text: string;
+          metaVariables?: Record<string, { text: string }>;
+        }>;
+
+        for (const match of matches) {
+          allResults.push({
+            id: `ast-grep:${match.file}:${match.range.start.line}`,
+            filePath: match.file,
+            content: match.text,
+            score: 1.0,
+            startLine: match.range.start.line,
+            endLine: match.range.end.line,
+            metadata: match.metaVariables
+              ? { metaVariables: match.metaVariables }
+              : undefined,
+          });
+        }
+      } catch (error) {
+        const msg = error instanceof Error ? error.message : String(error);
+        logger.warn({ error: msg, pattern }, "ast-grep pattern search failed");
+      }
+    }
+
+    // Assign decaying scores by position so RRF can rank them
+    const scored = allResults.slice(0, maxResults).map((result, idx) => ({
+      ...result,
+      score: 1.0 - idx * 0.02,
+    }));
+
     return {
       latencyMs: Date.now() - start,
       methodResult: {
         method: "ast-grep",
-        results: [],
+        results: scored,
       },
     };
   }

@@ -473,6 +473,9 @@ importers:
       '@clerk/themes':
         specifier: ^2.4.57
         version: 2.4.57(react-dom@19.2.4(react@19.2.4))(react@19.2.4)
+      '@codemirror/autocomplete':
+        specifier: ^6.20.1
+        version: 6.20.1
       '@codemirror/commands':
         specifier: ^6.10.3
         version: 6.10.3
@@ -709,6 +712,9 @@ importers:
 
   packages/ai:
     dependencies:
+      '@prometheus/logger':
+        specifier: workspace:*
+        version: link:../logger
       openai:
         specifier: ^6.32.0
         version: 6.32.0(ws@8.18.3)(zod@4.3.6)

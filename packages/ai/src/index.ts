@@ -83,7 +83,11 @@ export {
   getSlotConfig,
   SLOT_CONFIGS,
 } from "./slots";
-
+// ---------------------------------------------------------------------------
+// Token Optimizer
+// ---------------------------------------------------------------------------
+export type { Message as TokenOptimizerMessage } from "./token-optimizer";
+export { TokenOptimizer } from "./token-optimizer";
 // ---------------------------------------------------------------------------
 // Token Utilities
 // ---------------------------------------------------------------------------
@@ -94,3 +98,16 @@ export {
   remainingContextTokens,
   truncateToTokens,
 } from "./tokens";
+// ---------------------------------------------------------------------------
+// Vercel AI SDK Adapter
+// ---------------------------------------------------------------------------
+export type {
+  SlotResolution,
+  VercelLanguageModel,
+  VercelProviderConfig,
+} from "./vercel-adapter";
+export {
+  createModelForSlot,
+  createVercelProvider,
+  slotToVercelModel,
+} from "./vercel-adapter";

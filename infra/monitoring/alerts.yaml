@@ -212,6 +212,203 @@ groups:
             LLM provider errors are consuming the error budget rapidly.
 
   # ════════════════════════════════════════════════
+  # SLO Burn-Rate: 99.9% Availability Target
+  # Multi-window approach: 1h/6h/24h windows
+  # Error budget = 0.1% over 30 days = 43.2 minutes
+  # ════════════════════════════════════════════════
+  - name: slo-999-availability
+    interval: 30s
+    rules:
+      # ── 1h window: Critical burn (budget exhausted in ~1h) ──
+      - alert: SLO999BurnRate1hCritical
+        expr: |
+          (
+            1 - (
+              sum(rate(http_requests_total{service=~"api|orchestrator|model-router", status_code!~"5.."}[1h]))
+              /
+              sum(rate(http_requests_total{service=~"api|orchestrator|model-router"}[1h]))
+            )
+          ) > (14.4 * 0.001)
+          and
+          (
+            1 - (
+              sum(rate(http_requests_total{service=~"api|orchestrator|model-router", status_code!~"5.."}[5m]))
+              /
+              sum(rate(http_requests_total{service=~"api|orchestrator|model-router"}[5m]))
+            )
+          ) > (14.4 * 0.001)
+        for: 2m
+        labels:
+          severity: critical
+          slo: platform-availability-999
+          team: platform
+          window: 1h
+        annotations:
+          summary: "99.9% availability SLO: critical burn rate (14.4x) over 1h window"
+          description: >
+            Platform error rate across API, Orchestrator, and Model Router indicates
+            the 30-day error budget (43.2 min) will be exhausted within ~1 hour.
+            Immediate investigation required.
+          runbook_url: "https://runbooks.prometheus.dev/slo/999-availability"
+          dashboard_url: "https://grafana.prometheus.dev/d/slo-overview"
+
+      # ── 6h window: High burn (budget exhausted in ~6h) ──
+      - alert: SLO999BurnRate6hHigh
+        expr: |
+          (
+            1 - (
+              sum(rate(http_requests_total{service=~"api|orchestrator|model-router", status_code!~"5.."}[6h]))
+              /
+              sum(rate(http_requests_total{service=~"api|orchestrator|model-router"}[6h]))
+            )
+          ) > (6 * 0.001)
+          and
+          (
+            1 - (
+              sum(rate(http_requests_total{service=~"api|orchestrator|model-router", status_code!~"5.."}[30m]))
+              /
+              sum(rate(http_requests_total{service=~"api|orchestrator|model-router"}[30m]))
+            )
+          ) > (6 * 0.001)
+        for: 5m
+        labels:
+          severity: warning
+          slo: platform-availability-999
+          team: platform
+          window: 6h
+        annotations:
+          summary: "99.9% availability SLO: elevated burn rate (6x) over 6h window"
+          description: >
+            The 6h error rate indicates the monthly error budget will be exhausted
+            within ~6 hours at the current rate.
+          runbook_url: "https://runbooks.prometheus.dev/slo/999-availability"
+
+      # ── 24h window: Slow burn (budget draining steadily) ──
+      - alert: SLO999BurnRate24hWarning
+        expr: |
+          (
+            1 - (
+              sum(rate(http_requests_total{service=~"api|orchestrator|model-router", status_code!~"5.."}[24h]))
+              /
+              sum(rate(http_requests_total{service=~"api|orchestrator|model-router"}[24h]))
+            )
+          ) > (1 * 0.001)
+          and
+          (
+            1 - (
+              sum(rate(http_requests_total{service=~"api|orchestrator|model-router", status_code!~"5.."}[6h]))
+              /
+              sum(rate(http_requests_total{service=~"api|orchestrator|model-router"}[6h]))
+            )
+          ) > (1 * 0.001)
+        for: 30m
+        labels:
+          severity: info
+          slo: platform-availability-999
+          team: platform
+          window: 24h
+        annotations:
+          summary: "99.9% availability SLO: slow budget drain (1x) over 24h window"
+          description: >
+            The error budget is being consumed at a steady rate. At the current
+            pace, the 30-day budget will be fully exhausted. Review recent deployments.
+
+      # ── Per-Service 99.9% SLO (1h critical window) ──
+      - alert: ServiceSLO999BurnRateCritical
+        expr: |
+          (
+            1 - (
+              sum by (service) (rate(http_requests_total{status_code!~"5.."}[1h]))
+              /
+              sum by (service) (rate(http_requests_total[1h]))
+            )
+          ) > (14.4 * 0.001)
+          and
+          (
+            1 - (
+              sum by (service) (rate(http_requests_total{status_code!~"5.."}[5m]))
+              /
+              sum by (service) (rate(http_requests_total[5m]))
+            )
+          ) > (14.4 * 0.001)
+        for: 2m
+        labels:
+          severity: critical
+          slo: per-service-availability-999
+          team: platform
+        annotations:
+          summary: "Service {{ $labels.service }}: 99.9% SLO critical burn rate"
+          description: >
+            Individual service {{ $labels.service }} is burning its error budget
+            at 14.4x the sustainable rate.
+
+      # ── Per-Org Error Rate (detect tenant-specific issues) ──
+      - alert: OrgErrorRateElevated
+        expr: |
+          (
+            sum by (org_id) (rate(http_requests_total{status_code=~"5.."}[15m]))
+            /
+            sum by (org_id) (rate(http_requests_total[15m]))
+          ) > 0.05
+          and
+          sum by (org_id) (rate(http_requests_total[15m])) > 10
+        for: 10m
+        labels:
+          severity: warning
+          team: platform
+        annotations:
+          summary: "Org {{ $labels.org_id }} experiencing >5% error rate"
+          description: >
+            A specific organization is seeing elevated errors. This may indicate
+            a tenant-specific issue (bad input, quota exhaustion, etc.).
+
+  # ════════════════════════════════════════════════
+  # Worker Pool Health
+  # ════════════════════════════════════════════════
+  - name: worker-pool-health
+    interval: 30s
+    rules:
+      - alert: AgentWorkerQueueBacklog
+        expr: |
+          (
+            bullmq_queue_waiting{queue=~"agent-tasks|enterprise-tasks"} > 50
+          )
+        for: 5m
+        labels:
+          severity: warning
+          team: ai-agents
+        annotations:
+          summary: "Agent worker queue {{ $labels.queue }} has {{ $value }} pending jobs"
+          description: >
+            The agent task queue is backing up. Consider scaling the agent worker pool
+            or investigating slow task processing.
+
+      - alert: BackgroundWorkerQueueBacklog
+        expr: |
+          (
+            bullmq_queue_waiting{queue=~"embeddings|indexing|cleanup"} > 200
+          )
+        for: 10m
+        labels:
+          severity: warning
+          team: platform
+        annotations:
+          summary: "Background queue {{ $labels.queue }} has {{ $value }} pending jobs"
+
+      - alert: BillingWorkerDown
+        expr: |
+          up{job="queue-worker-billing"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          team: billing
+        annotations:
+          summary: "Billing worker is down"
+          description: >
+            The billing worker pool has no healthy instances. Credit grants and
+            reconciliation processing is halted.
+
+  # ════════════════════════════════════════════════
   # PgBouncer / Database Saturation
   # ════════════════════════════════════════════════
   - name: database-saturation
