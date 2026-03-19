@@ -1,0 +1,17 @@
+{
+  "name": "@prometheus/voice",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "clean": "rm -rf dist .turbo"
+  },
+  "devDependencies": {
+    "@prometheus/config-typescript": "workspace:*",
+    "@types/node": "^25.5.0",
+    "typescript": "^5.9.3"
+  }
+}

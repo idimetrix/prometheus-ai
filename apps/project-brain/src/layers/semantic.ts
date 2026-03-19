@@ -14,34 +14,38 @@ export interface SearchResult {
   score: number;
 }
 
-const OLLAMA_URL = process.env.OLLAMA_BASE_URL ?? "http://localhost:11434";
-const EMBEDDING_MODEL = process.env.EMBEDDING_MODEL ?? "nomic-embed-text";
-const _EMBEDDING_DIMENSIONS = 768;
+const MODEL_ROUTER_URL =
+  process.env.MODEL_ROUTER_URL ?? "http://localhost:4004";
 
 /** Whether the embedding service has been verified as available */
 let _embeddingServiceVerified = false;
 
 /**
- * Verify that the embedding service (Ollama with nomic-embed-text) is available.
+ * Verify that the embedding service is available via model-router.
+ * The model-router handles fallback (Voyage Code 3 → Ollama nomic-embed-text).
  * Should be called at startup. Logs a warning if unavailable but does not throw,
  * allowing the service to start in degraded mode.
  */
 export async function verifyEmbeddingService(): Promise<boolean> {
   try {
-    const response = await fetch(`${OLLAMA_URL}/api/embeddings`, {
+    const response = await fetch(`${MODEL_ROUTER_URL}/embeddings`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ model: EMBEDDING_MODEL, prompt: "health check" }),
+      body: JSON.stringify({ input: "health check" }),
       signal: AbortSignal.timeout(15_000),
     });
 
     if (response.ok) {
-      const data = (await response.json()) as { embedding: number[] };
+      const data = (await response.json()) as {
+        embedding: number[];
+        dimensions: number;
+        model: string;
+      };
       if (data.embedding?.length > 0) {
         _embeddingServiceVerified = true;
         logger.info(
-          { model: EMBEDDING_MODEL, dimensions: data.embedding.length },
-          "Embedding service verified"
+          { model: data.model, dimensions: data.dimensions },
+          "Embedding service verified via model-router"
         );
         return true;
       }
@@ -55,17 +59,20 @@ export async function verifyEmbeddingService(): Promise<boolean> {
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     logger.warn(
-      { error: msg, url: OLLAMA_URL, model: EMBEDDING_MODEL },
-      "Embedding service unavailable — semantic search will be degraded. Ensure Ollama is running with the nomic-embed-text model"
+      { error: msg, url: MODEL_ROUTER_URL },
+      "Embedding service unavailable via model-router — semantic search will be degraded"
     );
     return false;
   }
 }
 
 /**
- * Generate an embedding vector for the given text using Ollama.
- * Throws an error if the embedding service is unavailable — callers
- * must handle this gracefully instead of silently producing meaningless vectors.
+ * Generate an embedding vector for the given text using model-router's
+ * routeEmbedding() endpoint. Supports automatic fallback chain:
+ * Voyage Code 3 → Ollama nomic-embed-text.
+ *
+ * Throws an error if all embedding providers are unavailable — callers
+ * must handle this gracefully.
  */
 async function generateEmbedding(text: string): Promise<number[]> {
   const MAX_RETRIES = 2;
@@ -73,22 +80,26 @@ async function generateEmbedding(text: string): Promise<number[]> {
 
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
     try {
-      const response = await fetch(`${OLLAMA_URL}/api/embeddings`, {
+      const response = await fetch(`${MODEL_ROUTER_URL}/embeddings`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ model: EMBEDDING_MODEL, prompt: text }),
+        body: JSON.stringify({ input: text }),
         signal: AbortSignal.timeout(30_000),
       });
 
       if (response.ok) {
-        const data = (await response.json()) as { embedding: number[] };
+        const data = (await response.json()) as {
+          embedding: number[];
+          model: string;
+          dimensions: number;
+        };
         if (data.embedding?.length > 0) {
           _embeddingServiceVerified = true;
           return data.embedding;
         }
-        lastError = "Embedding service returned empty embedding vector";
+        lastError = "Model-router returned empty embedding vector";
       } else {
-        lastError = `Embedding service returned HTTP ${response.status}`;
+        lastError = `Model-router returned HTTP ${response.status}`;
       }
     } catch (err) {
       lastError = err instanceof Error ? err.message : String(err);
@@ -99,7 +110,7 @@ async function generateEmbedding(text: string): Promise<number[]> {
       const delayMs = 1000 * 2 ** attempt;
       logger.debug(
         { attempt: attempt + 1, delayMs },
-        "Retrying embedding generation"
+        "Retrying embedding generation via model-router"
       );
       await new Promise((r) => setTimeout(r, delayMs));
     }
@@ -108,7 +119,7 @@ async function generateEmbedding(text: string): Promise<number[]> {
   _embeddingServiceVerified = false;
   throw new Error(
     `Embedding generation failed after ${MAX_RETRIES + 1} attempts: ${lastError}. ` +
-      `Ensure Ollama is running at ${OLLAMA_URL} with model '${EMBEDDING_MODEL}' pulled.`
+      `Ensure model-router is running at ${MODEL_ROUTER_URL} with embedding providers configured.`
   );
 }
 

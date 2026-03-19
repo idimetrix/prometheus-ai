@@ -8,6 +8,10 @@ const HEDGING_PATTERNS =
   /\b(I'm not sure|I don't know|I cannot|unclear|might be|possibly)\b/i;
 const REFUSAL_PATTERNS =
   /\b(I can't help|I'm unable|beyond my capabilities)\b/i;
+const PLACEHOLDER_PATTERN = /\b(TODO|FIXME|placeholder|not implemented)\b/i;
+const ABRUPT_ENDING_PATTERN = /[.!?`)\]}]$/;
+const CONTRADICTION_PATTERN =
+  /\b(however|but actually|wait|correction|I was wrong)\b/i;
 
 interface CascadeConfig {
   confidenceThreshold: number;
@@ -119,36 +123,88 @@ export class CascadeRouter {
     return this.inner.route(request);
   }
 
+  /**
+   * Multi-signal quality assessment of LLM responses.
+   * Evaluates: structural completeness, content quality, hedging/refusal
+   * detection, format compliance, and consistency checks.
+   */
   private assessResponseQuality(response: RouteResponse): number {
-    let score = 0.5;
-
     const content = response.choices[0]?.message?.content ?? "";
-
-    if (content.length > 100) {
-      score += 0.15;
-    }
-    if (content.length > 500) {
-      score += 0.1;
-    }
-
-    if (response.choices[0]?.finish_reason === "stop") {
-      score += 0.1;
-    }
-
     const toolCalls = response.choices[0]?.message?.tool_calls;
+    const finishReason = response.choices[0]?.finish_reason;
+
+    // Signal 1: Structural completeness (0.25 weight)
+    let structuralScore = 0;
+    if (content.length > 50) {
+      structuralScore += 0.3;
+    }
+    if (content.length > 200) {
+      structuralScore += 0.3;
+    }
+    if (finishReason === "stop") {
+      structuralScore += 0.2;
+    }
     if (toolCalls && Array.isArray(toolCalls) && toolCalls.length > 0) {
-      score += 0.15;
+      structuralScore += 0.2;
     }
 
+    // Signal 2: Content quality — symbol density as proxy for code/technical content (0.20 weight)
+    let qualityScore = 0.5;
+    const codeBlockCount = (content.match(/```/g) ?? []).length / 2;
+    if (codeBlockCount >= 1) {
+      qualityScore += 0.2;
+    }
+    const hasStructuredOutput =
+      content.includes("##") ||
+      content.includes("- ") ||
+      content.includes("1.");
+    if (hasStructuredOutput) {
+      qualityScore += 0.15;
+    }
+    // Penalize very short non-tool responses
+    if (!toolCalls && content.length < 20) {
+      qualityScore -= 0.3;
+    }
+
+    // Signal 3: Hedging/refusal detection (0.25 weight)
+    let confidenceScore = 1.0;
     if (HEDGING_PATTERNS.test(content)) {
-      score -= 0.2;
+      confidenceScore -= 0.3;
     }
-
     if (REFUSAL_PATTERNS.test(content)) {
-      score -= 0.3;
+      confidenceScore -= 0.5;
+    }
+    // Detect placeholder/incomplete patterns
+    if (PLACEHOLDER_PATTERN.test(content)) {
+      confidenceScore -= 0.2;
     }
 
-    return Math.max(0, Math.min(1, score));
+    // Signal 4: Completeness — check for truncation or contradictions (0.15 weight)
+    let completenessScore = 1.0;
+    if (finishReason === "length") {
+      completenessScore -= 0.5;
+    }
+    // Detect abrupt endings (last sentence without punctuation)
+    const lastLine = content.trim().split("\n").pop() ?? "";
+    if (lastLine.length > 20 && !ABRUPT_ENDING_PATTERN.test(lastLine)) {
+      completenessScore -= 0.2;
+    }
+
+    // Signal 5: Consistency — no internal contradictions (0.15 weight)
+    let consistencyScore = 1.0;
+    if (CONTRADICTION_PATTERN.test(content)) {
+      consistencyScore -= 0.15;
+    }
+
+    // Weighted combination
+    const finalScore =
+      structuralScore * 0.25 +
+      Math.min(1, Math.max(0, qualityScore)) * 0.2 +
+      Math.max(0, confidenceScore) * 0.25 +
+      Math.max(0, completenessScore) * 0.15 +
+      Math.max(0, consistencyScore) * 0.15;
+
+    return Math.max(0, Math.min(1, finalScore));
   }
 
   private estimatePremiumCost(request: RouteRequest): number {

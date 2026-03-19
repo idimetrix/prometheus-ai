@@ -18,6 +18,7 @@
     "db:reset": "drizzle-kit push --force-reset",
     "db:fresh": "pnpm db:drop && rm -rf drizzle && drizzle-kit push --force && pnpm db:seed",
     "db:setup": "pnpm db:generate && pnpm db:migrate",
+    "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "clean": "rm -rf dist .turbo"
   },

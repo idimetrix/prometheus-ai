@@ -76,6 +76,23 @@ const SLOT_CONFIGS: Record<string, SlotConfig> = {
   },
 };
 
+/**
+ * Per-slot default temperatures. Creative tasks get higher temperature,
+ * precise/deterministic tasks get lower.
+ */
+const SLOT_TEMPERATURES: Record<string, number> = {
+  fastLoop: 0.05,
+  default: 0.1,
+  think: 0.3,
+  review: 0.1,
+  premium: 0.2,
+  background: 0.0,
+  speculate: 0.0,
+  longContext: 0.1,
+  vision: 0.1,
+  embeddings: 0.0,
+};
+
 export interface RouteRequest {
   messages: Array<{ role: string; content: string }>;
   options?: {
@@ -458,7 +475,10 @@ export class ModelRouterService {
         tools: request.options?.tools as Parameters<
           typeof client.chat.completions.create
         >[0]["tools"],
-        temperature: request.options?.temperature ?? 0.1,
+        temperature:
+          request.options?.temperature ??
+          SLOT_TEMPERATURES[request.slot] ??
+          0.1,
         max_tokens: request.options?.maxTokens ?? 4096,
         stream: false,
       });
@@ -587,7 +607,10 @@ export class ModelRouterService {
         tools: request.options?.tools as Parameters<
           typeof client.chat.completions.create
         >[0]["tools"],
-        temperature: request.options?.temperature ?? 0.1,
+        temperature:
+          request.options?.temperature ??
+          SLOT_TEMPERATURES[request.slot] ??
+          0.1,
         max_tokens: request.options?.maxTokens ?? 4096,
         stream: true,
         stream_options: { include_usage: true },
@@ -876,10 +899,15 @@ export class ModelRouterService {
   }
 
   /**
-   * Select the appropriate slot based on token count and task hints.
-   * The orchestrator can use this to auto-select a slot.
+   * Select the appropriate slot based on token count, task hints, and
+   * complexity estimation. Uses the ComplexityEstimator when no explicit
+   * slot or task type is provided.
    */
-  selectSlot(tokenEstimate: number, taskType?: string): string {
+  selectSlot(
+    tokenEstimate: number,
+    taskType?: string,
+    messages?: Array<{ role: string; content: string }>
+  ): string {
     // If task type is specified, prefer its mapping
     if (taskType && TASK_TYPE_TO_SLOT[taskType]) {
       return TASK_TYPE_TO_SLOT[taskType] as string;
@@ -888,6 +916,25 @@ export class ModelRouterService {
     // Auto-select based on token count
     if (tokenEstimate > 32_000) {
       return "longContext";
+    }
+
+    // Use complexity estimator for intelligent slot selection
+    if (messages && messages.length > 0) {
+      try {
+        const { ComplexityEstimator } = require("./complexity-estimator") as {
+          ComplexityEstimator: new () => {
+            estimate: (req: {
+              messages: Array<{ role: string; content: string }>;
+              taskType?: string;
+            }) => { recommendedSlot: string };
+          };
+        };
+        const estimator = new ComplexityEstimator();
+        const estimate = estimator.estimate({ messages, taskType });
+        return estimate.recommendedSlot;
+      } catch {
+        // Complexity estimator not available, fall through
+      }
     }
 
     return "default";

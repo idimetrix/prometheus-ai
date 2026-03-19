@@ -88,6 +88,29 @@ export interface SelfReviewEvent extends BaseExecutionEvent {
   type: "self_review";
 }
 
+export interface HumanInputRequestEvent extends BaseExecutionEvent {
+  context?: string;
+  question: string;
+  requestId: string;
+  suggestedResponses?: string[];
+  type: "human_input_request";
+}
+
+export interface HumanInputResponseEvent extends BaseExecutionEvent {
+  action: "approve" | "reject" | "respond";
+  message: string;
+  requestId: string;
+  type: "human_input_response";
+}
+
+export interface ASTValidationEvent extends BaseExecutionEvent {
+  filePath: string;
+  issueCount: number;
+  summary: string;
+  type: "ast_validation";
+  valid: boolean;
+}
+
 export type ExecutionEvent =
   | TokenEvent
   | ToolCallEvent
@@ -99,4 +122,7 @@ export type ExecutionEvent =
   | CreditUpdateEvent
   | FileChangeEvent
   | TerminalOutputEvent
-  | SelfReviewEvent;
+  | SelfReviewEvent
+  | HumanInputRequestEvent
+  | HumanInputResponseEvent
+  | ASTValidationEvent;

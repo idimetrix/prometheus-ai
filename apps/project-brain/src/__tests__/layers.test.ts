@@ -139,10 +139,26 @@ export class Greeter {
   });
 
   it("performs text search", async () => {
-    const { SemanticLayer } = await import("../layers/semantic");
-    const layer = new SemanticLayer();
-    const results = await layer.search("proj_1", "authentication");
-    expect(Array.isArray(results)).toBe(true);
+    // Mock fetch so generateEmbedding doesn't try to reach model-router
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          embedding: Array.from({ length: 768 }, () => Math.random()),
+          model: "test-model",
+          dimensions: 768,
+        }),
+    }) as unknown as typeof fetch;
+
+    try {
+      const { SemanticLayer } = await import("../layers/semantic");
+      const layer = new SemanticLayer();
+      const results = await layer.search("proj_1", "authentication");
+      expect(Array.isArray(results)).toBe(true);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
   });
 });
 

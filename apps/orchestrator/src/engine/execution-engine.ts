@@ -26,6 +26,7 @@ import { SelfReview } from "../self-review";
 import { classifyToolDependencies } from "../tool-dependency";
 import type { ExecutionContext } from "./execution-context";
 import type {
+  ASTValidationEvent,
   CheckpointEvent,
   CompleteEvent,
   ConfidenceEvent,
@@ -163,6 +164,30 @@ export const ExecutionEngine = {
     const selfReview = new SelfReview();
     const qualityGate = new QualityGate();
     const contextCompressor = new ContextCompressor();
+
+    // Inject learned context from procedural memories
+    try {
+      const { LearningExtractor } = await import(
+        "../feedback/learning-extractor"
+      );
+      const learningExtractor = new LearningExtractor();
+      const learnedContext = await learningExtractor.getLearnedContext(
+        ctx.agentRole,
+        ctx.agentRole,
+        ctx.projectId
+      );
+      if (learnedContext) {
+        agent.addUserMessage(
+          `[System] Learned patterns from previous sessions:\n${learnedContext}`
+        );
+        logger.info(
+          { role: ctx.agentRole },
+          "Injected learned context from procedural memories"
+        );
+      }
+    } catch {
+      // Learning extractor not available, continue without learned context
+    }
 
     await blueprintEnforcer.loadForProject(ctx.projectId).catch((err) => {
       logger.warn({ err }, "Blueprint loading failed");
@@ -762,7 +787,41 @@ export const ExecutionEngine = {
                 filesToReview.push(reviewDecision.filePath);
               }
 
-              // Phase 9: Quality gate for significant file writes (>20 lines)
+              // AST validation after file writes for TypeScript files
+              if (
+                ((tc.name === "file_write" || tc.name === "file_edit") &&
+                  String(filePath).endsWith(".ts")) ||
+                String(filePath).endsWith(".tsx")
+              ) {
+                try {
+                  const { ASTValidator } = await import("./ast-validator");
+                  const astValidator = new ASTValidator();
+                  const astResult = await astValidator.validateFile(
+                    String(filePath),
+                    ctx.workDir
+                  );
+                  if (!astResult.valid) {
+                    const feedback =
+                      astValidator.formatIssuesForAgent(astResult);
+                    agent.addUserMessage(
+                      `[System] AST validation found issues in ${filePath}:\n${feedback}\n\nPlease fix these issues.`
+                    );
+                    events.push(
+                      makeEvent<ASTValidationEvent>({
+                        type: "ast_validation",
+                        filePath: String(filePath),
+                        valid: false,
+                        issueCount: astResult.issues.length,
+                        summary: astResult.summary,
+                      })
+                    );
+                  }
+                } catch {
+                  // AST validator not available, continue without validation
+                }
+              }
+
+              // Quality gate for significant file writes (>20 lines)
               if (qualityGate.shouldEvaluate(tc.name, tc.args)) {
                 const qgResult = await qualityGate.evaluate({
                   filePath: String(filePath),

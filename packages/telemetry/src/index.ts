@@ -7,8 +7,14 @@ import {
 
 export type { Span, SpanOptions } from "@opentelemetry/api";
 export { context, SpanStatusCode, trace } from "@opentelemetry/api";
+export { registerDebugEndpoints } from "./debug";
 export { metrics, metricsRegistry } from "./metrics";
 export { metricsHandler, metricsMiddleware } from "./metrics-middleware";
+export {
+  createTracedFetch,
+  extractTraceContext,
+  injectTraceHeaders,
+} from "./propagation";
 export type { SentryConfig } from "./sentry";
 export {
   addBreadcrumb,

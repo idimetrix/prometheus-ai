@@ -1,4 +1,26 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import pino from "pino";
+
+/**
+ * Async local storage for trace context propagation into log lines.
+ * Services can call `runWithLogContext()` to inject trace_id and request_id
+ * into all log lines within the async scope.
+ */
+export interface LogContext {
+  request_id?: string;
+  trace_id?: string;
+  [key: string]: unknown;
+}
+
+export const logContextStorage = new AsyncLocalStorage<LogContext>();
+
+/**
+ * Run a function with trace/request context that is automatically
+ * injected into every log line produced within the scope.
+ */
+export function runWithLogContext<T>(ctx: LogContext, fn: () => T): T {
+  return logContextStorage.run(ctx, fn);
+}
 
 export interface LoggerOptions {
   /** Additional default fields merged into every log line */
@@ -35,9 +57,22 @@ export function createLogger(
   const resolvedLevel = opts.level ?? process.env.LOG_LEVEL ?? "info";
   const isDev = process.env.NODE_ENV === "development";
 
+  const redactPaths = [
+    "password",
+    "token",
+    "secret",
+    "apiKey",
+    "authorization",
+    "cookie",
+  ];
+
   return pino({
     name: opts.service,
     level: resolvedLevel,
+    redact: {
+      paths: redactPaths,
+      censor: "[REDACTED]",
+    },
     transport: isDev
       ? { target: "pino-pretty", options: { colorize: true } }
       : undefined,
@@ -51,6 +86,20 @@ export function createLogger(
     base: {
       service: opts.service,
       ...(opts.defaultFields ?? {}),
+    },
+    mixin() {
+      const ctx = logContextStorage.getStore();
+      if (!ctx) {
+        return {};
+      }
+      const mixed: Record<string, unknown> = {};
+      if (ctx.trace_id) {
+        mixed.trace_id = ctx.trace_id;
+      }
+      if (ctx.request_id) {
+        mixed.request_id = ctx.request_id;
+      }
+      return mixed;
     },
   });
 }

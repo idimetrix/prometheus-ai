@@ -256,6 +256,46 @@ export function setupSessionNamespace(namespace: Namespace) {
       logger.info({ userId, sessionId: data.sessionId }, "Session resumed");
     });
 
+    // ---- human_input_response: Respond to agent's human-input request ----
+    socket.on(
+      "agent:human-input-response",
+      (data: {
+        sessionId: string;
+        requestId: string;
+        action: "approve" | "reject" | "respond";
+        message: string;
+      }) => {
+        const channel = `session:${data.sessionId}:commands`;
+        publisher.publish(
+          channel,
+          JSON.stringify({
+            type: "human_input_response",
+            userId,
+            requestId: data.requestId,
+            action: data.action,
+            message: data.message,
+            timestamp: new Date().toISOString(),
+          })
+        );
+
+        namespace.to(`session:${data.sessionId}`).emit("human_input_resolved", {
+          userId,
+          requestId: data.requestId,
+          action: data.action,
+          timestamp: new Date().toISOString(),
+        });
+
+        logger.info(
+          {
+            userId,
+            sessionId: data.sessionId,
+            action: data.action,
+          },
+          "Human input response sent"
+        );
+      }
+    );
+
     // ---- typing: Typing indicator ----
     socket.on("typing", (data: { sessionId: string; isTyping: boolean }) => {
       socket.to(`session:${data.sessionId}`).emit("user_typing", {

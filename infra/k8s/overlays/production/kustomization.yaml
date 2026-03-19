@@ -28,6 +28,8 @@ resources:
   - ../../base/keda/scaledobject-agent-worker.yaml
   # Monitoring
   - ../../base/monitoring/alert-rules.yaml
+  # Secrets Management
+  - external-secrets.yaml
 patches:
   # Production: scale up web and api
   - patch: |-

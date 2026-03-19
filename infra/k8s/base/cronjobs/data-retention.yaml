@@ -1,0 +1,91 @@
+# GDPR Data Retention CronJob
+# Runs weekly (Sunday 3:00 AM UTC) to clean up:
+# - Session events older than 90 days
+# - Audit logs older than 1 year
+# - Model usage logs older than 6 months
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: data-retention
+  namespace: prometheus
+  labels:
+    app: data-retention
+    purpose: gdpr-compliance
+spec:
+  schedule: "0 3 * * 0"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      activeDeadlineSeconds: 3600
+      template:
+        metadata:
+          labels:
+            app: data-retention
+        spec:
+          restartPolicy: OnFailure
+          securityContext:
+            runAsNonRoot: true
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: data-retention
+              image: ghcr.io/prometheus/api:latest
+              command:
+                - node
+                - -e
+                - |
+                  const { db } = require("@prometheus/db");
+                  const { sql } = require("drizzle-orm");
+
+                  async function runRetention() {
+                    const now = new Date();
+                    console.log(`[data-retention] Starting cleanup at ${now.toISOString()}`);
+
+                    // Delete session events older than 90 days
+                    const sessionEventsResult = await db.execute(sql`
+                      DELETE FROM session_events
+                      WHERE timestamp < NOW() - INTERVAL '90 days'
+                    `);
+                    console.log(`[data-retention] Deleted old session events: ${sessionEventsResult.rowCount} rows`);
+
+                    // Delete audit logs older than 1 year
+                    const auditLogsResult = await db.execute(sql`
+                      DELETE FROM audit_logs
+                      WHERE created_at < NOW() - INTERVAL '1 year'
+                    `);
+                    console.log(`[data-retention] Deleted old audit logs: ${auditLogsResult.rowCount} rows`);
+
+                    // Delete model usage logs older than 6 months
+                    const modelUsageResult = await db.execute(sql`
+                      DELETE FROM model_usage_logs
+                      WHERE created_at < NOW() - INTERVAL '6 months'
+                    `);
+                    console.log(`[data-retention] Deleted old model usage logs: ${modelUsageResult.rowCount} rows`);
+
+                    console.log(`[data-retention] Cleanup complete at ${new Date().toISOString()}`);
+                  }
+
+                  runRetention()
+                    .then(() => process.exit(0))
+                    .catch((err) => {
+                      console.error("[data-retention] Failed:", err);
+                      process.exit(1);
+                    });
+              envFrom:
+                - configMapRef:
+                    name: app-config
+                - secretRef:
+                    name: app-secrets
+              resources:
+                requests:
+                  cpu: 100m
+                  memory: 256Mi
+                limits:
+                  cpu: 500m
+                  memory: 512Mi
+              securityContext:
+                readOnlyRootFilesystem: true
+                runAsNonRoot: true

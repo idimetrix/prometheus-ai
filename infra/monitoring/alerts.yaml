@@ -1,0 +1,473 @@
+# Prometheus Platform — Enhanced Alert Rules
+# Covers SLO burn-rate alerts, infrastructure saturation, predictive alerts,
+# and certificate expiration warnings.
+
+groups:
+  # ════════════════════════════════════════════════
+  # SLO Burn-Rate Alerts (Multi-Window, Multi-Burn-Rate)
+  # ════════════════════════════════════════════════
+  - name: slo-burn-rate
+    interval: 30s
+    rules:
+      # --- API Availability ---
+      - alert: APIAvailabilityBurnRateCritical
+        expr: |
+          (
+            1 - (
+              sum(rate(http_requests_total{service="api", status_code!~"5.."}[1h]))
+              /
+              sum(rate(http_requests_total{service="api"}[1h]))
+            )
+          ) > (14.4 * 0.001)
+          and
+          (
+            1 - (
+              sum(rate(http_requests_total{service="api", status_code!~"5.."}[5m]))
+              /
+              sum(rate(http_requests_total{service="api"}[5m]))
+            )
+          ) > (14.4 * 0.001)
+        for: 2m
+        labels:
+          severity: critical
+          slo: api-availability
+          team: platform
+        annotations:
+          summary: "API availability SLO burn rate is critical (14.4x)"
+          description: >
+            The API error rate over the last 1h and 5m windows indicates
+            that the 30-day error budget will be exhausted within ~1 hour
+            at the current burn rate.
+          runbook_url: "https://runbooks.prometheus.dev/slo/api-availability"
+
+      - alert: APIAvailabilityBurnRateHigh
+        expr: |
+          (
+            1 - (
+              sum(rate(http_requests_total{service="api", status_code!~"5.."}[6h]))
+              /
+              sum(rate(http_requests_total{service="api"}[6h]))
+            )
+          ) > (6 * 0.001)
+          and
+          (
+            1 - (
+              sum(rate(http_requests_total{service="api", status_code!~"5.."}[30m]))
+              /
+              sum(rate(http_requests_total{service="api"}[30m]))
+            )
+          ) > (6 * 0.001)
+        for: 5m
+        labels:
+          severity: warning
+          slo: api-availability
+          team: platform
+        annotations:
+          summary: "API availability SLO burn rate is high (6x)"
+          description: >
+            The API error rate over the last 6h and 30m windows indicates
+            the 30-day error budget will be exhausted within ~5 hours.
+          runbook_url: "https://runbooks.prometheus.dev/slo/api-availability"
+
+      - alert: APIAvailabilityBurnRateSlow
+        expr: |
+          (
+            1 - (
+              sum(rate(http_requests_total{service="api", status_code!~"5.."}[3d]))
+              /
+              sum(rate(http_requests_total{service="api"}[3d]))
+            )
+          ) > (1 * 0.001)
+          and
+          (
+            1 - (
+              sum(rate(http_requests_total{service="api", status_code!~"5.."}[6h]))
+              /
+              sum(rate(http_requests_total{service="api"}[6h]))
+            )
+          ) > (1 * 0.001)
+        for: 30m
+        labels:
+          severity: warning
+          slo: api-availability
+          team: platform
+        annotations:
+          summary: "API availability SLO budget draining slowly (1x)"
+          description: >
+            The API error budget is being consumed at a steady rate.
+            At the current pace the budget will be fully consumed within
+            the 30-day window.
+
+      # --- API Latency ---
+      - alert: APILatencyBurnRateCritical
+        expr: |
+          (
+            1 - (
+              sum(rate(http_request_duration_seconds_bucket{service="api", le="0.5"}[1h]))
+              /
+              sum(rate(http_request_duration_seconds_count{service="api"}[1h]))
+            )
+          ) > (14.4 * 0.01)
+          and
+          (
+            1 - (
+              sum(rate(http_request_duration_seconds_bucket{service="api", le="0.5"}[5m]))
+              /
+              sum(rate(http_request_duration_seconds_count{service="api"}[5m]))
+            )
+          ) > (14.4 * 0.01)
+        for: 2m
+        labels:
+          severity: critical
+          slo: api-latency-p99
+          team: platform
+        annotations:
+          summary: "API latency SLO burn rate is critical"
+          description: >
+            More than 14.4x the allowed fraction of requests are exceeding
+            the 500 ms latency threshold.
+
+      - alert: APILatencyBurnRateHigh
+        expr: |
+          (
+            1 - (
+              sum(rate(http_request_duration_seconds_bucket{service="api", le="0.5"}[6h]))
+              /
+              sum(rate(http_request_duration_seconds_count{service="api"}[6h]))
+            )
+          ) > (6 * 0.01)
+          and
+          (
+            1 - (
+              sum(rate(http_request_duration_seconds_bucket{service="api", le="0.5"}[30m]))
+              /
+              sum(rate(http_request_duration_seconds_count{service="api"}[30m]))
+            )
+          ) > (6 * 0.01)
+        for: 5m
+        labels:
+          severity: warning
+          slo: api-latency-p99
+          team: platform
+        annotations:
+          summary: "API latency SLO burn rate is high"
+          description: >
+            Sustained elevated latency detected over the 6h window.
+
+      # --- Agent Task Success ---
+      - alert: AgentTaskSuccessBurnRateCritical
+        expr: |
+          (
+            1 - (
+              sum(rate(agent_tasks_completed_total{status="success"}[1h]))
+              /
+              sum(rate(agent_tasks_completed_total[1h]))
+            )
+          ) > (14.4 * 0.025)
+          and
+          (
+            1 - (
+              sum(rate(agent_tasks_completed_total{status="success"}[5m]))
+              /
+              sum(rate(agent_tasks_completed_total[5m]))
+            )
+          ) > (14.4 * 0.025)
+        for: 2m
+        labels:
+          severity: critical
+          slo: agent-task-success
+          team: ai-agents
+        annotations:
+          summary: "Agent task success SLO burn rate is critical"
+          description: >
+            Agent task failures are consuming the error budget at 14.4x
+            the sustainable rate.
+
+      # --- Model Router Availability ---
+      - alert: ModelRouterBurnRateCritical
+        expr: |
+          (
+            1 - (
+              sum(rate(model_requests_total{status="success"}[1h]))
+              /
+              sum(rate(model_requests_total[1h]))
+            )
+          ) > (14.4 * 0.005)
+          and
+          (
+            1 - (
+              sum(rate(model_requests_total{status="success"}[5m]))
+              /
+              sum(rate(model_requests_total[5m]))
+            )
+          ) > (14.4 * 0.005)
+        for: 2m
+        labels:
+          severity: critical
+          slo: model-router-availability
+          team: ai-agents
+        annotations:
+          summary: "Model router availability SLO burn rate is critical"
+          description: >
+            LLM provider errors are consuming the error budget rapidly.
+
+  # ════════════════════════════════════════════════
+  # PgBouncer / Database Saturation
+  # ════════════════════════════════════════════════
+  - name: database-saturation
+    interval: 30s
+    rules:
+      - alert: PgBouncerPoolSaturationHigh
+        expr: |
+          (
+            pgbouncer_pools_server_active_connections
+            /
+            pgbouncer_pools_server_maxconnections
+          ) > 0.85
+        for: 5m
+        labels:
+          severity: warning
+          team: platform
+        annotations:
+          summary: "PgBouncer connection pool is {{ $value | humanizePercentage }} saturated"
+          description: >
+            Active connections have exceeded 85% of the configured maximum.
+            Consider scaling the pool or investigating long-running queries.
+          runbook_url: "https://runbooks.prometheus.dev/db/pgbouncer-saturation"
+
+      - alert: PgBouncerPoolSaturationCritical
+        expr: |
+          (
+            pgbouncer_pools_server_active_connections
+            /
+            pgbouncer_pools_server_maxconnections
+          ) > 0.95
+        for: 2m
+        labels:
+          severity: critical
+          team: platform
+        annotations:
+          summary: "PgBouncer connection pool is nearly exhausted ({{ $value | humanizePercentage }})"
+          description: >
+            Active connections have exceeded 95% of the configured maximum.
+            New connections will start queueing or being rejected.
+
+      - alert: PgBouncerWaitingClientsHigh
+        expr: pgbouncer_pools_client_waiting_connections > 10
+        for: 3m
+        labels:
+          severity: warning
+          team: platform
+        annotations:
+          summary: "{{ $value }} clients waiting for a PgBouncer connection"
+          description: >
+            Clients are waiting for available database connections, indicating
+            pool saturation or slow queries holding connections.
+
+      - alert: DatabaseReplicationLagHigh
+        expr: pg_replication_lag_seconds > 10
+        for: 5m
+        labels:
+          severity: warning
+          team: platform
+        annotations:
+          summary: "PostgreSQL replication lag is {{ $value }}s"
+          description: >
+            Read replica replication lag exceeds 10 seconds. Read queries
+            may return stale data.
+
+      - alert: DatabaseReplicationLagCritical
+        expr: pg_replication_lag_seconds > 60
+        for: 2m
+        labels:
+          severity: critical
+          team: platform
+        annotations:
+          summary: "PostgreSQL replication lag is critical ({{ $value }}s)"
+          description: >
+            Read replica is significantly behind the primary. Consider
+            failing over read traffic to the primary.
+
+  # ════════════════════════════════════════════════
+  # Memory Leak Prediction
+  # ════════════════════════════════════════════════
+  - name: memory-prediction
+    interval: 60s
+    rules:
+      - alert: MemoryLeakPredicted
+        expr: |
+          predict_linear(
+            container_memory_working_set_bytes{namespace="prometheus"}[6h],
+            4 * 3600
+          ) > container_spec_memory_limit_bytes{namespace="prometheus"} * 0.95
+        for: 15m
+        labels:
+          severity: warning
+          team: platform
+        annotations:
+          summary: "Memory leak predicted for {{ $labels.container }} in {{ $labels.pod }}"
+          description: >
+            Based on the memory growth trend over the last 6 hours, the
+            container is predicted to hit 95% of its memory limit within
+            4 hours. Investigate for memory leaks.
+          runbook_url: "https://runbooks.prometheus.dev/infra/memory-leak"
+
+      - alert: MemoryUsageHigh
+        expr: |
+          (
+            container_memory_working_set_bytes{namespace="prometheus"}
+            /
+            container_spec_memory_limit_bytes{namespace="prometheus"}
+          ) > 0.85
+        for: 10m
+        labels:
+          severity: warning
+          team: platform
+        annotations:
+          summary: "High memory usage ({{ $value | humanizePercentage }}) in {{ $labels.pod }}"
+          description: >
+            Container memory working set has exceeded 85% of the configured
+            limit for 10 minutes.
+
+      - alert: MemoryUsageCritical
+        expr: |
+          (
+            container_memory_working_set_bytes{namespace="prometheus"}
+            /
+            container_spec_memory_limit_bytes{namespace="prometheus"}
+          ) > 0.95
+        for: 5m
+        labels:
+          severity: critical
+          team: platform
+        annotations:
+          summary: "Critical memory usage ({{ $value | humanizePercentage }}) in {{ $labels.pod }}"
+          description: >
+            Container is about to hit its memory limit and will be
+            OOM-killed. Immediate investigation required.
+
+      - alert: OOMKillDetected
+        expr: |
+          increase(kube_pod_container_status_restarts_total{namespace="prometheus"}[15m]) > 0
+          and
+          kube_pod_container_status_last_terminated_reason{namespace="prometheus", reason="OOMKilled"} == 1
+        labels:
+          severity: critical
+          team: platform
+        annotations:
+          summary: "OOM kill detected for {{ $labels.container }} in {{ $labels.pod }}"
+          description: >
+            The container was terminated due to out-of-memory. Review
+            memory limits and application memory usage patterns.
+
+  # ════════════════════════════════════════════════
+  # Certificate Expiration
+  # ════════════════════════════════════════════════
+  - name: certificate-expiry
+    interval: 6h
+    rules:
+      - alert: CertificateExpiring30Days
+        expr: |
+          (
+            x509_cert_not_after{namespace="prometheus"}
+            - time()
+          ) < 30 * 24 * 3600
+        labels:
+          severity: info
+          team: platform
+        annotations:
+          summary: "Certificate {{ $labels.subject }} expires in < 30 days"
+          description: >
+            The TLS certificate for {{ $labels.subject }} will expire
+            within 30 days. Verify that cert-manager auto-renewal is
+            configured or manually renew.
+
+      - alert: CertificateExpiring7Days
+        expr: |
+          (
+            x509_cert_not_after{namespace="prometheus"}
+            - time()
+          ) < 7 * 24 * 3600
+        labels:
+          severity: warning
+          team: platform
+        annotations:
+          summary: "Certificate {{ $labels.subject }} expires in < 7 days"
+          description: >
+            The TLS certificate is expiring soon. If cert-manager has not
+            renewed it automatically, manual intervention is required.
+          runbook_url: "https://runbooks.prometheus.dev/infra/cert-renewal"
+
+      - alert: CertificateExpiring24Hours
+        expr: |
+          (
+            x509_cert_not_after{namespace="prometheus"}
+            - time()
+          ) < 24 * 3600
+        labels:
+          severity: critical
+          team: platform
+        annotations:
+          summary: "Certificate {{ $labels.subject }} expires in < 24 hours"
+          description: >
+            Immediate action required — the TLS certificate will expire
+            within 24 hours. Services will start failing TLS handshakes.
+
+      - alert: CertificateExpired
+        expr: |
+          (
+            x509_cert_not_after{namespace="prometheus"}
+            - time()
+          ) <= 0
+        labels:
+          severity: critical
+          team: platform
+        annotations:
+          summary: "Certificate {{ $labels.subject }} has EXPIRED"
+          description: >
+            The TLS certificate has expired. Clients will receive TLS
+            errors. Renew immediately.
+
+  # ════════════════════════════════════════════════
+  # Redis / Queue Health
+  # ════════════════════════════════════════════════
+  - name: redis-health
+    interval: 30s
+    rules:
+      - alert: RedisMemoryUsageHigh
+        expr: |
+          redis_memory_used_bytes / redis_memory_max_bytes > 0.85
+        for: 5m
+        labels:
+          severity: warning
+          team: platform
+        annotations:
+          summary: "Redis memory usage is {{ $value | humanizePercentage }}"
+          description: >
+            Redis is approaching its maxmemory limit. Keys may start being
+            evicted according to the configured eviction policy.
+
+      - alert: RedisConnectedClientsHigh
+        expr: redis_connected_clients > 500
+        for: 5m
+        labels:
+          severity: warning
+          team: platform
+        annotations:
+          summary: "{{ $value }} clients connected to Redis"
+          description: >
+            Unusually high number of Redis connections. Check for connection
+            leaks in application code.
+
+      - alert: BullMQDeadLetterQueueGrowing
+        expr: |
+          increase(bullmq_dlq_size_total[30m]) > 50
+        for: 10m
+        labels:
+          severity: warning
+          team: platform
+        annotations:
+          summary: "Dead letter queue growing: {{ $value }} new messages in 30m"
+          description: >
+            Jobs are failing and landing in the dead letter queue at an
+            elevated rate. Investigate job processing errors.

@@ -12,10 +12,11 @@
   },
   "dependencies": {
     "@clerk/nextjs": "^7.0.5",
-    "@clerk/backend": "^3.2.1"
+    "@clerk/backend": "^3.2.1",
+    "@prometheus/logger": "workspace:*"
   },
   "devDependencies": {
     "@prometheus/config-typescript": "workspace:*",
-    "typescript": "^5.9.3"
+    "typescript": "5.9.3"
   }
 }

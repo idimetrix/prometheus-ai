@@ -83,6 +83,58 @@ export interface ErrorEvent extends BaseEvent {
   type: "error";
 }
 
+export interface BlueprintAnalysisEvent extends BaseEvent {
+  blueprintId: string;
+  componentCount: number;
+  phase: string;
+  status: "started" | "analyzing" | "completed" | "failed";
+  type: "blueprint_analysis";
+}
+
+export interface TechStackRecommendationEvent extends BaseEvent {
+  confidence: number;
+  projectId: string;
+  rationale: string;
+  recommendations: Array<{
+    category: string;
+    name: string;
+    reason: string;
+  }>;
+  type: "tech_stack_recommendation";
+}
+
+export interface ScaffoldProgressEvent extends BaseEvent {
+  currentFile?: string;
+  filesGenerated: number;
+  phase: string;
+  progress: number;
+  totalFiles: number;
+  type: "scaffold_progress";
+}
+
+export interface AgentDecisionEvent extends BaseEvent {
+  alternatives: string[];
+  decision: string;
+  rationale: string;
+  type: "agent_decision";
+}
+
+export interface AgentConfidenceChangeEvent extends BaseEvent {
+  newConfidence: number;
+  previousConfidence: number;
+  reason: string;
+  type: "agent_confidence_change";
+}
+
+export interface HumanInputRequestEvent extends BaseEvent {
+  context: Record<string, unknown>;
+  options?: string[];
+  prompt: string;
+  required: boolean;
+  timeoutMs?: number;
+  type: "human_input_request";
+}
+
 export type SessionEvent =
   | AgentOutputEvent
   | ToolCallStartEvent
@@ -94,7 +146,13 @@ export type SessionEvent =
   | CheckpointEvent
   | PlanUpdateEvent
   | TaskStatusEvent
-  | ErrorEvent;
+  | ErrorEvent
+  | BlueprintAnalysisEvent
+  | TechStackRecommendationEvent
+  | ScaffoldProgressEvent
+  | AgentDecisionEvent
+  | AgentConfidenceChangeEvent
+  | HumanInputRequestEvent;
 
 /** Current event schema version */
 export const EVENT_VERSION = 1;

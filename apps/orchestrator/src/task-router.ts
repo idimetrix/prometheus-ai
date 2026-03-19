@@ -7,6 +7,8 @@ import { eq } from "drizzle-orm";
 import { type CILoopResult, CILoopRunner } from "./ci-loop/ci-loop-runner";
 import { PropertyTesting } from "./ci-loop/property-testing";
 import { classifyTask } from "./embedding-classifier";
+import { LearningExtractor } from "./feedback/learning-extractor";
+import { MixtureOfAgents } from "./moa/parallel-generator";
 import { GeneratorEvaluator } from "./patterns/generator-evaluator";
 import { SpecFirst } from "./patterns/spec-first";
 import {
@@ -15,7 +17,8 @@ import {
 } from "./phases/architecture";
 import { DiscoveryPhase, type DiscoveryResult } from "./phases/discovery";
 import type { SprintPlan } from "./phases/planning";
-import { MCTSPlanner } from "./planning/mcts-planner";
+import { MCTSPlanner, type MCTSPlanResult } from "./planning/mcts-planner";
+import { PlanReviser } from "./planning/plan-reviser";
 import type { SessionManager } from "./session-manager";
 import { VisualVerifier } from "./visual/visual-verifier";
 
@@ -306,6 +309,30 @@ export class TaskRouter {
         timestamp: new Date().toISOString(),
       });
 
+      // Extract learning patterns at end of task processing
+      const learningExtractor = new LearningExtractor();
+      learningExtractor
+        .extract({
+          sessionId,
+          projectId,
+          agentRole: agentRole ?? "orchestrator",
+          taskType: mode,
+          success: allSuccess,
+          toolCalls: [],
+          errorMessages: results
+            .filter((r) => r.error)
+            .map((r) => r.error as string),
+          filesChanged: results.flatMap((r) => r.filesChanged),
+          totalTokens: results.reduce(
+            (sum, r) => sum + r.tokensUsed.input + r.tokensUsed.output,
+            0
+          ),
+          totalDuration: 0,
+        })
+        .catch(() => {
+          /* fire-and-forget */
+        });
+
       return {
         success: allSuccess,
         taskId,
@@ -531,7 +558,19 @@ Instructions:
     });
     await this.publishPhaseUpdate("architecture", "completed");
 
-    // Phase 3: MCTS Planning (replaces flat planning)
+    // Phase 2.5: Auto-ensemble for architecture using MoA with 3 models
+    const moaArchitecture = new MixtureOfAgents();
+    const moaResult = await moaArchitecture
+      .generate(
+        `Review and enhance this architecture blueprint for potential issues, missing considerations, and improvements:\n\n${architectureResult.blueprint.slice(0, 4000)}`,
+        1
+      )
+      .catch(() => null);
+    if (moaResult?.synthesized) {
+      architectureResult.blueprint += `\n\n## Architecture Review (Multi-Model Consensus)\n${moaResult.synthesized.slice(0, 2000)}`;
+    }
+
+    // Phase 3: MCTS Planning (with full tree retention for backtracking)
     await this.publishPhaseUpdate("planning", "running");
     const mctsPlanner = new MCTSPlanner({
       expansionWidth: 3,
@@ -542,7 +581,8 @@ Instructions:
       architectureResult.blueprint,
       taskDescription
     );
-    const sprintPlan = mctsResult.selectedPlan;
+    let sprintPlan = mctsResult.selectedPlan;
+    const currentMCTSResult: MCTSPlanResult = mctsResult;
 
     this.logger.info(
       {
@@ -564,7 +604,7 @@ Instructions:
     });
     await this.publishPhaseUpdate("planning", "completed");
 
-    // Phase 3.5: SpecFirst — Generate specifications before coding
+    // Phase 3.5: SpecFirst — Generate specifications AND test skeletons before coding (TDD)
     await this.publishPhaseUpdate("spec_first", "running");
     const specFirst = new SpecFirst();
     const specResult = await specFirst.generateSpecs(
@@ -591,18 +631,128 @@ Instructions:
       if (specSummary) {
         architectureResult.blueprint += `\n\n## Generated Specifications\n${specSummary}`;
       }
+
+      // TDD: Write test skeletons to disk before coding
+      if (specResult.specs.testStubs) {
+        await agentLoop.executeTask(
+          `Write these test skeleton files to disk. Create the test files with test.todo() blocks based on these stubs:\n\n${specResult.specs.testStubs}\n\nUse vitest syntax. Each test should be a \`test.todo()\` placeholder that will be implemented later.`,
+          "test_engineer"
+        );
+      }
     }
     await this.publishPhaseUpdate("spec_first", "completed");
 
-    // Phase 4: Execute sprint tasks in dependency order
-    await this.publishPhaseUpdate("coding", "running");
-    const executionResults = await this.executeSprintPlan(
-      agentLoop,
-      sprintPlan,
-      architectureResult.blueprint
-    );
+    // Phase 4: Execute sprint tasks with backtracking support
+    const planReviser = new PlanReviser(3);
+    let executionAttempt = 0;
+    const maxExecutionAttempts = 2;
+    let executionResults: AgentExecutionResult[] = [];
+
+    while (executionAttempt < maxExecutionAttempts) {
+      executionAttempt++;
+      await this.publishPhaseUpdate(
+        "coding",
+        executionAttempt > 1 ? "retrying" : "running"
+      );
+
+      executionResults = await this.executeSprintPlan(
+        agentLoop,
+        sprintPlan,
+        architectureResult.blueprint
+      );
+
+      // Check if execution succeeded or if we should backtrack
+      const failedTasks = executionResults.filter((r) => !r.success);
+      const qualityGatePassed =
+        failedTasks.length === 0 ||
+        failedTasks.length / executionResults.length < 0.5;
+
+      if (qualityGatePassed || planReviser.isExhausted()) {
+        break;
+      }
+
+      // Backtrack: revise the plan using MCTS tree
+      this.logger.warn(
+        {
+          failedCount: failedTasks.length,
+          attempt: executionAttempt,
+        },
+        "Execution quality below threshold, attempting plan revision"
+      );
+
+      const revision = await planReviser.revise(
+        agentLoop,
+        currentMCTSResult,
+        {
+          failedPhase: "coding",
+          failedTaskId:
+            sprintPlan.tasks.find(
+              (_, i) => executionResults[i] && !executionResults[i]?.success
+            )?.id ?? "unknown",
+          errorMessage: failedTasks
+            .map((r) => r.error)
+            .filter(Boolean)
+            .join("; "),
+          partialResults: sprintPlan.tasks.map((t, i) => ({
+            taskId: t.id,
+            success: executionResults[i]?.success ?? false,
+            output: executionResults[i]?.output ?? "",
+          })),
+          creditsConsumed: executionResults.reduce(
+            (sum, r) => sum + r.creditsConsumed,
+            0
+          ),
+          filesChanged: executionResults.flatMap((r) => r.filesChanged),
+        },
+        architectureResult.blueprint,
+        taskDescription
+      );
+
+      if (!revision) {
+        this.logger.warn(
+          "Plan revision failed, continuing with current results"
+        );
+        break;
+      }
+
+      sprintPlan = revision.revisedPlan;
+      this.logger.info(
+        {
+          newStrategy: revision.strategy,
+          confidence: revision.confidence,
+          reusableWork: revision.reusableWork.length,
+        },
+        "Plan revised via MCTS backtracking"
+      );
+    }
+
     results.push(...executionResults);
     await this.publishPhaseUpdate("coding", "completed");
+
+    // Phase 4.25: Cross-file consistency validation
+    const allChangedFilesPre = executionResults.flatMap((r) => r.filesChanged);
+    if (allChangedFilesPre.length > 0) {
+      try {
+        const { CrossFileValidator } = await import(
+          "./engine/cross-file-validator"
+        );
+        const crossFileValidator = new CrossFileValidator();
+        const crossFileResult = await crossFileValidator.validate(
+          allChangedFilesPre,
+          "/workspace"
+        );
+        if (!crossFileResult.valid) {
+          const feedback = crossFileValidator.formatForAgent(crossFileResult);
+          const fixResult = await agentLoop.executeTask(
+            `Fix the following cross-file consistency issues:\n\n${feedback}`,
+            "backend_coder"
+          );
+          results.push(fixResult);
+        }
+      } catch {
+        // Cross-file validator not available, skip
+      }
+    }
 
     // Phase 4.5: Typecheck verification gate
     const typecheckResult = await agentLoop.executeTask(

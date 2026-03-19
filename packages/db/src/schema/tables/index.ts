@@ -1,7 +1,9 @@
 export * from "./agents";
 export * from "./api-keys";
+export * from "./architecture";
 export * from "./audit-logs";
 export * from "./blueprints";
+export * from "./code-reviews";
 export * from "./conventions";
 export * from "./credits";
 export * from "./decisions";
@@ -11,6 +13,7 @@ export * from "./governance";
 export * from "./graph";
 export * from "./installed-plugins";
 export * from "./integrations";
+export * from "./learning";
 export * from "./memories";
 export * from "./model-usage";
 export * from "./models";

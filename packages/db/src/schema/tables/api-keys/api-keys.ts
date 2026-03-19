@@ -15,6 +15,7 @@ export const apiKeys = pgTable(
     keyHash: text("key_hash").notNull().unique(),
     name: text("name").notNull(),
     lastUsed: timestamp("last_used", { withTimezone: true }),
+    expiresAt: timestamp("expires_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),

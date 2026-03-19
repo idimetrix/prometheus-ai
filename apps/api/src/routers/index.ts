@@ -1,8 +1,12 @@
 import { router } from "../trpc";
 import { analyticsRouter } from "./analytics";
 import { apiKeysRouter } from "./api-keys";
+import { architectureRouter } from "./architecture";
+import { auditRouter } from "./audit";
 import { billingRouter } from "./billing";
+import { blueprintsEnhancedRouter } from "./blueprints-enhanced";
 import { brainRouter } from "./brain";
+import { codeAnalysisRouter } from "./code-analysis";
 import { fleetRouter } from "./fleet";
 import { healthRouter } from "./health";
 import { integrationsRouter } from "./integrations";
@@ -29,6 +33,10 @@ export const appRouter = router({
   integrations: integrationsRouter,
   apiKeys: apiKeysRouter,
   plugins: pluginsRouter,
+  architecture: architectureRouter,
+  codeAnalysis: codeAnalysisRouter,
+  audit: auditRouter,
+  blueprintsEnhanced: blueprintsEnhancedRouter,
 });
 
 export type AppRouter = typeof appRouter;

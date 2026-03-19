@@ -38,7 +38,34 @@ const io = new Server(httpServer, {
   transports: ["websocket", "polling"],
   pingInterval: 25_000,
   pingTimeout: 20_000,
+  maxHttpBufferSize: 1_048_576, // 1MB
 });
+
+// Per-user connection tracking (max 5 connections per user)
+const MAX_CONNECTIONS_PER_USER = 5;
+const userConnections = new Map<string, Set<string>>();
+
+function trackConnection(userId: string, socketId: string): boolean {
+  if (!userConnections.has(userId)) {
+    userConnections.set(userId, new Set());
+  }
+  const connections = userConnections.get(userId) ?? new Set<string>();
+  if (connections.size >= MAX_CONNECTIONS_PER_USER) {
+    return false;
+  }
+  connections.add(socketId);
+  return true;
+}
+
+function untrackConnection(userId: string, socketId: string): void {
+  const connections = userConnections.get(userId);
+  if (connections) {
+    connections.delete(socketId);
+    if (connections.size === 0) {
+      userConnections.delete(userId);
+    }
+  }
+}
 
 // Redis adapter for multi-instance scaling
 function setupRedisAdapter() {
@@ -71,6 +98,18 @@ setupNotificationNamespace(notificationsNs);
 // Default namespace: connection status and global broadcasts
 io.on("connection", (socket) => {
   const userId = socket.data.userId as string;
+
+  // Enforce per-user connection limit
+  if (!trackConnection(userId, socket.id)) {
+    logger.warn(
+      { userId, socketId: socket.id, limit: MAX_CONNECTIONS_PER_USER },
+      "Connection limit exceeded, disconnecting"
+    );
+    socket.emit("error", { message: "Too many connections" });
+    socket.disconnect(true);
+    return;
+  }
+
   logger.info(
     { userId, socketId: socket.id },
     "Client connected to default namespace"
@@ -84,6 +123,7 @@ io.on("connection", (socket) => {
   });
 
   socket.on("disconnect", (reason) => {
+    untrackConnection(userId, socket.id);
     logger.debug(
       { userId, socketId: socket.id, reason },
       "Client disconnected from default namespace"

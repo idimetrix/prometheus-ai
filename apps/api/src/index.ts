@@ -10,6 +10,7 @@ await initTelemetry({ serviceName: "api" });
 initSentry({ serviceName: "api" });
 
 import { Hono } from "hono";
+import { bodyLimit } from "hono/body-limit";
 import { cors } from "hono/cors";
 import {
   apiKeyAuthMiddleware,
@@ -28,6 +29,11 @@ import { createContext } from "./trpc";
 
 const logger = createLogger("api");
 const app = new Hono();
+
+// ---------------------------------------------------------------------------
+// 0. Body size limit — reject payloads larger than 1MB
+// ---------------------------------------------------------------------------
+app.use("*", bodyLimit({ maxSize: 1024 * 1024 }));
 
 // ---------------------------------------------------------------------------
 // 1. Request ID — generates a unique ID for every request (before all others)
