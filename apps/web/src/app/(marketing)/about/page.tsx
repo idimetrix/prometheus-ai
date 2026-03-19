@@ -62,7 +62,7 @@ export default function AboutPage() {
             ].map((step, i) => (
               <div
                 className="flex items-center gap-3 rounded-lg border border-zinc-800 bg-zinc-900/30 px-4 py-3"
-                key={i}
+                key={step}
               >
                 <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-violet-600/10 font-bold text-violet-400 text-xs">
                   {i + 1}

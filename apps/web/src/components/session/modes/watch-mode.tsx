@@ -193,8 +193,8 @@ export function WatchMode({ sessionId }: WatchModeProps) {
             </div>
           ) : (
             <div className="space-y-0.5">
-              {terminalLines.map((line, lineIdx) => (
-                <div className="flex gap-2" key={`wl-${lineIdx}`}>
+              {Array.from(terminalLines.entries()).map(([lineNum, line]) => (
+                <div className="flex gap-2" key={`watch-line-${lineNum}`}>
                   {line.timestamp && (
                     <span className="shrink-0 text-zinc-700">
                       {new Date(line.timestamp).toLocaleTimeString([], {

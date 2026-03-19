@@ -69,13 +69,25 @@ function estimateTokens(text: string): number {
  *  - Tools/Role:       ~10% (1400 tokens)
  */
 export class ContextAssembler {
+  private readonly semantic: SemanticLayer;
+  private readonly knowledgeGraph: KnowledgeGraphLayer;
+  private readonly episodic: EpisodicLayer;
+  private readonly procedural: ProceduralLayer;
+  private readonly workingMemory: WorkingMemoryLayer;
+
   constructor(
-    private readonly semantic: SemanticLayer,
-    private readonly knowledgeGraph: KnowledgeGraphLayer,
-    private readonly episodic: EpisodicLayer,
-    private readonly procedural: ProceduralLayer,
-    private readonly workingMemory: WorkingMemoryLayer
-  ) {}
+    semantic: SemanticLayer,
+    knowledgeGraph: KnowledgeGraphLayer,
+    episodic: EpisodicLayer,
+    procedural: ProceduralLayer,
+    workingMemory: WorkingMemoryLayer
+  ) {
+    this.semantic = semantic;
+    this.knowledgeGraph = knowledgeGraph;
+    this.episodic = episodic;
+    this.procedural = procedural;
+    this.workingMemory = workingMemory;
+  }
 
   async assemble(request: AssembleRequest): Promise<AssembledContext> {
     const { projectId, sessionId, taskDescription, agentRole, maxTokens } =

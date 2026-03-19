@@ -229,14 +229,14 @@ export default function AnalyticsPage() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-zinc-800">
-                {taskMetrics.map((dp, i) => {
+                {taskMetrics.map((dp) => {
                   const total = dp.completed + dp.failed;
                   const rate =
                     total > 0
                       ? ((dp.completed / total) * 100).toFixed(0)
                       : "--";
                   return (
-                    <tr className="text-sm" key={i}>
+                    <tr className="text-sm" key={dp.date}>
                       <td className="px-4 py-2.5 font-mono text-xs text-zinc-300">
                         {new Date(dp.date).toLocaleDateString()}
                       </td>

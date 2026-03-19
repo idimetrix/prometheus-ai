@@ -34,8 +34,11 @@ export interface InstalledPlugin {
  */
 export class PluginRegistry {
   private readonly installed = new Map<string, InstalledPlugin>();
+  readonly _registryUrl: string;
 
-  constructor(readonly _registryUrl = "https://plugins.prometheus.dev/api") {}
+  constructor(_registryUrl = "https://plugins.prometheus.dev/api") {
+    this._registryUrl = _registryUrl;
+  }
 
   /**
    * Search the plugin marketplace.

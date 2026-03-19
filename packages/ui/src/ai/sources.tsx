@@ -28,10 +28,10 @@ export function Sources({ sources, onSourceClick, className }: SourcesProps) {
     <div className={cn("space-y-1", className)}>
       <div className="font-medium text-muted-foreground text-xs">Sources</div>
       <div className="flex flex-wrap gap-1.5">
-        {sources.map((source, i) => (
+        {sources.map((source) => (
           <button
             className="inline-flex items-center gap-1 rounded-md border px-2 py-1 text-xs transition-colors hover:bg-muted"
-            key={i}
+            key={source.path}
             onClick={() => onSourceClick?.(source)}
             type="button"
           >

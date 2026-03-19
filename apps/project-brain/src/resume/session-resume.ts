@@ -17,11 +17,19 @@ export interface SessionBriefing {
 }
 
 export class SessionResume {
+  readonly _contextAssembler: ContextAssembler;
+  private readonly workingMemory: WorkingMemoryLayer;
+  private readonly episodic: EpisodicLayer;
+
   constructor(
-    readonly _contextAssembler: ContextAssembler,
-    private readonly workingMemory: WorkingMemoryLayer,
-    private readonly episodic: EpisodicLayer
-  ) {}
+    _contextAssembler: ContextAssembler,
+    workingMemory: WorkingMemoryLayer,
+    episodic: EpisodicLayer
+  ) {
+    this._contextAssembler = _contextAssembler;
+    this.workingMemory = workingMemory;
+    this.episodic = episodic;
+  }
 
   async generateBriefing(
     sessionId: string,

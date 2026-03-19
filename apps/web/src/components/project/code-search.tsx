@@ -255,10 +255,10 @@ export function CodeSearch({ projectId }: CodeSearchProps) {
 
               {expandedFiles.has(file) && (
                 <div className="bg-zinc-950/50 px-3 pb-2">
-                  {matches.map((match, i) => (
+                  {matches.map((match) => (
                     <div
                       className="mt-1 rounded border border-zinc-800/30 bg-zinc-900/50"
-                      key={`${match.line}-${i}`}
+                      key={`${file}-${match.line}`}
                     >
                       <div className="border-zinc-800/30 border-b px-2 py-1">
                         <span className="font-mono text-[10px] text-zinc-500">
@@ -266,19 +266,29 @@ export function CodeSearch({ projectId }: CodeSearchProps) {
                         </span>
                       </div>
                       <pre className="overflow-auto p-2 text-[10px] leading-relaxed">
-                        {match.context?.before?.map((line, j) => (
-                          <div className="text-zinc-600" key={`b-${j}`}>
+                        {Array.from(
+                          (match.context?.before ?? []).entries()
+                        ).map(([idx, line]) => (
+                          <div
+                            className="text-zinc-600"
+                            key={`before-${match.line}-${idx}`}
+                          >
                             {line}
                           </div>
                         ))}
                         <div className="bg-yellow-500/10 text-zinc-200">
                           {match.content}
                         </div>
-                        {match.context?.after?.map((line, j) => (
-                          <div className="text-zinc-600" key={`a-${j}`}>
-                            {line}
-                          </div>
-                        ))}
+                        {Array.from((match.context?.after ?? []).entries()).map(
+                          ([idx, line]) => (
+                            <div
+                              className="text-zinc-600"
+                              key={`after-${match.line}-${idx}`}
+                            >
+                              {line}
+                            </div>
+                          )
+                        )}
                       </pre>
                     </div>
                   ))}

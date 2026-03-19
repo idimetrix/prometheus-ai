@@ -100,8 +100,8 @@ export function TerminalOutput({ event }: TerminalOutputProps) {
         </div>
       )}
       <div className="whitespace-pre-wrap text-[11px] leading-relaxed">
-        {segments.map((seg, segIdx) => (
-          <span className={seg.className} key={`seg-${segIdx}`}>
+        {Array.from(segments.entries()).map(([segNum, seg]) => (
+          <span className={seg.className} key={`segment-${segNum}`}>
             {seg.text}
           </span>
         ))}

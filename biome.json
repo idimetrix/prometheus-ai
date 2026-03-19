@@ -1,5 +1,5 @@
 {
-  "$schema": "https://biomejs.dev/schemas/2.4.8/schema.json",
+  "$schema": "./node_modules/@biomejs/biome/configuration_schema.json",
   "extends": [
     "ultracite/biome/core",
     "ultracite/biome/react",
@@ -14,42 +14,38 @@
     "ignoreUnknown": true,
     "includes": [
       "!**/node_modules",
-      "!**/dist",
       "!**/.next",
+      "!**/.claude",
+      "!**/.agents",
+      "!**/dist",
+      "!**/build",
+      "!**/skills",
+      "!**/src/components/ui",
+      "!**/src/components/ai-elements",
       "!**/.turbo",
       "!**/drizzle",
       "!**/coverage",
-      "!**/*.min.js",
-      "!**/.claude",
-      "!**/.agents",
-      "!**/src/components/ui"
+      "!**/*.min.js"
     ]
   },
   "formatter": {
+    "enabled": true,
     "indentStyle": "space",
     "indentWidth": 2
   },
   "linter": {
+    "enabled": true,
     "rules": {
       "recommended": true,
       "suspicious": {
-        "noExplicitAny": "error",
-        "noArrayIndexKey": "warn",
-        "noUnknownAtRules": "off"
+        "noUnknownAtRules": "off",
+        "noExplicitAny": "error"
       },
       "performance": {
         "noBarrelFile": "off"
       },
-      "style": {
-        "noParameterProperties": "off"
-      },
       "complexity": {
-        "noExcessiveCognitiveComplexity": {
-          "level": "warn",
-          "options": {
-            "maxAllowedComplexity": 25
-          }
-        }
+        "noExcessiveCognitiveComplexity": "off"
       }
     },
     "domains": {

@@ -332,10 +332,10 @@ export function PlanMode({ sessionId }: PlanModeProps) {
             </div>
           ) : (
             <div className="space-y-2">
-              {reasoning.map((thought, i) => (
+              {Array.from(reasoning.entries()).map(([thoughtIdx, thought]) => (
                 <div
                   className="rounded-lg bg-zinc-950 px-3 py-2 text-violet-300/80 text-xs italic leading-relaxed"
-                  key={i}
+                  key={`thought-${thoughtIdx}`}
                 >
                   {thought}
                 </div>

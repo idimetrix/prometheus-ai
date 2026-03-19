@@ -262,7 +262,7 @@ export function DependencyGraph({
       >
         <g transform={`translate(${pan.x}, ${pan.y}) scale(${zoom})`}>
           {/* Edges */}
-          {edges.map((edge, i) => {
+          {edges.map((edge) => {
             const source = nodeMap.get(edge.source);
             const target = nodeMap.get(edge.target);
             if (!(source && target)) {
@@ -274,7 +274,7 @@ export function DependencyGraph({
 
             return (
               <line
-                key={`edge-${i}`}
+                key={`edge-${edge.source}-${edge.target}`}
                 markerEnd="url(#arrowhead)"
                 stroke={isHighlighted ? "#3b82f6" : "#d4d4d8"}
                 strokeOpacity={isHighlighted ? 0.8 : 0.3}

@@ -242,7 +242,7 @@ function DiffFileView({ file }: { file: DiffFile }) {
         <div className="overflow-x-auto">
           <table className="w-full border-collapse font-mono text-[11px] leading-[1.6]">
             <tbody>
-              {lines.map((line, i) => {
+              {Array.from(lines.entries()).map(([lineIdx, line]) => {
                 if (line.type === "header") {
                   return null;
                 }
@@ -254,7 +254,7 @@ function DiffFileView({ file }: { file: DiffFile }) {
                       line.type === "deletion" && "bg-red-500/[0.07]",
                       line.type === "hunk" && "bg-violet-500/[0.05]"
                     )}
-                    key={i}
+                    key={`diff-${lineIdx}-${line.oldLineNum ?? "x"}-${line.newLineNum ?? "x"}`}
                   >
                     {/* Old line number */}
                     <td className="w-[1px] select-none whitespace-nowrap border-zinc-800/50 border-r px-2 text-right text-zinc-600">
@@ -449,8 +449,8 @@ export function CodeDiff({
 
       {/* Diff content area */}
       <div className="min-h-0 flex-1 space-y-3 overflow-auto p-2">
-        {files.map((file, i) => (
-          <DiffFileView file={file} key={`${file.filePath}-${i}`} />
+        {files.map((file) => (
+          <DiffFileView file={file} key={file.filePath} />
         ))}
       </div>
     </div>

@@ -44,14 +44,14 @@ export function SkeletonTableRow({
 }: SkeletonProps & { columns?: number }) {
   return (
     <tr className={className}>
-      {Array.from({ length: columns }).map((_, i) => (
-        <td className="px-4 py-3" key={`col-${i}`}>
+      {Array.from({ length: columns }, (_, k) => k).map((colIndex) => (
+        <td className="px-4 py-3" key={`skeleton-col-${colIndex}`}>
           <Skeleton
             className={`h-4 ${(() => {
-              if (i === 0) {
+              if (colIndex === 0) {
                 return "w-32";
               }
-              if (i === columns - 1) {
+              if (colIndex === columns - 1) {
                 return "w-16";
               }
               return "w-20";
@@ -76,16 +76,19 @@ export function SkeletonTable({
       <table className="w-full">
         <thead>
           <tr className="border-zinc-800 border-b">
-            {Array.from({ length: columns }).map((_, i) => (
-              <th className="px-4 py-3" key={`th-${i}`}>
+            {Array.from({ length: columns }, (_, k) => k).map((colIndex) => (
+              <th className="px-4 py-3" key={`skeleton-th-${colIndex}`}>
                 <Skeleton className="h-3 w-16" />
               </th>
             ))}
           </tr>
         </thead>
         <tbody className="divide-y divide-zinc-800">
-          {Array.from({ length: rows }).map((_, i) => (
-            <SkeletonTableRow columns={columns} key={`row-${i}`} />
+          {Array.from({ length: rows }, (_, k) => k).map((rowIndex) => (
+            <SkeletonTableRow
+              columns={columns}
+              key={`skeleton-row-${rowIndex}`}
+            />
           ))}
         </tbody>
       </table>
@@ -97,8 +100,8 @@ export function SkeletonTable({
 export function SkeletonStats({ count = 4 }: { count?: number }) {
   return (
     <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-      {Array.from({ length: count }).map((_, i) => (
-        <SkeletonCard key={`stat-${i}`} />
+      {Array.from({ length: count }, (_, k) => k).map((statIndex) => (
+        <SkeletonCard key={`skeleton-stat-${statIndex}`} />
       ))}
     </div>
   );

@@ -65,18 +65,18 @@ export function ReasoningPanel() {
           </div>
         ) : (
           <div className="space-y-1">
-            {reasoning.map((thought, i) => {
-              const isCollapsed = collapsedMap[i] ?? false;
+            {Array.from(reasoning.entries()).map(([thoughtIdx, thought]) => {
+              const isCollapsed = collapsedMap[thoughtIdx] ?? false;
               const preview =
                 thought.slice(0, 80) + (thought.length > 80 ? "..." : "");
               return (
                 <div
                   className="rounded-lg border border-zinc-800/50 bg-zinc-950/50"
-                  key={i}
+                  key={`reasoning-${thoughtIdx}`}
                 >
                   <button
                     className="flex w-full items-center gap-2 px-3 py-2 text-left"
-                    onClick={() => toggle(i)}
+                    onClick={() => toggle(thoughtIdx)}
                     type="button"
                   >
                     <svg
@@ -96,7 +96,7 @@ export function ReasoningPanel() {
                       />
                     </svg>
                     <span className="font-medium text-[10px] text-violet-400/70">
-                      Step {i + 1}
+                      Step {thoughtIdx + 1}
                     </span>
                     {isCollapsed && (
                       <span className="truncate text-[10px] text-zinc-600">

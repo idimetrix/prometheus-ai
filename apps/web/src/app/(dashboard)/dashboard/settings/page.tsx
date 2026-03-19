@@ -375,10 +375,10 @@ export default function SettingsPage() {
             </div>
             {plan?.features && plan.features.length > 0 && (
               <div className="mt-4 flex flex-wrap gap-2">
-                {plan.features.map((feature, i) => (
+                {plan.features.map((feature) => (
                   <span
                     className="rounded-full border border-zinc-800 bg-zinc-950 px-3 py-1 text-xs text-zinc-400"
-                    key={i}
+                    key={feature}
                   >
                     {feature}
                   </span>

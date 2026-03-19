@@ -23,10 +23,13 @@ const PERSISTENT_KEYS = [
  * memory at session end, and pre-loading relevant context at session start.
  */
 export class SessionPersistence {
-  constructor(
-    private readonly workingMemory: WorkingMemoryLayer,
-    private readonly episodic: EpisodicLayer
-  ) {}
+  private readonly workingMemory: WorkingMemoryLayer;
+  private readonly episodic: EpisodicLayer;
+
+  constructor(workingMemory: WorkingMemoryLayer, episodic: EpisodicLayer) {
+    this.workingMemory = workingMemory;
+    this.episodic = episodic;
+  }
 
   /**
    * Save important working memory entries as episodic memories at session end.

@@ -49,11 +49,11 @@ export function CodeBlock({
       </div>
       <div className="overflow-x-auto p-3">
         <pre className="font-mono text-sm">
-          {lines.map((line, i) => (
-            <div className="flex" key={i}>
+          {Array.from(lines.entries()).map(([lineNum, line]) => (
+            <div className="flex" key={`line-${lineNum}`}>
               {showLineNumbers && (
                 <span className="mr-4 w-8 shrink-0 select-none text-right text-zinc-600">
-                  {i + 1}
+                  {lineNum + 1}
                 </span>
               )}
               <code className="text-zinc-200">{line || " "}</code>

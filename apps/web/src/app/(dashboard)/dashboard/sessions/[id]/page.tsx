@@ -54,10 +54,10 @@ function FileTreePanel() {
           </div>
         ) : (
           <div className="space-y-0.5">
-            {fileTree.map((file, i) => (
+            {fileTree.map((file) => (
               <div
                 className="flex items-center gap-2 rounded px-2 py-1 text-xs hover:bg-zinc-800/50"
-                key={`${file.path}-${i}`}
+                key={file.path}
               >
                 {statusIcon(file.status)}
                 <span className="truncate font-mono text-zinc-300">
@@ -243,8 +243,11 @@ function TerminalPanel() {
           </div>
         ) : (
           <div className="space-y-0.5">
-            {terminalLines.map((line, i) => (
-              <div className="flex gap-2" key={i}>
+            {terminalLines.map((line) => (
+              <div
+                className="flex gap-2"
+                key={`${line.timestamp ?? ""}-${line.content.slice(0, 50)}`}
+              >
                 {line.timestamp && (
                   <span className="shrink-0 text-zinc-700">
                     {new Date(line.timestamp).toLocaleTimeString([], {
@@ -328,38 +331,40 @@ function CodeDiffPanel() {
           </div>
         ) : (
           <div className="space-y-3">
-            {diffs.map((diff, i) => (
+            {diffs.map((diff) => (
               <div
                 className="rounded-lg border border-zinc-800 bg-zinc-950"
-                key={i}
+                key={diff.id}
               >
                 <div className="border-zinc-800 border-b px-3 py-1.5">
                   <span className="font-mono text-[10px] text-zinc-400">
-                    {String(diff.data?.filePath ?? `Change ${i + 1}`)}
+                    {String(diff.data?.filePath ?? `Change ${diff.id}`)}
                   </span>
                 </div>
                 <pre className="overflow-auto p-3 text-[11px] leading-relaxed">
-                  {String(diff.data?.diff ?? diff.data?.content ?? "")
-                    .split("\n")
-                    .map((line: string, j: number) => (
-                      <div
-                        className={(() => {
-                          if (line.startsWith("+")) {
-                            return "bg-green-500/10 text-green-400";
-                          }
-                          if (line.startsWith("-")) {
-                            return "bg-red-500/10 text-red-400";
-                          }
-                          if (line.startsWith("@@")) {
-                            return "text-violet-400";
-                          }
-                          return "text-zinc-500";
-                        })()}
-                        key={j}
-                      >
-                        {line}
-                      </div>
-                    ))}
+                  {Array.from(
+                    String(diff.data?.diff ?? diff.data?.content ?? "")
+                      .split("\n")
+                      .entries()
+                  ).map(([lineNum, line]) => (
+                    <div
+                      className={(() => {
+                        if (line.startsWith("+")) {
+                          return "bg-green-500/10 text-green-400";
+                        }
+                        if (line.startsWith("-")) {
+                          return "bg-red-500/10 text-red-400";
+                        }
+                        if (line.startsWith("@@")) {
+                          return "text-violet-400";
+                        }
+                        return "text-zinc-500";
+                      })()}
+                      key={lineNum}
+                    >
+                      {line}
+                    </div>
+                  ))}
                 </pre>
               </div>
             ))}

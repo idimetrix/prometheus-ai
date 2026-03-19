@@ -66,18 +66,18 @@ export function AmbiguityResolverUI({
             Assumptions:
           </div>
           <ul className="list-inside list-disc text-sm text-zinc-400">
-            {assumptions.map((a, i) => (
-              <li key={i}>{a}</li>
+            {assumptions.map((a) => (
+              <li key={a}>{a}</li>
             ))}
           </ul>
         </div>
       )}
 
       <div className="space-y-4">
-        {questions.map((q, idx) => (
+        {Array.from(questions.entries()).map(([qIdx, q]) => (
           <div
             className="rounded border border-zinc-700 bg-zinc-900 p-3"
-            key={idx}
+            key={q.question}
           >
             <div className="mb-1 flex items-center gap-2">
               <span className="font-medium text-sm text-white">
@@ -94,12 +94,12 @@ export function AmbiguityResolverUI({
               {q.options.map((option) => (
                 <button
                   className={`rounded-lg border px-3 py-1.5 text-sm transition-colors ${
-                    answers[idx] === option
+                    answers[qIdx] === option
                       ? "border-indigo-500 bg-indigo-600/20 text-indigo-300"
                       : "border-zinc-700 text-zinc-400 hover:border-zinc-500"
                   }`}
                   key={option}
-                  onClick={() => handleSelect(idx, option)}
+                  onClick={() => handleSelect(qIdx, option)}
                   type="button"
                 >
                   {option}

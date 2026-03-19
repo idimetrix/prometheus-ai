@@ -157,8 +157,8 @@ export default function PricingPage() {
               </div>
 
               <ul className="mt-6 space-y-2.5">
-                {tier.features.map((feature, i) => (
-                  <li className="flex items-start gap-2 text-sm" key={i}>
+                {tier.features.map((feature) => (
+                  <li className="flex items-start gap-2 text-sm" key={feature}>
                     <svg
                       aria-hidden="true"
                       className="mt-0.5 h-4 w-4 shrink-0 text-green-500"

@@ -174,8 +174,8 @@ function TerminalPanel() {
           </div>
         ) : (
           <div className="space-y-0.5">
-            {terminalLines.map((line, lineIdx) => (
-              <div className="flex gap-2" key={`term-${lineIdx}`}>
+            {Array.from(terminalLines.entries()).map(([lineNum, line]) => (
+              <div className="flex gap-2" key={`terminal-line-${lineNum}`}>
                 {line.timestamp && (
                   <span className="shrink-0 text-zinc-700">
                     {new Date(line.timestamp).toLocaleTimeString([], {
@@ -259,38 +259,40 @@ function CodePanel() {
           </div>
         ) : (
           <div className="space-y-3">
-            {diffs.map((diff, diffIdx) => (
+            {diffs.map((diff) => (
               <div
                 className="rounded-lg border border-zinc-800 bg-zinc-950"
-                key={`diff-${diffIdx}`}
+                key={diff.id}
               >
                 <div className="border-zinc-800 border-b px-3 py-1.5">
                   <span className="font-mono text-[10px] text-zinc-400">
-                    {String(diff.data?.filePath ?? `Change ${diffIdx + 1}`)}
+                    {String(diff.data?.filePath ?? `Change ${diff.id}`)}
                   </span>
                 </div>
                 <pre className="overflow-auto p-3 text-[11px] leading-relaxed">
-                  {String(diff.data?.diff ?? diff.data?.content ?? "")
-                    .split("\n")
-                    .map((line: string, lineIdx: number) => (
-                      <div
-                        className={(() => {
-                          if (line.startsWith("+")) {
-                            return "bg-green-500/10 text-green-400";
-                          }
-                          if (line.startsWith("-")) {
-                            return "bg-red-500/10 text-red-400";
-                          }
-                          if (line.startsWith("@@")) {
-                            return "text-violet-400";
-                          }
-                          return "text-zinc-500";
-                        })()}
-                        key={`dl-${lineIdx}`}
-                      >
-                        {line}
-                      </div>
-                    ))}
+                  {Array.from(
+                    String(diff.data?.diff ?? diff.data?.content ?? "")
+                      .split("\n")
+                      .entries()
+                  ).map(([lineNum, line]) => (
+                    <div
+                      className={(() => {
+                        if (line.startsWith("+")) {
+                          return "bg-green-500/10 text-green-400";
+                        }
+                        if (line.startsWith("-")) {
+                          return "bg-red-500/10 text-red-400";
+                        }
+                        if (line.startsWith("@@")) {
+                          return "text-violet-400";
+                        }
+                        return "text-zinc-500";
+                      })()}
+                      key={`diff-line-${lineNum}`}
+                    >
+                      {line}
+                    </div>
+                  ))}
                 </pre>
               </div>
             ))}

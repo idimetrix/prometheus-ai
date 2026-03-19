@@ -76,10 +76,13 @@ export interface IndexProgress {
 export class FileIndexer {
   private readonly progressMap = new Map<string, IndexProgress>();
 
-  constructor(
-    private readonly semantic: SemanticLayer,
-    private readonly knowledgeGraph: KnowledgeGraphLayer
-  ) {}
+  private readonly semantic: SemanticLayer;
+  private readonly knowledgeGraph: KnowledgeGraphLayer;
+
+  constructor(semantic: SemanticLayer, knowledgeGraph: KnowledgeGraphLayer) {
+    this.semantic = semantic;
+    this.knowledgeGraph = knowledgeGraph;
+  }
 
   /**
    * Get current indexing progress for a project.

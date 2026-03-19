@@ -80,10 +80,16 @@ export interface ConventionExtractionResult {
  * identify recurring patterns that constitute project conventions.
  */
 export class ConventionExtractor {
+  readonly _symbolStore: SymbolStore;
+  private readonly conversationalMemory: ConversationalMemoryLayer;
+
   constructor(
-    readonly _symbolStore: SymbolStore,
-    private readonly conversationalMemory: ConversationalMemoryLayer
-  ) {}
+    _symbolStore: SymbolStore,
+    conversationalMemory: ConversationalMemoryLayer
+  ) {
+    this._symbolStore = _symbolStore;
+    this.conversationalMemory = conversationalMemory;
+  }
 
   /**
    * Analyze a set of files and extract conventions.

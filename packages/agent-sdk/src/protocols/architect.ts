@@ -74,8 +74,10 @@ export interface Workstream {
 
 export class ArchitectProtocol {
   private readonly blueprint: Partial<Blueprint> = {};
+  private readonly projectId: string;
 
-  constructor(private readonly projectId: string) {
+  constructor(projectId: string) {
+    this.projectId = projectId;
     this.blueprint = {
       id: generateId("bp"),
       projectId,

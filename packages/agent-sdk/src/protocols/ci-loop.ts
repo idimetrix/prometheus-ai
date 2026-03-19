@@ -46,15 +46,19 @@ export interface CILoopResult {
 }
 
 export class CILoopProtocol {
+  private readonly sessionId: string;
+  private readonly publisher?: EventPublisher;
   private readonly maxIterations: number;
   private readonly fixHistory: FixAttempt[] = [];
   private currentIteration = 0;
 
   constructor(
-    private readonly sessionId: string,
-    private readonly publisher?: EventPublisher,
+    sessionId: string,
+    publisher?: EventPublisher,
     maxIterations = 20
   ) {
+    this.sessionId = sessionId;
+    this.publisher = publisher;
     this.maxIterations = maxIterations;
   }
 

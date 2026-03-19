@@ -113,10 +113,10 @@ export default function FeaturesPage() {
                 </div>
               </div>
               <div className="mt-6 ml-14 grid gap-2 md:grid-cols-2">
-                {section.details.map((detail, i) => (
+                {section.details.map((detail) => (
                   <div
                     className="flex items-start gap-2 rounded-lg border border-zinc-800 bg-zinc-900/30 px-4 py-3"
-                    key={i}
+                    key={detail}
                   >
                     <svg
                       aria-hidden="true"

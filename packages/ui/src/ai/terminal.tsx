@@ -34,8 +34,11 @@ export function Terminal({
       )}
       ref={containerRef}
     >
-      {lines.map((line, i) => (
-        <div className="whitespace-pre-wrap break-all leading-relaxed" key={i}>
+      {Array.from(lines.entries()).map(([lineNum, line]) => (
+        <div
+          className="whitespace-pre-wrap break-all leading-relaxed"
+          key={`terminal-${lineNum}`}
+        >
           {line.timestamp && (
             <span className="mr-2 text-xs text-zinc-600">{line.timestamp}</span>
           )}

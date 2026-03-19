@@ -81,7 +81,11 @@ class MetricsRegistry {
 }
 
 class Counter {
-  constructor(private readonly def: MetricDefinition) {}
+  private readonly def: MetricDefinition;
+
+  constructor(def: MetricDefinition) {
+    this.def = def;
+  }
 
   inc(labels: Record<string, string> = {}, value = 1): void {
     const existing = this.def.values.find(
@@ -96,7 +100,11 @@ class Counter {
 }
 
 class Gauge {
-  constructor(private readonly def: MetricDefinition) {}
+  private readonly def: MetricDefinition;
+
+  constructor(def: MetricDefinition) {
+    this.def = def;
+  }
 
   set(labels: Record<string, string>, value: number): void {
     const existing = this.def.values.find(
@@ -126,7 +134,11 @@ class Gauge {
 }
 
 class Histogram {
-  constructor(private readonly def: MetricDefinition) {}
+  private readonly def: MetricDefinition;
+
+  constructor(def: MetricDefinition) {
+    this.def = def;
+  }
 
   observe(labels: Record<string, string>, value: number): void {
     // Record sum and count

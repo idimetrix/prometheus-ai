@@ -17,10 +17,10 @@ export function Suggestion({
 
   return (
     <div className={cn("flex flex-wrap gap-2", className)}>
-      {suggestions.map((s, i) => (
+      {suggestions.map((s) => (
         <button
           className="rounded-full border px-3 py-1.5 text-xs transition-colors hover:bg-muted"
-          key={i}
+          key={s.value}
           onClick={() => onSelect(s.value)}
           type="button"
         >

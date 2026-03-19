@@ -233,12 +233,12 @@ export default function BrainPage({
               </div>
             ) : (
               <div className="space-y-4">
-                {chatMessages.map((msg, i) => (
+                {Array.from(chatMessages.entries()).map(([msgIdx, msg]) => (
                   <div
                     className={`flex ${
                       msg.role === "user" ? "justify-end" : "justify-start"
                     }`}
-                    key={i}
+                    key={`${msg.role}-${msgIdx}`}
                   >
                     <div
                       className={`max-w-[80%] rounded-xl px-4 py-2 text-sm ${
