@@ -10,7 +10,8 @@ import { DomainKnowledgeLayer } from "./layers/domain-knowledge";
 import { EpisodicLayer } from "./layers/episodic";
 import { KnowledgeGraphLayer } from "./layers/knowledge-graph";
 import { ProceduralLayer } from "./layers/procedural";
-import { SemanticLayer } from "./layers/semantic";
+import { Reranker } from "./layers/reranker";
+import { SemanticLayer, verifyEmbeddingService } from "./layers/semantic";
 import { SessionPersistence } from "./layers/session-persistence";
 import { WorkingMemoryLayer } from "./layers/working-memory";
 // Phase 9 imports
@@ -41,12 +42,14 @@ const conventionExtractor = new ConventionExtractor(
 );
 
 // Initialize higher-level services
+const reranker = new Reranker();
 const contextAssembler = new ContextAssembler(
   semantic,
   knowledgeGraph,
   episodic,
   procedural,
-  workingMemory
+  workingMemory,
+  reranker
 );
 const sessionResume = new SessionResume(
   contextAssembler,
@@ -642,6 +645,15 @@ app.onError((err, c) => {
 
 const port = Number(process.env.PROJECT_BRAIN_PORT ?? 4003);
 
-serve({ fetch: app.fetch, port }, () => {
+serve({ fetch: app.fetch, port }, async () => {
   logger.info(`Project Brain running on port ${port}`);
+
+  // Verify embedding service availability at startup
+  const embeddingAvailable = await verifyEmbeddingService();
+  if (!embeddingAvailable) {
+    logger.warn(
+      "Embedding service unavailable at startup — semantic search will be degraded. " +
+        "Pull the model with: ollama pull nomic-embed-text"
+    );
+  }
 });

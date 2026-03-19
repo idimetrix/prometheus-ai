@@ -16,6 +16,17 @@ export class TestEngineerAgent extends BaseAgent {
     super("test_engineer", tools);
   }
 
+  override getReasoningProtocol(): string {
+    return `${super.getReasoningProtocol()}
+
+### TESTING-SPECIFIC REASONING
+- Before writing tests, read the implementation code thoroughly
+- Check: Are edge cases covered (null, undefined, empty, boundary values)?
+- Verify: Are error paths tested, not just happy paths?
+- Ensure: Tests are independent and don't depend on execution order
+- Consider: Are integration tests needed in addition to unit tests?`;
+  }
+
   getPreferredModel(): string {
     return "groq/llama-3.3-70b-versatile";
   }

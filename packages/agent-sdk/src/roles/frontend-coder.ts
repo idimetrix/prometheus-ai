@@ -21,6 +21,17 @@ export class FrontendCoderAgent extends BaseAgent {
     super("frontend_coder", tools);
   }
 
+  override getReasoningProtocol(): string {
+    return `${super.getReasoningProtocol()}
+
+### FRONTEND-SPECIFIC REASONING
+- Before creating components, check for existing similar components to reuse
+- Verify: Are all user inputs properly sanitized and validated?
+- Check: Is the component accessible (ARIA labels, keyboard navigation)?
+- Ensure: Loading and error states are handled for async operations
+- Consider: Is this a Server Component or Client Component? Choose appropriately`;
+  }
+
   getPreferredModel(): string {
     return "ollama/qwen3-coder-next";
   }

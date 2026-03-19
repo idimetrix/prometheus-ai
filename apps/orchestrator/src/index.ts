@@ -326,6 +326,13 @@ export { SessionMemory } from "./continuity/session-memory";
 export { CreditTracker } from "./credit-tracker";
 // Phase 2: Decision logging
 export { DecisionLogger } from "./decision-logger";
+export {
+  createExecutionContext,
+  type ExecutionContext,
+  ExecutionEngine,
+  type ExecutionEvent,
+  type ExecutionOptions,
+} from "./engine";
 export { FleetManager } from "./fleet-manager";
 // Phase 7: Guardian
 export { BusinessLogicGuardian } from "./guardian/business-logic-guardian";

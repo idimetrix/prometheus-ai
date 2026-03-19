@@ -72,6 +72,27 @@ vi.mock("@prometheus/logger", () => ({
   }),
 }));
 
+// Mock global fetch so embedding generation doesn't require Ollama
+const fakeEmbedding = Array.from({ length: 768 }, () => Math.random());
+const originalFetch = globalThis.fetch;
+vi.stubGlobal(
+  "fetch",
+  vi.fn().mockImplementation((url: string, options?: RequestInit) => {
+    const urlStr = typeof url === "string" ? url : String(url);
+    if (urlStr.includes("/api/embeddings")) {
+      return Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({ embedding: fakeEmbedding }),
+      });
+    }
+    // Fallback to original fetch for other URLs
+    if (originalFetch) {
+      return originalFetch(url, options);
+    }
+    return Promise.reject(new Error(`Unmocked fetch: ${urlStr}`));
+  })
+);
+
 vi.mock("@prometheus/utils", () => ({
   generateId: (prefix?: string) => `${prefix ?? "id"}_test`,
 }));

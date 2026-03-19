@@ -1,7 +1,12 @@
 import { createLogger } from "@prometheus/logger";
 import { EventPublisher, QueueEvents } from "@prometheus/queue";
 import type { AgentLoop } from "../agent-loop";
-import { type FailureAnalysis, FailureAnalyzer } from "./failure-analyzer";
+import {
+  FAILURE_PRIORITY,
+  type FailureAnalysis,
+  FailureAnalyzer,
+} from "./failure-analyzer";
+import { FiveWhyDebugger } from "./five-why-debugger";
 
 const logger = createLogger("orchestrator:ci-loop");
 
@@ -124,7 +129,6 @@ Run the command and return the complete output.`,
         failureHistory.set(failure.testName, count);
 
         if (count >= 3) {
-          // This test has failed 3+ times, mark it as stuck
           if (!stuckFailures.has(failure.testName)) {
             stuckFailures.add(failure.testName);
             logger.warn(
@@ -133,8 +137,39 @@ Run the command and return the complete output.`,
                 attempts: count,
                 failureType: failure.failureType,
               },
-              "Stuck failure detected, escalating"
+              "Stuck failure detected, running root cause analysis"
             );
+
+            // Run Five-Why root cause analysis
+            try {
+              const fiveWhy = new FiveWhyDebugger();
+              const previousAttempts = Array.from(
+                { length: count },
+                (_, i) =>
+                  `Attempt ${i + 1}: Fixed ${failure.failureType} error in ${failure.affectedFiles.join(", ") || "unknown files"}`
+              );
+              const rootCause = await fiveWhy.analyze(
+                agentLoop,
+                failure,
+                previousAttempts
+              );
+
+              // If root cause analysis suggests a different fix approach,
+              // add the failure back as fixable with the new strategy
+              if (rootCause?.suggestedFix) {
+                fixableFailures.push({
+                  ...failure,
+                  suggestedFix: rootCause.suggestedFix,
+                  rootCause: rootCause.rootCause ?? failure.rootCause,
+                });
+              }
+            } catch (err) {
+              const msg = err instanceof Error ? err.message : String(err);
+              logger.warn(
+                { testName: failure.testName, error: msg },
+                "Five-Why analysis failed"
+              );
+            }
           }
           continue;
         }
@@ -154,35 +189,38 @@ Run the command and return the complete output.`,
         break;
       }
 
-      // Group fixable failures by agent role for batch fixing
-      const failuresByRole = this.groupByRole(fixableFailures);
+      // Split failures by priority tier: high-priority (1-2) vs low-priority (3+)
+      const highPriority = fixableFailures.filter(
+        (f) => (FAILURE_PRIORITY[f.failureType] ?? 99) <= 2
+      );
+      const lowPriority = fixableFailures.filter(
+        (f) => (FAILURE_PRIORITY[f.failureType] ?? 99) > 2
+      );
 
-      for (const [role, roleFailures] of Object.entries(failuresByRole)) {
-        // Build a combined fix prompt for all failures assigned to this role
-        const fixPrompt = this.buildFixPrompt(roleFailures);
-
-        logger.info(
-          {
-            role,
-            failureCount: roleFailures.length,
-            iteration: iterations,
-          },
-          "Dispatching fix agent"
+      // Fix high-priority errors first (syntax, type, import)
+      if (highPriority.length > 0) {
+        const resolved = await this.dispatchFixes(
+          agentLoop,
+          highPriority,
+          iterations
         );
+        autoResolved += resolved;
 
-        const fixResult = await agentLoop.executeTask(fixPrompt, role);
-
-        if (fixResult.success) {
-          autoResolved += roleFailures.length;
-        } else {
-          logger.warn(
-            {
-              role,
-              error: fixResult.error,
-            },
-            "Fix agent failed to resolve failures"
-          );
+        // Re-run tests before attempting low-priority fixes
+        // (high-priority fixes may resolve cascading lower-priority issues)
+        if (lowPriority.length > 0) {
+          continue;
         }
+      }
+
+      // Fix lower-priority errors
+      if (lowPriority.length > 0) {
+        const resolved = await this.dispatchFixes(
+          agentLoop,
+          lowPriority,
+          iterations
+        );
+        autoResolved += resolved;
       }
 
       lastFailures = failures;
@@ -216,6 +254,47 @@ Run the command and return the complete output.`,
       remainingFailures: lastFailures,
       stuckFailures: Array.from(stuckFailures),
     };
+  }
+
+  /**
+   * Dispatch fix agents grouped by role. Returns the count of resolved failures.
+   */
+  private async dispatchFixes(
+    agentLoop: AgentLoop,
+    failures: FailureAnalysis[],
+    iteration: number
+  ): Promise<number> {
+    let resolved = 0;
+    const failuresByRole = this.groupByRole(failures);
+
+    for (const [role, roleFailures] of Object.entries(failuresByRole)) {
+      const fixPrompt = this.buildFixPrompt(roleFailures);
+
+      logger.info(
+        {
+          role,
+          failureCount: roleFailures.length,
+          iteration,
+          priorities: roleFailures.map(
+            (f) => `${f.failureType}(${FAILURE_PRIORITY[f.failureType] ?? 99})`
+          ),
+        },
+        "Dispatching fix agent"
+      );
+
+      const fixResult = await agentLoop.executeTask(fixPrompt, role);
+
+      if (fixResult.success) {
+        resolved += roleFailures.length;
+      } else {
+        logger.warn(
+          { role, error: fixResult.error },
+          "Fix agent failed to resolve failures"
+        );
+      }
+    }
+
+    return resolved;
   }
 
   /**

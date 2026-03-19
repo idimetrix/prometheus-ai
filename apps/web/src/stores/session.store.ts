@@ -43,8 +43,15 @@ export interface ActiveAgent {
   tokensOut: number;
 }
 
+export interface CreditEntry {
+  credits: number;
+  timestamp: number;
+}
+
 interface SessionState {
+  activeFilePath: string | null;
   activeSessionId: string | null;
+  addCreditEntry: (credits: number) => void;
   addEvent: (event: SessionEvent) => void;
   addFileEntry: (entry: FileEntry) => void;
   addReasoning: (thought: string) => void;
@@ -52,14 +59,19 @@ interface SessionState {
   addTerminalOutput: (content: string) => void;
   agents: ActiveAgent[];
   clearSession: () => void;
+  closeFile: (path: string) => void;
+  creditHistory: CreditEntry[];
   events: SessionEvent[];
   fileTree: FileEntry[];
   isConnected: boolean;
   mode: SessionMode;
+  openFile: (path: string) => void;
+  openFiles: string[];
   planSteps: PlanStep[];
   queuePosition: number;
   reasoning: string[];
   removeAgent: (agentId: string) => void;
+  setActiveFile: (path: string) => void;
 
   setActiveSession: (id: string | null) => void;
   setAgents: (agents: ActiveAgent[]) => void;
@@ -88,6 +100,9 @@ export const useSessionStore = create<SessionState>((set) => ({
   queuePosition: 0,
   reasoning: [],
   agents: [],
+  openFiles: [],
+  activeFilePath: null,
+  creditHistory: [],
 
   setActiveSession: (id) => set({ activeSessionId: id }),
   setStatus: (status) => set({ status }),
@@ -143,6 +158,34 @@ export const useSessionStore = create<SessionState>((set) => ({
 
   updateFileTree: (files) => set({ fileTree: files }),
 
+  openFile: (path) =>
+    set((state) => ({
+      openFiles: state.openFiles.includes(path)
+        ? state.openFiles
+        : [...state.openFiles, path],
+      activeFilePath: path,
+    })),
+
+  closeFile: (path) =>
+    set((state) => {
+      const updated = state.openFiles.filter((f) => f !== path);
+      const newActive =
+        state.activeFilePath === path
+          ? (updated.at(-1) ?? null)
+          : state.activeFilePath;
+      return { openFiles: updated, activeFilePath: newActive };
+    }),
+
+  setActiveFile: (path) => set({ activeFilePath: path }),
+
+  addCreditEntry: (credits) =>
+    set((state) => ({
+      creditHistory: [
+        ...state.creditHistory,
+        { credits, timestamp: Date.now() },
+      ].slice(-100),
+    })),
+
   setAgents: (agents) => set({ agents }),
 
   updateAgent: (agentId, updates) =>
@@ -170,5 +213,8 @@ export const useSessionStore = create<SessionState>((set) => ({
       queuePosition: 0,
       reasoning: [],
       agents: [],
+      openFiles: [],
+      activeFilePath: null,
+      creditHistory: [],
     }),
 }));

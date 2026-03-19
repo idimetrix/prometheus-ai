@@ -19,6 +19,22 @@ export const codeEmbeddings = pgTable(
     chunkIndex: integer("chunk_index").notNull().default(0),
     content: text("content").notNull(),
     embedding: vector("embedding", { dimensions: 768 }),
+    embedding256: vector("embedding_256", { dimensions: 256 }),
+    symbolType: text("symbol_type", {
+      enum: [
+        "function",
+        "class",
+        "interface",
+        "type",
+        "variable",
+        "module",
+        "component",
+        "other",
+      ],
+    }),
+    symbolName: text("symbol_name"),
+    startLine: integer("start_line"),
+    endLine: integer("end_line"),
     updatedAt: timestamp("updated_at", { withTimezone: true })
       .notNull()
       .defaultNow(),
@@ -31,6 +47,15 @@ export const codeEmbeddings = pgTable(
     index("code_embeddings_embedding_idx").using(
       "hnsw",
       table.embedding.op("vector_cosine_ops")
+    ),
+    index("code_embeddings_embedding_256_idx").using(
+      "hnsw",
+      table.embedding256.op("vector_cosine_ops")
+    ),
+    index("code_embeddings_symbol_idx").on(
+      table.projectId,
+      table.symbolType,
+      table.symbolName
     ),
   ]
 );

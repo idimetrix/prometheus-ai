@@ -1,4 +1,5 @@
 export { createRedisConnection, redis } from "./connection";
+export { EventStream, type StreamEvent } from "./event-stream";
 export { QueueEvents } from "./events";
 export {
   getConcurrencyForTier,

@@ -3,10 +3,14 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 // ── Mocks ────────────────────────────────────────────────────────────────────
 
 const mockPublish = vi.fn().mockResolvedValue(1);
+const mockIncr = vi.fn().mockResolvedValue(1);
+const mockXadd = vi.fn().mockResolvedValue("1-0");
 
 vi.mock("../connection", () => ({
   createRedisConnection: () => ({
     publish: mockPublish,
+    incr: mockIncr,
+    xadd: mockXadd,
   }),
 }));
 
@@ -80,6 +84,7 @@ describe("EventPublisher", () => {
 
       const publishedData = JSON.parse(mockPublish.mock.calls[0]?.[1]);
       expect(publishedData.agentRole).toBeUndefined();
+      expect(publishedData.sequence).toBeDefined();
     });
   });
 
@@ -238,17 +243,24 @@ describe("EventPublisher", () => {
   // ── constructor ──────────────────────────────────────────────────────────
 
   describe("constructor", () => {
-    it("accepts custom redis instance", () => {
-      const customRedis = { publish: vi.fn().mockResolvedValue(1) } as any;
-      const customPublisher = new EventPublisher(customRedis);
+    it("accepts custom redis instance", async () => {
+      const customPublish = vi.fn().mockResolvedValue(1);
+      const customRedis = {
+        publish: customPublish,
+        incr: vi.fn().mockResolvedValue(1),
+        xadd: vi.fn().mockResolvedValue("1-0"),
+      };
+      const customPublisher = new EventPublisher(
+        customRedis as unknown as import("ioredis").default
+      );
 
-      customPublisher.publishSessionEvent("ses_1", {
+      await customPublisher.publishSessionEvent("ses_1", {
         type: "test",
         data: {},
         timestamp: new Date().toISOString(),
       });
 
-      expect(customRedis.publish).toHaveBeenCalled();
+      expect(customPublish).toHaveBeenCalled();
     });
   });
 });

@@ -21,6 +21,8 @@ export function useSSEStream(sessionId: string | null) {
   const heartbeatTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const eventBuffer = useRef<BufferedEvent[]>([]);
   const flushTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastEventId = useRef<string>("0");
+  const seenSequences = useRef<Set<number>>(new Set());
   const [isConnected, setIsConnected] = useState(false);
 
   const store = useSessionStore();
@@ -34,6 +36,25 @@ export function useSSEStream(sessionId: string | null) {
 
   const processEvent = useCallback(
     function processEvent(type: string, data: Record<string, unknown>) {
+      // Deduplicate by sequence number (Phase 12)
+      const seq = data.sequence as number | undefined;
+      if (seq !== undefined) {
+        if (seenSequences.current.has(seq)) {
+          return; // Already processed this event
+        }
+        seenSequences.current.add(seq);
+        // Keep set bounded
+        if (seenSequences.current.size > 2000) {
+          const arr = Array.from(seenSequences.current).sort((a, b) => a - b);
+          seenSequences.current = new Set(arr.slice(-1000));
+        }
+      }
+
+      // Track lastEventId for reconnection gap-fill
+      if (data.id) {
+        lastEventId.current = data.id as string;
+      }
+
       switch (type) {
         case "agent_output":
           store.addTerminalLine({
@@ -242,7 +263,12 @@ export function useSSEStream(sessionId: string | null) {
     }
 
     const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000";
-    const url = `${apiUrl}/api/sse/sessions/${sessionId}/stream`;
+    // Include lastEventId for gap-fill on reconnection
+    const lastId = lastEventId.current;
+    const url =
+      lastId === "0"
+        ? `${apiUrl}/api/sse/sessions/${sessionId}/stream`
+        : `${apiUrl}/api/sse/sessions/${sessionId}/stream?lastEventId=${lastId}`;
 
     const es = new EventSource(url);
     eventSourceRef.current = es;

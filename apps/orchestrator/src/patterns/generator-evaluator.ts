@@ -2,6 +2,7 @@ import type { AgentExecutionResult } from "@prometheus/agent-sdk";
 import { createLogger } from "@prometheus/logger";
 import { EventPublisher, QueueEvents } from "@prometheus/queue";
 import type { AgentLoop } from "../agent-loop";
+import { MixtureOfAgents } from "../moa/parallel-generator";
 
 const logger = createLogger("orchestrator:generator-evaluator");
 
@@ -13,14 +14,22 @@ export interface EvaluationResult {
 }
 
 export interface GeneratorEvaluatorConfig {
+  /** Agent role for evaluation. Default: "security_auditor" */
+  evaluatorRole?: string;
   /** Agent role for generation. Default: "backend_coder" */
   generatorRole?: string;
   /** Maximum generation rounds. Default: 3 */
   maxRounds?: number;
   /** Whether to publish events. Default: true */
   publishEvents?: boolean;
+  /** Run pnpm check (lint) as part of evaluation. Default: false */
+  runLint?: boolean;
+  /** Run pnpm typecheck as part of evaluation. Default: false */
+  runTypecheck?: boolean;
   /** Minimum score to accept (0-1). Default: 0.8 */
   threshold?: number;
+  /** Use Mixture-of-Agents for code generation. Default: false */
+  useMoA?: boolean;
 }
 
 const SCORE_RE = /(?:SCORE|score|Score):\s*([\d.]+)/;
@@ -44,7 +53,11 @@ export class GeneratorEvaluator {
       threshold: config.threshold ?? 0.8,
       maxRounds: config.maxRounds ?? 3,
       generatorRole: config.generatorRole ?? "backend_coder",
+      evaluatorRole: config.evaluatorRole ?? "security_auditor",
       publishEvents: config.publishEvents ?? true,
+      runTypecheck: config.runTypecheck ?? false,
+      runLint: config.runLint ?? false,
+      useMoA: config.useMoA ?? false,
     };
   }
 
@@ -93,10 +106,23 @@ export class GeneratorEvaluator {
       }
 
       // Generate
-      const result = await agentLoop.executeTask(
-        prompt,
-        this.config.generatorRole
-      );
+      let result: AgentExecutionResult;
+      if (this.config.useMoA && round === 1) {
+        // First round uses MoA for diverse generation
+        const moa = new MixtureOfAgents();
+        const moaResult = await moa.generate(prompt);
+        result = {
+          success: moaResult.synthesized.length > 0,
+          output: moaResult.synthesized,
+          filesChanged: [],
+          tokensUsed: { input: 0, output: 0 },
+          toolCalls: 0,
+          steps: 0,
+          creditsConsumed: moaResult.responses.length,
+        };
+      } else {
+        result = await agentLoop.executeTask(prompt, this.config.generatorRole);
+      }
       lastResult = result;
 
       if (!result.success) {
@@ -201,10 +227,78 @@ ISSUES:
 
     const evalResult = await agentLoop.executeTask(
       evalPrompt,
-      "security_auditor"
+      this.config.evaluatorRole
     );
 
-    return this.parseEvaluation(evalResult.output);
+    const llmEvaluation = this.parseEvaluation(evalResult.output);
+
+    // Run static checks if configured
+    const staticChecks = await this.runStaticChecks(agentLoop);
+
+    // Compute composite score with weighted components
+    const typecheckEnabled = this.config.runTypecheck;
+    const lintEnabled = this.config.runLint;
+
+    if (!(typecheckEnabled || lintEnabled)) {
+      // LLM score is 100% weight (current behavior)
+      return llmEvaluation;
+    }
+
+    const enabledChecks = (typecheckEnabled ? 1 : 0) + (lintEnabled ? 1 : 0);
+    const staticWeight = enabledChecks * 0.3;
+    const llmWeight = 1.0 - staticWeight;
+
+    let compositeScore = llmEvaluation.score * llmWeight;
+    if (typecheckEnabled) {
+      compositeScore += (staticChecks.typecheckPassed ? 1.0 : 0.0) * 0.3;
+      if (!staticChecks.typecheckPassed) {
+        llmEvaluation.issues.push("TypeScript typecheck failed");
+      }
+    }
+    if (lintEnabled) {
+      compositeScore += (staticChecks.lintPassed ? 1.0 : 0.0) * 0.3;
+      if (!staticChecks.lintPassed) {
+        llmEvaluation.issues.push("Lint check failed");
+      }
+    }
+
+    return {
+      score: compositeScore,
+      feedback: llmEvaluation.feedback,
+      issues: llmEvaluation.issues,
+      passesThreshold: compositeScore >= this.config.threshold,
+    };
+  }
+
+  private async runStaticChecks(
+    agentLoop: AgentLoop
+  ): Promise<{ typecheckPassed: boolean; lintPassed: boolean }> {
+    let typecheckPassed = true;
+    let lintPassed = true;
+
+    if (this.config.runTypecheck) {
+      logger.info("Running typecheck as part of evaluation");
+      const typecheckResult = await agentLoop.executeTask(
+        "Run `pnpm typecheck` and report the output. Do not fix any errors, just report them.",
+        "ci_loop"
+      );
+      typecheckPassed =
+        typecheckResult.success &&
+        !typecheckResult.output.toLowerCase().includes("error");
+    }
+
+    if (this.config.runLint) {
+      logger.info("Running lint check as part of evaluation");
+      const lintResult = await agentLoop.executeTask(
+        "Run `pnpm check` and report the output. Do not fix any errors, just report them.",
+        "ci_loop"
+      );
+      lintPassed =
+        lintResult.success &&
+        !lintResult.output.toLowerCase().includes("error");
+    }
+
+    return { typecheckPassed, lintPassed };
   }
 
   private parseEvaluation(output: string): EvaluationResult {

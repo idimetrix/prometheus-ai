@@ -77,7 +77,7 @@ pnpm dev              # Start development
 
 ### Core Principles
 
-- **Type Safety:** Use explicit types, avoid `any` (warn-level). Prefer `unknown` + type guards over `any`. Always type function parameters and return values for public APIs.
+- **Type Safety:** Use explicit types, avoid `any` (error-level). Prefer `unknown` + type guards over `any`. Always type function parameters and return values for public APIs.
 - **Async/Await:** Always use async/await over raw promises. Handle errors with try/catch, never swallow errors silently.
 - **React/JSX:** Use functional components with hooks. Prefer named exports. Use `React.FC` sparingly — prefer explicit prop types.
 - **Error Handling:** Throw typed errors (`TRPCError`, custom error classes). Log with `@prometheus/logger`. Never expose internal errors to clients in production.

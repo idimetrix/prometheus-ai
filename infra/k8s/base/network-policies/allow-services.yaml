@@ -1,0 +1,292 @@
+## Allow DNS resolution for all pods in the namespace
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-dns
+  namespace: prometheus
+  labels:
+    app.kubernetes.io/part-of: prometheus
+spec:
+  podSelector: {}
+  policyTypes:
+    - Egress
+  egress:
+    - ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+---
+## Web -> API
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-web-to-api
+  namespace: prometheus
+  labels:
+    app.kubernetes.io/part-of: prometheus
+spec:
+  podSelector:
+    matchLabels:
+      app: api
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: web
+      ports:
+        - protocol: TCP
+          port: 4000
+---
+## API -> Orchestrator
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-api-to-orchestrator
+  namespace: prometheus
+  labels:
+    app.kubernetes.io/part-of: prometheus
+spec:
+  podSelector:
+    matchLabels:
+      app: orchestrator
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: api
+      ports:
+        - protocol: TCP
+          port: 4002
+---
+## Orchestrator -> Model Router
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-orchestrator-to-model-router
+  namespace: prometheus
+  labels:
+    app.kubernetes.io/part-of: prometheus
+spec:
+  podSelector:
+    matchLabels:
+      app: model-router
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: orchestrator
+      ports:
+        - protocol: TCP
+          port: 4004
+---
+## Orchestrator -> Sandbox Manager
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-orchestrator-to-sandbox-manager
+  namespace: prometheus
+  labels:
+    app.kubernetes.io/part-of: prometheus
+spec:
+  podSelector:
+    matchLabels:
+      app: sandbox-manager
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: orchestrator
+      ports:
+        - protocol: TCP
+          port: 4006
+---
+## Orchestrator -> Project Brain
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-orchestrator-to-project-brain
+  namespace: prometheus
+  labels:
+    app.kubernetes.io/part-of: prometheus
+spec:
+  podSelector:
+    matchLabels:
+      app: project-brain
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: orchestrator
+      ports:
+        - protocol: TCP
+          port: 4003
+---
+## API -> Socket Server
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-api-to-socket-server
+  namespace: prometheus
+  labels:
+    app.kubernetes.io/part-of: prometheus
+spec:
+  podSelector:
+    matchLabels:
+      app: socket-server
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: api
+        - podSelector:
+            matchLabels:
+              app: web
+      ports:
+        - protocol: TCP
+          port: 4001
+---
+## All services -> PostgreSQL (via pgbouncer)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-services-to-pgbouncer
+  namespace: prometheus
+  labels:
+    app.kubernetes.io/part-of: prometheus
+spec:
+  podSelector:
+    matchLabels:
+      app: pgbouncer
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: api
+        - podSelector:
+            matchLabels:
+              app: orchestrator
+        - podSelector:
+            matchLabels:
+              app: queue-worker
+        - podSelector:
+            matchLabels:
+              app: project-brain
+      ports:
+        - protocol: TCP
+          port: 6432
+---
+## pgbouncer -> PostgreSQL
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-pgbouncer-to-postgres
+  namespace: prometheus
+  labels:
+    app.kubernetes.io/part-of: prometheus
+spec:
+  podSelector:
+    matchLabels:
+      app: pgbouncer
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app: postgres
+      ports:
+        - protocol: TCP
+          port: 5432
+---
+## All services -> Redis
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-services-to-redis
+  namespace: prometheus
+  labels:
+    app.kubernetes.io/part-of: prometheus
+spec:
+  podSelector:
+    matchLabels:
+      app: redis
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: api
+        - podSelector:
+            matchLabels:
+              app: orchestrator
+        - podSelector:
+            matchLabels:
+              app: queue-worker
+        - podSelector:
+            matchLabels:
+              app: socket-server
+      ports:
+        - protocol: TCP
+          port: 6379
+---
+## Orchestrator -> MCP Gateway
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-orchestrator-to-mcp-gateway
+  namespace: prometheus
+  labels:
+    app.kubernetes.io/part-of: prometheus
+spec:
+  podSelector:
+    matchLabels:
+      app: mcp-gateway
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: orchestrator
+      ports:
+        - protocol: TCP
+          port: 4005
+---
+## Traefik ingress -> Web and API
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-ingress-to-web-api
+  namespace: prometheus
+  labels:
+    app.kubernetes.io/part-of: prometheus
+spec:
+  podSelector:
+    matchLabels:
+      app: web
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: traefik
+      ports:
+        - protocol: TCP
+          port: 3000

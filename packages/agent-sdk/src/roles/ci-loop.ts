@@ -14,6 +14,17 @@ export class CiLoopAgent extends BaseAgent {
     super("ci_loop", tools);
   }
 
+  override getReasoningProtocol(): string {
+    return `${super.getReasoningProtocol()}
+
+### CI-LOOP-SPECIFIC REASONING
+- Read the full error output before attempting a fix
+- Identify: Is this a type error, runtime error, logic error, or missing dependency?
+- Check: Has this same failure occurred before? If so, try a different approach
+- Verify: Fix the root cause, not just the symptom
+- After fixing: Verify the fix doesn't break other tests`;
+  }
+
   getPreferredModel(): string {
     return "cerebras/qwen3-235b";
   }

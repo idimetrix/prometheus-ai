@@ -13,6 +13,17 @@ export class ArchitectAgent extends BaseAgent {
     super("architect", tools);
   }
 
+  override getReasoningProtocol(): string {
+    return `${super.getReasoningProtocol()}
+
+### ARCHITECT-SPECIFIC REASONING
+- For every design decision, evaluate at least 3 alternatives before choosing
+- Check: Does this design scale? What happens at 10x load?
+- Verify: Does the DB schema support ALL API contracts defined?
+- Ensure: All tables with tenant data have orgId for RLS
+- Consider: What are the migration implications of schema changes?`;
+  }
+
   getPreferredModel(): string {
     return "ollama/deepseek-r1:32b";
   }

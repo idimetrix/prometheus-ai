@@ -69,116 +69,116 @@ describe("TaskRouter", () => {
   // ── routeTask (rule-based routing) ─────────────────────────────────────
 
   describe("routeTask", () => {
-    it("routes requirements gathering to discovery", () => {
-      const result = router.routeTask(
+    it("routes requirements gathering to discovery", async () => {
+      const result = await router.routeTask(
         "Gather requirements for the user authentication feature"
       );
       expect(result.agentRole).toBe("discovery");
       expect(result.confidence).toBe(0.9);
     });
 
-    it("routes user stories to discovery", () => {
-      const result = router.routeTask(
+    it("routes user stories to discovery", async () => {
+      const result = await router.routeTask(
         "Write user stories for the checkout flow"
       );
       expect(result.agentRole).toBe("discovery");
     });
 
-    it("routes architecture design to architect", () => {
-      const result = router.routeTask(
+    it("routes architecture design to architect", async () => {
+      const result = await router.routeTask(
         "Design the system architecture and create a blueprint"
       );
       expect(result.agentRole).toBe("architect");
       expect(result.confidence).toBe(0.9);
     });
 
-    it("routes schema design to architect", () => {
-      const result = router.routeTask(
+    it("routes schema design to architect", async () => {
+      const result = await router.routeTask(
         "Define the data model and schema for the app"
       );
       expect(result.agentRole).toBe("architect");
     });
 
-    it("routes sprint planning to planner", () => {
-      const result = router.routeTask(
+    it("routes sprint planning to planner", async () => {
+      const result = await router.routeTask(
         "Create a sprint plan for the next milestone"
       );
       expect(result.agentRole).toBe("planner");
       expect(result.confidence).toBe(0.85);
     });
 
-    it("routes frontend work to frontend_coder", () => {
-      const result = router.routeTask(
+    it("routes frontend work to frontend_coder", async () => {
+      const result = await router.routeTask(
         "Build a React component for the user dashboard"
       );
       expect(result.agentRole).toBe("frontend_coder");
     });
 
-    it("routes UI/page work to frontend_coder", () => {
-      const result = router.routeTask(
+    it("routes UI/page work to frontend_coder", async () => {
+      const result = await router.routeTask(
         "Create the settings page with Tailwind CSS layout"
       );
       expect(result.agentRole).toBe("frontend_coder");
     });
 
-    it("routes API work to backend_coder", () => {
-      const result = router.routeTask(
+    it("routes API work to backend_coder", async () => {
+      const result = await router.routeTask(
         "Implement the REST API endpoint for user profiles"
       );
       expect(result.agentRole).toBe("backend_coder");
     });
 
-    it("routes database work to backend_coder", () => {
-      const result = router.routeTask(
+    it("routes database work to backend_coder", async () => {
+      const result = await router.routeTask(
         "Create a database migration for the new table"
       );
       expect(result.agentRole).toBe("backend_coder");
     });
 
-    it("routes test writing to test_engineer", () => {
-      const result = router.routeTask(
+    it("routes test writing to test_engineer", async () => {
+      const result = await router.routeTask(
         "Write unit tests and integration tests for the auth module"
       );
       expect(result.agentRole).toBe("test_engineer");
       expect(result.confidence).toBe(0.9);
     });
 
-    it("routes security audit to security_auditor", () => {
-      const result = router.routeTask(
+    it("routes security audit to security_auditor", async () => {
+      const result = await router.routeTask(
         "Perform a security audit and check for vulnerabilities"
       );
       expect(result.agentRole).toBe("security_auditor");
     });
 
-    it("routes deployment to deploy_engineer", () => {
-      const result = router.routeTask(
+    it("routes deployment to deploy_engineer", async () => {
+      const result = await router.routeTask(
         "Set up Docker containers and Kubernetes deployment"
       );
       expect(result.agentRole).toBe("deploy_engineer");
     });
 
-    it("routes CI/CD to deploy_engineer", () => {
-      const result = router.routeTask(
+    it("routes CI/CD to deploy_engineer", async () => {
+      const result = await router.routeTask(
         "Configure the GitHub Actions CI/CD pipeline"
       );
       expect(result.agentRole).toBe("deploy_engineer");
     });
 
-    it("routes integration work to integration_coder", () => {
-      const result = router.routeTask(
+    it("routes integration work to integration_coder", async () => {
+      const result = await router.routeTask(
         "Wire up the data layer to connect with external services"
       );
       expect(result.agentRole).toBe("integration_coder");
     });
 
-    it("defaults to orchestrator for ambiguous tasks", () => {
-      const result = router.routeTask("Make the thing better");
+    it("defaults to orchestrator for ambiguous tasks", async () => {
+      const result = await router.routeTask("Make the thing better");
       expect(result.agentRole).toBe("orchestrator");
       expect(result.confidence).toBe(0.5);
     });
 
-    it("is case-insensitive", () => {
-      const result = router.routeTask("WRITE UNIT TESTS FOR THE MODULE");
+    it("is case-insensitive", async () => {
+      const result = await router.routeTask("WRITE UNIT TESTS FOR THE MODULE");
       expect(result.agentRole).toBe("test_engineer");
     });
   });

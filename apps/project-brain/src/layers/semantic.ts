@@ -3,15 +3,9 @@ import { codeEmbeddings, db, fileIndexes } from "@prometheus/db";
 import { createLogger } from "@prometheus/logger";
 import { generateId } from "@prometheus/utils";
 import { and, eq, ilike, sql } from "drizzle-orm";
+import { chunkBySemantic } from "../indexing/semantic-chunker";
 
 const logger = createLogger("project-brain:semantic");
-
-const MAX_CHUNK_CHARS = 2000; // ~500 tokens
-const CHUNK_OVERLAP_CHARS = 200; // ~50 tokens overlap between chunks
-
-const TOP_LEVEL_DECL_RE =
-  /^(?:export\s+)?(?:default\s+)?(?:async\s+)?(?:function|class|interface|type|const|let|var|enum)\s+/;
-const DOUBLE_NEWLINE_RE = /\n\n+/;
 
 export interface SearchResult {
   chunkIndex: number;
@@ -22,58 +16,100 @@ export interface SearchResult {
 
 const OLLAMA_URL = process.env.OLLAMA_BASE_URL ?? "http://localhost:11434";
 const EMBEDDING_MODEL = process.env.EMBEDDING_MODEL ?? "nomic-embed-text";
-const EMBEDDING_DIMENSIONS = 768;
+const _EMBEDDING_DIMENSIONS = 768;
+
+/** Whether the embedding service has been verified as available */
+let _embeddingServiceVerified = false;
 
 /**
- * Generate an embedding vector for the given text.
- * Tries Ollama nomic-embed-text first, falls back to deterministic hash.
+ * Verify that the embedding service (Ollama with nomic-embed-text) is available.
+ * Should be called at startup. Logs a warning if unavailable but does not throw,
+ * allowing the service to start in degraded mode.
  */
-async function generateEmbedding(text: string): Promise<number[]> {
+export async function verifyEmbeddingService(): Promise<boolean> {
   try {
     const response = await fetch(`${OLLAMA_URL}/api/embeddings`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ model: EMBEDDING_MODEL, prompt: text }),
-      signal: AbortSignal.timeout(30_000),
+      body: JSON.stringify({ model: EMBEDDING_MODEL, prompt: "health check" }),
+      signal: AbortSignal.timeout(15_000),
     });
 
     if (response.ok) {
       const data = (await response.json()) as { embedding: number[] };
       if (data.embedding?.length > 0) {
-        return data.embedding;
+        _embeddingServiceVerified = true;
+        logger.info(
+          { model: EMBEDDING_MODEL, dimensions: data.embedding.length },
+          "Embedding service verified"
+        );
+        return true;
       }
     }
-  } catch {
-    // Ollama not available, fall back to hash embedding
-  }
 
-  return hashEmbedding(text);
+    logger.warn(
+      { status: response.status },
+      "Embedding service returned unexpected response — semantic search will be unavailable"
+    );
+    return false;
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    logger.warn(
+      { error: msg, url: OLLAMA_URL, model: EMBEDDING_MODEL },
+      "Embedding service unavailable — semantic search will be degraded. Ensure Ollama is running with the nomic-embed-text model"
+    );
+    return false;
+  }
 }
 
-/** Deterministic fallback embedding using SHA-256 hashing */
-function hashEmbedding(
-  text: string,
-  dimensions: number = EMBEDDING_DIMENSIONS
-): number[] {
-  const embedding: number[] = new Array(dimensions);
-  let seed = text;
-  let offset = 0;
-  while (offset < dimensions) {
-    const hash = crypto.createHash("sha256").update(seed).digest();
-    for (let i = 0; i < hash.length && offset < dimensions; i += 4) {
-      const val = hash.readInt32BE(i) / 2_147_483_647;
-      embedding[offset] = val;
-      offset++;
+/**
+ * Generate an embedding vector for the given text using Ollama.
+ * Throws an error if the embedding service is unavailable — callers
+ * must handle this gracefully instead of silently producing meaningless vectors.
+ */
+async function generateEmbedding(text: string): Promise<number[]> {
+  const MAX_RETRIES = 2;
+  let lastError: string | undefined;
+
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    try {
+      const response = await fetch(`${OLLAMA_URL}/api/embeddings`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ model: EMBEDDING_MODEL, prompt: text }),
+        signal: AbortSignal.timeout(30_000),
+      });
+
+      if (response.ok) {
+        const data = (await response.json()) as { embedding: number[] };
+        if (data.embedding?.length > 0) {
+          _embeddingServiceVerified = true;
+          return data.embedding;
+        }
+        lastError = "Embedding service returned empty embedding vector";
+      } else {
+        lastError = `Embedding service returned HTTP ${response.status}`;
+      }
+    } catch (err) {
+      lastError = err instanceof Error ? err.message : String(err);
     }
-    seed = hash.toString("hex");
-  }
-  const norm = Math.sqrt(embedding.reduce((sum, v) => sum + v * v, 0));
-  if (norm > 0) {
-    for (let i = 0; i < dimensions; i++) {
-      embedding[i] = (embedding[i] as number) / norm;
+
+    // Exponential backoff before retry
+    if (attempt < MAX_RETRIES) {
+      const delayMs = 1000 * 2 ** attempt;
+      logger.debug(
+        { attempt: attempt + 1, delayMs },
+        "Retrying embedding generation"
+      );
+      await new Promise((r) => setTimeout(r, delayMs));
     }
   }
-  return embedding;
+
+  _embeddingServiceVerified = false;
+  throw new Error(
+    `Embedding generation failed after ${MAX_RETRIES + 1} attempts: ${lastError}. ` +
+      `Ensure Ollama is running at ${OLLAMA_URL} with model '${EMBEDDING_MODEL}' pulled.`
+  );
 }
 
 export class SemanticLayer {
@@ -115,7 +151,17 @@ export class SemanticLayer {
     // Insert new chunks with embeddings
     for (let i = 0; i < chunks.length; i++) {
       const chunk = chunks[i] as string;
-      const embedding = await generateEmbedding(chunk);
+      let embedding: number[];
+      try {
+        embedding = await generateEmbedding(chunk);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        logger.error(
+          { projectId, filePath, chunkIndex: i, error: msg },
+          "Failed to generate embedding — skipping chunk. Fix embedding service to enable semantic search."
+        );
+        continue;
+      }
 
       await db.insert(codeEmbeddings).values({
         id: generateId("emb"),
@@ -322,154 +368,29 @@ export class SemanticLayer {
     logger.info({ projectId, filePath }, "File removed from index");
   }
 
+  /**
+   * Chunk file content using the semantic chunker (SymbolTable-based for
+   * TS/JS/Python/Go/Rust/Java) with fallback to line-based chunking.
+   * Returns plain string chunks for embedding, with symbol metadata available
+   * via chunkContentStructured().
+   */
   chunkContent(content: string, filePath: string): string[] {
-    const ext = filePath.split(".").pop() ?? "";
-    const isCode = [
-      "ts",
-      "tsx",
-      "js",
-      "jsx",
-      "py",
-      "go",
-      "rs",
-      "rb",
-      "java",
-      "c",
-      "cpp",
-      "h",
-    ].includes(ext);
-
-    if (isCode) {
-      return this.chunkByDeclarations(content);
-    }
-    return this.chunkByParagraph(content);
+    const structured = chunkBySemantic(filePath, content);
+    // Prepend import context to each chunk for embedding quality
+    return structured.map((chunk) => {
+      if (chunk.importContext) {
+        return `${chunk.importContext}\n\n${chunk.content}`;
+      }
+      return chunk.content;
+    });
   }
 
   /**
-   * Split code by top-level declarations (functions, classes, exports).
-   * Each chunk is at most MAX_CHUNK_CHARS characters.
+   * Chunk with full structured metadata (symbol type, name, line numbers).
+   * Used by the indexing pipeline for storing rich metadata in code_embeddings.
    */
-  private chunkByDeclarations(content: string): string[] {
-    const lines = content.split("\n");
-    const chunks: string[] = [];
-    let currentChunk: string[] = [];
-    let braceDepth = 0;
-    let inTopLevelDecl = false;
-
-    for (const line of lines) {
-      const trimmed = line.trimStart();
-
-      // Check if this line starts a new top-level declaration at depth 0
-      if (
-        braceDepth === 0 &&
-        TOP_LEVEL_DECL_RE.test(trimmed) &&
-        currentChunk.length > 0
-      ) {
-        // Flush current chunk if it has substance
-        const chunkText = currentChunk.join("\n").trim();
-        if (chunkText.length > 0) {
-          chunks.push(...this.splitLargeChunk(chunkText));
-        }
-        currentChunk = [];
-        inTopLevelDecl = true;
-      }
-
-      currentChunk.push(line);
-
-      // Track brace depth
-      for (const ch of line) {
-        if (ch === "{") {
-          braceDepth++;
-        }
-        if (ch === "}") {
-          braceDepth = Math.max(0, braceDepth - 1);
-        }
-      }
-
-      // If we were in a top-level declaration and braces are balanced, consider the chunk complete
-      if (inTopLevelDecl && braceDepth === 0 && currentChunk.length > 2) {
-        const chunkText = currentChunk.join("\n").trim();
-        if (chunkText.length > 0) {
-          chunks.push(...this.splitLargeChunk(chunkText));
-        }
-        currentChunk = [];
-        inTopLevelDecl = false;
-      }
-    }
-
-    // Flush remaining
-    if (currentChunk.length > 0) {
-      const chunkText = currentChunk.join("\n").trim();
-      if (chunkText.length > 0) {
-        chunks.push(...this.splitLargeChunk(chunkText));
-      }
-    }
-
-    return chunks.length > 0 ? chunks : [content];
-  }
-
-  /** Split a chunk that exceeds MAX_CHUNK_CHARS into smaller pieces by line boundaries with overlap */
-  private splitLargeChunk(text: string): string[] {
-    if (text.length <= MAX_CHUNK_CHARS) {
-      return [text];
-    }
-
-    const lines = text.split("\n");
-    const results: string[] = [];
-    let current: string[] = [];
-    let currentLen = 0;
-
-    for (const line of lines) {
-      if (
-        currentLen + line.length + 1 > MAX_CHUNK_CHARS &&
-        current.length > 0
-      ) {
-        results.push(current.join("\n"));
-        // Keep trailing lines as overlap for the next chunk
-        const overlapLines: string[] = [];
-        let overlapLen = 0;
-        for (let i = current.length - 1; i >= 0; i--) {
-          overlapLen += (current[i]?.length ?? 0) + 1;
-          if (overlapLen > CHUNK_OVERLAP_CHARS) {
-            break;
-          }
-          overlapLines.unshift(current[i] as string);
-        }
-        current = overlapLines;
-        currentLen = overlapLines.reduce((sum, l) => sum + l.length + 1, 0);
-      }
-      current.push(line);
-      currentLen += line.length + 1;
-    }
-
-    if (current.length > 0) {
-      results.push(current.join("\n"));
-    }
-
-    return results;
-  }
-
-  private chunkByParagraph(content: string): string[] {
-    const paragraphs = content.split(DOUBLE_NEWLINE_RE);
-    const chunks: string[] = [];
-    let current = "";
-
-    for (const para of paragraphs) {
-      if (
-        current.length + para.length > MAX_CHUNK_CHARS &&
-        current.length > 0
-      ) {
-        chunks.push(current.trim());
-        current = "";
-      }
-      current += `${para}\n\n`;
-    }
-
-    if (current.trim()) {
-      chunks.push(current.trim());
-    }
-
-    return chunks.length > 0 ? chunks : [content];
+  chunkContentStructured(content: string, filePath: string) {
+    return chunkBySemantic(filePath, content);
   }
 
   /** Get count of indexed files for a project (for progress tracking) */

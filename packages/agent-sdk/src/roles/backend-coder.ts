@@ -20,6 +20,18 @@ export class BackendCoderAgent extends BaseAgent {
     super("backend_coder", tools);
   }
 
+  override getReasoningProtocol(): string {
+    return `${super.getReasoningProtocol()}
+
+### BACKEND-SPECIFIC REASONING
+- Before writing code, ALWAYS read the existing file and related files first
+- Check: Is orgId scoping (RLS) applied on every tenant-scoped query?
+- Verify: Are all inputs validated with Zod schemas?
+- Ensure: Error handling uses TRPCError with appropriate codes
+- Consider: Does this need a database transaction for atomicity?
+- After writing: Run pnpm typecheck to verify type safety`;
+  }
+
   getPreferredModel(): string {
     return "ollama/qwen3-coder-next";
   }

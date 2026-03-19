@@ -6,6 +6,8 @@ import {
 } from "@prometheus/ai";
 import { createLogger } from "@prometheus/logger";
 import { generateId } from "@prometheus/utils";
+import { ResponseCache } from "./cache";
+import { ModelScorer } from "./model-scorer";
 import type { RateLimitManager } from "./rate-limiter";
 
 /**
@@ -59,6 +61,11 @@ const SLOT_CONFIGS: Record<string, SlotConfig> = {
     primary: "anthropic/claude-opus-4-6",
     fallbacks: ["anthropic/claude-sonnet-4-6", "ollama/deepseek-r1:32b"],
     description: "Premium tier for complex tasks",
+  },
+  speculate: {
+    primary: "cerebras/qwen3-235b",
+    fallbacks: ["groq/llama-3.3-70b-versatile"],
+    description: "Fastest available model for speculative tool pre-execution",
   },
 };
 
@@ -201,7 +208,9 @@ function getActiveProviders(): Set<ModelProvider> {
 
 export class ModelRouterService {
   private readonly logger = createLogger("model-router:service");
+  private readonly cache: ResponseCache;
   private readonly rateLimiter: RateLimitManager;
+  private readonly scorer: ModelScorer;
   /** Cache provider health status with TTL to avoid hammering providers */
   private readonly providerHealthCache = new Map<
     string,
@@ -211,6 +220,8 @@ export class ModelRouterService {
 
   constructor(rateLimiter: RateLimitManager) {
     this.rateLimiter = rateLimiter;
+    this.cache = new ResponseCache();
+    this.scorer = new ModelScorer();
   }
 
   /**
@@ -225,11 +236,29 @@ export class ModelRouterService {
       );
     }
 
+    // Check cache for non-streaming requests
+    const cachedResponse = this.cache.get(
+      request.slot,
+      request.messages as Array<{ role: string; content: string }>,
+      request.options?.tools as unknown[] | undefined
+    );
+    if (cachedResponse) {
+      this.logger.info({ slot: request.slot }, "Returning cached response");
+      return cachedResponse as RouteResponse;
+    }
+
     // If a specific model is explicitly requested and it exists, use it directly
     const overrideModel = request.options?.model;
     if (overrideModel && MODEL_REGISTRY[overrideModel]) {
       const result = await this.tryModel(overrideModel, request, 1);
       if (result) {
+        // Cache the successful response
+        this.cache.set(
+          request.slot,
+          request.messages as Array<{ role: string; content: string }>,
+          request.options?.tools as unknown[] | undefined,
+          result
+        );
         return result;
       }
       // Fall through to slot-based routing if override fails
@@ -237,6 +266,24 @@ export class ModelRouterService {
 
     // Build the candidate chain: primary + fallbacks
     const candidates = [slotConfig.primary, ...slotConfig.fallbacks];
+
+    // Adaptive model reordering based on historical performance
+    const ranked = this.scorer.getRankedModels(request.slot);
+    if (ranked.length >= 2) {
+      // Reorder candidates based on scoring data
+      const rankedKeys = new Set(ranked.map((r) => r.modelKey));
+      const reordered = [
+        ...ranked.map((r) => r.modelKey).filter((k) => candidates.includes(k)),
+        ...candidates.filter((k) => !rankedKeys.has(k)),
+      ];
+      candidates.length = 0;
+      candidates.push(...reordered);
+      this.logger.debug(
+        { slot: request.slot, reordered: candidates },
+        "Adaptive model reordering"
+      );
+    }
+
     let attempts = 0;
 
     for (const modelKey of candidates) {
@@ -261,9 +308,34 @@ export class ModelRouterService {
       }
 
       const result = await this.tryModel(modelKey, request, attempts);
-      if (result) {
-        return result;
+      if (!result) {
+        this.scorer.recordOutcome({
+          modelKey,
+          slotName: request.slot,
+          success: false,
+          latencyMs: 0,
+          costUsd: 0,
+        });
+        continue;
       }
+
+      // Record success for adaptive scoring
+      this.scorer.recordOutcome({
+        modelKey: result.model,
+        slotName: request.slot,
+        success: true,
+        latencyMs: 0, // Could track timing
+        costUsd: result.usage.cost_usd,
+      });
+
+      // Cache the successful response
+      this.cache.set(
+        request.slot,
+        request.messages as Array<{ role: string; content: string }>,
+        request.options?.tools as unknown[] | undefined,
+        result
+      );
+      return result;
     }
 
     throw new Error(

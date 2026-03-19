@@ -1,7 +1,7 @@
 import { getAuthContext } from "@prometheus/auth";
 import { db, projects, sessions } from "@prometheus/db";
 import { createLogger } from "@prometheus/logger";
-import { createRedisConnection } from "@prometheus/queue";
+import { createRedisConnection, EventStream } from "@prometheus/queue";
 import { eq } from "drizzle-orm";
 import { Hono } from "hono";
 
@@ -92,6 +92,7 @@ sseApp.get("/sessions/:sessionId/stream", async (c) => {
   // --- Redis subscriber (dedicated connection for SUBSCRIBE mode) ---
   const subscriber = createRedisConnection();
   const channel = `session:${sessionId}:events`;
+  const lastEventId = c.req.query("lastEventId");
 
   return c.newResponse(
     new ReadableStream({
@@ -111,12 +112,39 @@ sseApp.get("/sessions/:sessionId/stream", async (c) => {
           `event: connected\ndata: ${JSON.stringify({ sessionId, userId: auth.userId })}\n\n`
         );
 
+        // Replay missed events from Redis Streams if lastEventId is provided
+        if (lastEventId) {
+          const eventStream = new EventStream();
+          eventStream
+            .readAfter(sessionId, lastEventId)
+            .then((missedEvents) => {
+              logger.info(
+                { sessionId, lastEventId, replayed: missedEvents.length },
+                "Replaying missed SSE events"
+              );
+              for (const missed of missedEvents) {
+                const eventType = missed.type ?? "message";
+                const data = JSON.stringify(missed.data ?? missed);
+                enqueue(
+                  `id: ${missed.id}\nevent: ${eventType}\ndata: ${data}\n\n`
+                );
+              }
+            })
+            .catch((err: unknown) => {
+              const msg = err instanceof Error ? err.message : String(err);
+              logger.error(
+                { sessionId, lastEventId, error: msg },
+                "Failed to replay missed events"
+              );
+            });
+        }
+
         // Heartbeat every 15 seconds to keep connection alive
         const heartbeatInterval = setInterval(() => {
           enqueue(": heartbeat\n\n");
         }, 15_000);
 
-        // Subscribe to session events
+        // Subscribe to session events for live updates
         subscriber.subscribe(channel, (err) => {
           if (err) {
             logger.error(
@@ -134,6 +162,7 @@ sseApp.get("/sessions/:sessionId/stream", async (c) => {
             const event = JSON.parse(message) as {
               type?: string;
               data?: Record<string, unknown>;
+              id?: string;
               [key: string]: unknown;
             };
 
@@ -148,7 +177,8 @@ sseApp.get("/sessions/:sessionId/stream", async (c) => {
             }
 
             const data = JSON.stringify(event.data ?? event);
-            enqueue(`event: ${eventType}\ndata: ${data}\n\n`);
+            const idField = event.id ? `id: ${event.id}\n` : "";
+            enqueue(`${idField}event: ${eventType}\ndata: ${data}\n\n`);
           } catch (error) {
             logger.error({ sessionId, error }, "SSE message parse error");
           }

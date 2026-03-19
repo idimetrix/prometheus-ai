@@ -45,5 +45,11 @@ infra/secrets/dev.yaml
 # Load test results
 *-test-results.json
 
+# Playwright MCP
+.playwright-mcp
+
+# MCP config (contains env vars)
+.mcp.json
+
 # Misc
 *.tsbuildinfo

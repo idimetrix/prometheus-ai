@@ -13,6 +13,17 @@ export class DiscoveryAgent extends BaseAgent {
     super("discovery", tools);
   }
 
+  override getReasoningProtocol(): string {
+    return `${super.getReasoningProtocol()}
+
+### DISCOVERY-SPECIFIC REASONING
+- Identify ambiguities in the requirements and ask clarifying questions
+- Check: Are all functional requirements specific and measurable?
+- Verify: Are non-functional requirements (performance, security) addressed?
+- Ensure: Acceptance criteria are testable and unambiguous
+- Consider: What assumptions am I making that should be validated?`;
+  }
+
   getPreferredModel(): string {
     return "gemini/gemini-2.5-flash";
   }

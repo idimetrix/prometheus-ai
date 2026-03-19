@@ -14,6 +14,17 @@ export class SecurityAuditorAgent extends BaseAgent {
     super("security_auditor", tools);
   }
 
+  override getReasoningProtocol(): string {
+    return `${super.getReasoningProtocol()}
+
+### SECURITY-SPECIFIC REASONING
+- Check OWASP Top 10 systematically: injection, broken auth, XSS, CSRF, etc.
+- Verify: Are all user inputs sanitized before storage and display?
+- Check: Are authentication and authorization checks in place on every endpoint?
+- Ensure: No secrets, API keys, or credentials are hardcoded in source
+- Consider: Are there any insecure dependencies with known CVEs?`;
+  }
+
   getPreferredModel(): string {
     return "ollama/deepseek-r1:32b";
   }

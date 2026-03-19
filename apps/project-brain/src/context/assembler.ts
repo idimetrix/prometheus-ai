@@ -8,6 +8,7 @@ import type {
   KnowledgeGraphLayer,
 } from "../layers/knowledge-graph";
 import type { ProceduralLayer, Procedure } from "../layers/procedural";
+import type { RerankableResult, Reranker } from "../layers/reranker";
 import type { SearchResult, SemanticLayer } from "../layers/semantic";
 import type { WorkingMemoryLayer } from "../layers/working-memory";
 
@@ -43,10 +44,7 @@ export interface AssembledContext {
   totalTokensEstimate: number;
 }
 
-/** Rough token estimate: ~4 chars per token */
-function estimateTokens(text: string): number {
-  return Math.ceil(text.length / 4);
-}
+import { estimateTokens } from "./token-counter";
 
 /**
  * Context Assembler: combines all 5 memory layers into a unified context
@@ -74,36 +72,32 @@ export class ContextAssembler {
   private readonly episodic: EpisodicLayer;
   private readonly procedural: ProceduralLayer;
   private readonly workingMemory: WorkingMemoryLayer;
+  private readonly reranker: Reranker;
 
   constructor(
     semantic: SemanticLayer,
     knowledgeGraph: KnowledgeGraphLayer,
     episodic: EpisodicLayer,
     procedural: ProceduralLayer,
-    workingMemory: WorkingMemoryLayer
+    workingMemory: WorkingMemoryLayer,
+    reranker: Reranker
   ) {
     this.semantic = semantic;
     this.knowledgeGraph = knowledgeGraph;
     this.episodic = episodic;
     this.procedural = procedural;
     this.workingMemory = workingMemory;
+    this.reranker = reranker;
   }
 
   async assemble(request: AssembleRequest): Promise<AssembledContext> {
     const { projectId, sessionId, taskDescription, agentRole, maxTokens } =
       request;
 
-    // Budget allocation
-    const budgets = {
-      blueprint: Math.floor(maxTokens * 0.1),
-      semantic: Math.floor(maxTokens * 0.4),
-      knowledgeGraph: Math.floor(maxTokens * 0.15),
-      episodic: Math.floor(maxTokens * 0.1),
-      procedural: Math.floor(maxTokens * 0.05),
-      working: Math.floor(maxTokens * 0.1),
-      tools: Math.floor(maxTokens * 0.1),
-    };
+    // Adaptive budget allocation based on agent role
+    const budgets = this.getAdaptiveBudget(agentRole, maxTokens);
 
+    // ─── PASS 1: Lightweight references (IDs + scores, ~50 tokens each) ───
     // Fetch all layers in parallel for maximum throughput
     const [
       blueprintContent,
@@ -116,16 +110,38 @@ export class ContextAssembler {
     ] = await Promise.all([
       this.loadBlueprint(projectId),
       this.procedural.list(projectId),
-      this.semantic.search(projectId, taskDescription, 20),
+      this.semantic.search(projectId, taskDescription, 40), // Fetch more candidates for pass 1
       this.knowledgeGraph.query(projectId, taskDescription),
       this.episodic.getRecent(projectId, 10),
       this.episodic.recall(projectId, taskDescription, 5),
       sessionId ? this.workingMemory.getAll(sessionId) : Promise.resolve({}),
     ]);
 
+    // Rerank semantic results using role-based boost paths
+    const boostPaths = this.getRoleBoostPaths(agentRole);
+    const rerankedResults = this.reranker.rerank(
+      semanticResults as RerankableResult[],
+      taskDescription,
+      { boostPaths }
+    ) as SearchResult[];
+
+    // ─── PASS 2: Load full content for top refs until budget reached ───
+    // Only take top N results that fit within the semantic budget
+    let semanticTokensUsed = 0;
+    const semanticBudgetChars = budgets.semantic * 4;
+    const selectedResults: SearchResult[] = [];
+    for (const result of rerankedResults) {
+      const entrySize = result.content.length + result.filePath.length + 50;
+      if (semanticTokensUsed + entrySize > semanticBudgetChars) {
+        break;
+      }
+      selectedResults.push(result);
+      semanticTokensUsed += entrySize;
+    }
+
     // Also look up dependency graph for top relevant files
     const topFiles = [
-      ...new Set(semanticResults.slice(0, 5).map((r) => r.filePath)),
+      ...new Set(selectedResults.slice(0, 5).map((r) => r.filePath)),
     ];
     const [dependencyNodes, dependentNodes] = await Promise.all([
       Promise.all(
@@ -148,7 +164,7 @@ export class ContextAssembler {
 
     // 2. Task-specific context: semantic search + knowledge graph
     const semanticContext = this.buildSemanticContext(
-      semanticResults,
+      selectedResults,
       budgets.semantic
     );
     const graphContext = this.buildGraphContext(
@@ -197,7 +213,7 @@ export class ContextAssembler {
         projectId,
         agentRole,
         totalTokensEstimate: totalEstimate,
-        semanticHits: semanticResults.length,
+        semanticHits: rerankedResults.length,
         graphNodes: graphResults.nodes.length,
         episodicMemories: recentDecisions.length,
         procedures: procedures.length,
@@ -450,6 +466,110 @@ export class ContextAssembler {
     const description =
       roleDescriptions[agentRole] ?? `Agent role: ${agentRole}`;
     return this.truncate(description, budgetTokens * 4);
+  }
+
+  private getRoleBoostPaths(role: string): string[] {
+    const roleBoostMap: Record<string, string[]> = {
+      backend_coder: ["src/routers/", "src/services/", "packages/db/"],
+      frontend_coder: ["src/components/", "src/app/", "src/hooks/"],
+      test_engineer: ["__tests__/", ".test.", ".spec."],
+      architect: ["packages/", "infra/"],
+      security_auditor: ["src/middleware/", "src/auth/"],
+    };
+    return roleBoostMap[role] ?? [];
+  }
+
+  private getAdaptiveBudget(
+    agentRole: string,
+    requestedMaxTokens: number
+  ): {
+    semantic: number;
+    knowledgeGraph: number;
+    blueprint: number;
+    episodic: number;
+    procedural: number;
+    working: number;
+    tools: number;
+  } {
+    const maxTokens = Math.min(requestedMaxTokens, 50_000);
+
+    interface BudgetProfile {
+      blueprint: number;
+      episodic: number;
+      knowledgeGraph: number;
+      procedural: number;
+      semantic: number;
+      tools: number;
+      working: number;
+    }
+
+    // Dynamic role-adaptive budgets per the plan:
+    // Coder: 60% semantic, 15% graph, 10% procedural, 10% conventions, 5% episodic
+    // Architect: 25% semantic, 30% graph, 15% episodic, 15% blueprint, 10% conventions
+    // Tester: 40% semantic, 20% procedural, 15% episodic, 15% conventions, 10% graph
+    // Security: 50% semantic, 20% graph, 15% episodic, 10% conventions, 5% procedural
+    const coderProfile: BudgetProfile = {
+      semantic: 0.6,
+      knowledgeGraph: 0.15,
+      blueprint: 0.05,
+      episodic: 0.05,
+      procedural: 0.1,
+      working: 0.02,
+      tools: 0.03,
+    };
+
+    const roleProfiles: Record<string, BudgetProfile> = {
+      frontend_coder: coderProfile,
+      backend_coder: coderProfile,
+      integration_coder: coderProfile,
+      architect: {
+        semantic: 0.25,
+        knowledgeGraph: 0.3,
+        blueprint: 0.15,
+        episodic: 0.15,
+        procedural: 0.05,
+        working: 0.05,
+        tools: 0.05,
+      },
+      test_engineer: {
+        semantic: 0.4,
+        knowledgeGraph: 0.1,
+        blueprint: 0.05,
+        episodic: 0.15,
+        procedural: 0.2,
+        working: 0.05,
+        tools: 0.05,
+      },
+      security_auditor: {
+        semantic: 0.5,
+        knowledgeGraph: 0.2,
+        blueprint: 0.05,
+        episodic: 0.15,
+        procedural: 0.05,
+        working: 0.02,
+        tools: 0.03,
+      },
+    };
+
+    const profile: BudgetProfile = roleProfiles[agentRole] ?? {
+      semantic: 0.4,
+      knowledgeGraph: 0.15,
+      blueprint: 0.1,
+      episodic: 0.1,
+      procedural: 0.05,
+      working: 0.1,
+      tools: 0.1,
+    };
+
+    return {
+      semantic: Math.floor(maxTokens * profile.semantic),
+      knowledgeGraph: Math.floor(maxTokens * profile.knowledgeGraph),
+      blueprint: Math.floor(maxTokens * profile.blueprint),
+      episodic: Math.floor(maxTokens * profile.episodic),
+      procedural: Math.floor(maxTokens * profile.procedural),
+      working: Math.floor(maxTokens * profile.working),
+      tools: Math.floor(maxTokens * profile.tools),
+    };
   }
 
   private truncate(text: string, maxChars: number): string {

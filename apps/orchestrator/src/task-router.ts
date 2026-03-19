@@ -5,13 +5,17 @@ import { EventPublisher, QueueEvents } from "@prometheus/queue";
 import type { AgentMode, AgentRole } from "@prometheus/types";
 import { eq } from "drizzle-orm";
 import { type CILoopResult, CILoopRunner } from "./ci-loop/ci-loop-runner";
+import { GeneratorEvaluator } from "./patterns/generator-evaluator";
+import { SpecFirst } from "./patterns/spec-first";
 import {
   ArchitecturePhase,
   type ArchitectureResult,
 } from "./phases/architecture";
 import { DiscoveryPhase, type DiscoveryResult } from "./phases/discovery";
-import { PlanningPhase, type SprintPlan } from "./phases/planning";
+import type { SprintPlan } from "./phases/planning";
+import { MCTSPlanner } from "./planning/mcts-planner";
 import type { SessionManager } from "./session-manager";
+import { VisualVerifier } from "./visual/visual-verifier";
 
 // ─── Top-level regex constants for task matching ─────────────────────────
 const REQUIREMENTS_RE =
@@ -32,6 +36,7 @@ const DEPLOYMENT_RE =
   /\b(deploy|docker|kubernetes|k8s|k3s|ci.?cd|github action|helm|traefik|nginx|ssl|tls)\b/;
 const INTEGRATION_RE =
   /\b(integrat|connect|wire|hook up|link|bind|api call|fetch data|real.?time)\b/;
+const LLM_ROUTE_ROLE_RE = /ROLE:\s*(\w+)/;
 
 interface TaskRoutingResult {
   agentRole: string;
@@ -262,7 +267,11 @@ export class TaskRouter {
             totalCreditsConsumed += agentLoop.getCreditsConsumed();
           } else {
             // Route based on task description analysis
-            const routing = this.routeTask(taskDescription);
+            const routing = await this.routeTask(
+              taskDescription,
+              undefined,
+              agentLoop
+            );
             const result = await agentLoop.executeTask(
               taskDescription,
               routing.agentRole
@@ -414,16 +423,31 @@ Instructions:
     });
     await this.publishPhaseUpdate("architecture", "completed");
 
-    // Phase 3: Planning
+    // Phase 3: MCTS Planning (replaces flat planning)
     await this.publishPhaseUpdate("planning", "running");
-    const planningPhase = new PlanningPhase();
-    const sprintPlan = await planningPhase.execute(
+    const mctsPlanner = new MCTSPlanner({
+      expansionWidth: 3,
+      maxLLMCalls: 8,
+    });
+    const mctsResult = await mctsPlanner.plan(
       agentLoop,
-      architectureResult.blueprint
+      architectureResult.blueprint,
+      taskDescription
     );
+    const sprintPlan = mctsResult.selectedPlan;
+
+    this.logger.info(
+      {
+        strategy: mctsResult.selectedStrategy,
+        confidence: mctsResult.confidence,
+        alternatives: mctsResult.alternativesExplored,
+      },
+      "MCTS planning selected strategy"
+    );
+
     results.push({
       success: true,
-      output: JSON.stringify(sprintPlan),
+      output: `MCTS Planning: Selected "${mctsResult.selectedStrategy}" strategy (confidence: ${mctsResult.confidence.toFixed(2)}, explored ${mctsResult.alternativesExplored} alternatives).\n${JSON.stringify(sprintPlan)}`,
       filesChanged: [],
       tokensUsed: { input: 0, output: 0 },
       toolCalls: 0,
@@ -456,7 +480,11 @@ Instructions:
     // If a specific agent role was provided, skip the planning phases
     // and go directly to execution
     if (specificRole) {
-      const routing = this.routeTask(taskDescription);
+      const routing = await this.routeTask(
+        taskDescription,
+        undefined,
+        agentLoop
+      );
       const role = specificRole || routing.agentRole;
       const result = await agentLoop.executeTask(taskDescription, role);
       results.push(result);
@@ -501,16 +529,31 @@ Instructions:
     });
     await this.publishPhaseUpdate("architecture", "completed");
 
-    // Phase 3: Planning
+    // Phase 3: MCTS Planning (replaces flat planning)
     await this.publishPhaseUpdate("planning", "running");
-    const planningPhase = new PlanningPhase();
-    const sprintPlan = await planningPhase.execute(
+    const mctsPlanner = new MCTSPlanner({
+      expansionWidth: 3,
+      maxLLMCalls: 8,
+    });
+    const mctsResult = await mctsPlanner.plan(
       agentLoop,
-      architectureResult.blueprint
+      architectureResult.blueprint,
+      taskDescription
     );
+    const sprintPlan = mctsResult.selectedPlan;
+
+    this.logger.info(
+      {
+        strategy: mctsResult.selectedStrategy,
+        confidence: mctsResult.confidence,
+        alternatives: mctsResult.alternativesExplored,
+      },
+      "MCTS planning selected strategy"
+    );
+
     results.push({
       success: true,
-      output: JSON.stringify(sprintPlan),
+      output: `MCTS Planning: Selected "${mctsResult.selectedStrategy}" strategy (confidence: ${mctsResult.confidence.toFixed(2)}, explored ${mctsResult.alternativesExplored} alternatives).\n${JSON.stringify(sprintPlan)}`,
       filesChanged: [],
       tokensUsed: { input: 0, output: 0 },
       toolCalls: 0,
@@ -518,6 +561,36 @@ Instructions:
       creditsConsumed: 0,
     });
     await this.publishPhaseUpdate("planning", "completed");
+
+    // Phase 3.5: SpecFirst — Generate specifications before coding
+    await this.publishPhaseUpdate("spec_first", "running");
+    const specFirst = new SpecFirst();
+    const specResult = await specFirst.generateSpecs(
+      agentLoop,
+      architectureResult.blueprint,
+      JSON.stringify(sprintPlan)
+    );
+    if (specResult.specs) {
+      // Inject spec context into the blueprint for coding agents
+      const specSummary = [
+        specResult.specs.interfaces &&
+          `### Interfaces\n${specResult.specs.interfaces}`,
+        specResult.specs.validators &&
+          `### Validators\n${specResult.specs.validators}`,
+        specResult.specs.apiSignatures &&
+          `### API Signatures\n${specResult.specs.apiSignatures}`,
+        specResult.specs.dbChanges &&
+          `### DB Changes\n${specResult.specs.dbChanges}`,
+        specResult.specs.testStubs &&
+          `### Test Stubs\n${specResult.specs.testStubs}`,
+      ]
+        .filter(Boolean)
+        .join("\n\n");
+      if (specSummary) {
+        architectureResult.blueprint += `\n\n## Generated Specifications\n${specSummary}`;
+      }
+    }
+    await this.publishPhaseUpdate("spec_first", "completed");
 
     // Phase 4: Execute sprint tasks in dependency order
     await this.publishPhaseUpdate("coding", "running");
@@ -528,6 +601,42 @@ Instructions:
     );
     results.push(...executionResults);
     await this.publishPhaseUpdate("coding", "completed");
+
+    // Phase 4.5: Typecheck verification gate
+    const typecheckResult = await agentLoop.executeTask(
+      "Run `pnpm typecheck` and report ALL TypeScript errors found. If there are errors, fix them. Repeat until typecheck passes (max 10 attempts).",
+      "ci_loop"
+    );
+    results.push(typecheckResult);
+
+    // Phase 4.6: Visual verification for frontend changes
+    const allChangedFiles = executionResults.flatMap((r) => r.filesChanged);
+    const hasFrontendChanges = allChangedFiles.some(
+      (f) => f.endsWith(".tsx") || f.endsWith(".jsx") || f.endsWith(".css")
+    );
+    if (hasFrontendChanges) {
+      await this.publishPhaseUpdate("visual_verify", "running");
+      const visualVerifier = new VisualVerifier();
+      const visualResult = await visualVerifier.verify(
+        agentLoop,
+        this.currentSessionId ?? "",
+        allChangedFiles,
+        taskDescription
+      );
+      results.push({
+        success: visualResult.passed,
+        output: `Visual Verification: ${visualResult.summary} (score: ${visualResult.score.toFixed(2)}, ${visualResult.pagesChecked} pages checked)`,
+        filesChanged: [],
+        tokensUsed: { input: 0, output: 0 },
+        toolCalls: 0,
+        steps: 0,
+        creditsConsumed: 0,
+      });
+      await this.publishPhaseUpdate(
+        "visual_verify",
+        visualResult.passed ? "completed" : "failed"
+      );
+    }
 
     // Phase 5: Testing
     await this.publishPhaseUpdate("testing", "running");
@@ -706,10 +815,29 @@ Instructions:
       for (const task of ready) {
         const enrichedDesc = `${task.description}\n\nBlueprint:\n${blueprint}\n\nAcceptance Criteria:\n${task.acceptanceCriteria.map((c) => `- ${c}`).join("\n")}`;
 
-        const result = await agentLoop.executeTask(
-          enrichedDesc,
-          task.agentRole
-        );
+        // Use GeneratorEvaluator for coding roles
+        const codingRoles = new Set([
+          "frontend_coder",
+          "backend_coder",
+          "integration_coder",
+        ]);
+        let result: AgentExecutionResult;
+        if (codingRoles.has(task.agentRole)) {
+          const genEval = new GeneratorEvaluator({
+            generatorRole: task.agentRole,
+            evaluatorRole: "security_auditor",
+            threshold: 0.75,
+            maxRounds: 2,
+          });
+          const genResult = await genEval.execute(
+            agentLoop,
+            enrichedDesc,
+            blueprint
+          );
+          result = genResult.result;
+        } else {
+          result = await agentLoop.executeTask(enrichedDesc, task.agentRole);
+        }
         results.push(result);
         completed.add(task.id);
 
@@ -729,80 +857,145 @@ Instructions:
   }
 
   /**
-   * Rule-based task routing: analyze the task description to determine
-   * the best agent role for a single-shot execution.
+   * Two-stage task routing: regex pre-filter then LLM disambiguation.
+   * Stage 1 collects all regex matches with confidence scores.
+   * Stage 2 uses the agent loop to disambiguate when results are ambiguous.
    */
-  routeTask(
+  async routeTask(
     taskDescription: string,
-    _projectContext?: string
-  ): TaskRoutingResult {
+    _projectContext?: string,
+    agentLoop?: import("./agent-loop").AgentLoop
+  ): Promise<TaskRoutingResult> {
     const description = taskDescription.toLowerCase();
 
-    if (this.matchesRequirements(description)) {
-      return {
-        agentRole: "discovery",
+    // Stage 1: Regex pre-filter — collect all matches with scores
+    const candidates: TaskRoutingResult[] = [];
+
+    const matchers: Array<{
+      test: (d: string) => boolean;
+      role: string;
+      confidence: number;
+      reasoning: string;
+    }> = [
+      {
+        test: (d) => this.matchesRequirements(d),
+        role: "discovery",
         confidence: 0.9,
         reasoning: "Task involves requirements gathering",
-      };
-    }
-    if (this.matchesArchitecture(description)) {
-      return {
-        agentRole: "architect",
+      },
+      {
+        test: (d) => this.matchesArchitecture(d),
+        role: "architect",
         confidence: 0.9,
         reasoning: "Task involves architecture design",
-      };
-    }
-    if (this.matchesPlanning(description)) {
-      return {
-        agentRole: "planner",
+      },
+      {
+        test: (d) => this.matchesPlanning(d),
+        role: "planner",
         confidence: 0.85,
         reasoning: "Task involves planning or sprint creation",
-      };
-    }
-    if (this.matchesFrontend(description)) {
-      return {
-        agentRole: "frontend_coder",
+      },
+      {
+        test: (d) => this.matchesFrontend(d),
+        role: "frontend_coder",
         confidence: 0.85,
         reasoning: "Task involves frontend/UI work",
-      };
-    }
-    if (this.matchesBackend(description)) {
-      return {
-        agentRole: "backend_coder",
+      },
+      {
+        test: (d) => this.matchesBackend(d),
+        role: "backend_coder",
         confidence: 0.85,
         reasoning: "Task involves backend/API work",
-      };
-    }
-    if (this.matchesTesting(description)) {
-      return {
-        agentRole: "test_engineer",
+      },
+      {
+        test: (d) => this.matchesTesting(d),
+        role: "test_engineer",
         confidence: 0.9,
         reasoning: "Task involves writing tests",
-      };
-    }
-    if (this.matchesSecurity(description)) {
-      return {
-        agentRole: "security_auditor",
+      },
+      {
+        test: (d) => this.matchesSecurity(d),
+        role: "security_auditor",
         confidence: 0.9,
         reasoning: "Task involves security audit",
-      };
-    }
-    if (this.matchesDeployment(description)) {
-      return {
-        agentRole: "deploy_engineer",
+      },
+      {
+        test: (d) => this.matchesDeployment(d),
+        role: "deploy_engineer",
         confidence: 0.9,
         reasoning: "Task involves deployment",
-      };
-    }
-    if (this.matchesIntegration(description)) {
-      return {
-        agentRole: "integration_coder",
+      },
+      {
+        test: (d) => this.matchesIntegration(d),
+        role: "integration_coder",
         confidence: 0.8,
         reasoning: "Task involves integration work",
-      };
+      },
+    ];
+
+    for (const matcher of matchers) {
+      if (matcher.test(description)) {
+        candidates.push({
+          agentRole: matcher.role,
+          confidence: matcher.confidence,
+          reasoning: matcher.reasoning,
+        });
+      }
     }
 
-    // Default to orchestrator for complex/ambiguous tasks
+    // If exactly one match with high confidence, return it
+    if (
+      candidates.length === 1 &&
+      (candidates[0] as TaskRoutingResult).confidence >= 0.85
+    ) {
+      return candidates[0] as TaskRoutingResult;
+    }
+
+    // Stage 2: LLM disambiguation for ambiguous cases
+    if (candidates.length > 1 && agentLoop) {
+      const candidateList = candidates
+        .slice(0, 3)
+        .map((c, i) => `${i + 1}. ${c.agentRole} (${c.reasoning})`)
+        .join("\n");
+
+      const disambiguationPrompt = `You are a task router. Given the following task description, determine which agent role is the BEST fit.
+
+Task: "${taskDescription}"
+
+Candidate roles:
+${candidateList}
+
+Respond with ONLY the role name (e.g., "backend_coder") and a one-line reason. Format: ROLE: <role_name>\nREASON: <reason>`;
+
+      try {
+        const result = await agentLoop.executeTask(
+          disambiguationPrompt,
+          "orchestrator"
+        );
+        const roleMatch = result.output.match(LLM_ROUTE_ROLE_RE);
+        if (roleMatch) {
+          const selectedRole = roleMatch[1];
+          const candidate = candidates.find(
+            (c) => c.agentRole === selectedRole
+          );
+          if (candidate) {
+            return {
+              ...candidate,
+              confidence: 0.95,
+              reasoning: `LLM-selected: ${candidate.reasoning}`,
+            };
+          }
+        }
+      } catch {
+        this.logger.warn("LLM disambiguation failed, using regex result");
+      }
+    }
+
+    // Fallback: return best regex match or orchestrator
+    if (candidates.length > 0) {
+      return candidates[0] as TaskRoutingResult;
+    }
+
     return {
       agentRole: "orchestrator",
       confidence: 0.5,

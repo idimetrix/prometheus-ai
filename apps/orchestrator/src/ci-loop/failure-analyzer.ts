@@ -13,6 +13,16 @@ const TS_ERROR_CODE_RE = /error (TS\d+):\s*(.+)/;
 const MODULE_NAME_RE = /['"]([^'"]+)['"]/;
 const EXPECTED_VALUE_RE = /expected[:\s]+(.+?)(?:\n|$)/i;
 const RECEIVED_VALUE_RE = /received[:\s]+(.+?)(?:\n|$)/i;
+
+// ─── Failure categorization regexes ─────────────────────────────────────
+const CATEGORY_TYPE_ERROR_RE = /Type|TS2|ts\(|cannot find name|not assignable/i;
+const CATEGORY_MISSING_DEP_RE =
+  /Cannot find module|Module not found|not installed|missing dependency/i;
+const CATEGORY_RUNTIME_RE =
+  /ReferenceError|TypeError at runtime|undefined is not|null reference|ENOENT|ECONNREFUSED/i;
+const CATEGORY_TEST_DESIGN_RE =
+  /Expected.*received|toBe|toEqual|assertion failed|snapshot.*mismatch/i;
+const CATEGORY_LOGIC_RE = /expected.*but got|incorrect result|wrong output/i;
 const ERROR_TYPE_RE = /^(\w+Error):/;
 const FILE_PATH_RE = /(?:\/[\w.-]+)+\.\w+(?::\d+(?::\d+)?)?/g;
 const FAIL_PASS_PATTERN_RE = /(?:FAIL|PASS|✕|✓|×|√)\s+(.+)/;
@@ -22,6 +32,14 @@ const TEST_PATTERN_RE = /test\(['"](.+?)['"]/;
 const DESCRIBE_PATTERN_RE = /describe\(['"](.+?)['"]/;
 const NEAREST_FAIL_RE = /(?:FAIL|✕|×)\s+(.+)/;
 
+export type FailureCategory =
+  | "TYPE_ERROR"
+  | "RUNTIME_ERROR"
+  | "LOGIC_ERROR"
+  | "MISSING_DEPENDENCY"
+  | "TEST_DESIGN_ERROR"
+  | "UNKNOWN";
+
 export type FailureType =
   | "syntax"
   | "logic"
@@ -29,11 +47,29 @@ export type FailureType =
   | "type"
   | "runtime"
   | "timeout"
-  | "import";
+  | "import"
+  | "environment";
+
+/**
+ * Explicit priority hierarchy for fix ordering.
+ * SYNTAX(1) > TYPE(2) > ENVIRONMENT(3) > RUNTIME(4) > LOGIC(5) > INTEGRATION(6)
+ * Lower number = higher priority = fix first.
+ */
+export const FAILURE_PRIORITY: Record<FailureType, number> = {
+  syntax: 1,
+  type: 2,
+  import: 2,
+  environment: 3,
+  runtime: 4,
+  timeout: 4,
+  logic: 5,
+  integration: 6,
+};
 
 export interface FailureAnalysis {
   affectedFiles: string[];
   confidence: number;
+  failureCategory?: FailureCategory;
   failureType: FailureType;
   fixAgentRole: string;
   rootCause: string;
@@ -135,9 +171,16 @@ export class FailureAnalyzer {
       }
     }
 
-    // Sort by severity (critical first) then confidence (highest first)
+    // Sort by priority hierarchy (SYNTAX→TYPE→ENVIRONMENT→RUNTIME→LOGIC→INTEGRATION)
+    // then by severity, then by confidence
     const severityOrder = { critical: 0, high: 1, medium: 2, low: 3 };
     failures.sort((a, b) => {
+      const priDiff =
+        (FAILURE_PRIORITY[a.failureType] ?? 99) -
+        (FAILURE_PRIORITY[b.failureType] ?? 99);
+      if (priDiff !== 0) {
+        return priDiff;
+      }
       const sevDiff = severityOrder[a.severity] - severityOrder[b.severity];
       if (sevDiff !== 0) {
         return sevDiff;
@@ -154,6 +197,28 @@ export class FailureAnalyzer {
     );
 
     return failures;
+  }
+
+  categorizeFailure(failure: FailureAnalysis): FailureCategory {
+    const text = `${failure.rootCause} ${failure.suggestedFix}`;
+
+    if (CATEGORY_TYPE_ERROR_RE.test(text)) {
+      return "TYPE_ERROR";
+    }
+    if (CATEGORY_MISSING_DEP_RE.test(text)) {
+      return "MISSING_DEPENDENCY";
+    }
+    if (CATEGORY_RUNTIME_RE.test(text)) {
+      return "RUNTIME_ERROR";
+    }
+    if (CATEGORY_TEST_DESIGN_RE.test(text)) {
+      return "TEST_DESIGN_ERROR";
+    }
+    if (CATEGORY_LOGIC_RE.test(text)) {
+      return "LOGIC_ERROR";
+    }
+
+    return "UNKNOWN";
   }
 
   private analyzeTypeError(
