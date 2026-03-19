@@ -6,7 +6,7 @@
  */
 
 import { createLogger } from "@prometheus/logger";
-import type Parser from "web-tree-sitter";
+import type { Language, Parser, Tree } from "web-tree-sitter";
 import { FILE_EXTENSION_MAP, LANGUAGE_GRAMMAR_URLS } from "./language-grammars";
 
 const logger = createLogger("code-intelligence:tree-sitter");
@@ -54,7 +54,7 @@ export interface ParseResult {
   /** Duration of the parse in milliseconds */
   parseTimeMs: number;
   /** The root tree-sitter tree node */
-  tree: Parser.Tree;
+  tree: Tree;
 }
 
 /**
@@ -73,9 +73,13 @@ export interface ParseResult {
  */
 export class TreeSitterParser {
   private parser: Parser | null = null;
-  private readonly languageCache = new Map<string, Parser.Language>();
+  private readonly languageCache = new Map<string, Language>();
   private initialized = false;
-  private treeSitter: typeof Parser | null = null;
+  private treeSitter: {
+    Parser: new () => Parser;
+    Language: typeof Language;
+    init: () => Promise<void>;
+  } | null = null;
 
   /**
    * Initialize the Tree-sitter WASM runtime.
@@ -90,10 +94,15 @@ export class TreeSitterParser {
       const TreeSitter = await import("web-tree-sitter");
       const Module = TreeSitter.default ?? TreeSitter;
 
-      await Module.init();
+      await (Module as unknown as { init: () => Promise<void> }).init();
 
-      this.treeSitter = Module as unknown as typeof Parser;
-      this.parser = new (Module as unknown as new () => Parser)();
+      const TSModule = Module as unknown as typeof TreeSitter;
+      this.treeSitter = {
+        Parser: TSModule.Parser as unknown as new () => Parser,
+        Language: TSModule.Language as unknown as typeof Language,
+        init: () => Promise.resolve(),
+      };
+      this.parser = new this.treeSitter.Parser();
       this.initialized = true;
 
       logger.info("Tree-sitter WASM runtime initialized");
@@ -125,6 +134,10 @@ export class TreeSitterParser {
     const start = performance.now();
     const tree = this.parser.parse(code);
     const parseTimeMs = Math.round(performance.now() - start);
+
+    if (!tree) {
+      throw new Error(`Failed to parse ${language}: parser returned null`);
+    }
 
     const hasErrors = tree.rootNode.hasError;
 
@@ -193,9 +206,7 @@ export class TreeSitterParser {
   /**
    * Load a language grammar, using cached version if available.
    */
-  private async loadLanguage(
-    language: SupportedLanguage
-  ): Promise<Parser.Language> {
+  private async loadLanguage(language: SupportedLanguage): Promise<Language> {
     const cached = this.languageCache.get(language);
     if (cached) {
       return cached;

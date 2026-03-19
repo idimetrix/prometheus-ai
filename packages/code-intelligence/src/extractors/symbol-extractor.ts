@@ -6,7 +6,7 @@
  */
 
 import { createLogger } from "@prometheus/logger";
-import type TreeSitter from "web-tree-sitter";
+import type { Node } from "web-tree-sitter";
 import type { SupportedLanguage } from "../parsers/tree-sitter-wasm";
 
 const logger = createLogger("code-intelligence:symbol-extractor");
@@ -147,7 +147,7 @@ const LANGUAGE_NODE_OVERRIDES: Partial<
  * Try to extract a name from a tree-sitter node.
  * Looks for common child field names across languages.
  */
-function extractNodeName(node: TreeSitter.SyntaxNode): string | undefined {
+function extractNodeName(node: Node): string | undefined {
   // Direct name field (most common)
   const nameNode =
     node.childForFieldName("name") ??
@@ -179,7 +179,7 @@ function extractNodeName(node: TreeSitter.SyntaxNode): string | undefined {
 /**
  * Determine if a node represents an exported symbol.
  */
-function isNodeExported(node: TreeSitter.SyntaxNode): boolean {
+function isNodeExported(node: Node): boolean {
   const parent = node.parent;
   if (!parent) {
     return false;
@@ -222,7 +222,7 @@ function isNodeExported(node: TreeSitter.SyntaxNode): boolean {
  * Walk the AST and collect symbols.
  */
 function walkTree(
-  node: TreeSitter.SyntaxNode,
+  node: Node,
   language: SupportedLanguage,
   parentName?: string
 ): ExtractedSymbol[] {
@@ -339,7 +339,7 @@ function groupByKind(
  * ```
  */
 export function extractSymbols(
-  tree: TreeSitter.Tree,
+  tree: import("web-tree-sitter").Tree,
   language: SupportedLanguage
 ): SymbolTable {
   const start = performance.now();

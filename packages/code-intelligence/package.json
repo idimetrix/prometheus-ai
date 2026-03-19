@@ -10,7 +10,7 @@
     "clean": "rm -rf dist .turbo"
   },
   "dependencies": {
-    "web-tree-sitter": "^0.24.7",
+    "web-tree-sitter": "^0.26.7",
     "@prometheus/logger": "workspace:*"
   },
   "devDependencies": {
