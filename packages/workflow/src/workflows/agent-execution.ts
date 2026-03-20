@@ -1,10 +1,8 @@
 /**
- * Agent Execution Workflow
+ * Agent Execution Workflow — Type Definitions
  *
- * Defines the durable workflow for: Plan -> Approve -> Execute -> Review -> PR
- *
- * TODO: Implement as a Temporal workflow when @temporalio/workflow is available.
- * For now, this module exports the type definitions and interfaces.
+ * Durable workflow for: Discover -> Architect -> Plan -> Approve -> Code -> Test -> CI -> Security -> Review -> Deploy
+ * Implemented via Inngest durable functions in agent-execution.inngest.ts.
  */
 
 export interface PlanStep {
@@ -66,39 +64,7 @@ export interface AgentExecutionWorkflowOutput {
   totalTokensUsed: { input: number; output: number };
 }
 
-/**
- * The AgentExecutionWorkflow type defines the workflow signature.
- *
- * When implemented with Temporal, this would be:
- * ```ts
- * export async function agentExecutionWorkflow(
- *   input: AgentExecutionWorkflowInput
- * ): Promise<AgentExecutionWorkflowOutput> {
- *   // 1. Plan: Generate execution plan
- *   const plan = await executeActivity('generatePlan', input);
- *
- *   // 2. Approve: Wait for human approval (with timeout)
- *   const approval = await condition(() => approvalReceived, '24h');
- *
- *   // 3. Execute: Run each plan step with an agent
- *   const executions = [];
- *   for (const step of plan) {
- *     const result = await executeActivity('executeStep', step);
- *     executions.push(result);
- *   }
- *
- *   // 4. Review: Run automated code review
- *   const review = await executeActivity('reviewChanges', executions);
- *
- *   // 5. PR: Create pull request if review passes
- *   const pr = review.passed
- *     ? await executeActivity('createPR', executions)
- *     : null;
- *
- *   return { success: true, plan, approval, executions, review, pr };
- * }
- * ```
- */
+/** Type signature for the agent execution workflow. See agent-execution.inngest.ts for implementation. */
 export type AgentExecutionWorkflow = (
   input: AgentExecutionWorkflowInput
 ) => Promise<AgentExecutionWorkflowOutput>;

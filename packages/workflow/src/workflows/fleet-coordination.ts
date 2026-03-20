@@ -1,11 +1,9 @@
 /**
- * Fleet Coordination Workflow
+ * Fleet Coordination Workflow — Type Definitions
  *
- * Defines the durable workflow for coordinating multiple agents
- * working in parallel on related tasks.
- *
- * TODO: Implement as a Temporal workflow when @temporalio/workflow is available.
- * For now, this module exports the type definitions and interfaces.
+ * Durable workflow for coordinating multiple agents in parallel
+ * with wave-based topological execution, conflict detection, and resolution.
+ * Implemented via Inngest durable functions in fleet-coordination.inngest.ts.
  */
 
 export interface FleetTask {
@@ -62,38 +60,7 @@ export interface FleetCoordinationWorkflowOutput {
   wavesExecuted: number;
 }
 
-/**
- * The FleetCoordinationWorkflow type defines the workflow signature.
- *
- * When implemented with Temporal, this would be:
- * ```ts
- * export async function fleetCoordinationWorkflow(
- *   input: FleetCoordinationWorkflowInput
- * ): Promise<FleetCoordinationWorkflowOutput> {
- *   const { tasks, maxParallelAgents, blueprint } = input;
- *
- *   // 1. Compute execution waves based on dependency graph
- *   const waves = topologicalSort(tasks);
- *
- *   // 2. Execute each wave
- *   for (const wave of waves) {
- *     // Run tasks in parallel, up to maxParallelAgents
- *     const results = await Promise.all(
- *       wave.map(task => executeActivity('runFleetAgent', { task, blueprint }))
- *     );
- *
- *     // 3. Check for file conflicts between agents
- *     const conflicts = await executeActivity('detectConflicts', results);
- *     if (conflicts.hasConflicts) {
- *       await executeActivity('resolveConflicts', conflicts);
- *     }
- *   }
- *
- *   // 4. Merge all results and create summary
- *   return aggregateResults(assignments);
- * }
- * ```
- */
+/** Type signature for the fleet coordination workflow. See fleet-coordination.inngest.ts for implementation. */
 export type FleetCoordinationWorkflow = (
   input: FleetCoordinationWorkflowInput
 ) => Promise<FleetCoordinationWorkflowOutput>;
