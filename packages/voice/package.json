@@ -9,6 +9,10 @@
     "typecheck": "tsc --noEmit",
     "clean": "rm -rf dist .turbo"
   },
+  "dependencies": {
+    "@prometheus/logger": "workspace:*",
+    "@prometheus/utils": "workspace:*"
+  },
   "devDependencies": {
     "@prometheus/config-typescript": "workspace:*",
     "@types/node": "^25.5.0",

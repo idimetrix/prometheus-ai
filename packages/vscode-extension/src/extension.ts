@@ -7,18 +7,25 @@ import {
 } from "vscode";
 import { ApiClient } from "./api-client";
 import { ChatPanel } from "./chat-panel";
+import { submitTask } from "./commands/submit-task";
 import { AutoPRGenerator } from "./git/auto-pr";
 import { PRReviewer } from "./git/pr-reviewer";
 import { ChatPanelProvider } from "./panels/chat-panel";
+import { PrometheusClient } from "./prometheus-client";
+import { AgentProvider } from "./providers/agent-provider";
 import { PrometheusCodeActionProvider } from "./providers/code-action-provider";
+import { SessionProvider } from "./providers/session-provider";
 import { StatusBarManager } from "./status-bar";
 import { EnhancedStatusBarManager } from "./ui/status-bar";
 
 let apiClient: ApiClient | undefined;
+let prometheusClient: PrometheusClient | undefined;
 let chatPanel: ChatPanel | undefined;
 let chatPanelProvider: ChatPanelProvider | undefined;
 let statusBar: StatusBarManager | undefined;
 let enhancedStatusBar: EnhancedStatusBarManager | undefined;
+let sessionProvider: SessionProvider | undefined;
+let agentProvider: AgentProvider | undefined;
 
 export function activate(context: ExtensionContext): void {
   const config = workspace.getConfiguration("prometheus");
@@ -27,9 +34,42 @@ export function activate(context: ExtensionContext): void {
   const apiToken = config.get<string>("apiToken", "");
 
   apiClient = new ApiClient(apiUrl, apiToken);
+  prometheusClient = new PrometheusClient(apiUrl, socketUrl, apiToken);
   statusBar = new StatusBarManager();
   statusBar.show();
   enhancedStatusBar = new EnhancedStatusBarManager();
+
+  // Register tree data providers for sidebar views
+  sessionProvider = new SessionProvider(prometheusClient);
+  agentProvider = new AgentProvider(prometheusClient);
+
+  context.subscriptions.push(
+    window.registerTreeDataProvider("prometheus.sessions", sessionProvider)
+  );
+  context.subscriptions.push(
+    window.registerTreeDataProvider("prometheus.agents", agentProvider)
+  );
+
+  // Connect WebSocket for real-time updates
+  prometheusClient.connectWebSocket();
+  prometheusClient.onEvent((event, data) => {
+    if (event === "agent:status") {
+      const agents = Array.isArray(data) ? data : [data];
+      agentProvider?.updateAgents(
+        agents as Array<{
+          id: string;
+          role: string;
+          status: "pending" | "running" | "completed" | "failed";
+          progress: number;
+          filesChanged: number;
+          tokensUsed: number;
+        }>
+      );
+    }
+    if (event === "session:update") {
+      sessionProvider?.refresh();
+    }
+  });
 
   // Register code action provider for all languages
   context.subscriptions.push(
@@ -229,6 +269,124 @@ export function activate(context: ExtensionContext): void {
     })
   );
 
+  // Submit task command (enhanced version with priority picker)
+  context.subscriptions.push(
+    commands.registerCommand("prometheus.submitTask", async () => {
+      if (!prometheusClient) {
+        return;
+      }
+      try {
+        statusBar?.setStatus("busy");
+        enhancedStatusBar?.setStatus("busy");
+        await submitTask(prometheusClient);
+        statusBar?.setStatus("active");
+        enhancedStatusBar?.setStatus("active");
+        sessionProvider?.refresh();
+        agentProvider?.refresh();
+      } catch (error) {
+        statusBar?.setStatus("error");
+        enhancedStatusBar?.setStatus("error");
+        const message =
+          error instanceof Error ? error.message : "Unknown error";
+        window.showErrorMessage(`Failed to submit task: ${message}`);
+      }
+    })
+  );
+
+  // Show dashboard command
+  context.subscriptions.push(
+    commands.registerCommand("prometheus.showDashboard", async () => {
+      if (!prometheusClient) {
+        return;
+      }
+      try {
+        const status = await prometheusClient.getStatus();
+        const sessionCount = status.sessions.length;
+        const activeCount = status.sessions.filter(
+          (s) => s.status === "active"
+        ).length;
+
+        window.showInformationMessage(
+          `Prometheus Dashboard: ${sessionCount} sessions (${activeCount} active)`
+        );
+
+        // Refresh sidebar views
+        sessionProvider?.refresh();
+        agentProvider?.refresh();
+      } catch (error) {
+        const message =
+          error instanceof Error ? error.message : "Unknown error";
+        window.showErrorMessage(`Failed to load dashboard: ${message}`);
+      }
+    })
+  );
+
+  // Approve checkpoint command
+  context.subscriptions.push(
+    commands.registerCommand("prometheus.approveCheckpoint", async () => {
+      if (!prometheusClient) {
+        return;
+      }
+      try {
+        const checkpoints = await prometheusClient.getPendingCheckpoints();
+        if (checkpoints.length === 0) {
+          window.showInformationMessage("No pending checkpoints to approve");
+          return;
+        }
+
+        const items = checkpoints.map((cp) => ({
+          label: cp.phase,
+          description: cp.taskId.slice(0, 8),
+          detail: cp.summary,
+          taskId: cp.taskId,
+        }));
+
+        const selected = await window.showQuickPick(items, {
+          placeHolder: "Select a checkpoint to approve",
+          title: "Pending Checkpoints",
+        });
+
+        if (!selected) {
+          return;
+        }
+
+        const action = await window.showQuickPick(
+          [
+            { label: "Approve", value: "approve" },
+            { label: "Reject", value: "reject" },
+          ],
+          { placeHolder: "Choose action" }
+        );
+
+        if (!action) {
+          return;
+        }
+
+        if (action.value === "approve") {
+          await prometheusClient.approveCheckpoint(selected.taskId);
+          window.showInformationMessage(
+            `Checkpoint approved: ${selected.label}`
+          );
+        } else {
+          const reason = await window.showInputBox({
+            prompt: "Provide a reason for rejection",
+            placeHolder: "e.g., Missing error handling",
+          });
+          if (reason) {
+            await prometheusClient.rejectCheckpoint(selected.taskId, reason);
+            window.showInformationMessage(
+              `Checkpoint rejected: ${selected.label}`
+            );
+          }
+        }
+      } catch (error) {
+        const message =
+          error instanceof Error ? error.message : "Unknown error";
+        window.showErrorMessage(`Checkpoint action failed: ${message}`);
+      }
+    })
+  );
+
   context.subscriptions.push(
     commands.registerCommand("prometheus.viewStatus", async () => {
       if (!apiClient) {
@@ -296,8 +454,13 @@ export function activate(context: ExtensionContext): void {
           "apiUrl",
           "http://localhost:4000"
         );
+        const newSocketUrl = updatedConfig.get<string>(
+          "socketUrl",
+          "ws://localhost:4001"
+        );
         const newToken = updatedConfig.get<string>("apiToken", "");
         apiClient = new ApiClient(newApiUrl, newToken);
+        prometheusClient?.updateCredentials(newApiUrl, newSocketUrl, newToken);
       }
     })
   );
@@ -322,5 +485,11 @@ export function deactivate(): void {
   statusBar = undefined;
   enhancedStatusBar?.dispose();
   enhancedStatusBar = undefined;
+  sessionProvider?.dispose();
+  sessionProvider = undefined;
+  agentProvider?.dispose();
+  agentProvider = undefined;
+  prometheusClient?.dispose();
+  prometheusClient = undefined;
   apiClient = undefined;
 }

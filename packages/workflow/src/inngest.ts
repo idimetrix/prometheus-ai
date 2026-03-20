@@ -95,6 +95,30 @@ export interface AgentApprovalEvent {
   name: "prometheus/agent.execution.approved";
 }
 
+export interface FeaturePipelineEvent {
+  data: {
+    taskId: string;
+    sessionId: string;
+    projectId: string;
+    orgId: string;
+    userId: string;
+    title: string;
+    description: string;
+    sourceChannel: string;
+    sourceMetadata: Record<string, unknown>;
+    maxCredits?: number;
+  };
+  name: "prometheus/feature.pipeline.requested";
+}
+
+export interface FeaturePipelineCancelledEvent {
+  data: {
+    reason: string;
+    taskId: string;
+  };
+  name: "prometheus/feature.pipeline.cancelled";
+}
+
 export type PrometheusEvent =
   | AgentExecutionEvent
   | FleetCoordinationEvent
@@ -102,7 +126,9 @@ export type PrometheusEvent =
   | FleetAgentCompletedEvent
   | AgentExecutionCancelledEvent
   | FleetCoordinationCancelledEvent
-  | AgentApprovalEvent;
+  | AgentApprovalEvent
+  | FeaturePipelineEvent
+  | FeaturePipelineCancelledEvent;
 
 /**
  * Real Inngest client for the Prometheus platform.

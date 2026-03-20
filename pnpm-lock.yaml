@@ -1355,6 +1355,13 @@ importers:
         version: 5.9.3
 
   packages/voice:
+    dependencies:
+      '@prometheus/logger':
+        specifier: workspace:*
+        version: link:../logger
+      '@prometheus/utils':
+        specifier: workspace:*
+        version: link:../utils
     devDependencies:
       '@prometheus/config-typescript':
         specifier: workspace:*

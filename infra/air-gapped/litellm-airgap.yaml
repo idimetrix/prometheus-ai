@@ -1,0 +1,53 @@
+# =============================================================================
+# LiteLLM Configuration — Air-Gapped (Ollama-only routing)
+# =============================================================================
+# No external API keys required. All models served locally via Ollama.
+# =============================================================================
+
+model_list:
+  # ── Coding Models ──────────────────────────────────────────────────────────
+  - model_name: ollama/qwen3-coder-next
+    litellm_params:
+      model: ollama/qwen3-coder-next
+      api_base: http://ollama:11434
+
+  - model_name: ollama/qwen3.5:27b
+    litellm_params:
+      model: ollama/qwen3.5:27b
+      api_base: http://ollama:11434
+
+  # ── Reasoning Model ────────────────────────────────────────────────────────
+  - model_name: ollama/deepseek-r1:32b
+    litellm_params:
+      model: ollama/deepseek-r1:32b
+      api_base: http://ollama:11434
+
+  # ── Embeddings ─────────────────────────────────────────────────────────────
+  - model_name: ollama/nomic-embed-text
+    litellm_params:
+      model: ollama/nomic-embed-text
+      api_base: http://ollama:11434
+
+litellm_settings:
+  drop_params: true
+  set_verbose: false
+  cache: true
+  cache_params:
+    type: redis
+    host: redis
+    port: 6379
+  success_callback: []
+  failure_callback: []
+  num_retries: 3
+  request_timeout: 300
+  allowed_fails: 5
+  cooldown_time: 10
+
+router_settings:
+  routing_strategy: simple-shuffle
+  num_retries: 3
+  retry_after: 5
+  enable_pre_call_checks: true
+
+general_settings:
+  master_key: sk-prometheus-airgap

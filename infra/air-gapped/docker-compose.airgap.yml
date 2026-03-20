@@ -1,0 +1,604 @@
+# =============================================================================
+# Prometheus AI Platform — Air-Gapped Deployment
+# =============================================================================
+# Fully offline deployment with zero external dependencies.
+# All LLM inference runs locally via Ollama.
+# All services communicate over an isolated internal network.
+#
+# Usage:
+#   docker compose -f docker-compose.airgap.yml --env-file .env.airgap up -d
+# =============================================================================
+
+services:
+  # ── Infrastructure ──────────────────────────────────────────────────────────
+
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: airgap-postgres
+    environment:
+      POSTGRES_USER: prometheus
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-prometheus_airgap}
+      POSTGRES_DB: prometheus
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U prometheus -d prometheus"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+          cpus: "2.0"
+        reservations:
+          memory: 512M
+          cpus: "0.5"
+    networks:
+      - prometheus-airgap
+
+  pgbouncer:
+    image: bitnami/pgbouncer:latest
+    container_name: airgap-pgbouncer
+    environment:
+      POSTGRESQL_HOST: postgres
+      POSTGRESQL_PORT: 5432
+      POSTGRESQL_USERNAME: prometheus
+      POSTGRESQL_PASSWORD: ${POSTGRES_PASSWORD:-prometheus_airgap}
+      POSTGRESQL_DATABASE: prometheus
+      PGBOUNCER_DATABASE: prometheus
+      PGBOUNCER_POOL_MODE: transaction
+      PGBOUNCER_MAX_CLIENT_CONN: 200
+      PGBOUNCER_DEFAULT_POOL_SIZE: 40
+      PGBOUNCER_RESERVE_POOL_SIZE: 5
+      PGBOUNCER_SERVER_LIFETIME: 3600
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -p 6432 -U prometheus"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: "0.5"
+        reservations:
+          memory: 64M
+          cpus: "0.1"
+    networks:
+      - prometheus-airgap
+
+  redis:
+    image: docker.dragonflydb.io/dragonflydb/dragonfly:latest
+    container_name: airgap-redis
+    command: dragonfly --maxmemory 512mb --proactor_threads 2 --cache_mode
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+    ulimits:
+      memlock: -1
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: "2.0"
+        reservations:
+          memory: 256M
+          cpus: "0.5"
+    networks:
+      - prometheus-airgap
+
+  minio:
+    image: minio/minio:latest
+    container_name: airgap-minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: "1.0"
+        reservations:
+          memory: 256M
+          cpus: "0.25"
+    networks:
+      - prometheus-airgap
+
+  # ── Local LLM Serving ──────────────────────────────────────────────────────
+
+  ollama:
+    image: ollama/ollama:latest
+    container_name: airgap-ollama
+    environment:
+      OLLAMA_HOST: 0.0.0.0:11434
+      OLLAMA_NUM_PARALLEL: 2
+      OLLAMA_MAX_LOADED_MODELS: 3
+    volumes:
+      - ollama_data:/root/.ollama
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:11434/api/tags || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 24G
+          cpus: "8.0"
+        reservations:
+          memory: 12G
+          cpus: "4.0"
+    networks:
+      - prometheus-airgap
+
+  # Pull required models on startup
+  ollama-init:
+    image: ollama/ollama:latest
+    container_name: airgap-ollama-init
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        echo "Waiting for Ollama to be ready..."
+        until curl -sf http://ollama:11434/api/tags > /dev/null 2>&1; do
+          sleep 2
+        done
+        echo "Pulling models..."
+        curl -sf http://ollama:11434/api/pull -d '{"name":"qwen3-coder-next"}'
+        curl -sf http://ollama:11434/api/pull -d '{"name":"qwen3.5:27b"}'
+        curl -sf http://ollama:11434/api/pull -d '{"name":"deepseek-r1:32b"}'
+        curl -sf http://ollama:11434/api/pull -d '{"name":"nomic-embed-text"}'
+        echo "All models pulled successfully."
+    depends_on:
+      ollama:
+        condition: service_healthy
+    restart: "no"
+    networks:
+      - prometheus-airgap
+
+  litellm:
+    image: ghcr.io/berriai/litellm:main-latest
+    container_name: airgap-litellm
+    volumes:
+      - ./litellm-airgap.yaml:/app/config.yaml
+    environment:
+      LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY:-sk-prometheus-airgap}
+      DATABASE_URL: postgresql://prometheus:${POSTGRES_PASSWORD:-prometheus_airgap}@postgres:5432/prometheus
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      OLLAMA_API_BASE: http://ollama:11434
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      ollama:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:4000/health || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: "1.0"
+        reservations:
+          memory: 256M
+          cpus: "0.25"
+    networks:
+      - prometheus-airgap
+
+  # ── Code Search ─────────────────────────────────────────────────────────────
+
+  zoekt:
+    image: ghcr.io/sourcegraph/zoekt-webserver:latest
+    container_name: airgap-zoekt
+    volumes:
+      - zoekt_data:/data/index
+    environment:
+      DATA_DIR: /data/index
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:6070/healthz || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: "1.0"
+        reservations:
+          memory: 256M
+          cpus: "0.25"
+    networks:
+      - prometheus-airgap
+
+  # ── Inngest Dev Server ──────────────────────────────────────────────────────
+
+  inngest:
+    image: inngest/inngest:latest
+    container_name: airgap-inngest
+    command: inngest dev -u http://queue-worker:4007/api/inngest
+    environment:
+      INNGEST_EVENT_KEY: ${INNGEST_EVENT_KEY:-airgap-event-key}
+      INNGEST_SIGNING_KEY: ${INNGEST_SIGNING_KEY:-airgap-signing-key}
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8288/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: "1.0"
+        reservations:
+          memory: 128M
+          cpus: "0.25"
+    networks:
+      - prometheus-airgap
+
+  # ── Prometheus Application Services ─────────────────────────────────────────
+
+  web:
+    image: prometheus/web:latest
+    container_name: airgap-web
+    env_file: .env.airgap
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      NEXT_PUBLIC_API_URL: http://api:4000
+      NEXT_PUBLIC_SOCKET_URL: http://socket-server:4001
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:3000/ || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: "1.0"
+        reservations:
+          memory: 256M
+          cpus: "0.25"
+    networks:
+      - prometheus-airgap
+
+  api:
+    image: prometheus/api:latest
+    container_name: airgap-api
+    env_file: .env.airgap
+    environment:
+      NODE_ENV: production
+      PORT: 4000
+      DATABASE_URL: postgresql://prometheus:${POSTGRES_PASSWORD:-prometheus_airgap}@pgbouncer:6432/prometheus
+      REDIS_URL: redis://redis:6379
+      LITELLM_URL: http://litellm:4000
+      LITELLM_API_KEY: ${LITELLM_MASTER_KEY:-sk-prometheus-airgap}
+    depends_on:
+      pgbouncer:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:4000/health || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: "1.0"
+        reservations:
+          memory: 256M
+          cpus: "0.25"
+    networks:
+      - prometheus-airgap
+
+  orchestrator:
+    image: prometheus/orchestrator:latest
+    container_name: airgap-orchestrator
+    env_file: .env.airgap
+    environment:
+      NODE_ENV: production
+      PORT: 4002
+      DATABASE_URL: postgresql://prometheus:${POSTGRES_PASSWORD:-prometheus_airgap}@pgbouncer:6432/prometheus
+      REDIS_URL: redis://redis:6379
+      LITELLM_URL: http://litellm:4000
+      LITELLM_API_KEY: ${LITELLM_MASTER_KEY:-sk-prometheus-airgap}
+      API_URL: http://api:4000
+      PROJECT_BRAIN_URL: http://project-brain:4003
+      MODEL_ROUTER_URL: http://model-router:4004
+      MCP_GATEWAY_URL: http://mcp-gateway:4005
+      SANDBOX_MANAGER_URL: http://sandbox-manager:4006
+    depends_on:
+      api:
+        condition: service_healthy
+      litellm:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:4002/health || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+          cpus: "2.0"
+        reservations:
+          memory: 512M
+          cpus: "0.5"
+    networks:
+      - prometheus-airgap
+
+  queue-worker:
+    image: prometheus/queue-worker:latest
+    container_name: airgap-queue-worker
+    env_file: .env.airgap
+    environment:
+      NODE_ENV: production
+      PORT: 4007
+      DATABASE_URL: postgresql://prometheus:${POSTGRES_PASSWORD:-prometheus_airgap}@pgbouncer:6432/prometheus
+      REDIS_URL: redis://redis:6379
+      INNGEST_EVENT_KEY: ${INNGEST_EVENT_KEY:-airgap-event-key}
+      INNGEST_SIGNING_KEY: ${INNGEST_SIGNING_KEY:-airgap-signing-key}
+      INNGEST_BASE_URL: http://inngest:8288
+      API_URL: http://api:4000
+      ORCHESTRATOR_URL: http://orchestrator:4002
+    depends_on:
+      pgbouncer:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      inngest:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:4007/health || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: "1.0"
+        reservations:
+          memory: 256M
+          cpus: "0.25"
+    networks:
+      - prometheus-airgap
+
+  socket-server:
+    image: prometheus/socket-server:latest
+    container_name: airgap-socket-server
+    env_file: .env.airgap
+    environment:
+      NODE_ENV: production
+      PORT: 4001
+      REDIS_URL: redis://redis:6379
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:4001/health || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: "0.5"
+        reservations:
+          memory: 128M
+          cpus: "0.25"
+    networks:
+      - prometheus-airgap
+
+  mcp-gateway:
+    image: prometheus/mcp-gateway:latest
+    container_name: airgap-mcp-gateway
+    env_file: .env.airgap
+    environment:
+      NODE_ENV: production
+      PORT: 4005
+      REDIS_URL: redis://redis:6379
+      API_URL: http://api:4000
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:4005/health || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: "0.5"
+        reservations:
+          memory: 128M
+          cpus: "0.25"
+    networks:
+      - prometheus-airgap
+
+  model-router:
+    image: prometheus/model-router:latest
+    container_name: airgap-model-router
+    env_file: .env.airgap
+    environment:
+      NODE_ENV: production
+      PORT: 4004
+      LITELLM_URL: http://litellm:4000
+      LITELLM_API_KEY: ${LITELLM_MASTER_KEY:-sk-prometheus-airgap}
+      REDIS_URL: redis://redis:6379
+      OLLAMA_BASE_URL: http://ollama:11434
+    depends_on:
+      litellm:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:4004/health || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: "0.5"
+        reservations:
+          memory: 128M
+          cpus: "0.25"
+    networks:
+      - prometheus-airgap
+
+  project-brain:
+    image: prometheus/project-brain:latest
+    container_name: airgap-project-brain
+    env_file: .env.airgap
+    environment:
+      NODE_ENV: production
+      PORT: 4003
+      DATABASE_URL: postgresql://prometheus:${POSTGRES_PASSWORD:-prometheus_airgap}@pgbouncer:6432/prometheus
+      REDIS_URL: redis://redis:6379
+      LITELLM_URL: http://litellm:4000
+      LITELLM_API_KEY: ${LITELLM_MASTER_KEY:-sk-prometheus-airgap}
+      OLLAMA_BASE_URL: http://ollama:11434
+      EMBEDDING_MODEL: nomic-embed-text
+      ZOEKT_URL: http://zoekt:6070
+    depends_on:
+      pgbouncer:
+        condition: service_healthy
+      ollama:
+        condition: service_healthy
+      zoekt:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:4003/health || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: "1.0"
+        reservations:
+          memory: 256M
+          cpus: "0.25"
+    networks:
+      - prometheus-airgap
+
+  sandbox-manager:
+    image: prometheus/sandbox-manager:latest
+    container_name: airgap-sandbox-manager
+    env_file: .env.airgap
+    environment:
+      NODE_ENV: production
+      PORT: 4006
+      REDIS_URL: redis://redis:6379
+      SANDBOX_IMAGE: node:22-alpine
+      SANDBOX_BASE_DIR: /tmp/prometheus-sandboxes
+      WARM_POOL_SIZE: 2
+      MAX_POOL_SIZE: 10
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - sandbox_data:/tmp/prometheus-sandboxes
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:4006/health || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: "1.0"
+        reservations:
+          memory: 256M
+          cpus: "0.25"
+    networks:
+      - prometheus-airgap
+
+volumes:
+  postgres_data:
+    name: airgap-postgres-data
+  redis_data:
+    name: airgap-redis-data
+  minio_data:
+    name: airgap-minio-data
+  ollama_data:
+    name: airgap-ollama-data
+  zoekt_data:
+    name: airgap-zoekt-data
+  sandbox_data:
+    name: airgap-sandbox-data
+
+networks:
+  prometheus-airgap:
+    name: prometheus-airgap
+    driver: bridge
+    internal: true

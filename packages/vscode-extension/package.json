@@ -38,6 +38,18 @@
         "title": "Prometheus: Assign Task"
       },
       {
+        "command": "prometheus.submitTask",
+        "title": "Prometheus: Submit Task"
+      },
+      {
+        "command": "prometheus.showDashboard",
+        "title": "Prometheus: Show Dashboard"
+      },
+      {
+        "command": "prometheus.approveCheckpoint",
+        "title": "Prometheus: Approve Checkpoint"
+      },
+      {
         "command": "prometheus.viewStatus",
         "title": "Prometheus: View Agent Status"
       },
@@ -69,6 +81,10 @@
         {
           "id": "prometheus.sessions",
           "name": "Active Sessions"
+        },
+        {
+          "id": "prometheus.agents",
+          "name": "Agent Status"
         },
         {
           "id": "prometheus.tasks",
