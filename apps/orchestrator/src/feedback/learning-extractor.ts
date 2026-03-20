@@ -24,7 +24,10 @@ export interface LearningPattern {
     | "tool_pattern"
     | "error_resolution"
     | "quality_correlation"
-    | "iteration_insight";
+    | "iteration_insight"
+    | "conditional_pattern"
+    | "causal_chain"
+    | "anti_pattern";
 }
 
 export interface SessionAnalysis {
@@ -121,6 +124,9 @@ export class LearningExtractor {
       ...this.analyzeErrorPatterns(analysis),
       ...this.analyzeQualityCorrelations(analysis),
       ...this.analyzeIterationInsights(analysis),
+      ...this.analyzeConditionalPatterns(analysis),
+      ...this.analyzeCausalChains(analysis),
+      ...this.analyzeAntiPatterns(analysis),
     ];
 
     // Only promote patterns that have been observed across enough sessions
@@ -453,6 +459,173 @@ export class LearningExtractor {
   }
 
   // -----------------------------------------------------------------------
+  // Advanced pattern analysers (causal, conditional, anti-patterns)
+  // -----------------------------------------------------------------------
+
+  /**
+   * Detect conditional patterns: "When error X occurs AND file type is Y,
+   * tool Z resolves it." Built from error+tool co-occurrence data.
+   */
+  private analyzeConditionalPatterns(
+    analysis: SessionAnalysis
+  ): LearningPattern[] {
+    const key = compositeKey(analysis.agentRole, analysis.taskType);
+    const errors = this.errorHistory.get(key);
+    const toolMap = this.toolHistory.get(key);
+
+    if (!(errors && toolMap) || errors.length === 0) {
+      return [];
+    }
+
+    const patterns: LearningPattern[] = [];
+    const now = new Date().toISOString();
+
+    for (const err of errors) {
+      if (err.occurrences < 2 || err.resolvedAfter.length === 0) {
+        continue;
+      }
+
+      // Find tools that consistently resolve this error
+      for (const resolutionTool of err.resolvedAfter) {
+        const toolEntry = toolMap.get(resolutionTool);
+        if (!toolEntry) {
+          continue;
+        }
+
+        const total = toolEntry.successCount + toolEntry.failCount;
+        const successRate = total > 0 ? toolEntry.successCount / total : 0;
+
+        if (successRate >= 0.7 && err.occurrences >= 2) {
+          // Detect file type context from error message
+          const fileType = extractFileTypeFromError(err.message);
+          const condition = fileType
+            ? `When error "${truncate(err.message, 80)}" occurs in ${fileType} files`
+            : `When error "${truncate(err.message, 80)}" occurs`;
+
+          patterns.push({
+            type: "conditional_pattern",
+            agentRole: analysis.agentRole,
+            taskType: analysis.taskType,
+            pattern: `${condition}, use "${resolutionTool}" to resolve it (${(successRate * 100).toFixed(0)}% success, ${err.occurrences} observations).`,
+            confidence: clamp(successRate * (1 - 1 / err.occurrences), 0, 0.95),
+            occurrences: err.occurrences,
+            lastSeen: now,
+          });
+        }
+      }
+    }
+
+    return patterns;
+  }
+
+  /**
+   * Detect causal chains: sequences of tool calls where action A reliably
+   * leads to outcome B. Built from successful session tool sequences.
+   */
+  private analyzeCausalChains(analysis: SessionAnalysis): LearningPattern[] {
+    const key = compositeKey(analysis.agentRole, analysis.taskType);
+    const snapshots = this.qualitySnapshots.get(key);
+
+    if (!snapshots || snapshots.length < 3) {
+      return [];
+    }
+
+    const patterns: LearningPattern[] = [];
+    const now = new Date().toISOString();
+
+    // Extract tool pair co-occurrences in high-quality sessions
+    const highQ = [...snapshots]
+      .sort((a, b) => b.qualityScore - a.qualityScore)
+      .slice(0, Math.ceil(snapshots.length / 2));
+
+    const pairCounts = new Map<string, number>();
+    for (const snap of highQ) {
+      const tools = snap.toolNames;
+      for (let i = 0; i < tools.length - 1; i++) {
+        const pair = `${tools[i]} → ${tools[i + 1]}`;
+        pairCounts.set(pair, (pairCounts.get(pair) ?? 0) + 1);
+      }
+    }
+
+    // Promote pairs that appear in 40%+ of high-quality sessions
+    const threshold = Math.max(2, Math.ceil(highQ.length * 0.4));
+    for (const [pair, count] of pairCounts) {
+      if (count >= threshold) {
+        patterns.push({
+          type: "causal_chain",
+          agentRole: analysis.agentRole,
+          taskType: analysis.taskType,
+          pattern: `Tool sequence "${pair}" appears in ${((count / highQ.length) * 100).toFixed(0)}% of high-quality ${analysis.taskType} sessions. This sequence leads to better outcomes.`,
+          confidence: clamp(0.5 + (count / highQ.length) * 0.4, 0, 0.9),
+          occurrences: count,
+          lastSeen: now,
+        });
+      }
+    }
+
+    return patterns;
+  }
+
+  /**
+   * Detect anti-patterns: tool sequences or approaches that consistently
+   * lead to failure. Built from failed session data.
+   */
+  private analyzeAntiPatterns(analysis: SessionAnalysis): LearningPattern[] {
+    const key = compositeKey(analysis.agentRole, analysis.taskType);
+    const toolMap = this.toolHistory.get(key);
+
+    if (!toolMap) {
+      return [];
+    }
+
+    const patterns: LearningPattern[] = [];
+    const now = new Date().toISOString();
+
+    // Tools with consistently high failure rates
+    for (const [toolName, entry] of toolMap) {
+      const total = entry.successCount + entry.failCount;
+      if (total < 3) {
+        continue;
+      }
+
+      const failRate = entry.failCount / total;
+
+      // Anti-pattern: tool fails >60% of the time with enough data
+      if (failRate >= 0.6 && total >= 4) {
+        patterns.push({
+          type: "anti_pattern",
+          agentRole: analysis.agentRole,
+          taskType: analysis.taskType,
+          pattern: `AVOID: Tool "${toolName}" fails ${(failRate * 100).toFixed(0)}% of the time for ${analysis.taskType} tasks (${total} uses). Find an alternative approach.`,
+          confidence: clamp(failRate, 0, 0.95),
+          occurrences: total,
+          lastSeen: now,
+        });
+      }
+    }
+
+    // Check for error patterns that are never resolved
+    const errors = this.errorHistory.get(key);
+    if (errors) {
+      for (const err of errors) {
+        if (err.occurrences >= 3 && err.resolvedAfter.length === 0) {
+          patterns.push({
+            type: "anti_pattern",
+            agentRole: analysis.agentRole,
+            taskType: analysis.taskType,
+            pattern: `UNRESOLVED: Error "${truncate(err.message, 100)}" has occurred ${err.occurrences} times and was never successfully resolved. Escalate to human or try a fundamentally different approach.`,
+            confidence: clamp(0.5 + err.occurrences * 0.1, 0, 0.95),
+            occurrences: err.occurrences,
+            lastSeen: now,
+          });
+        }
+      }
+    }
+
+    return patterns;
+  }
+
+  // -----------------------------------------------------------------------
   // Persistence
   // -----------------------------------------------------------------------
 
@@ -695,8 +868,19 @@ function formatPatternType(type: LearningPattern["type"]): string {
     error_resolution: "Error",
     quality_correlation: "Quality",
     iteration_insight: "Iterations",
+    conditional_pattern: "Conditional",
+    causal_chain: "Causal",
+    anti_pattern: "Anti-Pattern",
   };
   return labels[type];
+}
+
+const FILE_EXT_RE =
+  /\.(ts|tsx|js|jsx|py|go|rs|java|rb|css|html|json|yaml|yml|sql|md)\b/i;
+
+function extractFileTypeFromError(errorMessage: string): string | null {
+  const match = errorMessage.match(FILE_EXT_RE);
+  return match ? `.${(match[1] as string).toLowerCase()}` : null;
 }
 
 /**

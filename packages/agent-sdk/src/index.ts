@@ -1,3 +1,20 @@
+// Hooks
+export type {
+  HookContext,
+  HookEvent,
+  HookHandler,
+  HookRegistration,
+  HookResult,
+} from "./hooks";
+export {
+  autoLintHook,
+  blueprintGuardHook,
+  costGuardHook,
+  dependencyAuditHook,
+  HookEngine,
+  securityScanHook,
+} from "./hooks";
+
 // Base agent
 
 export type {

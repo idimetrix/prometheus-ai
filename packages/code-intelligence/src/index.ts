@@ -13,6 +13,14 @@ export type {
   StructuralDiffResult,
 } from "./analyzers/ast-diff";
 export { AstDiffAnalyzer } from "./analyzers/ast-diff";
+// ─── Call Graph Analyzer ────────────────────────────────────────
+export type {
+  CallGraphEdge,
+  CallGraphNode,
+  CouplingPair,
+  ImpactAnalysis,
+} from "./analyzers/call-graph";
+export { CallGraph } from "./analyzers/call-graph";
 
 // ─── Cognee pipeline ────────────────────────────────────────────
 export type {
