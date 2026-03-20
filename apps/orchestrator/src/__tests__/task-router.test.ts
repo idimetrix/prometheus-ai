@@ -53,6 +53,7 @@ vi.mock("@prometheus/utils", () => ({
   generateId: vi.fn((prefix: string) => `${prefix}_mock123`),
 }));
 
+import type { AgentLoop } from "../agent-loop";
 import { SessionManager } from "../session-manager";
 import { TaskRouter } from "../task-router";
 
@@ -228,7 +229,7 @@ describe("TaskRouter", () => {
             startedAt: new Date(),
             endedAt: null,
           },
-          agentLoop: mockAgentLoop as any,
+          agentLoop: mockAgentLoop as unknown as AgentLoop,
           startedAt: new Date(),
           activeAgents: new Map(),
         });

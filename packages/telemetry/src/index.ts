@@ -8,6 +8,7 @@ import {
 export type { Span, SpanOptions } from "@opentelemetry/api";
 export { context, SpanStatusCode, trace } from "@opentelemetry/api";
 export { registerDebugEndpoints } from "./debug";
+export { traceMiddleware } from "./hono-middleware";
 export type { InitTelemetryConfig } from "./init";
 export { initTelemetry as initTelemetryV2 } from "./init";
 export { metrics, metricsRegistry } from "./metrics";

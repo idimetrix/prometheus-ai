@@ -14,6 +14,7 @@ await initTelemetry({ serviceName: "api" });
 initSentry({ serviceName: "api" });
 installShutdownHandlers();
 
+import { traceMiddleware } from "@prometheus/telemetry";
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { cors } from "hono/cors";
@@ -37,7 +38,12 @@ const logger = createLogger("api");
 const app = new Hono();
 
 // ---------------------------------------------------------------------------
-// 0. Body size limit — reject payloads larger than 1MB
+// 0. Distributed tracing — extract W3C TraceContext from incoming requests
+// ---------------------------------------------------------------------------
+app.use("/*", traceMiddleware("api"));
+
+// ---------------------------------------------------------------------------
+// 0b. Body size limit — reject payloads larger than 1MB
 // ---------------------------------------------------------------------------
 app.use("*", bodyLimit({ maxSize: 1024 * 1024 }));
 

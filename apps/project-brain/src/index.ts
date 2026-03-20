@@ -1,6 +1,10 @@
 import { serve } from "@hono/node-server";
 import { createLogger } from "@prometheus/logger";
-import { initSentry, initTelemetry } from "@prometheus/telemetry";
+import {
+  initSentry,
+  initTelemetry,
+  traceMiddleware,
+} from "@prometheus/telemetry";
 import {
   installShutdownHandlers,
   isProcessShuttingDown,
@@ -35,6 +39,8 @@ import { SessionResume } from "./resume/session-resume";
 
 const logger = createLogger("project-brain");
 const app = new Hono();
+
+app.use("/*", traceMiddleware("project-brain"));
 
 // Initialize layers
 const semantic = new SemanticLayer();

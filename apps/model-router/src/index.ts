@@ -1,6 +1,10 @@
 import { serve } from "@hono/node-server";
 import { createLogger } from "@prometheus/logger";
-import { initSentry, initTelemetry } from "@prometheus/telemetry";
+import {
+  initSentry,
+  initTelemetry,
+  traceMiddleware,
+} from "@prometheus/telemetry";
 import {
   installShutdownHandlers,
   isProcessShuttingDown,
@@ -21,6 +25,7 @@ const logger = createLogger("model-router");
 const app = new Hono();
 
 app.use("/*", cors());
+app.use("/*", traceMiddleware("model-router"));
 
 const rateLimiter = new RateLimitManager();
 const routerService = new ModelRouterService(rateLimiter);

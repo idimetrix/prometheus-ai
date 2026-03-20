@@ -1,6 +1,10 @@
 import { serve } from "@hono/node-server";
 import { createLogger } from "@prometheus/logger";
-import { initSentry, initTelemetry } from "@prometheus/telemetry";
+import {
+  initSentry,
+  initTelemetry,
+  traceMiddleware,
+} from "@prometheus/telemetry";
 import {
   installShutdownHandlers,
   isProcessShuttingDown,
@@ -22,6 +26,7 @@ const logger = createLogger("sandbox-manager");
 const app = new Hono();
 
 app.use("/*", cors());
+app.use("/*", traceMiddleware("sandbox-manager"));
 
 const containerManager = new ContainerManager();
 const sandboxPool = new SandboxPool(containerManager);

@@ -96,3 +96,4 @@ export {
   sandboxManagerClient,
 } from "./service-clients";
 export { slugify } from "./slug";
+export { getTraceHeaders } from "./trace-headers";

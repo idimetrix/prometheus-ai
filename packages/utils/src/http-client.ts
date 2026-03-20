@@ -1,5 +1,6 @@
 import { createLogger } from "@prometheus/logger";
 import { getCorrelationHeaders } from "./correlation";
+import { getTraceHeaders } from "./trace-headers";
 
 const logger = createLogger("utils:http-client");
 
@@ -143,6 +144,7 @@ export class HttpClient {
           headers: {
             ...this.config.defaultHeaders,
             ...getCorrelationHeaders(),
+            ...getTraceHeaders(),
             ...options.headers,
           },
           body: options.body == null ? undefined : JSON.stringify(options.body),

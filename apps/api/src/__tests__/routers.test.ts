@@ -370,7 +370,7 @@ describe("projectsRouter", () => {
     // by simulating what the handler does.
 
     // Insert project
-    mockDb.insert(null as any);
+    mockDb.insert();
     insertChain.values({
       id: "proj_mock123",
       orgId: "org_test123",
@@ -441,7 +441,7 @@ describe("projectsRouter", () => {
     const updated = { ...fakeProject, name: "Updated Name" };
     updateChain.returning.mockResolvedValueOnce([updated]);
 
-    mockDb.update(null as any);
+    mockDb.update();
     updateChain.set({ name: "Updated Name", updatedAt: new Date() });
     updateChain.where("conditions");
     const [result] = await updateChain.returning();
@@ -453,7 +453,7 @@ describe("projectsRouter", () => {
     const archived = { ...fakeProject, status: "archived" };
     updateChain.returning.mockResolvedValueOnce([archived]);
 
-    mockDb.update(null as any);
+    mockDb.update();
     updateChain.set({ status: "archived", updatedAt: new Date() });
     updateChain.where("conditions");
     const [result] = await updateChain.returning();
@@ -463,7 +463,7 @@ describe("projectsRouter", () => {
 
   it("delete: returns success false when project not found", async () => {
     updateChain.returning.mockResolvedValueOnce([]);
-    mockDb.update(null as any);
+    mockDb.update();
     updateChain.set({ status: "archived" });
     updateChain.where("conditions");
     const rows = await updateChain.returning();
@@ -496,7 +496,7 @@ describe("sessionsRouter", () => {
     });
     expect(project).toBeTruthy();
 
-    mockDb.insert(null as any);
+    mockDb.insert();
     insertChain.values({
       id: "ses_mock123",
       projectId: "proj_1",
@@ -597,7 +597,7 @@ describe("sessionsRouter", () => {
     updateChain.returning.mockResolvedValueOnce([
       { ...fakeSession, status: "paused" },
     ]);
-    mockDb.update(null as any);
+    mockDb.update();
     updateChain.set({ status: "paused" });
     updateChain.where("id = ses_1 AND status = active");
     const [result] = await updateChain.returning();
@@ -608,7 +608,7 @@ describe("sessionsRouter", () => {
     updateChain.returning.mockResolvedValueOnce([
       { ...fakeSession, status: "active" },
     ]);
-    mockDb.update(null as any);
+    mockDb.update();
     updateChain.set({ status: "active" });
     const [result] = await updateChain.returning();
     expect(result.status).toBe("active");
@@ -618,7 +618,7 @@ describe("sessionsRouter", () => {
     updateChain.returning.mockResolvedValueOnce([
       { ...fakeSession, status: "cancelled", endedAt: new Date() },
     ]);
-    mockDb.update(null as any);
+    mockDb.update();
     updateChain.set({ status: "cancelled", endedAt: expect.any(Date) });
     const [result] = await updateChain.returning();
     expect(result.status).toBe("cancelled");
@@ -707,7 +707,7 @@ describe("tasksRouter", () => {
 
   it("submit: returns queue position and estimated wait", async () => {
     const { agentTaskQueue } = await import("@prometheus/queue");
-    (agentTaskQueue.getWaitingCount as any).mockResolvedValueOnce(3);
+    vi.mocked(agentTaskQueue.getWaitingCount).mockResolvedValueOnce(3);
     const waiting = await agentTaskQueue.getWaitingCount();
     expect(waiting).toBe(3);
     const estimatedWait = waiting < 5 ? "< 1 minute" : `~${waiting} minutes`;
@@ -743,9 +743,11 @@ describe("tasksRouter", () => {
       { ...fakeTask, status: "cancelled" },
     ]);
     const mockJob = { remove: vi.fn().mockResolvedValue(undefined) };
-    (agentTaskQueue.getJob as any).mockResolvedValueOnce(mockJob);
+    vi.mocked(agentTaskQueue.getJob).mockResolvedValueOnce(
+      mockJob as unknown as Awaited<ReturnType<typeof agentTaskQueue.getJob>>
+    );
 
-    mockDb.update(null as any);
+    mockDb.update();
     updateChain.set({ status: "cancelled" });
     const [result] = await updateChain.returning();
     expect(result.status).toBe("cancelled");
@@ -759,13 +761,13 @@ describe("tasksRouter", () => {
 
   it("cancel: handles job already processing gracefully", async () => {
     const { agentTaskQueue } = await import("@prometheus/queue");
-    (agentTaskQueue.getJob as any).mockResolvedValueOnce(null);
+    vi.mocked(agentTaskQueue.getJob).mockResolvedValueOnce(undefined);
     updateChain.returning.mockResolvedValueOnce([
       { ...fakeTask, status: "cancelled" },
     ]);
 
     const job = await agentTaskQueue.getJob("task_mock123");
-    expect(job).toBeNull();
+    expect(job).toBeUndefined();
     // No error thrown
   });
 });
@@ -1001,7 +1003,7 @@ describe("settingsRouter", () => {
     updateChain.returning.mockResolvedValueOnce([
       { id: "key_1", revokedAt: new Date() },
     ]);
-    mockDb.update(null as any);
+    mockDb.update();
     updateChain.set({ revokedAt: expect.any(Date) });
     const [result] = await updateChain.returning();
     expect(result.revokedAt).toBeTruthy();
@@ -1009,7 +1011,7 @@ describe("settingsRouter", () => {
 
   it("revokeApiKey: returns false when key not found", async () => {
     updateChain.returning.mockResolvedValueOnce([]);
-    mockDb.update(null as any);
+    mockDb.update();
     updateChain.set({ revokedAt: new Date() });
     const rows = await updateChain.returning();
     expect(!!rows[0]).toBe(false);
@@ -1080,7 +1082,7 @@ describe("settingsRouter", () => {
   });
 
   it("disconnectIntegration: clears credentials and sets disconnected", () => {
-    mockDb.update(null as any);
+    mockDb.update();
     updateChain.set({ credentialsEncrypted: null, status: "disconnected" });
     expect(updateChain.set).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -1098,9 +1100,9 @@ describe("settingsRouter", () => {
 describe("queueRouter", () => {
   it("position: returns -1 when job not found", async () => {
     const { agentTaskQueue } = await import("@prometheus/queue");
-    (agentTaskQueue.getJob as any).mockResolvedValueOnce(null);
+    vi.mocked(agentTaskQueue.getJob).mockResolvedValueOnce(undefined);
     const job = await agentTaskQueue.getJob("task_unknown");
-    expect(job).toBeNull();
+    expect(job).toBeUndefined();
     const result = {
       taskId: "task_unknown",
       position: -1,
@@ -1116,13 +1118,15 @@ describe("queueRouter", () => {
       id: "task_1",
       getState: vi.fn().mockResolvedValue("waiting"),
     };
-    (agentTaskQueue.getJob as any).mockResolvedValueOnce(mockJob);
-    (agentTaskQueue.getWaiting as any).mockResolvedValueOnce([
+    vi.mocked(agentTaskQueue.getJob).mockResolvedValueOnce(
+      mockJob as unknown as Awaited<ReturnType<typeof agentTaskQueue.getJob>>
+    );
+    vi.mocked(agentTaskQueue.getWaiting).mockResolvedValueOnce([
       { id: "task_0" },
       { id: "task_1" },
-    ]);
-    (agentTaskQueue.getWaitingCount as any).mockResolvedValueOnce(3);
-    (agentTaskQueue.getActiveCount as any).mockResolvedValueOnce(1);
+    ] as unknown as Awaited<ReturnType<typeof agentTaskQueue.getWaiting>>);
+    vi.mocked(agentTaskQueue.getWaitingCount).mockResolvedValueOnce(3);
+    vi.mocked(agentTaskQueue.getActiveCount).mockResolvedValueOnce(1);
 
     const job = await agentTaskQueue.getJob("task_1");
     const state = await job?.getState();
@@ -1140,7 +1144,9 @@ describe("queueRouter", () => {
       getState: vi.fn().mockResolvedValue("active"),
     };
     const { agentTaskQueue } = await import("@prometheus/queue");
-    (agentTaskQueue.getJob as any).mockResolvedValueOnce(mockJob);
+    vi.mocked(agentTaskQueue.getJob).mockResolvedValueOnce(
+      mockJob as unknown as Awaited<ReturnType<typeof agentTaskQueue.getJob>>
+    );
 
     const job = await agentTaskQueue.getJob("task_1");
     const state = await job?.getState();
@@ -1153,11 +1159,11 @@ describe("queueRouter", () => {
 
   it("stats: returns all queue counters", async () => {
     const { agentTaskQueue } = await import("@prometheus/queue");
-    (agentTaskQueue.getWaitingCount as any).mockResolvedValueOnce(5);
-    (agentTaskQueue.getActiveCount as any).mockResolvedValueOnce(2);
-    (agentTaskQueue.getCompletedCount as any).mockResolvedValueOnce(100);
-    (agentTaskQueue.getFailedCount as any).mockResolvedValueOnce(3);
-    (agentTaskQueue.getDelayedCount as any).mockResolvedValueOnce(1);
+    vi.mocked(agentTaskQueue.getWaitingCount).mockResolvedValueOnce(5);
+    vi.mocked(agentTaskQueue.getActiveCount).mockResolvedValueOnce(2);
+    vi.mocked(agentTaskQueue.getCompletedCount).mockResolvedValueOnce(100);
+    vi.mocked(agentTaskQueue.getFailedCount).mockResolvedValueOnce(3);
+    vi.mocked(agentTaskQueue.getDelayedCount).mockResolvedValueOnce(1);
 
     const [waiting, active, completed, failed, delayed] = await Promise.all([
       agentTaskQueue.getWaitingCount(),
@@ -1223,7 +1229,7 @@ describe("brainRouter", () => {
       content: "Use kebab-case for files",
     };
     insertChain.returning.mockResolvedValueOnce([memory]);
-    mockDb.insert(null as any);
+    mockDb.insert();
     insertChain.values(memory);
     const [result] = await insertChain.returning();
     expect(result.memoryType).toBe("convention");
@@ -1310,7 +1316,7 @@ describe("fleetRouter", () => {
     ];
 
     for (const _task of tasks) {
-      mockDb.insert(null as any);
+      mockDb.insert();
       const [created] = await insertChain.returning();
       expect(created.status).toBe("queued");
     }
@@ -1353,7 +1359,7 @@ describe("fleetRouter", () => {
   });
 
   it("stop: terminates specific agent when agentId provided", () => {
-    mockDb.update(null as any);
+    mockDb.update();
     updateChain.set({ status: "terminated", terminatedAt: expect.any(Date) });
     updateChain.where("agents.id = agt_1");
     expect(updateChain.set).toHaveBeenCalledWith(
@@ -1362,7 +1368,7 @@ describe("fleetRouter", () => {
   });
 
   it("stop: terminates all session agents when no agentId", () => {
-    mockDb.update(null as any);
+    mockDb.update();
     updateChain.set({ status: "terminated", terminatedAt: expect.any(Date) });
     updateChain.where("sessionId AND status IN (idle, working)");
     expect(updateChain.set).toHaveBeenCalled();
@@ -1509,7 +1515,7 @@ describe("integrationsRouter", () => {
   });
 
   it("disconnect: clears credentials and updates status", () => {
-    mockDb.update(null as any);
+    mockDb.update();
     updateChain.set({ credentialsEncrypted: null, status: "disconnected" });
     expect(updateChain.set).toHaveBeenCalledWith(
       expect.objectContaining({

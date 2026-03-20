@@ -68,7 +68,7 @@ describe("SessionManager", () => {
         orgId: "org_1",
         userId: "usr_1",
         mode: "task",
-      } as any,
+      },
       "ses_1"
     );
 

@@ -84,6 +84,24 @@ export async function setupScheduledJobs(): Promise<void> {
     }
   );
 
+  // DLQ replay — every 15 minutes
+  // Replays eligible dead-letter queue entries back to their original queues
+  await cleanupSandboxQueue.add(
+    "scheduled:dlq-replay",
+    {
+      sandboxId: "__dlq-replay__",
+      sessionId: "",
+      projectId: "",
+      orgId: "",
+      reason: "timeout" as const,
+      preserveArtifacts: false,
+    },
+    {
+      repeat: { pattern: "*/15 * * * *" },
+      jobId: "scheduled:dlq-replay",
+    }
+  );
+
   // Nightly memory consolidation — 2am UTC
   // Deduplicates/merges similar memories and applies decay
   // (reduces relevance for memories not accessed in 30 days)

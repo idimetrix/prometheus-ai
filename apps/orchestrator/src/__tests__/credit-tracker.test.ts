@@ -26,7 +26,10 @@ vi.mock("@prometheus/utils", () => ({
 
 // Use a shared object to avoid hoisting issues
 const dbMocks = {
-  txSelectResult: [{ balance: 1000, reserved: 100 }] as any[],
+  txSelectResult: [{ balance: 1000, reserved: 100 }] as Array<{
+    balance: number;
+    reserved: number;
+  }>,
   transactionError: null as Error | null,
 };
 

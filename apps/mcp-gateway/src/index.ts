@@ -1,9 +1,7 @@
 import { serve } from "@hono/node-server";
 import { createLogger } from "@prometheus/logger";
-import { initSentry } from "@prometheus/telemetry";
+import { initSentry, traceMiddleware } from "@prometheus/telemetry";
 import {
-  decrypt,
-  encrypt,
   installShutdownHandlers,
   isProcessShuttingDown,
 } from "@prometheus/utils";
@@ -20,6 +18,7 @@ import { registerLinearAdapter } from "./adapters/linear";
 import { registerSentryAdapter } from "./adapters/sentry";
 import { registerSlackAdapter } from "./adapters/slack";
 import { registerVercelAdapter } from "./adapters/vercel";
+import { CredentialStore } from "./credential-store";
 import { ToolRegistry } from "./registry";
 
 initSentry({ serviceName: "mcp-gateway" });
@@ -28,8 +27,15 @@ installShutdownHandlers();
 const logger = createLogger("mcp-gateway");
 const app = new Hono();
 const registry = new ToolRegistry();
+const credentialStore = new CredentialStore();
+
+// Load persisted credentials from DB on startup
+credentialStore.loadAll().catch((err) => {
+  logger.error({ err }, "Failed to load credentials from DB on startup");
+});
 
 app.use("/*", cors());
+app.use("/*", traceMiddleware("mcp-gateway"));
 
 // Register all adapters
 registerGitHubAdapter(registry);
@@ -204,10 +210,10 @@ app.post("/tools/:toolName/execute", async (c) => {
       );
     }
 
-    // If no explicit credentials provided, try to load from encrypted store
+    // If no explicit credentials provided, try to load from persistent store
     let credentials = body.credentials;
     if (!credentials && body.orgId && toolDef.requiresAuth) {
-      credentials = loadCredentials(body.orgId, toolDef.adapter);
+      credentials = await credentialStore.retrieve(body.orgId, toolDef.adapter);
     }
 
     const result = await registry.execute(toolName, body.input ?? {}, {
@@ -225,56 +231,13 @@ app.post("/tools/:toolName/execute", async (c) => {
   }
 });
 
-// ---- Credential Management (Encrypted) ----
-
-/**
- * In-memory encrypted credential store.
- * Keys: "orgId:provider" -> encrypted JSON string of credentials
- */
-const credentialStore = new Map<string, string>();
-
-function storeCredentials(
-  orgId: string,
-  provider: string,
-  credentials: Record<string, string>
-): void {
-  const key = `${orgId}:${provider}`;
-  const existing = loadCredentials(orgId, provider);
-  const merged = { ...existing, ...credentials };
-  const encrypted = encrypt(JSON.stringify(merged));
-  credentialStore.set(key, encrypted);
-}
-
-function loadCredentials(
-  orgId: string,
-  provider: string
-): Record<string, string> | undefined {
-  const key = `${orgId}:${provider}`;
-  const encrypted = credentialStore.get(key);
-  if (!encrypted) {
-    return undefined;
-  }
-
-  try {
-    const decrypted = decrypt(encrypted);
-    return JSON.parse(decrypted) as Record<string, string>;
-  } catch (error) {
-    logger.error(
-      { orgId, provider, error: String(error) },
-      "Failed to decrypt credentials"
-    );
-    return undefined;
-  }
-}
-
-function deleteCredentials(orgId: string, provider: string): boolean {
-  const key = `${orgId}:${provider}`;
-  return credentialStore.delete(key);
-}
+// ---- Credential Management (Persistent + Encrypted) ----
 
 /**
  * POST /credentials/:provider
  * Body: { orgId: string, credentials: Record<string, string> }
+ *
+ * Credentials are stored encrypted in PostgreSQL via the CredentialStore.
  */
 app.post("/credentials/:provider", async (c) => {
   const provider = c.req.param("provider");
@@ -292,11 +255,11 @@ app.post("/credentials/:provider", async (c) => {
       return c.json({ error: "credentials object is required" }, 400);
     }
 
-    storeCredentials(body.orgId, provider, body.credentials);
+    await credentialStore.store(body.orgId, provider, body.credentials);
 
     logger.info(
       { provider, orgId: body.orgId },
-      "Credentials stored (encrypted)"
+      "Credentials stored (encrypted, persistent)"
     );
 
     return c.json({
@@ -315,7 +278,7 @@ app.post("/credentials/:provider", async (c) => {
  * GET /credentials/:provider?orgId=...
  * Returns stored credential keys (not values) for validation.
  */
-app.get("/credentials/:provider", (c) => {
+app.get("/credentials/:provider", async (c) => {
   const provider = c.req.param("provider");
   const orgId = c.req.query("orgId");
 
@@ -323,7 +286,7 @@ app.get("/credentials/:provider", (c) => {
     return c.json({ error: "orgId query parameter is required" }, 400);
   }
 
-  const creds = loadCredentials(orgId, provider);
+  const creds = await credentialStore.retrieve(orgId, provider);
 
   if (!creds) {
     return c.json({ configured: false, keys: [] });
@@ -349,7 +312,7 @@ app.delete("/credentials/:provider", async (c) => {
       return c.json({ error: "orgId is required" }, 400);
     }
 
-    const deleted = deleteCredentials(body.orgId, provider);
+    const deleted = await credentialStore.delete(body.orgId, provider);
 
     return c.json({
       success: true,

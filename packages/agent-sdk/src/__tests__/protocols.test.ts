@@ -466,7 +466,7 @@ describe("PlannerProtocol", () => {
         id: "bp_1",
         projectId: "proj_1",
         version: "1.0.0",
-        techStack: {} as any,
+        techStack: {} as unknown as TechStackDecision,
         databaseSchema: [],
         apiContracts: [],
         componentTree: [],
@@ -498,7 +498,7 @@ describe("PlannerProtocol", () => {
       // Should have at least 1 wave
       expect(waves.length).toBeGreaterThanOrEqual(1);
       // First wave should contain Database tasks (no deps)
-      const firstWaveTitles = waves[0]?.map((t: any) => t.title);
+      const firstWaveTitles = waves[0]?.map((t) => t.title);
       expect(firstWaveTitles?.length).toBeGreaterThan(0);
     });
 
@@ -516,7 +516,7 @@ describe("PlannerProtocol", () => {
         id: "bp_1",
         projectId: "proj_1",
         version: "1.0.0",
-        techStack: {} as any,
+        techStack: {} as unknown as TechStackDecision,
         databaseSchema: [],
         apiContracts: [],
         componentTree: [],
@@ -552,7 +552,7 @@ describe("PlannerProtocol", () => {
         id: "bp_1",
         projectId: "proj_1",
         version: "1.0.0",
-        techStack: {} as any,
+        techStack: {} as unknown as TechStackDecision,
         databaseSchema: [],
         apiContracts: [],
         componentTree: [],
@@ -587,7 +587,7 @@ describe("PlannerProtocol", () => {
         id: "bp_1",
         projectId: "proj_1",
         version: "1.0.0",
-        techStack: {} as any,
+        techStack: {} as unknown as TechStackDecision,
         databaseSchema: [],
         apiContracts: [],
         componentTree: [],

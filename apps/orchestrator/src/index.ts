@@ -1,6 +1,10 @@
 import { serve } from "@hono/node-server";
 import { createLogger } from "@prometheus/logger";
-import { initSentry, initTelemetry } from "@prometheus/telemetry";
+import {
+  initSentry,
+  initTelemetry,
+  traceMiddleware,
+} from "@prometheus/telemetry";
 import type { AgentMode, AgentRole } from "@prometheus/types";
 import {
   installShutdownHandlers,
@@ -27,6 +31,7 @@ const takeoverManager = new TakeoverManager();
 const app = new Hono();
 
 app.use("/*", cors());
+app.use("/*", traceMiddleware("orchestrator"));
 
 // ─── Health Check ────────────────────────────────────────────────
 

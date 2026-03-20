@@ -124,11 +124,11 @@ describe("ToolRegistry", () => {
   });
 
   it("returns error for unknown tool", async () => {
-    const result = (await registry.execute(
+    const result = await registry.execute(
       "nonexistent",
       {},
       { orgId: "org_1" }
-    )) as any;
+    );
     expect(result.success).toBe(false);
     expect(result.error).toContain("not found");
   });

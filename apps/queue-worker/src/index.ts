@@ -79,6 +79,11 @@ async function moveToDLQ(
 }
 
 // ========== Agent Task Worker ==========
+const _defaultJobOptions = {
+  attempts: 3,
+  backoff: { type: "exponential" as const, delay: 1000 },
+};
+
 const agentWorker = new Worker<AgentTaskData>(
   "agent-tasks",
   async (job) => {
