@@ -249,6 +249,64 @@ export class SCIMProvider {
     );
   }
 
+  /**
+   * Get a single group by SCIM resource ID.
+   */
+  getGroup(groupId: string): Promise<SCIMGroup> {
+    logger.debug({ groupId }, "Getting SCIM group");
+    return this.request<SCIMGroup>(`/Groups/${groupId}`, "GET");
+  }
+
+  /**
+   * Create a new group via SCIM provisioning.
+   */
+  createGroup(params: {
+    displayName: string;
+    externalId?: string;
+    members?: { value: string; display: string }[];
+  }): Promise<SCIMGroup> {
+    const body = {
+      schemas: ["urn:ietf:params:scim:schemas:core:2.0:Group"],
+      displayName: params.displayName,
+      externalId: params.externalId,
+      members: params.members ?? [],
+    };
+
+    logger.info({ displayName: params.displayName }, "Creating SCIM group");
+    return this.request<SCIMGroup>("/Groups", "POST", body);
+  }
+
+  /**
+   * Update group membership via SCIM PATCH.
+   */
+  updateGroupMembers(
+    groupId: string,
+    operations: Array<{
+      op: "add" | "remove" | "replace";
+      path: string;
+      value?: unknown;
+    }>
+  ): Promise<SCIMGroup> {
+    const body = {
+      schemas: ["urn:ietf:params:scim:api:messages:2.0:PatchOp"],
+      Operations: operations,
+    };
+
+    logger.info(
+      { groupId, operationCount: operations.length },
+      "Updating SCIM group"
+    );
+    return this.request<SCIMGroup>(`/Groups/${groupId}`, "PATCH", body);
+  }
+
+  /**
+   * Delete a group.
+   */
+  async deleteGroup(groupId: string): Promise<void> {
+    logger.info({ groupId }, "Deleting SCIM group");
+    await this.request<void>(`/Groups/${groupId}`, "DELETE");
+  }
+
   // -------------------------------------------------------------------------
   // Private helpers
   // -------------------------------------------------------------------------

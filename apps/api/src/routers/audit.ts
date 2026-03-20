@@ -474,4 +474,121 @@ export const auditRouter = router({
         healthScore,
       };
     }),
+
+  // ─── Export Audit Logs (CSV/JSON for SOC 2) ─────────────────────────────
+  exportAuditLogs: orgAdminProcedure
+    .input(
+      z.object({
+        format: z.enum(["json", "csv"]).default("json"),
+        dateFrom: z.string().datetime(),
+        dateTo: z.string().datetime(),
+        action: z.string().optional(),
+        resource: z.string().optional(),
+      })
+    )
+    .mutation(async ({ input, ctx }) => {
+      const conditions = [
+        eq(auditLogs.orgId, ctx.orgId),
+        gte(auditLogs.createdAt, new Date(input.dateFrom)),
+        lte(auditLogs.createdAt, new Date(input.dateTo)),
+      ];
+
+      if (input.action) {
+        conditions.push(eq(auditLogs.action, input.action));
+      }
+      if (input.resource) {
+        conditions.push(eq(auditLogs.resource, input.resource));
+      }
+
+      const results = await ctx.db
+        .select()
+        .from(auditLogs)
+        .where(and(...conditions))
+        .orderBy(desc(auditLogs.createdAt))
+        .limit(50_000);
+
+      // Resolve user names
+      const userIds = [
+        ...new Set(results.map((l) => l.userId).filter(Boolean)),
+      ] as string[];
+
+      let userMap = new Map<string, { name: string | null; email: string }>();
+      if (userIds.length > 0) {
+        const userRows = await ctx.db
+          .select({ id: users.id, name: users.name, email: users.email })
+          .from(users)
+          .where(inArray(users.id, userIds));
+        userMap = new Map(
+          userRows.map((u) => [u.id, { name: u.name, email: u.email }])
+        );
+      }
+
+      const rows = results.map((log) => ({
+        id: log.id,
+        timestamp: log.createdAt.toISOString(),
+        action: log.action,
+        resource: log.resource,
+        resourceId: log.resourceId ?? "",
+        userId: log.userId ?? "",
+        userName: log.userId ? (userMap.get(log.userId)?.name ?? "") : "",
+        userEmail: log.userId ? (userMap.get(log.userId)?.email ?? "") : "",
+        ipAddress: log.ipAddress ?? "",
+        details: JSON.stringify(log.details ?? {}),
+      }));
+
+      // Record the export in audit log
+      await ctx.db.insert(auditLogs).values({
+        id: generateId("audit"),
+        orgId: ctx.orgId,
+        userId: ctx.auth.userId,
+        action: "audit.export",
+        resource: "audit_log",
+        details: {
+          format: input.format,
+          dateFrom: input.dateFrom,
+          dateTo: input.dateTo,
+          recordCount: rows.length,
+        },
+      });
+
+      if (input.format === "csv") {
+        const headers = [
+          "id",
+          "timestamp",
+          "action",
+          "resource",
+          "resourceId",
+          "userId",
+          "userName",
+          "userEmail",
+          "ipAddress",
+          "details",
+        ];
+        const csvRows = rows.map((r) =>
+          headers
+            .map((h) => {
+              const val = String(r[h as keyof typeof r]);
+              return val.includes(",") || val.includes('"')
+                ? `"${val.replace(/"/g, '""')}"`
+                : val;
+            })
+            .join(",")
+        );
+        const csv = [headers.join(","), ...csvRows].join("\n");
+
+        logger.info(
+          { orgId: ctx.orgId, format: "csv", count: rows.length },
+          "Audit log export completed"
+        );
+
+        return { format: "csv" as const, data: csv, recordCount: rows.length };
+      }
+
+      logger.info(
+        { orgId: ctx.orgId, format: "json", count: rows.length },
+        "Audit log export completed"
+      );
+
+      return { format: "json" as const, data: rows, recordCount: rows.length };
+    }),
 });

@@ -144,4 +144,68 @@ export const apiKeysRouter = router({
       logger.info({ orgId: ctx.orgId, keyId: input.keyId }, "API key revoked");
       return { success: true };
     }),
+
+  /**
+   * Rotate an API key: revoke the current key and issue a new one atomically.
+   * Returns the new raw key (shown once).
+   */
+  rotate: orgAdminProcedure
+    .input(
+      z.object({
+        keyId: z.string().min(1, "Key ID is required"),
+      })
+    )
+    .mutation(async ({ input, ctx }) => {
+      // Find the existing key
+      const [existing] = await ctx.db
+        .select({ id: apiKeys.id, name: apiKeys.name })
+        .from(apiKeys)
+        .where(
+          and(
+            eq(apiKeys.id, input.keyId),
+            eq(apiKeys.orgId, ctx.orgId),
+            isNull(apiKeys.revokedAt)
+          )
+        )
+        .limit(1);
+
+      if (!existing) {
+        throw new TRPCError({
+          code: "NOT_FOUND",
+          message: "API key not found or already revoked",
+        });
+      }
+
+      // Revoke old key and create new one
+      const rawKey = `${KEY_PREFIX}${randomBytes(32).toString("hex")}`;
+      const newKeyHash = hashKey(rawKey);
+      const newId = generateId("key");
+
+      await ctx.db
+        .update(apiKeys)
+        .set({ revokedAt: new Date() })
+        .where(eq(apiKeys.id, input.keyId));
+
+      await ctx.db.insert(apiKeys).values({
+        id: newId,
+        orgId: ctx.orgId,
+        userId: ctx.auth.userId,
+        keyHash: newKeyHash,
+        name: existing.name,
+      });
+
+      logger.info(
+        { orgId: ctx.orgId, oldKeyId: input.keyId, newKeyId: newId },
+        "API key rotated"
+      );
+
+      return {
+        id: newId,
+        key: rawKey,
+        name: existing.name,
+        revokedKeyId: input.keyId,
+        message:
+          "Key rotated. Store the new key securely. It will not be shown again.",
+      };
+    }),
 });

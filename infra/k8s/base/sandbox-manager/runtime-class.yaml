@@ -1,0 +1,39 @@
+apiVersion: node.k8s.io/v1
+kind: RuntimeClass
+metadata:
+  name: gvisor
+handler: runsc
+scheduling:
+  nodeSelector:
+    sandbox.prometheus.dev/gvisor: "true"
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: sandbox-config
+  namespace: prometheus
+data:
+  SANDBOX_RUNTIME_CLASS: "gvisor"
+  SANDBOX_SECURITY_CONTEXT: |
+    {
+      "runAsNonRoot": true,
+      "runAsUser": 1000,
+      "readOnlyRootFilesystem": true,
+      "allowPrivilegeEscalation": false,
+      "capabilities": {
+        "drop": ["ALL"]
+      },
+      "seccompProfile": {
+        "type": "RuntimeDefault"
+      }
+    }
+  SANDBOX_RESOURCE_LIMITS: |
+    {
+      "cpu": "2",
+      "memory": "2Gi",
+      "ephemeral-storage": "10Gi"
+    }
+  SANDBOX_NETWORK_POLICY: "restricted"
+  SANDBOX_WARM_POOL_SIZE: "5"
+  SANDBOX_MAX_POOL_SIZE: "20"
+  SANDBOX_IDLE_TIMEOUT: "1800"

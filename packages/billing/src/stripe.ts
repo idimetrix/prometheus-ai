@@ -25,7 +25,8 @@ function getStripe(): Stripe {
       throw new Error("STRIPE_SECRET_KEY is required");
     }
     stripeInstance = new Stripe(key, {
-      apiVersion: "2025-02-24.acacia" as Stripe.LatestApiVersion,
+      apiVersion: "2025-02-24.acacia" as unknown as Stripe.LatestApiVersion,
+      maxNetworkRetries: 2,
     });
   }
   return stripeInstance;
@@ -116,38 +117,50 @@ export class StripeService {
     orgId: string;
     trialDays?: number;
   }): Promise<Stripe.Subscription> {
-    const subscription = await this.stripe.subscriptions.create({
-      customer: params.customerId,
-      items: [{ price: params.priceId }],
-      payment_behavior: "default_incomplete",
-      payment_settings: { save_default_payment_method: "on_subscription" },
-      expand: ["latest_invoice.payment_intent"],
-      metadata: { orgId: params.orgId },
-      ...(params.trialDays ? { trial_period_days: params.trialDays } : {}),
-    });
+    try {
+      const subscription = await this.stripe.subscriptions.create({
+        customer: params.customerId,
+        items: [{ price: params.priceId }],
+        payment_behavior: "default_incomplete",
+        payment_settings: { save_default_payment_method: "on_subscription" },
+        expand: ["latest_invoice.payment_intent"],
+        metadata: { orgId: params.orgId },
+        ...(params.trialDays ? { trial_period_days: params.trialDays } : {}),
+      });
 
-    // Persist subscription record
-    await db.insert(subscriptions).values({
-      id: generateId("sub"),
-      orgId: params.orgId,
-      planId: this.planIdFromPriceId(params.priceId),
-      stripeSubscriptionId: subscription.id,
-      status: subscription.status === "active" ? "active" : "incomplete",
-      currentPeriodStart: new Date(
-        (subscription.items.data[0]?.current_period_start ??
-          subscription.start_date) * 1000
-      ),
-      currentPeriodEnd: new Date(
-        (subscription.items.data[0]?.current_period_end ??
-          subscription.start_date) * 1000
-      ),
-    });
+      // Persist subscription record
+      await db.insert(subscriptions).values({
+        id: generateId("sub"),
+        orgId: params.orgId,
+        planId: this.planIdFromPriceId(params.priceId),
+        stripeSubscriptionId: subscription.id,
+        status: subscription.status === "active" ? "active" : "incomplete",
+        currentPeriodStart: new Date(
+          (subscription.items.data[0]?.current_period_start ??
+            subscription.start_date) * 1000
+        ),
+        currentPeriodEnd: new Date(
+          (subscription.items.data[0]?.current_period_end ??
+            subscription.start_date) * 1000
+        ),
+      });
 
-    logger.info(
-      { subscriptionId: subscription.id, orgId: params.orgId },
-      "Subscription created"
-    );
-    return subscription;
+      logger.info(
+        { subscriptionId: subscription.id, orgId: params.orgId },
+        "Subscription created"
+      );
+      return subscription;
+    } catch (err) {
+      logger.error(
+        {
+          orgId: params.orgId,
+          customerId: params.customerId,
+          error: err instanceof Error ? err.message : String(err),
+        },
+        "Failed to create subscription"
+      );
+      throw err;
+    }
   }
 
   async upgradeSubscription(params: {
@@ -277,21 +290,33 @@ export class StripeService {
     subscriptionId: string,
     immediate = false
   ): Promise<void> {
-    if (immediate) {
-      await this.stripe.subscriptions.cancel(subscriptionId);
-    } else {
-      // Cancel at end of period
-      await this.stripe.subscriptions.update(subscriptionId, {
-        cancel_at_period_end: true,
-      });
+    try {
+      if (immediate) {
+        await this.stripe.subscriptions.cancel(subscriptionId);
+      } else {
+        // Cancel at end of period
+        await this.stripe.subscriptions.update(subscriptionId, {
+          cancel_at_period_end: true,
+        });
+      }
+
+      await db
+        .update(subscriptions)
+        .set({ status: "cancelled" })
+        .where(eq(subscriptions.stripeSubscriptionId, subscriptionId));
+
+      logger.info({ subscriptionId, immediate }, "Subscription cancelled");
+    } catch (err) {
+      logger.error(
+        {
+          subscriptionId,
+          immediate,
+          error: err instanceof Error ? err.message : String(err),
+        },
+        "Failed to cancel subscription"
+      );
+      throw err;
     }
-
-    await db
-      .update(subscriptions)
-      .set({ status: "cancelled" })
-      .where(eq(subscriptions.stripeSubscriptionId, subscriptionId));
-
-    logger.info({ subscriptionId, immediate }, "Subscription cancelled");
   }
 
   async reactivateSubscription(subscriptionId: string): Promise<void> {
@@ -411,16 +436,28 @@ export class StripeService {
   }
 
   async resumeSubscription(subscriptionId: string): Promise<void> {
-    await this.stripe.subscriptions.update(subscriptionId, {
-      pause_collection: "",
-    });
+    try {
+      await this.stripe.subscriptions.update(subscriptionId, {
+        pause_collection:
+          null as unknown as Stripe.SubscriptionUpdateParams["pause_collection"],
+      });
 
-    await db
-      .update(subscriptions)
-      .set({ status: "active" })
-      .where(eq(subscriptions.stripeSubscriptionId, subscriptionId));
+      await db
+        .update(subscriptions)
+        .set({ status: "active" })
+        .where(eq(subscriptions.stripeSubscriptionId, subscriptionId));
 
-    logger.info({ subscriptionId }, "Subscription resumed");
+      logger.info({ subscriptionId }, "Subscription resumed");
+    } catch (err) {
+      logger.error(
+        {
+          subscriptionId,
+          error: err instanceof Error ? err.message : String(err),
+        },
+        "Failed to resume subscription"
+      );
+      throw err;
+    }
   }
 
   // -----------------------------------------------------------------------

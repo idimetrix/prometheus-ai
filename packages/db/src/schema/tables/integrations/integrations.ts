@@ -28,6 +28,56 @@ export const mcpConnections = pgTable(
   ]
 );
 
+export const webhookSubscriptions = pgTable(
+  "webhook_subscriptions",
+  {
+    id: text("id").primaryKey(),
+    orgId: text("org_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    url: text("url").notNull(),
+    secret: text("secret").notNull(),
+    events: jsonb("events").notNull().default([]),
+    enabled: boolean("enabled").notNull().default(true),
+    description: text("description"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    lastDeliveredAt: timestamp("last_delivered_at", { withTimezone: true }),
+    failureCount: text("failure_count").notNull().default("0"),
+  },
+  (table) => [
+    index("webhook_subscriptions_org_id_idx").on(table.orgId),
+    index("webhook_subscriptions_org_enabled_idx").on(
+      table.orgId,
+      table.enabled
+    ),
+  ]
+);
+
+export const webhookDeliveries = pgTable(
+  "webhook_deliveries",
+  {
+    id: text("id").primaryKey(),
+    subscriptionId: text("subscription_id")
+      .notNull()
+      .references(() => webhookSubscriptions.id, { onDelete: "cascade" }),
+    event: text("event").notNull(),
+    payload: jsonb("payload").notNull(),
+    statusCode: text("status_code"),
+    responseBody: text("response_body"),
+    deliveredAt: timestamp("delivered_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    success: boolean("success").notNull().default(false),
+    attempt: text("attempt").notNull().default("1"),
+  },
+  (table) => [
+    index("webhook_deliveries_sub_id_idx").on(table.subscriptionId),
+    index("webhook_deliveries_event_idx").on(table.subscriptionId, table.event),
+  ]
+);
+
 export const mcpToolConfigs = pgTable(
   "mcp_tool_configs",
   {

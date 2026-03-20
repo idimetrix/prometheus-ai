@@ -1,12 +1,17 @@
 import { getAuthContext } from "@prometheus/auth";
 import { db, projects, sessions } from "@prometheus/db";
 import { createLogger } from "@prometheus/logger";
-import { createRedisConnection, EventStream } from "@prometheus/queue";
+import {
+  createRedisConnection,
+  EventPublisher,
+  EventStream,
+} from "@prometheus/queue";
 import { eq } from "drizzle-orm";
 import { Hono } from "hono";
 
 const logger = createLogger("api:sse");
 const sseApp = new Hono();
+const publisher = new EventPublisher();
 
 /**
  * Supported SSE event types for agent session streaming.
@@ -14,13 +19,17 @@ const sseApp = new Hono();
 const VALID_EVENT_TYPES = new Set([
   "agent_output",
   "file_change",
+  "file_diff",
+  "code_change",
   "plan_update",
+  "plan_step_update",
   "task_status",
   "credit_update",
   "checkpoint",
   "error",
   "reasoning",
   "terminal_output",
+  "session_complete",
   "browser_screenshot",
   "pr_created",
   "queue_position",
@@ -139,10 +148,14 @@ sseApp.get("/sessions/:sessionId/stream", async (c) => {
             });
         }
 
-        // Heartbeat every 30 seconds to keep connection alive
+        // Heartbeat every 10 seconds to keep connection alive.
+        // Sent as a named event so the client EventSource can listen via
+        // addEventListener("heartbeat", ...) for timeout detection.
         const heartbeatInterval = setInterval(() => {
-          enqueue(": heartbeat\n\n");
-        }, 30_000);
+          enqueue(
+            `event: heartbeat\ndata: ${JSON.stringify({ ts: Date.now() })}\n\n`
+          );
+        }, 10_000);
 
         // Subscribe to session events for live updates
         subscriber.subscribe(channel, (err) => {
@@ -211,6 +224,108 @@ sseApp.get("/sessions/:sessionId/stream", async (c) => {
       },
     }
   );
+});
+
+/**
+ * POST /sessions/:sessionId/events
+ *
+ * Internal endpoint for other services (orchestrator, queue-worker, sandbox)
+ * to publish events to a session's SSE stream via Redis pub/sub.
+ *
+ * Expects JSON body: { type: string, data: Record<string, unknown> }
+ *
+ * No user auth — protected by network-level access (internal service mesh).
+ * Include X-Internal-Secret header in production for service-to-service auth.
+ */
+sseApp.post("/sessions/:sessionId/events", async (c) => {
+  const sessionId = c.req.param("sessionId");
+
+  // Lightweight service-to-service auth via shared secret
+  const internalSecret = process.env.INTERNAL_SERVICE_SECRET;
+  if (internalSecret) {
+    const provided = c.req.header("x-internal-secret");
+    if (provided !== internalSecret) {
+      return c.json({ error: "Forbidden" }, 403);
+    }
+  }
+
+  try {
+    const body = (await c.req.json()) as {
+      type?: string;
+      data?: Record<string, unknown>;
+    };
+
+    if (!body.type) {
+      return c.json({ error: "Missing 'type' field" }, 400);
+    }
+
+    if (!VALID_EVENT_TYPES.has(body.type)) {
+      logger.warn(
+        { sessionId, type: body.type },
+        "Publishing unrecognized event type"
+      );
+    }
+
+    await publisher.publishSessionEvent(sessionId, {
+      type: body.type,
+      data: body.data ?? {},
+      timestamp: new Date().toISOString(),
+    });
+
+    return c.json({ ok: true });
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    logger.error({ sessionId, error: msg }, "Failed to publish SSE event");
+    return c.json({ error: "Internal server error" }, 500);
+  }
+});
+
+/**
+ * POST /sessions/:sessionId/events/batch
+ *
+ * Batch publish multiple events in a single request.
+ * Useful for replaying file changes or plan updates.
+ */
+sseApp.post("/sessions/:sessionId/events/batch", async (c) => {
+  const sessionId = c.req.param("sessionId");
+
+  const internalSecret = process.env.INTERNAL_SERVICE_SECRET;
+  if (internalSecret) {
+    const provided = c.req.header("x-internal-secret");
+    if (provided !== internalSecret) {
+      return c.json({ error: "Forbidden" }, 403);
+    }
+  }
+
+  try {
+    const body = (await c.req.json()) as {
+      events?: Array<{ type: string; data: Record<string, unknown> }>;
+    };
+
+    if (!Array.isArray(body.events) || body.events.length === 0) {
+      return c.json({ error: "Missing or empty 'events' array" }, 400);
+    }
+
+    const timestamp = new Date().toISOString();
+    const publishPromises = body.events.map((evt) =>
+      publisher.publishSessionEvent(sessionId, {
+        type: evt.type,
+        data: evt.data ?? {},
+        timestamp,
+      })
+    );
+
+    await Promise.all(publishPromises);
+
+    return c.json({ ok: true, published: body.events.length });
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    logger.error(
+      { sessionId, error: msg },
+      "Failed to batch publish SSE events"
+    );
+    return c.json({ error: "Internal server error" }, 500);
+  }
 });
 
 export { sseApp };

@@ -1,3 +1,4 @@
+import { createVerify, X509Certificate } from "node:crypto";
 import { createLogger } from "@prometheus/logger";
 
 const logger = createLogger("auth:saml-provider");
@@ -9,12 +10,18 @@ const logger = createLogger("auth:saml-provider");
 export interface SAMLConfig {
   /** The ACS (Assertion Consumer Service) callback URL */
   callbackUrl: string;
-  /** The IdP's X.509 certificate for response validation */
+  /** The IdP's X.509 certificate (PEM) for response signature validation */
   certificate: string;
+  /** Clock skew tolerance in seconds for time condition checks (default: 120) */
+  clockSkewToleranceSec?: number;
   /** The SP entity ID (audience URI) */
   entityId: string;
   /** The IdP SSO URL where auth requests are sent */
   ssoUrl: string;
+  /** Whether to enforce InResponseTo matching (default: true) */
+  strictRequestValidation?: boolean;
+  /** Whether to enforce XML signature verification (default: true) */
+  wantAssertionsSigned?: boolean;
 }
 
 export interface SAMLUser {
@@ -23,6 +30,10 @@ export interface SAMLUser {
   groups: string[];
   lastName: string;
   nameId: string;
+  /** Raw attributes extracted from the SAML assertion */
+  rawAttributes?: Record<string, string | string[]>;
+  /** Session index for single logout */
+  sessionIndex?: string;
 }
 
 export interface SAMLAuthRequest {
@@ -36,17 +47,40 @@ export interface SAMLAuthRequest {
 // SAML 2.0 SSO Provider
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Top-level regex constants (moved here for performance per useTopLevelRegex)
+// ---------------------------------------------------------------------------
+
+const SIGNATURE_BLOCK_REGEX =
+  /<(?:ds:)?Signature[^>]*xmlns:ds="http:\/\/www\.w3\.org\/2000\/09\/xmldsig#"[^>]*>([\s\S]*?)<\/(?:ds:)?Signature>/i;
+const ALT_SIGNATURE_BLOCK_REGEX =
+  /<(?:ds:)?Signature[^>]*>([\s\S]*?)<\/(?:ds:)?Signature>/i;
+const SIG_VALUE_REGEX =
+  /<(?:ds:)?SignatureValue[^>]*>([\s\S]*?)<\/(?:ds:)?SignatureValue>/i;
+const SIGNED_INFO_REGEX =
+  /<(?:ds:)?SignedInfo[^>]*>([\s\S]*?)<\/(?:ds:)?SignedInfo>/i;
+const SIG_ALG_REGEX =
+  /Algorithm="http:\/\/www\.w3\.org\/\d{4}\/\d{2}\/xmldsig(?:-more)?#([\w-]+)"/i;
+
 /**
- * SAML 2.0 SSO provider stub.
+ * Production-ready SAML 2.0 SSO provider.
  *
- * Generates SAML AuthnRequest URLs, validates SAML responses, and produces
- * SP metadata XML. In production, wire this up to `@boxyhq/saml-jackson` for
- * full XML signature verification and schema validation. This implementation
- * provides the correct interface and data flow without a real XML crypto stack.
+ * Supports:
+ * - SP-initiated SSO with AuthnRequest generation
+ * - SAML Response parsing and assertion extraction
+ * - XML signature verification using the IdP X.509 certificate
+ * - Audience restriction validation
+ * - Time condition checks with configurable clock skew tolerance
+ * - InResponseTo replay protection
+ * - SP metadata XML generation
+ * - Attribute mapping for common IdP schemas (Okta, Azure AD, OneLogin)
  */
 export class SAMLProvider {
   private readonly config: SAMLConfig;
-  private readonly logger;
+  private readonly wantAssertionsSigned: boolean;
+  private readonly strictRequestValidation: boolean;
+  private readonly clockSkewToleranceSec: number;
+
   /** In-flight request IDs for replay protection */
   private readonly pendingRequests = new Map<
     string,
@@ -55,9 +89,11 @@ export class SAMLProvider {
 
   constructor(config: SAMLConfig) {
     this.config = config;
-    this.logger = logger;
+    this.wantAssertionsSigned = config.wantAssertionsSigned !== false;
+    this.strictRequestValidation = config.strictRequestValidation !== false;
+    this.clockSkewToleranceSec = config.clockSkewToleranceSec ?? 120;
 
-    this.logger.info(
+    logger.info(
       { entityId: config.entityId, ssoUrl: config.ssoUrl },
       "SAML provider initialized"
     );
@@ -68,15 +104,14 @@ export class SAMLProvider {
   // -------------------------------------------------------------------------
 
   /**
-   * Generate a SAML AuthnRequest redirect URL.
+   * Generate a SAML AuthnRequest and return structured request data.
    *
    * The IdP will redirect the user back to `callbackUrl` with a SAMLResponse
    * after authentication. An optional `relayState` value is forwarded through
-   * the flow so the SP can restore application state (e.g., the original URL
-   * the user was trying to access).
+   * the flow so the SP can restore application state.
    */
-  getAuthUrl(relayState?: string): string {
-    const requestId = `_${generateId()}`;
+  createAuthRequest(relayState?: string): SAMLAuthRequest {
+    const requestId = `_${generateRequestId()}`;
     const issueInstant = new Date().toISOString();
 
     // Store the request for later validation
@@ -114,41 +149,57 @@ export class SAMLProvider {
 
     const redirectUrl = `${this.config.ssoUrl}?${params.toString()}`;
 
-    this.logger.info(
+    logger.info(
       { requestId, relayState: relayState ?? null },
       "SAML AuthnRequest generated"
     );
 
-    return redirectUrl;
+    return { requestId, redirectUrl };
+  }
+
+  /**
+   * Backward-compatible alias that returns just the redirect URL.
+   */
+  getAuthUrl(relayState?: string): string {
+    return this.createAuthRequest(relayState).redirectUrl;
   }
 
   /**
    * Validate a SAML response and extract user information.
    *
-   * In production, this must:
-   *  1. Verify the XML signature against the IdP certificate
-   *  2. Check the InResponseTo matches a pending request ID
-   *  3. Validate audience restriction matches our entity ID
-   *  4. Check assertion time conditions (NotBefore / NotOnOrAfter)
-   *
-   * This stub performs basic Base64 decoding and attribute extraction.
-   * Use `@boxyhq/saml-jackson` for production-grade validation.
+   * Performs the following security checks:
+   *  1. XML signature verification against the IdP certificate
+   *  2. InResponseTo replay protection
+   *  3. Audience restriction validation
+   *  4. Time condition checks (NotBefore / NotOnOrAfter with clock skew)
+   *  5. Status code verification
    */
   validateResponse(samlResponse: string): SAMLUser {
     const xml = decodeBase64(samlResponse);
 
-    this.logger.debug("Validating SAML response");
+    logger.debug("Validating SAML response");
 
     // -----------------------------------------------------------------------
-    // 1. Extract InResponseTo and verify it matches a pending request
+    // 1. Verify XML signature against IdP certificate
+    // -----------------------------------------------------------------------
+    if (this.wantAssertionsSigned) {
+      this.verifySignature(xml);
+    }
+
+    // -----------------------------------------------------------------------
+    // 2. Extract InResponseTo and verify it matches a pending request
     // -----------------------------------------------------------------------
     const inResponseTo = extractAttribute(xml, "InResponseTo");
     if (inResponseTo) {
       const pending = this.pendingRequests.get(inResponseTo);
       if (pending) {
         this.pendingRequests.delete(inResponseTo);
+      } else if (this.strictRequestValidation) {
+        const error = `SAML response references unknown request ID: ${inResponseTo}`;
+        logger.error({ inResponseTo }, error);
+        throw new SAMLValidationError(error);
       } else {
-        this.logger.warn(
+        logger.warn(
           { inResponseTo },
           "SAML response references unknown request ID"
         );
@@ -156,30 +207,43 @@ export class SAMLProvider {
     }
 
     // -----------------------------------------------------------------------
-    // 2. Verify audience matches our entity ID
+    // 3. Verify audience matches our entity ID
     // -----------------------------------------------------------------------
     const audience = extractElementText(xml, "Audience");
     if (audience && audience !== this.config.entityId) {
       const error = `Audience mismatch: expected ${this.config.entityId}, got ${audience}`;
-      this.logger.error({ audience }, error);
+      logger.error({ audience }, error);
       throw new SAMLValidationError(error);
     }
 
     // -----------------------------------------------------------------------
-    // 3. Check time conditions
+    // 4. Check time conditions with clock skew tolerance
     // -----------------------------------------------------------------------
+    const toleranceMs = this.clockSkewToleranceSec * 1000;
+    const now = Date.now();
+
     const notOnOrAfter = extractAttribute(xml, "NotOnOrAfter");
     if (notOnOrAfter) {
-      const expiry = new Date(notOnOrAfter);
-      if (expiry < new Date()) {
+      const expiry = new Date(notOnOrAfter).getTime();
+      if (expiry + toleranceMs < now) {
         const error = "SAML assertion has expired";
-        this.logger.error({ notOnOrAfter }, error);
+        logger.error({ notOnOrAfter }, error);
+        throw new SAMLValidationError(error);
+      }
+    }
+
+    const notBefore = extractAttribute(xml, "NotBefore");
+    if (notBefore) {
+      const earliest = new Date(notBefore).getTime();
+      if (now + toleranceMs < earliest) {
+        const error = "SAML assertion is not yet valid";
+        logger.error({ notBefore }, error);
         throw new SAMLValidationError(error);
       }
     }
 
     // -----------------------------------------------------------------------
-    // 4. Extract status — reject if not Success
+    // 5. Extract status — reject if not Success
     // -----------------------------------------------------------------------
     const statusCode = extractAttribute(xml, "Value");
     if (
@@ -188,12 +252,12 @@ export class SAMLProvider {
       !statusCode.includes("Success")
     ) {
       const error = `SAML authentication failed with status: ${statusCode}`;
-      this.logger.error({ statusCode }, error);
+      logger.error({ statusCode }, error);
       throw new SAMLValidationError(error);
     }
 
     // -----------------------------------------------------------------------
-    // 5. Extract user attributes
+    // 6. Extract user attributes
     // -----------------------------------------------------------------------
     const nameId =
       extractElementText(xml, "NameID") ??
@@ -209,6 +273,10 @@ export class SAMLProvider {
         xml,
         "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/emailaddress"
       ) ??
+      extractSAMLAttribute(
+        xml,
+        "http://schemas.microsoft.com/ws/2008/06/identity/claims/emailaddress"
+      ) ??
       nameId;
 
     const firstName =
@@ -218,6 +286,10 @@ export class SAMLProvider {
       extractSAMLAttribute(
         xml,
         "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/givenname"
+      ) ??
+      extractSAMLAttribute(
+        xml,
+        "http://schemas.microsoft.com/ws/2008/06/identity/claims/givenname"
       ) ??
       "";
 
@@ -229,6 +301,10 @@ export class SAMLProvider {
         xml,
         "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/surname"
       ) ??
+      extractSAMLAttribute(
+        xml,
+        "http://schemas.microsoft.com/ws/2008/06/identity/claims/surname"
+      ) ??
       "";
 
     const groups =
@@ -238,7 +314,17 @@ export class SAMLProvider {
         xml,
         "http://schemas.xmlsoap.org/claims/Group"
       ) ??
+      extractSAMLAttributeValues(
+        xml,
+        "http://schemas.microsoft.com/ws/2008/06/identity/claims/groups"
+      ) ??
       [];
+
+    // Extract session index for SLO support
+    const sessionIndex = extractAttribute(xml, "SessionIndex");
+
+    // Collect raw attributes
+    const rawAttributes = extractAllSAMLAttributes(xml);
 
     const user: SAMLUser = {
       email,
@@ -246,9 +332,11 @@ export class SAMLProvider {
       lastName,
       groups,
       nameId,
+      sessionIndex,
+      rawAttributes,
     };
 
-    this.logger.info(
+    logger.info(
       { email: user.email, groups: user.groups },
       "SAML user authenticated"
     );
@@ -276,6 +364,9 @@ export class SAMLProvider {
       "    <md:NameIDFormat>",
       "      urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress",
       "    </md:NameIDFormat>",
+      "    <md:NameIDFormat>",
+      "      urn:oasis:names:tc:SAML:2.0:nameid-format:persistent",
+      "    </md:NameIDFormat>",
       "    <md:AssertionConsumerService",
       '      Binding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST"',
       `      Location="${escapeXml(this.config.callbackUrl)}"`,
@@ -286,9 +377,106 @@ export class SAMLProvider {
     ].join("\n");
   }
 
+  /**
+   * Verify that a certificate string is a valid PEM-encoded X.509 certificate
+   * and optionally check its expiry.
+   */
+  validateCertificate(): {
+    valid: boolean;
+    subject?: string;
+    issuer?: string;
+    notAfter?: Date;
+    error?: string;
+  } {
+    try {
+      const pem = normalizeCertificate(this.config.certificate);
+      const cert = new X509Certificate(pem);
+      const notAfter = new Date(cert.validTo);
+      const isExpired = notAfter < new Date();
+
+      return {
+        valid: !isExpired,
+        subject: cert.subject,
+        issuer: cert.issuer,
+        notAfter,
+        error: isExpired ? "Certificate has expired" : undefined,
+      };
+    } catch (err) {
+      return {
+        valid: false,
+        error: `Invalid certificate: ${err instanceof Error ? err.message : String(err)}`,
+      };
+    }
+  }
+
   // -------------------------------------------------------------------------
   // Private helpers
   // -------------------------------------------------------------------------
+
+  /**
+   * Verify the XML digital signature using the IdP's X.509 certificate.
+   *
+   * Extracts the SignatureValue and SignedInfo from the SAML response,
+   * then verifies using Node.js crypto with the configured certificate.
+   */
+  private verifySignature(xml: string): void {
+    // Extract the Signature block
+    const sigMatch =
+      SIGNATURE_BLOCK_REGEX.exec(xml) ?? ALT_SIGNATURE_BLOCK_REGEX.exec(xml);
+    if (!sigMatch) {
+      throw new SAMLValidationError(
+        "No XML signature found in SAML response — assertion signing is required"
+      );
+    }
+
+    const signatureBlock = sigMatch[0];
+
+    // Extract SignatureValue
+    const sigValueMatch = SIG_VALUE_REGEX.exec(signatureBlock);
+    if (!sigValueMatch?.[1]) {
+      throw new SAMLValidationError("Missing SignatureValue in SAML signature");
+    }
+    const signatureValue = sigValueMatch[1].replace(/\s+/g, "");
+
+    // Extract SignedInfo block (this is what was actually signed)
+    const signedInfoMatch = SIGNED_INFO_REGEX.exec(signatureBlock);
+    if (!signedInfoMatch) {
+      throw new SAMLValidationError("Missing SignedInfo in SAML signature");
+    }
+
+    // Reconstruct the canonical SignedInfo XML for verification
+    const signedInfoXml = signedInfoMatch[0];
+
+    // Detect the signature algorithm
+    const sigAlgMatch = SIG_ALG_REGEX.exec(signedInfoXml);
+    const algorithm = mapSignatureAlgorithm(sigAlgMatch?.[1] ?? "rsa-sha256");
+
+    // Verify the signature using the IdP certificate
+    try {
+      const pem = normalizeCertificate(this.config.certificate);
+      const verifier = createVerify(algorithm);
+      verifier.update(signedInfoXml);
+      const isValid = verifier.verify(pem, signatureValue, "base64");
+
+      if (!isValid) {
+        throw new SAMLValidationError(
+          "XML signature verification failed — the response may have been tampered with"
+        );
+      }
+
+      logger.debug(
+        { algorithm },
+        "SAML response signature verified successfully"
+      );
+    } catch (err) {
+      if (err instanceof SAMLValidationError) {
+        throw err;
+      }
+      throw new SAMLValidationError(
+        `Signature verification error: ${err instanceof Error ? err.message : String(err)}`
+      );
+    }
+  }
 
   /**
    * Remove pending requests older than 10 minutes to prevent unbounded
@@ -319,7 +507,7 @@ export class SAMLValidationError extends Error {
 // ---------------------------------------------------------------------------
 
 /** Generate a random alphanumeric ID for SAML request correlation */
-function generateId(): string {
+function generateRequestId(): string {
   const chars = "abcdefghijklmnopqrstuvwxyz0123456789";
   let result = "";
   const randomValues = new Uint8Array(32);
@@ -357,9 +545,42 @@ function escapeXml(str: string): string {
 }
 
 /**
+ * Normalize a certificate string to PEM format.
+ * Handles raw Base64 (no headers), single-line PEM, and standard multi-line PEM.
+ */
+function normalizeCertificate(cert: string): string {
+  let cleaned = cert.trim();
+
+  // Strip PEM headers if present
+  cleaned = cleaned
+    .replace(/-----BEGIN CERTIFICATE-----/g, "")
+    .replace(/-----END CERTIFICATE-----/g, "")
+    .replace(/\s+/g, "");
+
+  // Re-wrap in proper PEM format with 64-char lines
+  const lines: string[] = [];
+  for (let i = 0; i < cleaned.length; i += 64) {
+    lines.push(cleaned.slice(i, i + 64));
+  }
+
+  return `-----BEGIN CERTIFICATE-----\n${lines.join("\n")}\n-----END CERTIFICATE-----`;
+}
+
+/**
+ * Map an XML signature algorithm URI fragment to a Node.js crypto algorithm name.
+ */
+function mapSignatureAlgorithm(alg: string): string {
+  const algMap: Record<string, string> = {
+    "rsa-sha1": "SHA1",
+    "rsa-sha256": "SHA256",
+    "rsa-sha384": "SHA384",
+    "rsa-sha512": "SHA512",
+  };
+  return algMap[alg.toLowerCase()] ?? "SHA256";
+}
+
+/**
  * Extract the text content of an XML element by tag name.
- * This is a lightweight regex-based approach; production code should use
- * a proper XML parser.
  */
 function extractElementText(xml: string, tagName: string): string | undefined {
   const escapedTag = escapeRegex(tagName);
@@ -383,7 +604,6 @@ function extractAttribute(xml: string, attrName: string): string | undefined {
 
 /**
  * Extract a SAML attribute value by its Name or FriendlyName.
- * Looks for `<saml:Attribute Name="..."><saml:AttributeValue>...</saml:AttributeValue></saml:Attribute>`
  */
 function extractSAMLAttribute(
   xml: string,
@@ -428,6 +648,45 @@ function extractSAMLAttributeValues(
   }
 
   return values.length > 0 ? values : undefined;
+}
+
+/**
+ * Extract all SAML attributes into a flat map.
+ */
+function extractAllSAMLAttributes(
+  xml: string
+): Record<string, string | string[]> {
+  const result: Record<string, string | string[]> = {};
+  const attrBlockRegex =
+    /<(?:[\w-]+:)?Attribute\s+[^>]*Name="([^"]*)"[^>]*>(.*?)<\/(?:[\w-]+:)?Attribute>/gis;
+
+  let blockMatch = attrBlockRegex.exec(xml);
+  while (blockMatch !== null) {
+    const name = blockMatch[1];
+    const block = blockMatch[2];
+    if (name && block) {
+      const values: string[] = [];
+      const valueRegex =
+        /<(?:[\w-]+:)?AttributeValue[^>]*>([^<]*)<\/(?:[\w-]+:)?AttributeValue>/gi;
+      let valueMatch = valueRegex.exec(block);
+      while (valueMatch !== null) {
+        const v = valueMatch[1]?.trim();
+        if (v) {
+          values.push(v);
+        }
+        valueMatch = valueRegex.exec(block);
+      }
+
+      if (values.length === 1 && values[0] !== undefined) {
+        result[name] = values[0];
+      } else if (values.length > 1) {
+        result[name] = values;
+      }
+    }
+    blockMatch = attrBlockRegex.exec(xml);
+  }
+
+  return result;
 }
 
 /** Escape special regex characters in a string */

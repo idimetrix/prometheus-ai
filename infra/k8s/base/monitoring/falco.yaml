@@ -1,0 +1,150 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: falco
+  namespace: prometheus
+  labels:
+    app: falco
+spec:
+  selector:
+    matchLabels:
+      app: falco
+  template:
+    metadata:
+      labels:
+        app: falco
+    spec:
+      serviceAccountName: falco
+      containers:
+        - name: falco
+          image: falcosecurity/falco:0.39.2
+          securityContext:
+            privileged: true
+          args:
+            - /usr/bin/falco
+            - --cri
+            - /run/containerd/containerd.sock
+            - -K
+            - /var/run/secrets/kubernetes.io/serviceaccount/token
+            - -k
+            - https://kubernetes.default.svc
+            - --k8s-node
+            - $(FALCO_K8S_NODE_NAME)
+          env:
+            - name: FALCO_K8S_NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+          volumeMounts:
+            - name: containerd-socket
+              mountPath: /run/containerd/containerd.sock
+              readOnly: true
+            - name: dev
+              mountPath: /host/dev
+              readOnly: true
+            - name: proc
+              mountPath: /host/proc
+              readOnly: true
+            - name: config
+              mountPath: /etc/falco
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+      volumes:
+        - name: containerd-socket
+          hostPath:
+            path: /run/containerd/containerd.sock
+        - name: dev
+          hostPath:
+            path: /dev
+        - name: proc
+          hostPath:
+            path: /proc
+        - name: config
+          configMap:
+            name: falco-config
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: falco-config
+  namespace: prometheus
+data:
+  falco_rules.local.yaml: |
+    # Sandbox container rules — detect malicious behavior in agent sandboxes
+    - rule: Sandbox Shell Escape Attempt
+      desc: Detect attempts to spawn shells outside /workspace in sandbox containers
+      condition: >
+        spawned_process and container and
+        container.image.repository contains "sandbox" and
+        (proc.name in (bash, sh, zsh, dash, csh) and
+        not fd.directory startswith /workspace)
+      output: "Shell escape attempt in sandbox (user=%user.name command=%proc.cmdline container=%container.name)"
+      priority: CRITICAL
+      tags: [sandbox, security]
+
+    - rule: Sandbox Network Access to Internal Services
+      desc: Detect sandbox containers connecting to internal service ports
+      condition: >
+        outbound and container and
+        container.image.repository contains "sandbox" and
+        fd.sip in (10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16) and
+        not fd.sport in (80, 443, 53)
+      output: "Sandbox accessing internal network (ip=%fd.sip port=%fd.sport container=%container.name)"
+      priority: WARNING
+      tags: [sandbox, network]
+
+    - rule: Sandbox Privilege Escalation
+      desc: Detect privilege escalation attempts in sandbox containers
+      condition: >
+        spawned_process and container and
+        container.image.repository contains "sandbox" and
+        proc.name in (sudo, su, setuid, chroot, nsenter, unshare)
+      output: "Privilege escalation attempt in sandbox (user=%user.name command=%proc.cmdline container=%container.name)"
+      priority: CRITICAL
+      tags: [sandbox, privilege_escalation]
+
+    - rule: Sandbox Sensitive File Access
+      desc: Detect access to sensitive files in sandbox containers
+      condition: >
+        open_read and container and
+        container.image.repository contains "sandbox" and
+        fd.name in (/etc/shadow, /etc/passwd, /proc/self/environ, /root/.ssh/id_rsa)
+      output: "Sensitive file access in sandbox (file=%fd.name container=%container.name)"
+      priority: WARNING
+      tags: [sandbox, file_access]
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: falco
+  namespace: prometheus
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: falco
+rules:
+  - apiGroups: [""]
+    resources: ["nodes", "namespaces", "pods", "replicationcontrollers", "services", "events", "configmaps"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["apps"]
+    resources: ["daemonsets", "deployments", "replicasets", "statefulsets"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: falco
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: falco
+subjects:
+  - kind: ServiceAccount
+    name: falco
+    namespace: prometheus

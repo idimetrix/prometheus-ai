@@ -6,6 +6,10 @@
  * all methods log a warning and return gracefully.
  */
 
+import { createLogger } from "@prometheus/logger";
+
+const logger = createLogger("collaboration:voice-channel");
+
 export interface VoiceChannelConfig {
   /** Display name of the local participant */
   displayName: string;
@@ -77,20 +81,18 @@ export class VoiceChannel {
     }
 
     if (!(this.configured && this.config)) {
-      console.warn(
-        "[VoiceChannel] WebRTC not configured — call join() with a VoiceChannelConfig"
+      logger.warn(
+        "WebRTC not configured — call join() with a VoiceChannelConfig"
       );
       return false;
     }
 
     if (this.state === "connected") {
-      console.warn("[VoiceChannel] Already connected to voice channel");
+      logger.warn("Already connected to voice channel");
       return true;
     }
 
-    console.warn(
-      "[VoiceChannel] WebRTC not configured — voice channel join is a no-op stub"
-    );
+    logger.warn("WebRTC not configured — voice channel join is a no-op stub");
     this.state = "connecting";
     this.emit("stateChange", "connecting");
 
@@ -111,15 +113,11 @@ export class VoiceChannel {
     }
 
     if (!this.configured) {
-      console.warn(
-        "[VoiceChannel] WebRTC not configured — leave is a no-op stub"
-      );
+      logger.warn("WebRTC not configured — leave is a no-op stub");
       return;
     }
 
-    console.warn(
-      "[VoiceChannel] WebRTC not configured — voice channel leave is a no-op stub"
-    );
+    logger.warn("WebRTC not configured — voice channel leave is a no-op stub");
     this.state = "disconnected";
     this.emit("stateChange", "disconnected");
   }
@@ -129,21 +127,17 @@ export class VoiceChannel {
    */
   mute(): void {
     if (!this.configured) {
-      console.warn(
-        "[VoiceChannel] WebRTC not configured — mute is a no-op stub"
-      );
+      logger.warn("WebRTC not configured — mute is a no-op stub");
       return;
     }
 
     if (this.state !== "connected") {
-      console.warn(
-        "[VoiceChannel] Cannot mute — not connected to a voice channel"
-      );
+      logger.warn("Cannot mute — not connected to a voice channel");
       return;
     }
 
     // Stub: in a real implementation, this would disable the audio track
-    console.warn("[VoiceChannel] WebRTC not configured — mute is a no-op stub");
+    logger.warn("WebRTC not configured — mute is a no-op stub");
   }
 
   /**
@@ -151,23 +145,17 @@ export class VoiceChannel {
    */
   unmute(): void {
     if (!this.configured) {
-      console.warn(
-        "[VoiceChannel] WebRTC not configured — unmute is a no-op stub"
-      );
+      logger.warn("WebRTC not configured — unmute is a no-op stub");
       return;
     }
 
     if (this.state !== "connected") {
-      console.warn(
-        "[VoiceChannel] Cannot unmute — not connected to a voice channel"
-      );
+      logger.warn("Cannot unmute — not connected to a voice channel");
       return;
     }
 
     // Stub: in a real implementation, this would enable the audio track
-    console.warn(
-      "[VoiceChannel] WebRTC not configured — unmute is a no-op stub"
-    );
+    logger.warn("WebRTC not configured — unmute is a no-op stub");
   }
 
   /**
@@ -175,9 +163,7 @@ export class VoiceChannel {
    */
   getParticipants(): VoiceParticipant[] {
     if (!this.configured) {
-      console.warn(
-        "[VoiceChannel] WebRTC not configured — returning empty participants list"
-      );
+      logger.warn("WebRTC not configured — returning empty participants list");
       return [];
     }
 

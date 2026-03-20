@@ -18,6 +18,7 @@ import { sessionsRouter } from "./sessions";
 import { settingsRouter } from "./settings";
 import { tasksRouter } from "./tasks";
 import { userRouter } from "./user";
+import { webhooksOutboundRouter } from "./webhooks-outbound";
 
 export const appRouter = router({
   health: healthRouter,
@@ -39,6 +40,7 @@ export const appRouter = router({
   audit: auditRouter,
   blueprintsEnhanced: blueprintsEnhancedRouter,
   gdpr: gdprRouter,
+  webhooks: webhooksOutboundRouter,
 });
 
 export type AppRouter = typeof appRouter;
