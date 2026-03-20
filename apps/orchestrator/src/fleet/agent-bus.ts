@@ -8,6 +8,9 @@ const logger = createLogger("orchestrator:agent-bus");
 
 const MESSAGE_TTL = 3600;
 
+/** Stream-based message group for Redis Streams */
+const STREAM_GROUP = "agent-bus-consumers";
+
 export interface AgentBusMessage {
   fromAgentId: string;
   fromRole: string;
@@ -22,9 +25,27 @@ export interface AgentBusMessage {
     | "vote"
     | "file_claim"
     | "decision"
-    | "completion";
+    | "completion"
+    | "file_changed"
+    | "type_export_needed"
+    | "tests_passing"
+    | "tests_failing"
+    | "status_update";
 }
 
+/**
+ * AgentBus provides inter-agent communication via Redis Streams.
+ *
+ * Supports both pub/sub (real-time notifications) and Redis Streams
+ * (durable, ordered message log) for agent-to-agent messaging.
+ *
+ * Message types:
+ * - "file_changed": Agent modified a file, others should be aware
+ * - "type_export_needed": Agent needs a type exported from another module
+ * - "tests_passing": Test suite status update
+ * - "tests_failing": Test suite failure notification
+ * - "status_update": General agent status update
+ */
 export class AgentBus {
   private readonly sessionId: string;
   private readonly agentId: string;
@@ -33,6 +54,7 @@ export class AgentBus {
   private readonly dedupKey: string;
   private readonly messagesKey: string;
   private readonly claimsKey: string;
+  private readonly streamKey: string;
   private subscriber: RedisClient | null = null;
   private handler: ((msg: AgentBusMessage) => void) | null = null;
 
@@ -44,8 +66,12 @@ export class AgentBus {
     this.dedupKey = `fleet:bus:${sessionId}:seen`;
     this.messagesKey = `fleet:bus:${sessionId}:messages`;
     this.claimsKey = `fleet:bus:${sessionId}:claims`;
+    this.streamKey = `fleet:stream:${sessionId}`;
   }
 
+  /**
+   * Publish a message to both pub/sub and the Redis Stream.
+   */
   async publish(
     type: AgentBusMessage["type"],
     payload: unknown
@@ -65,19 +91,26 @@ export class AgentBus {
     const serialized = JSON.stringify(msg);
 
     const pipeline = redis.pipeline();
+    // Pub/sub for real-time notifications
     pipeline.sadd(this.dedupKey, msg.id);
     pipeline.expire(this.dedupKey, MESSAGE_TTL);
     pipeline.rpush(this.messagesKey, serialized);
     pipeline.expire(this.messagesKey, MESSAGE_TTL);
     pipeline.publish(this.channel, serialized);
+    // Redis Streams for durable message log
+    pipeline.xadd(this.streamKey, "*", "data", serialized);
+    pipeline.expire(this.streamKey, MESSAGE_TTL);
     await pipeline.exec();
 
     logger.debug(
       { messageId: msg.id, type, agentId: this.agentId },
-      "Message published"
+      "Message published to bus and stream"
     );
   }
 
+  /**
+   * Subscribe to real-time pub/sub messages.
+   */
   async subscribe(handler: (msg: AgentBusMessage) => void): Promise<void> {
     const { createRedisConnection } = await import("@prometheus/queue");
     this.subscriber = createRedisConnection();
@@ -119,6 +152,65 @@ export class AgentBus {
     }
   }
 
+  /**
+   * Read messages from the Redis Stream (durable, ordered).
+   * Uses consumer groups for load balancing across agents.
+   */
+  async readStream(count = 10): Promise<AgentBusMessage[]> {
+    const { redis } = await import("@prometheus/queue");
+
+    // Ensure consumer group exists
+    try {
+      await redis.xgroup(
+        "CREATE",
+        this.streamKey,
+        STREAM_GROUP,
+        "0",
+        "MKSTREAM"
+      );
+    } catch {
+      // Group may already exist, ignore
+    }
+
+    const results = await redis.xreadgroup(
+      "GROUP",
+      STREAM_GROUP,
+      this.agentId,
+      "COUNT",
+      count,
+      "STREAMS",
+      this.streamKey,
+      ">"
+    );
+
+    if (!results) {
+      return [];
+    }
+
+    const messages: AgentBusMessage[] = [];
+    for (const [, entries] of results as [string, [string, string[]][]][]) {
+      for (const [, fields] of entries) {
+        try {
+          const dataIdx = fields.indexOf("data");
+          const dataValue = dataIdx >= 0 ? fields[dataIdx + 1] : undefined;
+          if (dataValue) {
+            const msg = JSON.parse(dataValue) as AgentBusMessage;
+            if (msg.fromAgentId !== this.agentId) {
+              messages.push(msg);
+            }
+          }
+        } catch (err) {
+          logger.error({ err }, "Failed to parse stream message");
+        }
+      }
+    }
+
+    return messages;
+  }
+
+  /**
+   * Drain all messages from the legacy list-based store.
+   */
   async drainMessages(): Promise<AgentBusMessage[]> {
     const { redis } = await import("@prometheus/queue");
 
@@ -180,6 +272,43 @@ export class AgentBus {
     return claims;
   }
 
+  /** Notify other agents that a file was changed */
+  async publishFileChanged(
+    filePath: string,
+    changeType: "created" | "modified" | "deleted"
+  ): Promise<void> {
+    await this.publish("file_changed", {
+      filePath,
+      changeType,
+      agentId: this.agentId,
+    });
+  }
+
+  /** Request a type export from another agent's module */
+  async publishTypeExportNeeded(
+    typeName: string,
+    sourceModule: string
+  ): Promise<void> {
+    await this.publish("type_export_needed", {
+      typeName,
+      sourceModule,
+      requestedBy: this.agentId,
+    });
+  }
+
+  /** Publish test suite status */
+  async publishTestStatus(
+    passed: boolean,
+    details?: { testsRun: number; testsFailed: number }
+  ): Promise<void> {
+    const type = passed ? "tests_passing" : "tests_failing";
+    await this.publish(type, {
+      passed,
+      ...details,
+      agentId: this.agentId,
+    });
+  }
+
   async publishDecision(decision: string, context: unknown): Promise<void> {
     await this.publish("decision", { decision, context });
   }
@@ -199,6 +328,7 @@ export class AgentBus {
     pipeline.del(this.dedupKey);
     pipeline.del(this.messagesKey);
     pipeline.del(this.claimsKey);
+    pipeline.del(this.streamKey);
     await pipeline.exec();
 
     logger.debug(

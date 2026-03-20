@@ -32,6 +32,12 @@ export interface GitDiffResult {
   };
 }
 
+export interface WorktreeInfo {
+  branch: string;
+  isMainWorktree: boolean;
+  path: string;
+}
+
 export class GitOperations {
   private readonly containerManager: ContainerManager;
 
@@ -86,7 +92,6 @@ export class GitOperations {
   ): Promise<{ success: boolean; error?: string }> {
     const safeBranch = encodeShellArg(branchName);
 
-    // Create and checkout the new branch
     const result = await this.containerManager.exec(
       sandboxId,
       `cd /workspace/repo && git checkout -b ${safeBranch}`,
@@ -115,7 +120,6 @@ export class GitOperations {
     const { message, files, authorName, authorEmail } = options;
     const workDir = "/workspace/repo";
 
-    // Configure author if provided
     if (authorName) {
       await this.containerManager.exec(
         sandboxId,
@@ -131,7 +135,6 @@ export class GitOperations {
       );
     }
 
-    // Ensure default author exists
     const configCheck = await this.containerManager.exec(
       sandboxId,
       `cd ${workDir} && git config user.name || echo ""`,
@@ -145,7 +148,6 @@ export class GitOperations {
       );
     }
 
-    // Stage files
     if (files && files.length > 0) {
       const safeFiles = files.map(encodeShellArg).join(" ");
       const addResult = await this.containerManager.exec(
@@ -160,7 +162,6 @@ export class GitOperations {
         };
       }
     } else {
-      // Stage all changes
       const addResult = await this.containerManager.exec(
         sandboxId,
         `cd ${workDir} && git add -A`,
@@ -174,7 +175,6 @@ export class GitOperations {
       }
     }
 
-    // Check if there are staged changes
     const statusResult = await this.containerManager.exec(
       sandboxId,
       `cd ${workDir} && git diff --cached --stat`,
@@ -184,7 +184,6 @@ export class GitOperations {
       return { success: false, error: "No changes to commit" };
     }
 
-    // Commit
     const commitResult = await this.containerManager.exec(
       sandboxId,
       `cd ${workDir} && git commit -m ${encodeShellArg(message)}`,
@@ -199,7 +198,6 @@ export class GitOperations {
       return { success: false, error: commitResult.stderr };
     }
 
-    // Get commit SHA
     const shaResult = await this.containerManager.exec(
       sandboxId,
       `cd ${workDir} && git rev-parse HEAD`,
@@ -223,7 +221,6 @@ export class GitOperations {
     const force = options?.force ? " --force-with-lease" : "";
     const workDir = "/workspace/repo";
 
-    // Get current branch name
     const branchResult = await this.containerManager.exec(
       sandboxId,
       `cd ${workDir} && git rev-parse --abbrev-ref HEAD`,
@@ -256,28 +253,24 @@ export class GitOperations {
     const workDir = "/workspace/repo";
     const stagedFlag = options?.staged ? " --cached" : "";
 
-    // Get raw diff
     const diffResult = await this.containerManager.exec(
       sandboxId,
       `cd ${workDir} && git diff${stagedFlag}`,
       30_000
     );
 
-    // Get diff stats
     const _statResult = await this.containerManager.exec(
       sandboxId,
       `cd ${workDir} && git diff${stagedFlag} --stat`,
       10_000
     );
 
-    // Get file-level diff info using numstat
     const numstatResult = await this.containerManager.exec(
       sandboxId,
       `cd ${workDir} && git diff${stagedFlag} --numstat`,
       10_000
     );
 
-    // Get status to determine added/modified/deleted
     const statusCmd = options?.staged
       ? `cd ${workDir} && git diff --cached --name-status`
       : `cd ${workDir} && git diff --name-status`;
@@ -291,7 +284,6 @@ export class GitOperations {
     let totalInsertions = 0;
     let totalDeletions = 0;
 
-    // Parse numstat output (additions\tdeletions\tfilename)
     const numstatLines = numstatResult.stdout
       .trim()
       .split("\n")
@@ -378,7 +370,6 @@ export class GitOperations {
       "Starting sparse checkout"
     );
 
-    // Initialize a new repo with sparse checkout enabled
     const initResult = await this.containerManager.exec(
       sandboxId,
       `mkdir -p ${workDir} && cd ${workDir} && git init && git remote add origin ${safeRepoUrl}`,
@@ -388,7 +379,6 @@ export class GitOperations {
       throw new Error(`Sparse checkout init failed: ${initResult.stderr}`);
     }
 
-    // Enable sparse checkout
     const sparseResult = await this.containerManager.exec(
       sandboxId,
       `cd ${workDir} && git sparse-checkout init --cone`,
@@ -398,7 +388,6 @@ export class GitOperations {
       throw new Error(`Sparse checkout init failed: ${sparseResult.stderr}`);
     }
 
-    // Set the paths to check out
     const safePaths = paths.map(encodeShellArg).join(" ");
     const setResult = await this.containerManager.exec(
       sandboxId,
@@ -409,14 +398,12 @@ export class GitOperations {
       throw new Error(`Sparse checkout set failed: ${setResult.stderr}`);
     }
 
-    // Fetch and checkout
     const fetchResult = await this.containerManager.exec(
       sandboxId,
       `cd ${workDir} && git fetch --depth=1 origin main && git checkout main`,
       120_000
     );
     if (fetchResult.exitCode !== 0) {
-      // Try master as fallback
       const fallbackResult = await this.containerManager.exec(
         sandboxId,
         `cd ${workDir} && git fetch --depth=1 origin master && git checkout master`,
@@ -429,7 +416,6 @@ export class GitOperations {
       }
     }
 
-    // Configure safe directory
     await this.containerManager.exec(
       sandboxId,
       `git config --global --add safe.directory ${workDir}`,
@@ -439,8 +425,180 @@ export class GitOperations {
     logger.info({ sandboxId, repoUrl, paths }, "Sparse checkout completed");
   }
 
+  // ─── Worktree Operations ──────────────────────────────────────────────
+
   /**
-   * Create a git worktree for parallel branch work.
+   * Create a git worktree for an agent to work in isolation.
+   * Returns the worktree path: /workspace/worker-{agentId}
+   */
+  async createWorktree(
+    sandboxId: string,
+    repoPath: string,
+    agentId: string
+  ): Promise<string> {
+    const worktreePath = `/workspace/worker-${agentId}`;
+    const branchName = `worker/${agentId}`;
+    const safePath = encodeShellArg(worktreePath);
+    const safeBranch = encodeShellArg(branchName);
+    const safeRepoPath = encodeShellArg(repoPath);
+
+    logger.info(
+      { sandboxId, agentId, worktreePath, branchName },
+      "Creating git worktree for agent"
+    );
+
+    const result = await this.containerManager.exec(
+      sandboxId,
+      `cd ${safeRepoPath} && git worktree add -b ${safeBranch} ${safePath}`,
+      30_000
+    );
+
+    if (result.exitCode !== 0) {
+      // Branch may already exist; try without -b
+      const retryResult = await this.containerManager.exec(
+        sandboxId,
+        `cd ${safeRepoPath} && git worktree add ${safePath} ${safeBranch}`,
+        30_000
+      );
+
+      if (retryResult.exitCode !== 0) {
+        throw new Error(
+          `Worktree creation failed: ${retryResult.stderr || result.stderr}`
+        );
+      }
+    }
+
+    await this.containerManager.exec(
+      sandboxId,
+      `git config --global --add safe.directory ${safePath}`,
+      10_000
+    );
+
+    logger.info(
+      { sandboxId, agentId, worktreePath },
+      "Git worktree created for agent"
+    );
+
+    return worktreePath;
+  }
+
+  /**
+   * Remove a git worktree and clean up.
+   */
+  async removeWorktree(sandboxId: string, worktreePath: string): Promise<void> {
+    const safePath = encodeShellArg(worktreePath);
+
+    logger.info({ sandboxId, worktreePath }, "Removing git worktree");
+
+    const result = await this.containerManager.exec(
+      sandboxId,
+      `git worktree remove --force ${safePath} 2>/dev/null; rm -rf ${safePath}`,
+      15_000
+    );
+
+    if (result.exitCode !== 0) {
+      logger.warn(
+        { sandboxId, worktreePath, stderr: result.stderr },
+        "Worktree removal had warnings"
+      );
+    }
+
+    await this.containerManager.exec(
+      sandboxId,
+      "cd /workspace/repo && git worktree prune",
+      10_000
+    );
+
+    logger.info({ sandboxId, worktreePath }, "Git worktree removed");
+  }
+
+  /**
+   * List all git worktrees for a repository.
+   */
+  async listWorktrees(
+    sandboxId: string,
+    repoPath: string
+  ): Promise<WorktreeInfo[]> {
+    const safeRepoPath = encodeShellArg(repoPath);
+    const result = await this.containerManager.exec(
+      sandboxId,
+      `cd ${safeRepoPath} && git worktree list --porcelain`,
+      10_000
+    );
+
+    if (result.exitCode !== 0 || !result.stdout.trim()) {
+      return [];
+    }
+
+    const worktrees: WorktreeInfo[] = [];
+    const blocks = result.stdout.trim().split("\n\n");
+
+    for (const block of blocks) {
+      const lines = block.trim().split("\n");
+      let path = "";
+      let branch = "";
+      let isMainWorktree = false;
+
+      for (const line of lines) {
+        if (line.startsWith("worktree ")) {
+          path = line.replace("worktree ", "");
+        } else if (line.startsWith("branch ")) {
+          branch = line.replace("branch refs/heads/", "");
+        } else if (line === "bare") {
+          isMainWorktree = true;
+        }
+      }
+
+      if (path) {
+        if (worktrees.length === 0) {
+          isMainWorktree = true;
+        }
+        worktrees.push({ path, branch, isMainWorktree });
+      }
+    }
+
+    return worktrees;
+  }
+
+  /**
+   * Clean up all worktrees for an agent (e.g., on agent completion).
+   */
+  async cleanupAgentWorktrees(
+    sandboxId: string,
+    repoPath: string,
+    agentId: string
+  ): Promise<number> {
+    const worktrees = await this.listWorktrees(sandboxId, repoPath);
+    const agentWorktrees = worktrees.filter(
+      (w) => w.path.includes(`worker-${agentId}`) && !w.isMainWorktree
+    );
+
+    let cleaned = 0;
+    for (const wt of agentWorktrees) {
+      try {
+        await this.removeWorktree(sandboxId, wt.path);
+        cleaned++;
+      } catch (error) {
+        const msg = error instanceof Error ? error.message : String(error);
+        logger.warn(
+          { sandboxId, path: wt.path, error: msg },
+          "Failed to clean up agent worktree"
+        );
+      }
+    }
+
+    if (cleaned > 0) {
+      logger.info(
+        { sandboxId, agentId, cleaned },
+        "Agent worktrees cleaned up"
+      );
+    }
+
+    return cleaned;
+  }
+
+  /**
+   * Create a git worktree for parallel branch work (legacy API).
    */
   async worktreeCreate(
     sandboxId: string,
@@ -453,7 +611,6 @@ export class GitOperations {
 
     logger.info({ sandboxId, branch, path }, "Creating git worktree");
 
-    // Check if branch exists
     const checkResult = await this.containerManager.exec(
       sandboxId,
       `cd ${repoDir} && git rev-parse --verify ${safeBranch} 2>/dev/null`,
@@ -462,10 +619,8 @@ export class GitOperations {
 
     let cmd: string;
     if (checkResult.exitCode === 0) {
-      // Branch exists -- create worktree from existing branch
       cmd = `cd ${repoDir} && git worktree add ${safePath} ${safeBranch}`;
     } else {
-      // Branch doesn't exist -- create worktree with new branch
       cmd = `cd ${repoDir} && git worktree add -b ${safeBranch} ${safePath}`;
     }
 
@@ -475,7 +630,6 @@ export class GitOperations {
       throw new Error(`Worktree creation failed: ${result.stderr}`);
     }
 
-    // Configure safe directory for the worktree path
     await this.containerManager.exec(
       sandboxId,
       `git config --global --add safe.directory ${safePath}`,
@@ -495,7 +649,6 @@ export class GitOperations {
     const { message, files, authorName, authorEmail, signingKey } = options;
     const workDir = "/workspace/repo";
 
-    // Import the GPG key
     const importResult = await this.containerManager.exec(
       sandboxId,
       `echo ${encodeShellArg(signingKey)} | gpg --batch --import`,
@@ -505,14 +658,12 @@ export class GitOperations {
       throw new Error(`GPG key import failed: ${importResult.stderr}`);
     }
 
-    // Configure git to use GPG signing
     await this.containerManager.exec(
       sandboxId,
       `cd ${workDir} && git config commit.gpgsign true`,
       10_000
     );
 
-    // Get the key ID from the imported key
     const keyIdResult = await this.containerManager.exec(
       sandboxId,
       "gpg --list-secret-keys --keyid-format LONG | grep sec | head -1 | awk '{print $2}' | cut -d'/' -f2",
@@ -527,7 +678,6 @@ export class GitOperations {
       );
     }
 
-    // Configure author
     if (authorName) {
       await this.containerManager.exec(
         sandboxId,
@@ -543,7 +693,6 @@ export class GitOperations {
       );
     }
 
-    // Stage files
     if (files && files.length > 0) {
       const safeFiles = files.map(encodeShellArg).join(" ");
       const addResult = await this.containerManager.exec(
@@ -565,7 +714,6 @@ export class GitOperations {
       }
     }
 
-    // Signed commit
     const commitResult = await this.containerManager.exec(
       sandboxId,
       `cd ${workDir} && git commit -S -m ${encodeShellArg(message)}`,
@@ -576,7 +724,6 @@ export class GitOperations {
       throw new Error(`Signed commit failed: ${commitResult.stderr}`);
     }
 
-    // Get commit SHA
     const shaResult = await this.containerManager.exec(
       sandboxId,
       `cd ${workDir} && git rev-parse HEAD`,
@@ -630,6 +777,5 @@ export class GitOperations {
  * Shell-safe argument encoding.
  */
 function encodeShellArg(arg: string): string {
-  // Single-quote the argument and escape any embedded single quotes
   return `'${arg.replace(/'/g, "'\\''")}'`;
 }

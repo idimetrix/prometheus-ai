@@ -1,3 +1,7 @@
+export type { BM25Result } from "./bm25-search";
+export { BM25Search } from "./bm25-search";
+export type { FusionResult, SearchStrategy } from "./fusion-search";
+export { FusionSearch } from "./fusion-search";
 export type { HybridSearchOptions, HybridSearchResult } from "./hybrid-search";
 export { HybridSearch } from "./hybrid-search";
 export type { QueryClassification, QueryType } from "./query-classifier";
@@ -8,3 +12,10 @@ export type {
   SearchMethodResult,
 } from "./rrf-ranker";
 export { RRFRanker } from "./rrf-ranker";
+export type {
+  AttributedSearchResult,
+  BaseSearchResult,
+  SearchOptions,
+  SearchResponse,
+  SearchStats,
+} from "./search-types";

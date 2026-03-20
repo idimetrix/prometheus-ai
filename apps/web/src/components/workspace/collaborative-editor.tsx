@@ -13,13 +13,29 @@ interface CollaboratorInfo {
 
 type ConnectionStatus = "connecting" | "connected" | "disconnected" | "error";
 
+/** Inline modification hunk for accept/reject UI */
+export interface EditorModification {
+  endLine: number;
+  hunkId: string;
+  newContent: string;
+  originalContent: string;
+  startLine: number;
+  status: "pending" | "accepted" | "rejected";
+}
+
 interface CollaborativeEditorProps {
   /** Content to initialize the document with (used when no shared state exists) */
   content: string;
   /** Language/file extension for syntax highlighting */
   language: string;
+  /** Inline modifications by agent for accept/reject */
+  modifications?: EditorModification[];
+  /** Called when a modification hunk is accepted */
+  onAcceptModification?: (hunkId: string) => void;
   /** Called when document content changes */
   onChange?: (content: string) => void;
+  /** Called when a modification hunk is rejected */
+  onRejectModification?: (hunkId: string) => void;
   /** Called when save is triggered */
   onSave?: (content: string) => void;
   /** Whether the editor is read-only */
@@ -277,6 +293,55 @@ function useYjsCollaboration(
 
 // --- Main Component ---
 
+function ModificationGutter({
+  modifications,
+  onAccept,
+  onReject,
+}: {
+  modifications: EditorModification[];
+  onAccept?: (hunkId: string) => void;
+  onReject?: (hunkId: string) => void;
+}) {
+  const pendingMods = modifications.filter((m) => m.status === "pending");
+
+  if (pendingMods.length === 0) {
+    return null;
+  }
+
+  return (
+    <div className="absolute top-8 right-3 z-20 flex flex-col gap-1">
+      {pendingMods.map((mod) => (
+        <div
+          className="flex items-center gap-1 rounded border border-violet-500/30 bg-zinc-900/90 px-2 py-1 backdrop-blur-sm"
+          key={mod.hunkId}
+        >
+          <span className="text-[10px] text-violet-300">
+            L{mod.startLine}-{mod.endLine}
+          </span>
+          {onAccept && (
+            <button
+              className="rounded bg-green-500/20 px-1.5 py-0.5 text-[9px] text-green-300 hover:bg-green-500/30"
+              onClick={() => onAccept(mod.hunkId)}
+              type="button"
+            >
+              Accept
+            </button>
+          )}
+          {onReject && (
+            <button
+              className="rounded bg-red-500/20 px-1.5 py-0.5 text-[9px] text-red-300 hover:bg-red-500/30"
+              onClick={() => onReject(mod.hunkId)}
+              type="button"
+            >
+              Reject
+            </button>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export function CollaborativeEditor({
   roomId,
   userId,
@@ -285,8 +350,11 @@ export function CollaborativeEditor({
   language,
   userColor,
   wsUrl = "ws://localhost:4001/yjs",
+  modifications = [],
   onChange,
   onSave,
+  onAcceptModification,
+  onRejectModification,
   readOnly = false,
 }: CollaborativeEditorProps) {
   const resolvedColor = userColor ?? getColorForUser(userId);
@@ -340,8 +408,37 @@ export function CollaborativeEditor({
         <CollaboratorAvatars collaborators={collaborators} />
       </div>
 
+      {/* Modification gutter overlay */}
+      {modifications.length > 0 && (
+        <ModificationGutter
+          modifications={modifications}
+          onAccept={onAcceptModification}
+          onReject={onRejectModification}
+        />
+      )}
+
       {/* Editor */}
-      <div className="flex-1 overflow-hidden">
+      <div className="relative flex-1 overflow-hidden">
+        {/* Line highlights for modified ranges */}
+        {modifications.filter((m) => m.status === "pending").length > 0 && (
+          <div className="pointer-events-none absolute inset-0 z-10">
+            {/* Visual indicator strip on the left gutter */}
+            <div className="absolute top-0 left-0 h-full w-1">
+              {modifications
+                .filter((m) => m.status === "pending")
+                .map((mod) => (
+                  <div
+                    className="absolute left-0 w-1 bg-violet-500/40"
+                    key={mod.hunkId}
+                    style={{
+                      top: `${((mod.startLine - 1) / Math.max(1, (connectionStatus === "error" ? initialContent : content).split("\n").length)) * 100}%`,
+                      height: `${(Math.max(1, mod.endLine - mod.startLine + 1) / Math.max(1, (connectionStatus === "error" ? initialContent : content).split("\n").length)) * 100}%`,
+                    }}
+                  />
+                ))}
+            </div>
+          </div>
+        )}
         <CodeMirrorEditor
           extension={fileExtension}
           extraExtensions={extraExtensions}

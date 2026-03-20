@@ -9,7 +9,9 @@ export type OptimisticUpdateType =
   | "message_send"
   | "file_save"
   | "task_create"
-  | "plan_approve";
+  | "plan_approve"
+  | "approval_response"
+  | "tool_retry";
 
 export type OptimisticStatus = "pending" | "confirmed" | "rejected";
 
@@ -22,7 +24,17 @@ export interface OptimisticUpdate<T = unknown> {
   type: OptimisticUpdateType;
 }
 
+/** Optimistic message for instant display in chat. */
+export interface OptimisticMessage {
+  content: string;
+  id: string;
+  status: "pending" | "confirmed" | "rejected";
+  timestamp: string;
+}
+
 interface OptimisticState {
+  /** Add an optimistic message for instant chat display. */
+  addMessage: (id: string, content: string) => void;
   /** Register an optimistic update with a rollback function. */
   addOptimistic: <T = unknown>(
     id: string,
@@ -34,14 +46,26 @@ interface OptimisticState {
   /** Server confirmed the operation — remove from pending. */
   confirm: (id: string) => void;
 
+  /** Mark an optimistic message as confirmed. */
+  confirmMessage: (id: string) => void;
+
   /** Get all pending updates of a given type. */
   getPending: (type: OptimisticUpdateType) => OptimisticUpdate[];
+
+  /** Check if a given id is still pending. */
+  isPending: (id: string) => boolean;
+
+  /** Optimistic messages awaiting server confirmation. */
+  messages: OptimisticMessage[];
 
   /** The map of all pending optimistic updates keyed by operation ID. */
   pendingUpdates: Map<string, OptimisticUpdate>;
 
   /** Server rejected the operation — execute rollback and remove. */
   reject: (id: string) => void;
+
+  /** Mark an optimistic message as rejected. */
+  rejectMessage: (id: string) => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -50,6 +74,7 @@ interface OptimisticState {
 
 export const useOptimisticStore = create<OptimisticState>((set, get) => ({
   pendingUpdates: new Map(),
+  messages: [],
 
   addOptimistic: (id, type, data, rollback) =>
     set((state) => {
@@ -98,4 +123,33 @@ export const useOptimisticStore = create<OptimisticState>((set, get) => ({
     }
     return results;
   },
+
+  isPending: (id) => get().pendingUpdates.has(id),
+
+  addMessage: (id, content) =>
+    set((state) => ({
+      messages: [
+        ...state.messages,
+        {
+          id,
+          content,
+          status: "pending" as const,
+          timestamp: new Date().toISOString(),
+        },
+      ],
+    })),
+
+  confirmMessage: (id) =>
+    set((state) => ({
+      messages: state.messages.map((m) =>
+        m.id === id ? { ...m, status: "confirmed" as const } : m
+      ),
+    })),
+
+  rejectMessage: (id) =>
+    set((state) => ({
+      messages: state.messages.map((m) =>
+        m.id === id ? { ...m, status: "rejected" as const } : m
+      ),
+    })),
 }));

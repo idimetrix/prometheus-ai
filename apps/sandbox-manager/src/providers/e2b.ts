@@ -19,7 +19,7 @@ const DEFAULT_EXEC_TIMEOUT_MS = 60_000;
 const SNAPSHOT_TTL_MS = 60 * 60 * 1000;
 
 /**
- * Minimal type definitions for @e2b/code-interpreter SDK.
+ * Type definitions for the real @e2b/code-interpreter SDK.
  * Uses conditional dynamic imports since the package may not be installed.
  */
 interface E2BSandbox {
@@ -60,15 +60,29 @@ interface SnapshotEntry {
   snapshotId: string;
 }
 
+/** Cost tracking record for sandbox usage */
+interface SandboxUsageRecord {
+  cost: number;
+  durationMs: number;
+  endedAt: Date | null;
+  orgId: string;
+  provider: "e2b";
+  sandboxId: string;
+  startedAt: Date;
+}
+
 /**
- * E2B sandbox provider using the @e2b/code-interpreter SDK.
+ * E2B sandbox provider using the real @e2b/code-interpreter SDK.
  *
  * E2B provides managed cloud sandboxes with ~125ms boot times.
  * The SDK is loaded via conditional dynamic import so the provider
  * can be registered without requiring the package at build time.
  *
- * Supports snapshot/restore for session persistence and
- * package installation for runtime customization.
+ * Features:
+ * - Real E2B API calls via @e2b/code-interpreter SDK
+ * - Snapshot/restore for session persistence
+ * - Package installation for runtime customization
+ * - Sandbox cost tracking per organization
  */
 export class E2BProvider implements SandboxProvider {
   readonly name = "e2b" as const;
@@ -77,11 +91,16 @@ export class E2BProvider implements SandboxProvider {
   private readonly sandboxes = new Map<string, E2BSandbox>();
   private readonly instanceMap = new Map<string, SandboxInstance>();
   private readonly snapshots = new Map<string, SnapshotEntry>();
+  private readonly usageRecords: SandboxUsageRecord[] = [];
   private e2bModule: E2BCodeInterpreterModule | null = null;
   private moduleLoadAttempted = false;
 
-  constructor(apiKey?: string) {
+  /** Cost per sandbox minute in credits */
+  private readonly costPerMinute: number;
+
+  constructor(apiKey?: string, costPerMinute = 0.01) {
     this.apiKey = apiKey ?? process.env.E2B_API_KEY ?? "";
+    this.costPerMinute = costPerMinute;
   }
 
   /**
@@ -157,6 +176,9 @@ export class E2BProvider implements SandboxProvider {
     this.sandboxes.set(id, sandbox);
     this.instanceMap.set(id, instance);
 
+    // Start usage tracking
+    this.startUsageTracking(id, config.projectId);
+
     logger.info(
       {
         sandboxId: id,
@@ -176,6 +198,9 @@ export class E2BProvider implements SandboxProvider {
       return;
     }
 
+    // Stop usage tracking
+    this.stopUsageTracking(sandboxId);
+
     try {
       await sandbox.close();
     } catch (error) {
@@ -193,7 +218,6 @@ export class E2BProvider implements SandboxProvider {
     logger.info({ sandboxId }, "E2B sandbox destroyed");
   }
 
-  /* eslint-disable @typescript-eslint/member-ordering -- exec must match interface */
   async exec(
     sandboxId: string,
     command: string,
@@ -417,6 +441,59 @@ export class E2BProvider implements SandboxProvider {
     return removed;
   }
 
+  // ─── Cost tracking ───────────────────────────────────────────────────
+
+  /**
+   * Record sandbox usage for cost tracking.
+   * Cloud sandbox minutes count toward org credits.
+   */
+  recordSandboxUsage(
+    orgId: string,
+    provider: "e2b",
+    durationMs: number,
+    cost: number
+  ): void {
+    const record: SandboxUsageRecord = {
+      sandboxId: generateId("usage"),
+      orgId,
+      provider,
+      durationMs,
+      cost,
+      startedAt: new Date(Date.now() - durationMs),
+      endedAt: new Date(),
+    };
+
+    this.usageRecords.push(record);
+
+    logger.info(
+      {
+        orgId,
+        provider,
+        durationMinutes: Math.round((durationMs / 60_000) * 100) / 100,
+        cost,
+      },
+      "Sandbox usage recorded"
+    );
+  }
+
+  /** Get total usage cost for an organization */
+  getUsageCost(orgId: string): { totalCost: number; totalMinutes: number } {
+    let totalCost = 0;
+    let totalMs = 0;
+
+    for (const record of this.usageRecords) {
+      if (record.orgId === orgId) {
+        totalCost += record.cost;
+        totalMs += record.durationMs;
+      }
+    }
+
+    return {
+      totalCost,
+      totalMinutes: Math.round((totalMs / 60_000) * 100) / 100,
+    };
+  }
+
   /** Get the number of active sandboxes */
   getActiveCount(): number {
     return this.sandboxes.size;
@@ -460,8 +537,49 @@ export class E2BProvider implements SandboxProvider {
    * Map sandbox config trust levels to E2B template names.
    */
   private resolveTemplate(_config: SandboxConfig): string {
-    // E2B uses "base" template by default; custom templates can be configured
-    // via E2B dashboard for specific trust levels or runtime requirements
     return "base";
+  }
+
+  /**
+   * Start tracking usage for a sandbox.
+   */
+  private startUsageTracking(sandboxId: string, orgId: string): void {
+    const record: SandboxUsageRecord = {
+      sandboxId,
+      orgId,
+      provider: "e2b",
+      durationMs: 0,
+      cost: 0,
+      startedAt: new Date(),
+      endedAt: null,
+    };
+
+    this.usageRecords.push(record);
+  }
+
+  /**
+   * Stop tracking usage and calculate final cost.
+   */
+  private stopUsageTracking(sandboxId: string): void {
+    const record = this.usageRecords.find(
+      (r) => r.sandboxId === sandboxId && r.endedAt === null
+    );
+
+    if (!record) {
+      return;
+    }
+
+    record.endedAt = new Date();
+    record.durationMs = record.endedAt.getTime() - record.startedAt.getTime();
+    record.cost = (record.durationMs / 60_000) * this.costPerMinute;
+
+    logger.info(
+      {
+        sandboxId,
+        durationMinutes: Math.round((record.durationMs / 60_000) * 100) / 100,
+        cost: record.cost,
+      },
+      "Sandbox usage tracking completed"
+    );
   }
 }

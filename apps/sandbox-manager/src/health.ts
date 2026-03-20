@@ -13,7 +13,7 @@ export interface HealthStatus {
     available: boolean;
     activeContainers: number;
   };
-  mode: "docker" | "firecracker" | "dev";
+  mode: "docker" | "firecracker" | "dev" | "e2b";
   pool: {
     total: number;
     active: number;

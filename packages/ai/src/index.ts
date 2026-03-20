@@ -99,7 +99,16 @@ export {
   truncateToTokens,
 } from "./tokens";
 // ---------------------------------------------------------------------------
-// Vercel AI SDK Adapter
+// Tool Loop Agent (AI SDK 6)
+// ---------------------------------------------------------------------------
+export type {
+  GenerateResult,
+  StreamEvent,
+  ToolLoopAgentOptions,
+} from "./tool-loop-agent";
+export { createToolLoopAgent, ToolLoopAgent } from "./tool-loop-agent";
+// ---------------------------------------------------------------------------
+// Vercel AI SDK 6 Adapter
 // ---------------------------------------------------------------------------
 export type {
   SlotResolution,

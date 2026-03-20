@@ -253,6 +253,92 @@ export class DockerProvider implements SandboxProvider {
     }
   }
 
+  /**
+   * Take a snapshot of a Docker container using docker commit.
+   * Returns a snapshot ID (docker image tag).
+   */
+  async snapshot(sandboxId: string): Promise<string> {
+    const sandbox = this.sandboxes.get(sandboxId);
+    if (!sandbox) {
+      throw new Error(`Sandbox ${sandboxId} not found`);
+    }
+
+    const snapshotTag = `prometheus-snapshot:${sandboxId}-${Date.now()}`;
+
+    const result = await this.spawnDocker(
+      ["commit", sandbox.containerId, snapshotTag],
+      30_000
+    );
+
+    if (result.exitCode !== 0) {
+      throw new Error(`Docker snapshot failed: ${result.stderr}`);
+    }
+
+    logger.info(
+      { sandboxId, snapshotTag },
+      "Docker container snapshot created"
+    );
+
+    return snapshotTag;
+  }
+
+  /**
+   * Restore a sandbox from a Docker snapshot (committed image).
+   * Creates a new container from the snapshot image.
+   */
+  async restore(snapshotId: string): Promise<SandboxInstance> {
+    const id = generateId("sbx");
+    const containerName = `prometheus-sandbox-${id}`;
+
+    const args = [
+      "create",
+      "--name",
+      containerName,
+      "--workdir",
+      "/workspace",
+      "--label",
+      "prometheus.sandbox=true",
+      "--label",
+      `prometheus.sandbox.id=${id}`,
+      snapshotId,
+      "sleep",
+      "infinity",
+    ];
+
+    const createResult = await this.spawnDocker(args);
+    if (createResult.exitCode !== 0) {
+      throw new Error(
+        `Failed to create container from snapshot: ${createResult.stderr}`
+      );
+    }
+
+    const containerId = createResult.stdout.trim();
+    const startResult = await this.spawnDocker(["start", containerId]);
+    if (startResult.exitCode !== 0) {
+      throw new Error(
+        `Failed to start restored container: ${startResult.stderr}`
+      );
+    }
+
+    const instance: SandboxInstance = {
+      id,
+      provider: "docker",
+      workDir: "/workspace",
+      status: "running",
+      containerId,
+      createdAt: new Date(),
+    };
+
+    this.sandboxes.set(id, { containerId, instance });
+
+    logger.info(
+      { sandboxId: id, snapshotTag: snapshotId },
+      "Docker container restored from snapshot"
+    );
+
+    return instance;
+  }
+
   /** Check if the Docker daemon is reachable */
   static isAvailable(): Promise<boolean> {
     return new Promise<boolean>((resolve) => {

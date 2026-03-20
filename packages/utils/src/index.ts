@@ -1,3 +1,17 @@
+export type {
+  CircuitBreakerConfig,
+  CircuitBreakerMetrics,
+  CircuitBreakerState,
+} from "./circuit-breaker";
+export { CircuitBreaker } from "./circuit-breaker";
+export {
+  generateCorrelationId,
+  getCorrelationHeaderName,
+  getCorrelationHeaders,
+  getCorrelationId,
+  getCorrelationStore,
+  withCorrelationId,
+} from "./correlation";
 export { decrypt, encrypt } from "./encryption";
 export {
   apiEnvSchema,
@@ -20,6 +34,8 @@ export {
   validateEnv,
   webEnvSchema,
 } from "./env";
+export type { EncryptedPayload } from "./envelope-encryption";
+export { EnvelopeEncryption } from "./envelope-encryption";
 export {
   AgentError,
   CreditError,
@@ -28,6 +44,12 @@ export {
   SandboxError,
 } from "./errors";
 export { GitHubClient } from "./github-client";
+export {
+  gracefulShutdown,
+  installShutdownHandlers,
+  isProcessShuttingDown,
+  registerShutdownHandler,
+} from "./graceful-shutdown";
 export {
   chunk,
   clamp,
@@ -44,8 +66,19 @@ export {
   truncate,
   unique,
 } from "./helpers";
+export {
+  getSignatureHeaderName,
+  signRequest,
+  verifyRequest,
+} from "./hmac-signing";
 export { HttpClient, HttpClientError } from "./http-client";
 export { generateId } from "./id";
+export type {
+  RateLimitConfig,
+  RateLimitHeaders,
+  RateLimitResult,
+} from "./rate-limiter";
+export { SlidingWindowRateLimiter } from "./rate-limiter";
 export type { RetryOptions } from "./retry";
 export { retry } from "./retry";
 export { decryptSopsValue, loadSopsFile } from "./secrets";

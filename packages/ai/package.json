@@ -11,8 +11,15 @@
     "clean": "rm -rf dist .turbo"
   },
   "dependencies": {
+    "@ai-sdk/anthropic": "^3.0.58",
+    "@ai-sdk/google": "^3.0.43",
+    "@ai-sdk/groq": "^3.0.29",
+    "@ai-sdk/mistral": "^3.0.24",
+    "@ai-sdk/openai": "^3.0.41",
     "@prometheus/logger": "workspace:*",
-    "openai": "^6.32.0"
+    "ai": "^6.0.116",
+    "openai": "^6.32.0",
+    "zod": "^4.3.6"
   },
   "devDependencies": {
     "@prometheus/config-typescript": "workspace:*",

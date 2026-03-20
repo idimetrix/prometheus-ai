@@ -11,7 +11,8 @@
     "clean": "rm -rf dist .turbo"
   },
   "dependencies": {
-    "@prometheus/logger": "workspace:*"
+    "@prometheus/logger": "workspace:*",
+    "inngest": "^4.0.2"
   },
   "devDependencies": {
     "@prometheus/config-typescript": "workspace:*",

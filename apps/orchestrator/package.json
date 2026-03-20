@@ -14,7 +14,9 @@
   "dependencies": {
     "hono": "^4.12.8",
     "@hono/node-server": "^1.19.11",
+    "ai": "^6.0.116",
     "drizzle-orm": "^0.45.1",
+    "ioredis": "5.10.1",
     "@prometheus/db": "workspace:*",
     "@prometheus/types": "workspace:*",
     "@prometheus/queue": "workspace:*",
@@ -22,7 +24,8 @@
     "@prometheus/agent-sdk": "workspace:*",
     "@prometheus/logger": "workspace:*",
     "@prometheus/telemetry": "workspace:*",
-    "@prometheus/utils": "workspace:*"
+    "@prometheus/utils": "workspace:*",
+    "zod": "^4.3.6"
   },
   "devDependencies": {
     "@prometheus/config-typescript": "workspace:*",

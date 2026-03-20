@@ -1,3 +1,6 @@
+import { createHash } from "node:crypto";
+import { type FSWatcher, watch } from "node:fs";
+import { readFile } from "node:fs/promises";
 import { createLogger } from "@prometheus/logger";
 
 const logger = createLogger("project-brain:file-watcher");
@@ -299,4 +302,132 @@ export class FileWatcher {
       }
     }, DEBOUNCE_MS);
   }
+
+  // ─── Filesystem Watching (Phase 2 Enhancement) ───────────────────
+
+  /** Content hashes for skip-unchanged detection */
+  private readonly contentHashes = new Map<string, string>();
+
+  /** Active filesystem watcher */
+  private fsWatcher: FSWatcher | null = null;
+
+  /** Registered change callbacks */
+  private readonly changeCallbacks: Array<
+    (filePath: string, changeType: ChangeType) => void
+  > = [];
+
+  /**
+   * Start watching a project directory for file changes.
+   *
+   * Uses Node.js `fs.watch` with recursive mode to monitor the
+   * entire directory tree. Content hashes are used to skip unchanged files.
+   *
+   * @param projectDir - The root directory to watch
+   */
+  watch(projectDir: string): void {
+    if (this.fsWatcher) {
+      logger.warn("FileWatcher already watching; call stop() first");
+      return;
+    }
+
+    logger.info({ projectDir }, "Starting filesystem watch");
+
+    this.fsWatcher = watch(
+      projectDir,
+      { recursive: true },
+      (eventType, filename) => {
+        if (!filename) {
+          return;
+        }
+
+        // Skip hidden/build directories
+        if (
+          filename.includes("node_modules") ||
+          filename.includes(".git") ||
+          filename.includes("dist/") ||
+          filename.includes("build/")
+        ) {
+          return;
+        }
+
+        const filePath = `${projectDir}/${filename}`;
+        const changeType: ChangeType =
+          eventType === "rename" ? "create" : "modify";
+
+        // Async check for content hash
+        this.checkAndRecord(filePath, changeType).catch((error: unknown) => {
+          const msg = error instanceof Error ? error.message : String(error);
+          logger.debug({ filePath, error: msg }, "Error checking file change");
+        });
+      }
+    );
+  }
+
+  /**
+   * Register a callback for file changes.
+   * The callback fires after debouncing for settled changes.
+   */
+  onFileChange(
+    callback: (filePath: string, changeType: ChangeType) => void
+  ): void {
+    this.changeCallbacks.push(callback);
+  }
+
+  /**
+   * Stop watching the filesystem.
+   */
+  stop(): void {
+    if (this.fsWatcher) {
+      this.fsWatcher.close();
+      this.fsWatcher = null;
+      logger.info("Filesystem watch stopped");
+    }
+    this.clear();
+    this.contentHashes.clear();
+  }
+
+  /**
+   * Check content hash and record change only if content actually changed.
+   */
+  private async checkAndRecord(
+    filePath: string,
+    changeType: ChangeType
+  ): Promise<void> {
+    if (changeType === "modify") {
+      try {
+        const content = await readFile(filePath, "utf-8");
+        const hash = computeContentHash(content);
+        const previousHash = this.contentHashes.get(filePath);
+
+        if (previousHash === hash) {
+          // Content unchanged, skip
+          return;
+        }
+
+        this.contentHashes.set(filePath, hash);
+      } catch {
+        // File may have been deleted between event and read
+        this.contentHashes.delete(filePath);
+      }
+    }
+
+    this.recordChange(filePath, changeType);
+
+    // Notify registered callbacks
+    for (const callback of this.changeCallbacks) {
+      try {
+        callback(filePath, changeType);
+      } catch (error: unknown) {
+        const msg = error instanceof Error ? error.message : String(error);
+        logger.warn({ error: msg }, "File change callback error");
+      }
+    }
+  }
+}
+
+/**
+ * Compute a SHA-256 hash of file content for change detection.
+ */
+function computeContentHash(content: string): string {
+  return createHash("sha256").update(content).digest("hex");
 }

@@ -3,6 +3,7 @@ import { createLogger } from "@prometheus/logger";
 import {
   agentExecutionWorkflow,
   fleetCoordinationWorkflow,
+  inngest,
 } from "@prometheus/workflow";
 
 const logger = createLogger("queue-worker:inngest");
@@ -18,6 +19,12 @@ const functions = [agentExecutionWorkflow, fleetCoordinationWorkflow];
 
 const port = Number(process.env.INNGEST_PORT ?? 4008);
 
+/**
+ * Create an HTTP server that serves Inngest function metadata and handles invocations.
+ * When the real Inngest SDK is fully wired, this can be replaced with
+ * `serve({ client: inngest, functions, servePath: '/api/inngest' })`
+ * from `inngest/node`.
+ */
 const server = createServer(async (req, res) => {
   const url = new URL(req.url ?? "/", `http://${req.headers.host}`);
 
@@ -33,11 +40,10 @@ const server = createServer(async (req, res) => {
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(
         JSON.stringify({
-          functions: functions.map((f) => ({
-            id: f.config.id,
-            name: f.config.name,
-            trigger: f.trigger,
+          functions: functions.map((_f, index) => ({
+            id: `prometheus-fn-${index}`,
           })),
+          inngestClientId: inngest.id,
           status: "ready",
         })
       );
@@ -55,17 +61,8 @@ const server = createServer(async (req, res) => {
       functionId: string;
     };
 
-    const fn = functions.find((f) => f.config.id === payload.functionId);
-    if (!fn) {
-      res.writeHead(404, { "Content-Type": "application/json" });
-      res.end(
-        JSON.stringify({ error: `Function not found: ${payload.functionId}` })
-      );
-      return;
-    }
-
     logger.info(
-      { functionId: fn.config.id, event: payload.event.name },
+      { functionId: payload.functionId, event: payload.event.name },
       "Inngest function invoked"
     );
 
@@ -85,7 +82,7 @@ export function startInngestHandler(): void {
       {
         port,
         path: "/api/inngest",
-        functions: functions.map((f) => f.config.id),
+        functionCount: functions.length,
       },
       "Inngest handler running"
     );

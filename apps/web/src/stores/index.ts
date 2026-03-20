@@ -2,6 +2,7 @@ export { useChatStore } from "./chat.store";
 export { useDashboardStore } from "./dashboard.store";
 export { useNotificationStore } from "./notification.store";
 export type {
+  OptimisticMessage,
   OptimisticStatus,
   OptimisticUpdate,
   OptimisticUpdateType,

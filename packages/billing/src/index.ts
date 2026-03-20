@@ -4,6 +4,15 @@ export type {
   ReservationResult,
 } from "./credits";
 export { CreditService } from "./credits";
+export type {
+  ReconciliationResult,
+  TransactionVerification,
+} from "./ledger-integrity";
+export {
+  isIdempotent,
+  LedgerIntegrity,
+  recordIdempotencyKey,
+} from "./ledger-integrity";
 export {
   CREDIT_COSTS,
   CREDIT_PACKS,

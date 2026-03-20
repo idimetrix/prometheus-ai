@@ -234,6 +234,152 @@ export class ParallelScheduler {
     };
   }
 
+  // ---------------------------------------------------------------------------
+  // DAG scheduling from TaskPlan
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Schedule tasks from a TaskPlan DAG, respecting dependency ordering.
+   * Returns waves plus DAG visualization events for the frontend.
+   */
+  scheduleDAG(
+    tasks: SchedulableTask[],
+    dependencies: Array<{
+      from: string;
+      to: string;
+      type: "blocks" | "informs";
+    }>
+  ): ScheduleResult & { dagEvents: DAGVisualizationEvent[] } {
+    // Only use blocking dependencies for scheduling
+    const blockingDeps = dependencies.filter((d) => d.type === "blocks");
+
+    // Merge blocking deps into task dependencies
+    const merged = tasks.map((t) => ({
+      ...t,
+      dependencies: [
+        ...t.dependencies,
+        ...blockingDeps.filter((d) => d.from === t.id).map((d) => d.to),
+      ],
+    }));
+
+    const result = this.schedule(merged);
+    const dagEvents = this.buildDAGEvents(merged, result);
+
+    return { ...result, dagEvents };
+  }
+
+  /**
+   * Get the progress of a running schedule.
+   */
+  getProgress(
+    scheduleResult: ScheduleResult,
+    completedTaskIds: Set<string>
+  ): ScheduleProgress {
+    const totalTasks = scheduleResult.waves.flat().length;
+    const completedCount = completedTaskIds.size;
+    const remainingTasks = totalTasks - completedCount;
+
+    // Calculate ETA based on critical path remaining effort
+    const remainingCriticalEffort = scheduleResult.cpmAnalysis.taskTimings
+      .filter(
+        (t) =>
+          scheduleResult.criticalPath.includes(t.taskId) &&
+          !completedTaskIds.has(t.taskId)
+      )
+      .reduce((sum, t) => sum + t.weight, 0);
+
+    return {
+      completedCount,
+      totalTasks,
+      remainingTasks,
+      percentComplete:
+        totalTasks > 0 ? Math.round((completedCount / totalTasks) * 100) : 100,
+      remainingCriticalEffort,
+      currentWave: this.getCurrentWave(scheduleResult.waves, completedTaskIds),
+      totalWaves: scheduleResult.waves.length,
+    };
+  }
+
+  /**
+   * Get the critical path with estimated time to completion.
+   */
+  getCriticalPath(
+    scheduleResult: ScheduleResult,
+    completedTaskIds: Set<string>
+  ): CriticalPathInfo {
+    const remaining = scheduleResult.cpmAnalysis.taskTimings.filter(
+      (t) =>
+        scheduleResult.criticalPath.includes(t.taskId) &&
+        !completedTaskIds.has(t.taskId)
+    );
+
+    const totalRemainingEffort = remaining.reduce(
+      (sum, t) => sum + t.weight,
+      0
+    );
+
+    return {
+      taskIds: scheduleResult.criticalPath,
+      completedIds: scheduleResult.criticalPath.filter((id) =>
+        completedTaskIds.has(id)
+      ),
+      remainingIds: remaining.map((t) => t.taskId),
+      totalEffort: scheduleResult.cpmAnalysis.projectDuration,
+      remainingEffort: totalRemainingEffort,
+      estimatedRemainingUnits: totalRemainingEffort,
+    };
+  }
+
+  // ---------------------------------------------------------------------------
+  // Private helpers for DAG scheduling
+  // ---------------------------------------------------------------------------
+
+  private buildDAGEvents(
+    _tasks: SchedulableTask[],
+    result: ScheduleResult
+  ): DAGVisualizationEvent[] {
+    const events: DAGVisualizationEvent[] = [];
+
+    for (let waveIdx = 0; waveIdx < result.waves.length; waveIdx++) {
+      const wave = result.waves[waveIdx];
+      if (!wave) {
+        continue;
+      }
+      for (const task of wave) {
+        const timing = result.cpmAnalysis.taskTimings.find(
+          (t) => t.taskId === task.id
+        );
+
+        events.push({
+          taskId: task.id,
+          title: task.title,
+          agentRole: task.agentRole,
+          wave: waveIdx,
+          dependencies: task.dependencies,
+          isCriticalPath: result.criticalPath.includes(task.id),
+          timing: timing
+            ? { es: timing.es, ef: timing.ef, float: timing.float }
+            : null,
+        });
+      }
+    }
+
+    return events;
+  }
+
+  private getCurrentWave(
+    waves: SchedulableTask[][],
+    completedTaskIds: Set<string>
+  ): number {
+    for (let i = 0; i < waves.length; i++) {
+      const wave = waves[i];
+      if (wave?.some((t) => !completedTaskIds.has(t.id))) {
+        return i;
+      }
+    }
+    return waves.length - 1;
+  }
+
   /**
    * Topological sort using Kahn's algorithm.
    * Returns task IDs in dependency-respecting order.
@@ -285,4 +431,40 @@ export class ParallelScheduler {
 
     return sorted;
   }
+}
+
+// ---------------------------------------------------------------------------
+// Additional types for DAG scheduling
+// ---------------------------------------------------------------------------
+
+/** DAG visualization event for the frontend. */
+export interface DAGVisualizationEvent {
+  agentRole: string;
+  dependencies: string[];
+  isCriticalPath: boolean;
+  taskId: string;
+  timing: { es: number; ef: number; float: number } | null;
+  title: string;
+  wave: number;
+}
+
+/** Progress info for a running schedule. */
+export interface ScheduleProgress {
+  completedCount: number;
+  currentWave: number;
+  percentComplete: number;
+  remainingCriticalEffort: number;
+  remainingTasks: number;
+  totalTasks: number;
+  totalWaves: number;
+}
+
+/** Critical path analysis with remaining effort. */
+export interface CriticalPathInfo {
+  completedIds: string[];
+  estimatedRemainingUnits: number;
+  remainingEffort: number;
+  remainingIds: string[];
+  taskIds: string[];
+  totalEffort: number;
 }

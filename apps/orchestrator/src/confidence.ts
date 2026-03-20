@@ -306,6 +306,13 @@ export class ConfidenceScorer {
   }
 
   /**
+   * Get the current running confidence score.
+   */
+  getCurrentScore(): number {
+    return this.runningScore;
+  }
+
+  /**
    * Get summary statistics for the current task execution.
    */
   getSummary(): {
@@ -353,5 +360,213 @@ export class ConfidenceScorer {
       maxConfidence: max,
       escalationCount: escalations,
     };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Model Escalation Chain
+// ---------------------------------------------------------------------------
+
+/**
+ * Model slot escalation chain: default → think → review → premium.
+ * Each tier represents a more capable (and expensive) model.
+ */
+const ESCALATION_CHAIN = ["default", "think", "review", "premium"] as const;
+export type ModelSlot = (typeof ESCALATION_CHAIN)[number];
+
+export interface EscalationDecision {
+  /** Current confidence score */
+  confidence: number;
+  /** Current model slot */
+  currentSlot: ModelSlot;
+  /** Reasoning for the decision */
+  reason: string;
+  /** Recommended model slot */
+  recommendedSlot: ModelSlot;
+  /** Whether escalation is recommended */
+  shouldEscalate: boolean;
+}
+
+export interface EscalationHistoryEntry {
+  confidence: number;
+  fromSlot: ModelSlot;
+  /** Whether the escalation improved the outcome */
+  successful: boolean;
+  taskType: string;
+  timestamp: number;
+  toSlot: ModelSlot;
+}
+
+/**
+ * ModelEscalator determines when to upgrade the model tier based on
+ * confidence scores and learns which task types benefit from escalation.
+ */
+export class ModelEscalator {
+  private readonly history: EscalationHistoryEntry[] = [];
+
+  /** Confidence threshold below which escalation is recommended. */
+  private readonly escalationThreshold: number;
+
+  /** Per task-type learned escalation preferences. */
+  private readonly taskTypePreferences = new Map<
+    string,
+    { escalationCount: number; successCount: number; totalCount: number }
+  >();
+
+  constructor(escalationThreshold = 0.5) {
+    this.escalationThreshold = escalationThreshold;
+  }
+
+  /**
+   * Determine whether to escalate to a higher model tier.
+   */
+  shouldEscalate(
+    confidence: number,
+    taskType: string,
+    currentSlot: ModelSlot = "default"
+  ): EscalationDecision {
+    const currentIdx = ESCALATION_CHAIN.indexOf(currentSlot);
+
+    // Already at the highest tier
+    if (currentIdx >= ESCALATION_CHAIN.length - 1) {
+      return {
+        shouldEscalate: false,
+        currentSlot,
+        recommendedSlot: currentSlot,
+        confidence,
+        reason: "Already at highest model tier",
+      };
+    }
+
+    // Check if this task type historically benefits from escalation
+    const taskPref = this.taskTypePreferences.get(taskType);
+    let threshold = this.escalationThreshold;
+
+    if (taskPref && taskPref.totalCount >= 3) {
+      const successRate = taskPref.successCount / taskPref.totalCount;
+      if (successRate > 0.7) {
+        // This task type benefits from escalation — lower the threshold
+        threshold = Math.max(0.3, threshold - 0.15);
+      } else if (successRate < 0.3) {
+        // Escalation rarely helps for this task type — raise the threshold
+        threshold = Math.min(0.8, threshold + 0.15);
+      }
+    }
+
+    if (confidence < threshold) {
+      // Determine how many tiers to skip based on confidence
+      let nextIdx = currentIdx + 1;
+
+      // Very low confidence — skip to review or premium
+      if (confidence < 0.3 && currentIdx < ESCALATION_CHAIN.length - 2) {
+        nextIdx = currentIdx + 2;
+      }
+
+      // Extremely low — go straight to premium
+      if (confidence < 0.15) {
+        nextIdx = ESCALATION_CHAIN.length - 1;
+      }
+
+      nextIdx = Math.min(nextIdx, ESCALATION_CHAIN.length - 1);
+      const recommendedSlot = ESCALATION_CHAIN[nextIdx] ?? "premium";
+
+      logger.info(
+        {
+          confidence: confidence.toFixed(3),
+          taskType,
+          currentSlot,
+          recommendedSlot,
+          threshold: threshold.toFixed(3),
+        },
+        "Model escalation recommended"
+      );
+
+      return {
+        shouldEscalate: true,
+        currentSlot,
+        recommendedSlot,
+        confidence,
+        reason: `Confidence ${confidence.toFixed(3)} below threshold ${threshold.toFixed(3)}`,
+      };
+    }
+
+    return {
+      shouldEscalate: false,
+      currentSlot,
+      recommendedSlot: currentSlot,
+      confidence,
+      reason: `Confidence ${confidence.toFixed(3)} above threshold ${threshold.toFixed(3)}`,
+    };
+  }
+
+  /**
+   * Record the outcome of an escalation for learning.
+   */
+  recordOutcome(
+    taskType: string,
+    fromSlot: ModelSlot,
+    toSlot: ModelSlot,
+    confidence: number,
+    successful: boolean
+  ): void {
+    this.history.push({
+      taskType,
+      fromSlot,
+      toSlot,
+      confidence,
+      successful,
+      timestamp: Date.now(),
+    });
+
+    // Update task type preferences
+    const existing = this.taskTypePreferences.get(taskType) ?? {
+      escalationCount: 0,
+      successCount: 0,
+      totalCount: 0,
+    };
+
+    existing.escalationCount++;
+    existing.totalCount++;
+    if (successful) {
+      existing.successCount++;
+    }
+
+    this.taskTypePreferences.set(taskType, existing);
+
+    // Trim history to prevent unbounded growth
+    if (this.history.length > 500) {
+      this.history.splice(0, this.history.length - 500);
+    }
+  }
+
+  /**
+   * Get escalation success rates per task type.
+   */
+  getEscalationStats(): Record<
+    string,
+    { escalationCount: number; successRate: number }
+  > {
+    const result: Record<
+      string,
+      { escalationCount: number; successRate: number }
+    > = {};
+
+    for (const [taskType, pref] of this.taskTypePreferences) {
+      result[taskType] = {
+        escalationCount: pref.escalationCount,
+        successRate:
+          pref.totalCount > 0 ? pref.successCount / pref.totalCount : 0,
+      };
+    }
+
+    return result;
+  }
+
+  /**
+   * Reset all learned preferences.
+   */
+  reset(): void {
+    this.history.length = 0;
+    this.taskTypePreferences.clear();
   }
 }

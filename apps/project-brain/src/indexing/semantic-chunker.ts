@@ -1,7 +1,12 @@
 /**
- * Phase 5.1: Semantic Chunking via SymbolTable.
- * Uses the existing parseTypeScript SymbolTable instead of regex chunkByDeclarations.
- * Extracts functions/classes/interfaces with import context headers.
+ * Phase 5.1 + 7.10: Enhanced Semantic Chunking.
+ *
+ * AST-based chunking via tree-sitter symbol boundaries.
+ * Enhancements (Phase 7.10):
+ * - Import context prepending (includes imports used by the chunk)
+ * - Overlapping chunks (50 token overlap between adjacent chunks)
+ * - Multi-language regex-based chunking for Python, Go, Rust, Java, C++
+ * - SemanticChunker class for direct usage
  */
 import { createLogger } from "@prometheus/logger";
 import type { SymbolTable } from "../parsers/symbols";
@@ -10,6 +15,47 @@ import { parseTypeScript } from "../parsers/tree-sitter";
 const logger = createLogger("project-brain:semantic-chunker");
 
 const MAX_CHUNK_CHARS = 2000;
+const OVERLAP_CHARS = 200; // ~50 tokens at 4 chars/token
+
+// ── Language-specific patterns for non-TS languages ─────────────────
+const PYTHON_FUNC_RE = /^(?:async\s+)?def\s+(\w+)\s*\(/gm;
+const PYTHON_CLASS_RE = /^class\s+(\w+)(?:\([^)]*\))?\s*:/gm;
+const GO_FUNC_RE = /^func\s+(?:\([^)]*\)\s+)?(\w+)\s*\(/gm;
+const GO_TYPE_RE = /^type\s+(\w+)\s+(?:struct|interface)\s*\{/gm;
+const RUST_FN_RE = /^(?:pub\s+)?(?:async\s+)?fn\s+(\w+)/gm;
+const RUST_STRUCT_RE = /^(?:pub\s+)?struct\s+(\w+)/gm;
+const JAVA_METHOD_RE =
+  /(?:public|private|protected)\s+(?:static\s+)?[\w<>[\]]+\s+(\w+)\s*\(/gm;
+const JAVA_CLASS_RE = /(?:public\s+)?(?:abstract\s+)?class\s+(\w+)/gm;
+const CPP_FUNC_RE = /(?:[\w:]+\s+)+(\w+)\s*\([^)]*\)\s*(?:const\s*)?\{/gm;
+const CPP_CLASS_RE = /class\s+(\w+)/gm;
+
+const LANGUAGE_MAP: Record<string, string> = {
+  ts: "typescript",
+  tsx: "typescript",
+  js: "javascript",
+  jsx: "javascript",
+  mjs: "javascript",
+  cjs: "javascript",
+  py: "python",
+  go: "go",
+  rs: "rust",
+  java: "java",
+  cpp: "cpp",
+  cc: "cpp",
+  c: "c",
+  h: "c",
+};
+
+const TS_EXTENSIONS = new Set(["ts", "tsx", "js", "jsx", "mjs", "cjs"]);
+
+const REACT_COMPONENT_RE = /^[A-Z]/;
+const JSX_RE = /return\s*\(?[\s\S]*<|tsx|jsx/;
+
+export interface CodeChunk extends StructuredChunk {
+  language: string;
+  overlap: boolean;
+}
 
 export interface StructuredChunk {
   content: string;
@@ -38,7 +84,7 @@ export function chunkBySemantic(
   content: string
 ): StructuredChunk[] {
   const ext = filePath.split(".").pop()?.toLowerCase() ?? "";
-  const isTypeScript = ["ts", "tsx", "js", "jsx", "mjs", "cjs"].includes(ext);
+  const isTypeScript = TS_EXTENSIONS.has(ext);
 
   if (!isTypeScript) {
     return chunkByLines(filePath, content);
@@ -64,7 +110,6 @@ function chunkFromSymbols(
   const lines = content.split("\n");
   const chunks: StructuredChunk[] = [];
 
-  // Build import context header (shared across chunks from this file)
   const importContext = symbols.imports
     .map((imp) => {
       const specs = imp.specifiers.join(", ");
@@ -78,7 +123,6 @@ function chunkFromSymbols(
     })
     .join("\n");
 
-  // Extract functions as chunks
   for (const fn of symbols.functions) {
     const chunkContent = extractLines(lines, fn.line, fn.endLine);
     if (chunkContent.length > 0) {
@@ -96,13 +140,10 @@ function chunkFromSymbols(
     }
   }
 
-  // Extract classes as chunks
   for (const cls of symbols.classes) {
     const chunkContent = extractLines(lines, cls.line, cls.endLine);
     if (chunkContent.length > 0) {
-      // If class is too large, split by methods
       if (chunkContent.length > MAX_CHUNK_CHARS && cls.methods.length > 0) {
-        // Class header chunk
         const headerEnd = cls.methods[0]?.line ?? cls.endLine;
         chunks.push({
           filePath,
@@ -118,7 +159,6 @@ function chunkFromSymbols(
           importContext,
         });
 
-        // Method chunks
         for (const method of cls.methods) {
           const methodContent = extractLines(
             lines,
@@ -151,9 +191,8 @@ function chunkFromSymbols(
     }
   }
 
-  // Extract interfaces as chunks
   for (const iface of symbols.interfaces) {
-    const chunkContent = extractLines(lines, iface.line, iface.line + 30); // Interfaces are usually short
+    const chunkContent = extractLines(lines, iface.line, iface.line + 30);
     if (chunkContent.length > 0) {
       chunks.push({
         filePath,
@@ -167,7 +206,6 @@ function chunkFromSymbols(
     }
   }
 
-  // Extract type aliases as chunks
   for (const ta of symbols.typeAliases) {
     const chunkContent = extractLines(lines, ta.line, ta.line + 20);
     if (chunkContent.length > 0) {
@@ -183,7 +221,6 @@ function chunkFromSymbols(
     }
   }
 
-  // If no symbols found, fall back to whole-file chunk
   if (chunks.length === 0) {
     chunks.push({
       filePath,
@@ -204,19 +241,154 @@ function extractLines(
   startLine: number,
   endLine: number
 ): string {
-  // Lines are 1-based in the symbol table
   const start = Math.max(0, startLine - 1);
   const end = Math.min(lines.length, endLine);
   const extracted = lines.slice(start, end).join("\n");
-  // Truncate to max chunk size
   return extracted.slice(0, MAX_CHUNK_CHARS);
 }
 
-const REACT_COMPONENT_RE = /^[A-Z]/;
-const JSX_RE = /return\s*\(?[\s\S]*<|tsx|jsx/;
-
 function isReactComponent(name: string, content: string): boolean {
   return REACT_COMPONENT_RE.test(name) && JSX_RE.test(content);
+}
+
+/**
+ * Add overlapping chunks between adjacent chunks for better retrieval.
+ */
+function addOverlapChunks(chunks: StructuredChunk[]): StructuredChunk[] {
+  const overlaps: StructuredChunk[] = [];
+  for (let i = 0; i < chunks.length - 1; i++) {
+    const current = chunks[i] as StructuredChunk;
+    const next = chunks[i + 1] as StructuredChunk;
+
+    const overlapContent = [
+      current.content.slice(-OVERLAP_CHARS),
+      next.content.slice(0, OVERLAP_CHARS),
+    ].join("\n");
+
+    if (overlapContent.length > 50) {
+      overlaps.push({
+        filePath: current.filePath,
+        symbolType: "other",
+        symbolName: `overlap_${current.symbolName}_${next.symbolName}`,
+        startLine: current.endLine - 5,
+        endLine: next.startLine + 5,
+        content: overlapContent,
+        importContext: current.importContext,
+      });
+    }
+  }
+  return [...chunks, ...overlaps];
+}
+
+/**
+ * Chunk non-TS files using language-specific regex patterns.
+ */
+function chunkByLanguagePatterns(
+  filePath: string,
+  content: string,
+  language: string
+): StructuredChunk[] {
+  const lines = content.split("\n");
+  const boundaries: Array<{
+    name: string;
+    line: number;
+    type: StructuredChunk["symbolType"];
+  }> = [];
+
+  const patternSets: Record<
+    string,
+    Array<{ pattern: RegExp; type: StructuredChunk["symbolType"] }>
+  > = {
+    python: [
+      { pattern: PYTHON_FUNC_RE, type: "function" },
+      { pattern: PYTHON_CLASS_RE, type: "class" },
+    ],
+    go: [
+      { pattern: GO_FUNC_RE, type: "function" },
+      { pattern: GO_TYPE_RE, type: "type" },
+    ],
+    rust: [
+      { pattern: RUST_FN_RE, type: "function" },
+      { pattern: RUST_STRUCT_RE, type: "class" },
+    ],
+    java: [
+      { pattern: JAVA_METHOD_RE, type: "function" },
+      { pattern: JAVA_CLASS_RE, type: "class" },
+    ],
+    cpp: [
+      { pattern: CPP_FUNC_RE, type: "function" },
+      { pattern: CPP_CLASS_RE, type: "class" },
+    ],
+    c: [{ pattern: CPP_FUNC_RE, type: "function" }],
+  };
+
+  const patterns = patternSets[language] ?? [];
+
+  for (const { pattern, type } of patterns) {
+    const regex = new RegExp(pattern.source, pattern.flags);
+    const matches = content.matchAll(regex);
+    for (const match of matches) {
+      const line = content.slice(0, match.index ?? 0).split("\n").length;
+      boundaries.push({ name: match[1] ?? "anonymous", line, type });
+    }
+  }
+
+  boundaries.sort((a, b) => a.line - b.line);
+
+  if (boundaries.length === 0) {
+    return chunkByLines(filePath, content);
+  }
+
+  const chunks: StructuredChunk[] = [];
+  for (let i = 0; i < boundaries.length; i++) {
+    const boundary = boundaries[i] as (typeof boundaries)[0];
+    const nextBoundary = boundaries[i + 1];
+    const endLine = nextBoundary ? nextBoundary.line - 1 : lines.length;
+
+    const chunkContent = extractLines(lines, boundary.line, endLine);
+    if (chunkContent.length > 0) {
+      chunks.push({
+        filePath,
+        symbolType: boundary.type,
+        symbolName: boundary.name,
+        startLine: boundary.line,
+        endLine,
+        content: chunkContent,
+        importContext: "",
+      });
+    }
+  }
+
+  return chunks;
+}
+
+/**
+ * SemanticChunker class for enhanced multi-language chunking.
+ * Supports TS/JS (via AST), Python, Go, Rust, Java, C++ (via regex).
+ */
+export class SemanticChunker {
+  chunk(content: string, language: string, filePath = ""): CodeChunk[] {
+    const ext = filePath.split(".").pop()?.toLowerCase() ?? "";
+    const detectedLang = LANGUAGE_MAP[ext] ?? language;
+
+    let baseChunks: StructuredChunk[];
+    if (TS_EXTENSIONS.has(ext)) {
+      baseChunks = chunkBySemantic(filePath, content);
+    } else if (
+      ["python", "go", "rust", "java", "cpp", "c"].includes(detectedLang)
+    ) {
+      baseChunks = chunkByLanguagePatterns(filePath, content, detectedLang);
+    } else {
+      baseChunks = chunkByLines(filePath, content);
+    }
+
+    const withOverlaps = addOverlapChunks(baseChunks);
+    return withOverlaps.map((c) => ({
+      ...c,
+      language: detectedLang,
+      overlap: c.symbolName.startsWith("overlap_"),
+    }));
+  }
 }
 
 /**

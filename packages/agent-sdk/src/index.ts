@@ -41,6 +41,12 @@ export {
   readBrainSchema,
   spawnAgentSchema,
 } from "./tools/agent-tools";
+// AI SDK 6 tool adapter
+export {
+  convertRegistryToAISDK,
+  convertSingleTool,
+  convertToolsToAISDK,
+} from "./tools/ai-sdk-adapter";
 export {
   browserOpenSchema,
   browserScreenshotSchema,

@@ -6,6 +6,12 @@
  *
  * Snapshots enable sub-100ms VM boot times by restoring from a
  * pre-configured memory image rather than cold-booting.
+ *
+ * Features:
+ * - LRU eviction when storage exceeds capacity
+ * - Local SSD snapshot storage
+ * - Base snapshot creation after VM init
+ * - Restore targeting <100ms
  */
 import { createLogger } from "@prometheus/logger";
 import { generateId } from "@prometheus/utils";
@@ -17,6 +23,9 @@ const DEFAULT_API_BASE = "http://localhost:8080";
 
 /** Default snapshot TTL: 1 hour */
 const DEFAULT_SNAPSHOT_TTL_MS = 60 * 60 * 1000;
+
+/** Default max storage bytes: 10GB */
+const DEFAULT_MAX_STORAGE_BYTES = 10 * 1024 * 1024 * 1024;
 
 /** Supported template types */
 export type SnapshotTemplate = "node" | "python" | "rust";
@@ -32,6 +41,8 @@ const TEMPLATE_SETUP_COMMANDS: Record<SnapshotTemplate, string> = {
 interface SnapshotConfig {
   /** Base URL for the Firecracker management daemon */
   apiBase?: string;
+  /** Maximum total storage in bytes for snapshots (for LRU eviction) */
+  maxStorageBytes?: number;
   /** Directory to store snapshot files */
   snapshotDir?: string;
   /** Snapshot TTL in milliseconds (default: 1 hour) */
@@ -47,27 +58,46 @@ interface BaseSnapshotConfig {
   vcpuCount?: number;
 }
 
+export interface SnapshotMetadata {
+  createdAt: Date;
+  id: string;
+  sizeBytes: number;
+  vmConfig: {
+    diskMb: number;
+    memoryMb: number;
+    template: SnapshotTemplate | null;
+    vcpuCount: number;
+  };
+}
+
 interface SnapshotInfo {
   createdAt: Date;
   diskMb: number;
   id: string;
   /** Whether this is an incremental (diff) snapshot */
   incremental: boolean;
+  /** Last access time for LRU eviction */
+  lastAccessedAt: Date;
   memoryMb: number;
   /** Parent snapshot ID for incremental snapshots */
   parentId: string | null;
   path: string;
   projectId: string | null;
+  /** Estimated size in bytes */
+  sizeBytes: number;
   /** Template this snapshot was created from */
   template: SnapshotTemplate | null;
   ttlMs: number;
   type: "base" | "project" | "incremental";
+  /** vCPU count used when snapshot was taken */
+  vcpuCount: number;
 }
 
 export class SnapshotManager {
   private readonly apiBase: string;
   private readonly snapshotDir: string;
   private readonly defaultTtlMs: number;
+  private readonly maxStorageBytes: number;
   private readonly snapshots = new Map<string, SnapshotInfo>();
   /** Track base snapshots per template for fast lookup */
   private readonly templateSnapshots = new Map<SnapshotTemplate, string>();
@@ -80,6 +110,130 @@ export class SnapshotManager {
       process.env.FIRECRACKER_SNAPSHOT_DIR ??
       "/var/lib/firecracker/snapshots";
     this.defaultTtlMs = config?.ttlMs ?? DEFAULT_SNAPSHOT_TTL_MS;
+    this.maxStorageBytes = config?.maxStorageBytes ?? DEFAULT_MAX_STORAGE_BYTES;
+  }
+
+  /**
+   * Create a base snapshot after VM initialization.
+   * This is the primary method for snapshot-based fast boot.
+   */
+  async createBaseSnapshot(
+    vmId: string,
+    template?: SnapshotTemplate,
+    config?: BaseSnapshotConfig
+  ): Promise<SnapshotMetadata> {
+    const vcpuCount = config?.vcpuCount ?? 1;
+    const memoryMb = config?.memoryMb ?? 512;
+    const diskMb = config?.diskMb ?? 1024;
+
+    logger.info(
+      { vmId, template, vcpuCount, memoryMb, diskMb },
+      "Creating base snapshot after VM init"
+    );
+
+    // If template is provided, set up the environment first
+    if (template) {
+      const setupCommand = TEMPLATE_SETUP_COMMANDS[template];
+      await this.apiCall("POST", `/vms/${vmId}/agent/exec`, {
+        command: setupCommand,
+        timeout_ms: 120_000,
+      });
+    }
+
+    // Pause the VM before snapshotting
+    await this.apiCall("PATCH", `/vms/${vmId}/vm`, { state: "Paused" });
+
+    const snapshotId = generateId("snap");
+    const snapshotPath = `${this.snapshotDir}/${snapshotId}`;
+
+    await this.apiCall("PUT", `/vms/${vmId}/snapshot/create`, {
+      snapshot_type: "Full",
+      snapshot_path: snapshotPath,
+      mem_file_path: `${snapshotPath}.mem`,
+    });
+
+    // Resume the VM after snapshot
+    await this.apiCall("PATCH", `/vms/${vmId}/vm`, { state: "Resumed" });
+
+    // Estimate snapshot size (memory + rootfs state)
+    const estimatedSizeBytes = (memoryMb + diskMb / 4) * 1024 * 1024;
+
+    const info: SnapshotInfo = {
+      id: snapshotId,
+      type: "base",
+      template: template ?? null,
+      projectId: null,
+      parentId: null,
+      path: snapshotPath,
+      memoryMb,
+      diskMb,
+      vcpuCount,
+      incremental: false,
+      sizeBytes: estimatedSizeBytes,
+      ttlMs: this.defaultTtlMs,
+      createdAt: new Date(),
+      lastAccessedAt: new Date(),
+    };
+
+    this.snapshots.set(snapshotId, info);
+
+    // Track as template snapshot if applicable
+    if (template) {
+      this.templateSnapshots.set(template, snapshotId);
+    }
+
+    // Evict old snapshots if over storage limit
+    await this.evictIfNeeded();
+
+    logger.info(
+      {
+        snapshotId,
+        path: snapshotPath,
+        template,
+        sizeBytes: estimatedSizeBytes,
+      },
+      "Base snapshot created"
+    );
+
+    return this.toMetadata(info);
+  }
+
+  /**
+   * Restore a VM from a snapshot. Target: <100ms restore time.
+   * Uses Firecracker's snapshot/load API with memory file backend.
+   */
+  async restoreFromSnapshot(snapshotId: string): Promise<SnapshotMetadata> {
+    const info = this.snapshots.get(snapshotId);
+    if (!info) {
+      throw new Error(`Snapshot ${snapshotId} not found`);
+    }
+
+    const startTime = Date.now();
+
+    logger.info(
+      { snapshotId, type: info.type, template: info.template },
+      "Restoring VM from snapshot"
+    );
+
+    await this.apiCall("PUT", "/snapshot/load", {
+      snapshot_path: info.path,
+      mem_backend: {
+        backend_type: "File",
+        backend_path: `${info.path}.mem`,
+      },
+      enable_diff_snapshots: true,
+      resume_vm: true,
+    });
+
+    const restoreTimeMs = Date.now() - startTime;
+    info.lastAccessedAt = new Date();
+
+    logger.info(
+      { snapshotId, restoreTimeMs, targetMs: 100 },
+      "VM restored from snapshot"
+    );
+
+    return this.toMetadata(info);
   }
 
   /**
@@ -115,9 +269,12 @@ export class SnapshotManager {
       path: snapshotPath,
       memoryMb: 512,
       diskMb: 1024,
+      vcpuCount: 1,
       incremental: false,
+      sizeBytes: 512 * 1024 * 1024,
       ttlMs: this.defaultTtlMs,
       createdAt: new Date(),
+      lastAccessedAt: new Date(),
     };
 
     this.snapshots.set(snapshotId, info);
@@ -126,6 +283,8 @@ export class SnapshotManager {
     if (snapshotTemplate) {
       this.templateSnapshots.set(snapshotTemplate, snapshotId);
     }
+
+    await this.evictIfNeeded();
 
     logger.info(
       { snapshotId, path: snapshotPath, template },
@@ -160,6 +319,49 @@ export class SnapshotManager {
     logger.info({ snapshotPath, sandboxId }, "Snapshot restored");
 
     return sandboxId;
+  }
+
+  /**
+   * List all available snapshots, sorted by creation time descending.
+   */
+  listSnapshots(): SnapshotMetadata[] {
+    return Array.from(this.snapshots.values())
+      .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
+      .map((info) => this.toMetadata(info));
+  }
+
+  /**
+   * Delete a snapshot and its associated memory file.
+   */
+  async deleteSnapshot(id: string): Promise<void> {
+    const info = this.snapshots.get(id);
+    if (!info) {
+      logger.warn({ snapshotId: id }, "Snapshot not found for deletion");
+      return;
+    }
+
+    logger.info(
+      { snapshotId: id, path: info.path, type: info.type },
+      "Deleting snapshot"
+    );
+
+    // Delete snapshot files via the management API
+    await this.apiCall("DELETE", `/snapshots/${id}`, {
+      snapshot_path: info.path,
+      mem_file_path: `${info.path}.mem`,
+    });
+
+    this.snapshots.delete(id);
+
+    // Remove from template map if it was a template snapshot
+    if (info.template) {
+      const currentTemplateSnap = this.templateSnapshots.get(info.template);
+      if (currentTemplateSnap === id) {
+        this.templateSnapshots.delete(info.template);
+      }
+    }
+
+    logger.info({ snapshotId: id }, "Snapshot deleted");
   }
 
   /**
@@ -202,101 +404,13 @@ export class SnapshotManager {
   }
 
   /**
-   * Create a base snapshot with Alpine + template-specific toolchain.
-   * This is the foundation for template-based warm pools.
-   */
-  async createBaseSnapshot(
-    template: SnapshotTemplate,
-    config?: BaseSnapshotConfig
-  ): Promise<SnapshotInfo> {
-    const vcpuCount = config?.vcpuCount ?? 1;
-    const memoryMb = config?.memoryMb ?? 512;
-    const diskMb = config?.diskMb ?? 1024;
-
-    const setupCommand = TEMPLATE_SETUP_COMMANDS[template];
-
-    logger.info(
-      { template, vcpuCount, memoryMb, diskMb },
-      "Creating base template snapshot"
-    );
-
-    // 1. Boot a fresh VM with the base rootfs
-    await this.apiCall("PUT", "/machine-config", {
-      vcpu_count: vcpuCount,
-      mem_size_mib: memoryMb,
-      track_dirty_pages: true,
-    });
-
-    await this.apiCall("PUT", "/boot-source", {
-      kernel_image_path: "/var/lib/firecracker/vmlinux",
-      boot_args: "console=ttyS0 reboot=k panic=1 pci=off",
-    });
-
-    await this.apiCall("PUT", "/drives/rootfs", {
-      drive_id: "rootfs",
-      path_on_host: "/var/lib/firecracker/rootfs.ext4",
-      is_root_device: true,
-      is_read_only: false,
-    });
-
-    await this.apiCall("PUT", "/actions", { action_type: "InstanceStart" });
-
-    // 2. Install template-specific packages inside the VM
-    await this.apiCall("POST", "/agent/exec", {
-      command: setupCommand,
-      timeout_ms: 120_000,
-    });
-
-    // 3. Pause the VM and take a snapshot
-    await this.apiCall("PATCH", "/vm", { state: "Paused" });
-
-    const snapshotId = generateId("snap");
-    const snapshotPath = `${this.snapshotDir}/${snapshotId}`;
-
-    await this.apiCall("PUT", "/snapshot/create", {
-      snapshot_type: "Full",
-      snapshot_path: snapshotPath,
-      mem_file_path: `${snapshotPath}.mem`,
-    });
-
-    // 4. Stop the VM
-    await this.apiCall("PUT", "/actions", {
-      action_type: "SendCtrlAltDel",
-    });
-
-    const info: SnapshotInfo = {
-      id: snapshotId,
-      type: "base",
-      template,
-      projectId: null,
-      parentId: null,
-      path: snapshotPath,
-      memoryMb,
-      diskMb,
-      incremental: false,
-      ttlMs: this.defaultTtlMs,
-      createdAt: new Date(),
-    };
-
-    this.snapshots.set(snapshotId, info);
-    this.templateSnapshots.set(template, snapshotId);
-
-    logger.info(
-      { snapshotId, template, path: snapshotPath },
-      "Base template snapshot created"
-    );
-
-    return info;
-  }
-
-  /**
    * Create an incremental snapshot during a session.
    * These are diff-based and smaller than full snapshots.
    */
   async createIncrementalSnapshot(
     sandboxId: string,
     parentSnapshotId: string
-  ): Promise<SnapshotInfo> {
+  ): Promise<SnapshotMetadata> {
     const parent = this.snapshots.get(parentSnapshotId);
     if (!parent) {
       throw new Error(`Parent snapshot ${parentSnapshotId} not found`);
@@ -323,6 +437,9 @@ export class SnapshotManager {
     // Resume VM
     await this.apiCall("PATCH", "/vm", { state: "Resumed" });
 
+    // Incremental snapshots are typically 10-20% of full size
+    const estimatedSizeBytes = Math.round(parent.sizeBytes * 0.15);
+
     const info: SnapshotInfo = {
       id: snapshotId,
       type: "incremental",
@@ -332,19 +449,24 @@ export class SnapshotManager {
       path: snapshotPath,
       memoryMb: parent.memoryMb,
       diskMb: parent.diskMb,
+      vcpuCount: parent.vcpuCount,
       incremental: true,
+      sizeBytes: estimatedSizeBytes,
       ttlMs: this.defaultTtlMs,
       createdAt: new Date(),
+      lastAccessedAt: new Date(),
     };
 
     this.snapshots.set(snapshotId, info);
+
+    await this.evictIfNeeded();
 
     logger.info(
       { snapshotId, parentSnapshotId, path: snapshotPath },
       "Incremental snapshot created"
     );
 
-    return info;
+    return this.toMetadata(info);
   }
 
   /**
@@ -354,7 +476,7 @@ export class SnapshotManager {
     projectId: string,
     template: SnapshotTemplate,
     baseDeps: string[]
-  ): Promise<SnapshotInfo> {
+  ): Promise<SnapshotMetadata> {
     logger.info(
       { projectId, template, depCount: baseDeps.length },
       "Creating project snapshot"
@@ -417,6 +539,9 @@ export class SnapshotManager {
       action_type: "SendCtrlAltDel",
     });
 
+    const estimatedSizeBytes =
+      (baseSnapshot.memoryMb + baseSnapshot.diskMb / 4) * 1024 * 1024;
+
     const info: SnapshotInfo = {
       id: snapshotId,
       type: "project",
@@ -426,47 +551,24 @@ export class SnapshotManager {
       path: snapshotPath,
       memoryMb: baseSnapshot.memoryMb,
       diskMb: baseSnapshot.diskMb,
+      vcpuCount: baseSnapshot.vcpuCount,
       incremental: false,
+      sizeBytes: estimatedSizeBytes,
       ttlMs: this.defaultTtlMs,
       createdAt: new Date(),
+      lastAccessedAt: new Date(),
     };
 
     this.snapshots.set(snapshotId, info);
+
+    await this.evictIfNeeded();
 
     logger.info(
       { snapshotId, projectId, template, path: snapshotPath },
       "Project snapshot created"
     );
 
-    return info;
-  }
-
-  /**
-   * Restore a VM from a snapshot by ID.
-   */
-  async restoreFromSnapshot(snapshotId: string): Promise<SnapshotInfo> {
-    const info = this.snapshots.get(snapshotId);
-    if (!info) {
-      throw new Error(`Snapshot ${snapshotId} not found`);
-    }
-
-    logger.info(
-      { snapshotId, type: info.type, template: info.template },
-      "Restoring VM from snapshot"
-    );
-
-    await this.apiCall("PUT", "/snapshot/load", {
-      snapshot_path: info.path,
-      mem_backend: {
-        backend_type: "File",
-        backend_path: `${info.path}.mem`,
-      },
-      enable_diff_snapshots: true,
-      resume_vm: true,
-    });
-
-    logger.info({ snapshotId }, "VM restored from snapshot");
-    return info;
+    return this.toMetadata(info);
   }
 
   /** Get the base snapshot ID for a given template */
@@ -474,16 +576,10 @@ export class SnapshotManager {
     return this.templateSnapshots.get(template);
   }
 
-  /** List all available snapshots, sorted by creation time descending */
-  listSnapshots(): SnapshotInfo[] {
-    return Array.from(this.snapshots.values()).sort(
-      (a, b) => b.createdAt.getTime() - a.createdAt.getTime()
-    );
-  }
-
   /** Get snapshot by ID */
-  getSnapshot(id: string): SnapshotInfo | undefined {
-    return this.snapshots.get(id);
+  getSnapshot(id: string): SnapshotMetadata | undefined {
+    const info = this.snapshots.get(id);
+    return info ? this.toMetadata(info) : undefined;
   }
 
   /** Get count of snapshots by type */
@@ -503,41 +599,69 @@ export class SnapshotManager {
     return counts;
   }
 
-  /**
-   * Delete a snapshot and its associated memory file.
-   */
-  async deleteSnapshot(id: string): Promise<void> {
-    const info = this.snapshots.get(id);
-    if (!info) {
-      logger.warn({ snapshotId: id }, "Snapshot not found for deletion");
-      return;
+  /** Get total storage used by all snapshots in bytes */
+  getTotalStorageBytes(): number {
+    let total = 0;
+    for (const info of this.snapshots.values()) {
+      total += info.sizeBytes;
     }
-
-    logger.info(
-      { snapshotId: id, path: info.path, type: info.type },
-      "Deleting snapshot"
-    );
-
-    // Delete snapshot files via the management API
-    await this.apiCall("DELETE", `/snapshots/${id}`, {
-      snapshot_path: info.path,
-      mem_file_path: `${info.path}.mem`,
-    });
-
-    this.snapshots.delete(id);
-
-    // Remove from template map if it was a template snapshot
-    if (info.template) {
-      const currentTemplateSnap = this.templateSnapshots.get(info.template);
-      if (currentTemplateSnap === id) {
-        this.templateSnapshots.delete(info.template);
-      }
-    }
-
-    logger.info({ snapshotId: id }, "Snapshot deleted");
+    return total;
   }
 
   // ─── Private helpers ────────────────────────────────────────────────
+
+  /**
+   * LRU eviction: remove least recently accessed snapshots when
+   * total storage exceeds the configured maximum.
+   */
+  private async evictIfNeeded(): Promise<void> {
+    let totalBytes = this.getTotalStorageBytes();
+
+    if (totalBytes <= this.maxStorageBytes) {
+      return;
+    }
+
+    // Sort by last accessed time (LRU = oldest first)
+    const sorted = Array.from(this.snapshots.entries())
+      .filter(([, info]) => info.type !== "base") // Never evict base templates
+      .sort(
+        ([, a], [, b]) =>
+          a.lastAccessedAt.getTime() - b.lastAccessedAt.getTime()
+      );
+
+    for (const [id, info] of sorted) {
+      if (totalBytes <= this.maxStorageBytes) {
+        break;
+      }
+
+      logger.info(
+        { snapshotId: id, sizeBytes: info.sizeBytes },
+        "LRU eviction: removing snapshot"
+      );
+
+      try {
+        await this.deleteSnapshot(id);
+        totalBytes -= info.sizeBytes;
+      } catch (error) {
+        const msg = error instanceof Error ? error.message : String(error);
+        logger.warn({ snapshotId: id, error: msg }, "LRU eviction failed");
+      }
+    }
+  }
+
+  private toMetadata(info: SnapshotInfo): SnapshotMetadata {
+    return {
+      id: info.id,
+      createdAt: info.createdAt,
+      sizeBytes: info.sizeBytes,
+      vmConfig: {
+        memoryMb: info.memoryMb,
+        diskMb: info.diskMb,
+        vcpuCount: info.vcpuCount,
+        template: info.template,
+      },
+    };
+  }
 
   private isValidTemplate(template: string): template is SnapshotTemplate {
     return template === "node" || template === "python" || template === "rust";

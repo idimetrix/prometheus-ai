@@ -29,14 +29,14 @@
     "gen:table": "tsx scripts/gen-table.ts"
   },
   "devDependencies": {
+    "@biomejs/biome": "^2.4.8",
+    "@types/node": "^25.5.0",
+    "lefthook": "^2.1.4",
+    "tsx": "^4.21.0",
     "turbo": "^2.8.20",
     "typescript": "^5.9.3",
-    "@biomejs/biome": "^2.4.8",
     "ultracite": "^7.3.2",
-    "lefthook": "^2.1.4",
-    "@types/node": "^25.5.0",
-    "vitest": "^4.1.0",
-    "tsx": "^4.21.0"
+    "vitest": "^4.1.0"
   },
   "packageManager": "pnpm@10.32.1",
   "engines": {
@@ -57,5 +57,15 @@
     "overrides": {
       "ioredis": "5.9.3"
     }
+  },
+  "dependencies": {
+    "@ai-sdk/anthropic": "^3.0.58",
+    "@ai-sdk/google": "^3.0.43",
+    "@ai-sdk/groq": "^3.0.29",
+    "@ai-sdk/mcp": "^1.0.25",
+    "@ai-sdk/mistral": "^3.0.24",
+    "@ai-sdk/openai": "^3.0.41",
+    "ai": "^6.0.116",
+    "zod": "^4.3.6"
   }
 }

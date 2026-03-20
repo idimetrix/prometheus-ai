@@ -6,6 +6,7 @@ import { fileTools } from "./file";
 import { gitTools } from "./git";
 import { lspTools } from "./lsp";
 import { openhandsEditTools } from "./openhands-edit";
+import { sandboxRollbackTools } from "./sandbox-rollback";
 import { searchTools } from "./search";
 import { semgrepTools } from "./semgrep";
 import { terminalTools } from "./terminal";
@@ -32,6 +33,7 @@ registerTools(astGrepTools);
 registerTools(zoektTools);
 registerTools(semgrepTools);
 registerTools(openhandsEditTools);
+registerTools(sandboxRollbackTools);
 
 /**
  * ToolRegistry class for programmatic tool management.

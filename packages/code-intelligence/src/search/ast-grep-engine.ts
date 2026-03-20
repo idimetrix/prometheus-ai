@@ -289,3 +289,219 @@ function isExecError(
     typeof (error as Record<string, unknown>).stdout === "string"
   );
 }
+
+// ─── Anti-Pattern Detection ──────────────────────────────────────
+
+/**
+ * An anti-pattern detected in source code.
+ */
+export interface AntiPattern {
+  /** Human-readable description of the anti-pattern */
+  description: string;
+  /** Line number where the anti-pattern was found (0-indexed) */
+  line: number;
+  /** The ast-grep pattern that matched */
+  pattern: string;
+  /** Severity classification */
+  severity: "error" | "warning" | "info";
+  /** Suggested fix or alternative */
+  suggestion: string;
+}
+
+/**
+ * Definition of an anti-pattern rule for a specific language.
+ */
+interface AntiPatternRule {
+  /** Human-readable description */
+  description: string;
+  /** ast-grep pattern to match */
+  pattern: string;
+  /** Severity of the anti-pattern */
+  severity: "error" | "warning" | "info";
+  /** Suggested alternative or fix */
+  suggestion: string;
+}
+
+/**
+ * Anti-pattern rules organized by language.
+ * These patterns detect common code quality issues using ast-grep structural matching.
+ */
+const ANTI_PATTERN_RULES: Record<string, AntiPatternRule[]> = {
+  typescript: [
+    {
+      pattern: "console.log($$$ARGS)",
+      severity: "warning",
+      description: "console.log in production code",
+      suggestion:
+        "Use a structured logger (e.g., @prometheus/logger) instead of console.log",
+    },
+    {
+      pattern: "console.error($$$ARGS)",
+      severity: "info",
+      description: "console.error in production code",
+      suggestion:
+        "Use logger.error() from @prometheus/logger for structured error logging",
+    },
+    {
+      pattern: "catch ($ERR) {}",
+      severity: "error",
+      description: "Empty catch block silently swallows errors",
+      suggestion:
+        "Handle the error, log it, or re-throw. Never silently swallow exceptions",
+    },
+    {
+      pattern: ": any",
+      severity: "error",
+      description: "Usage of 'any' type reduces type safety",
+      suggestion:
+        "Use 'unknown' with type guards, or define a proper type/interface",
+    },
+    {
+      pattern: "as any",
+      severity: "warning",
+      description: "Type assertion to 'any' bypasses type checking",
+      suggestion: "Use a more specific type assertion or type guard instead",
+    },
+    {
+      pattern: "Promise.all($PROMISES).then($$$HANDLERS)",
+      severity: "info",
+      description: "Promise chain instead of async/await",
+      suggestion: "Use async/await with Promise.all for better readability",
+    },
+  ],
+  python: [
+    {
+      pattern: "except:",
+      severity: "error",
+      description:
+        "Bare except clause catches all exceptions including SystemExit",
+      suggestion:
+        "Catch specific exceptions: except ValueError, except Exception",
+    },
+    {
+      pattern: "except $E: pass",
+      severity: "error",
+      description: "Empty except block silently swallows errors",
+      suggestion: "Log the error or handle it appropriately",
+    },
+    {
+      pattern: "print($$$ARGS)",
+      severity: "warning",
+      description: "print() in production code",
+      suggestion: "Use the logging module instead of print()",
+    },
+    {
+      pattern: "import *",
+      severity: "warning",
+      description: "Wildcard import pollutes namespace",
+      suggestion: "Import specific names: from module import name1, name2",
+    },
+    {
+      pattern: "global $NAME",
+      severity: "warning",
+      description:
+        "Global variable usage makes code harder to test and reason about",
+      suggestion: "Pass values as function parameters or use class attributes",
+    },
+  ],
+  go: [
+    {
+      pattern: "fmt.Println($$$ARGS)",
+      severity: "warning",
+      description: "fmt.Println in production code",
+      suggestion:
+        "Use a structured logger (e.g., zap, zerolog) instead of fmt.Println",
+    },
+    {
+      pattern: "fmt.Printf($$$ARGS)",
+      severity: "warning",
+      description: "fmt.Printf in production code",
+      suggestion: "Use a structured logger instead of fmt.Printf",
+    },
+    {
+      pattern: "_ = $ERR",
+      severity: "error",
+      description: "Error explicitly ignored with blank identifier",
+      suggestion:
+        "Handle the error or wrap it with context: if err != nil { return err }",
+    },
+    {
+      pattern: "panic($$$ARGS)",
+      severity: "warning",
+      description: "panic() should only be used for unrecoverable errors",
+      suggestion:
+        "Return errors instead of panicking. Reserve panic for truly unrecoverable cases",
+    },
+    {
+      pattern: "interface{}",
+      severity: "info",
+      description: "Empty interface loses type safety",
+      suggestion: "Use 'any' (Go 1.18+) or define a concrete interface",
+    },
+  ],
+};
+
+// TSX and JavaScript share TypeScript rules
+ANTI_PATTERN_RULES.tsx = ANTI_PATTERN_RULES.typescript ?? [];
+ANTI_PATTERN_RULES.javascript = ANTI_PATTERN_RULES.typescript ?? [];
+
+/**
+ * Search for common anti-patterns in source code using ast-grep.
+ *
+ * Checks language-specific anti-pattern rules and returns all matches
+ * with severity, description, and suggested fixes.
+ *
+ * @param code - The source code to analyze
+ * @param language - The language of the source code
+ * @returns Array of detected anti-patterns with locations and suggestions
+ *
+ * @example
+ * ```ts
+ * const issues = await searchAntiPatterns(
+ *   'try { doStuff() } catch(e) {}',
+ *   'typescript'
+ * );
+ * // issues[0].description === "Empty catch block silently swallows errors"
+ * ```
+ */
+export async function searchAntiPatterns(
+  code: string,
+  language: AstGrepLanguage
+): Promise<AntiPattern[]> {
+  const rules = ANTI_PATTERN_RULES[language];
+  if (!rules || rules.length === 0) {
+    logger.debug({ language }, "No anti-pattern rules for language");
+    return [];
+  }
+
+  const results: AntiPattern[] = [];
+
+  for (const rule of rules) {
+    try {
+      const matches = await astGrepSearch(rule.pattern, language, code);
+
+      for (const match of matches) {
+        results.push({
+          pattern: rule.pattern,
+          severity: rule.severity,
+          description: rule.description,
+          line: match.startLine,
+          suggestion: rule.suggestion,
+        });
+      }
+    } catch {
+      // Some patterns may not be valid for ast-grep; skip them silently
+      logger.debug(
+        { pattern: rule.pattern, language },
+        "Anti-pattern rule failed to match"
+      );
+    }
+  }
+
+  logger.debug(
+    { language, ruleCount: rules.length, matchCount: results.length },
+    `Anti-pattern scan found ${results.length} issues`
+  );
+
+  return results;
+}

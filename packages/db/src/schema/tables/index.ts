@@ -27,4 +27,6 @@ export * from "./subscriptions";
 export * from "./tasks";
 export * from "./usage-rollups";
 export * from "./users";
+export * from "./workflow-checkpoints";
+export * from "./workflow-events";
 export * from "./workspaces";

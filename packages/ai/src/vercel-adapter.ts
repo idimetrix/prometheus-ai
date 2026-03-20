@@ -1,17 +1,17 @@
 // =============================================================================
-// @prometheus/ai — Vercel AI SDK Adapter
+// @prometheus/ai — Vercel AI SDK 6 Adapter
 // =============================================================================
-// Bridges Prometheus slot configs and model registry to Vercel AI SDK provider
-// instances. This adapter allows the platform to use the Vercel AI SDK's
-// unified streaming and tool-calling interface instead of raw SSE parsing.
-//
-// Expected dependency: "ai" (Vercel AI SDK v4+)
-//   pnpm add ai @ai-sdk/openai @ai-sdk/anthropic @ai-sdk/google @ai-sdk/mistral
-//
-// Until those packages are installed, this module uses dynamic imports with
-// graceful fallback so it does not break the build.
+// Bridges Prometheus slot configs and model registry to AI SDK 6 provider
+// instances. Uses the native AI SDK 6 provider packages for type-safe,
+// unified streaming and tool-calling across all providers.
 // =============================================================================
 
+import { createAnthropic } from "@ai-sdk/anthropic";
+import { createGoogleGenerativeAI } from "@ai-sdk/google";
+import { createGroq } from "@ai-sdk/groq";
+import { createMistral } from "@ai-sdk/mistral";
+import { createOpenAI } from "@ai-sdk/openai";
+import type { LanguageModel } from "ai";
 import { MODEL_REGISTRY, type ModelConfig, PROVIDER_ENV_KEYS } from "./models";
 import { type RoutingSlot, SLOT_CONFIGS } from "./slots";
 
@@ -19,20 +19,16 @@ import { type RoutingSlot, SLOT_CONFIGS } from "./slots";
 // Types
 // ---------------------------------------------------------------------------
 
-/** Configuration needed to create a Vercel AI SDK provider instance. */
+/** Configuration needed to create an AI SDK 6 provider instance. */
 export interface VercelProviderConfig {
   apiKey?: string;
+  baseURL?: string;
   modelId: string;
   provider: string;
 }
 
-/**
- * A resolved Vercel AI SDK language model instance.
- * Typed as `unknown` because the concrete type comes from the `ai` package
- * which may not be installed yet. Consumers should cast to
- * `import('ai').LanguageModel` when using with `streamText()` / `generateText()`.
- */
-export type VercelLanguageModel = unknown;
+/** A resolved AI SDK 6 language model instance. */
+export type VercelLanguageModel = LanguageModel;
 
 /** Result of resolving a slot name to its provider config. */
 export interface SlotResolution {
@@ -46,98 +42,59 @@ export interface SlotResolution {
 }
 
 // ---------------------------------------------------------------------------
-// Provider factory map — each entry dynamically imports the Vercel AI SDK
-// provider package and returns a language model instance.
+// Provider factory map — AI SDK 6 native providers
 // ---------------------------------------------------------------------------
 
 type ProviderFactory = (
   modelId: string,
-  apiKey?: string
-) => Promise<VercelLanguageModel>;
+  apiKey?: string,
+  baseURL?: string
+) => LanguageModel;
 
 const PROVIDER_FACTORIES: Record<string, ProviderFactory> = {
-  openai: async (modelId: string, apiKey?: string) => {
-    // Requires: @ai-sdk/openai
-    const { createOpenAI } = (await import("@ai-sdk/openai" as string)) as {
-      createOpenAI: (opts: { apiKey?: string }) => (id: string) => unknown;
-    };
+  openai: (modelId, apiKey) => {
     const provider = createOpenAI({
       apiKey: apiKey ?? process.env[PROVIDER_ENV_KEYS.openai],
     });
     return provider(modelId);
   },
 
-  anthropic: async (modelId: string, apiKey?: string) => {
-    // Requires: @ai-sdk/anthropic
-    const { createAnthropic } = (await import(
-      "@ai-sdk/anthropic" as string
-    )) as {
-      createAnthropic: (opts: { apiKey?: string }) => (id: string) => unknown;
-    };
+  anthropic: (modelId, apiKey) => {
     const provider = createAnthropic({
       apiKey: apiKey ?? process.env[PROVIDER_ENV_KEYS.anthropic],
     });
     return provider(modelId);
   },
 
-  google: async (modelId: string, apiKey?: string) => {
-    // Requires: @ai-sdk/google
-    const { createGoogleGenerativeAI } = (await import(
-      "@ai-sdk/google" as string
-    )) as {
-      createGoogleGenerativeAI: (opts: {
-        apiKey?: string;
-      }) => (id: string) => unknown;
-    };
+  google: (modelId, apiKey) => {
     const provider = createGoogleGenerativeAI({
       apiKey: apiKey ?? process.env[PROVIDER_ENV_KEYS.gemini],
     });
     return provider(modelId);
   },
 
-  gemini: async (modelId: string, apiKey?: string) => {
-    // Alias for google — Prometheus uses "gemini" as the provider name
-    const googleFactory = PROVIDER_FACTORIES.google as ProviderFactory;
-    const model = await googleFactory(modelId, apiKey);
-    return model;
-  },
-
-  groq: async (modelId: string, apiKey?: string) => {
-    // Requires: @ai-sdk/groq (or use OpenAI-compatible adapter)
-    // Groq exposes an OpenAI-compatible API, so we use the OpenAI adapter
-    // with a custom base URL.
-    const { createOpenAI } = (await import("@ai-sdk/openai" as string)) as {
-      createOpenAI: (opts: {
-        apiKey?: string;
-        baseURL?: string;
-      }) => (id: string) => unknown;
-    };
-    const provider = createOpenAI({
-      apiKey: apiKey ?? process.env[PROVIDER_ENV_KEYS.groq],
-      baseURL: "https://api.groq.com/openai/v1",
+  gemini: (modelId, apiKey) => {
+    const provider = createGoogleGenerativeAI({
+      apiKey: apiKey ?? process.env[PROVIDER_ENV_KEYS.gemini],
     });
     return provider(modelId);
   },
 
-  mistral: async (modelId: string, apiKey?: string) => {
-    // Requires: @ai-sdk/mistral
-    const { createMistral } = (await import("@ai-sdk/mistral" as string)) as {
-      createMistral: (opts: { apiKey?: string }) => (id: string) => unknown;
-    };
+  groq: (modelId, apiKey) => {
+    const provider = createGroq({
+      apiKey: apiKey ?? process.env[PROVIDER_ENV_KEYS.groq],
+    });
+    return provider(modelId);
+  },
+
+  mistral: (modelId, apiKey) => {
     const provider = createMistral({
       apiKey: apiKey ?? process.env[PROVIDER_ENV_KEYS.mistral],
     });
     return provider(modelId);
   },
 
-  deepseek: async (modelId: string, apiKey?: string) => {
-    // DeepSeek is OpenAI-compatible — use OpenAI adapter with custom base URL
-    const { createOpenAI } = (await import("@ai-sdk/openai" as string)) as {
-      createOpenAI: (opts: {
-        apiKey?: string;
-        baseURL?: string;
-      }) => (id: string) => unknown;
-    };
+  deepseek: (modelId, apiKey) => {
     const provider = createOpenAI({
       apiKey: apiKey ?? process.env[PROVIDER_ENV_KEYS.deepseek],
       baseURL: "https://api.deepseek.com/v1",
@@ -145,14 +102,7 @@ const PROVIDER_FACTORIES: Record<string, ProviderFactory> = {
     return provider(modelId);
   },
 
-  cerebras: async (modelId: string, apiKey?: string) => {
-    // Cerebras is OpenAI-compatible
-    const { createOpenAI } = (await import("@ai-sdk/openai" as string)) as {
-      createOpenAI: (opts: {
-        apiKey?: string;
-        baseURL?: string;
-      }) => (id: string) => unknown;
-    };
+  cerebras: (modelId, apiKey) => {
     const provider = createOpenAI({
       apiKey: apiKey ?? process.env[PROVIDER_ENV_KEYS.cerebras],
       baseURL: "https://api.cerebras.ai/v1",
@@ -160,14 +110,7 @@ const PROVIDER_FACTORIES: Record<string, ProviderFactory> = {
     return provider(modelId);
   },
 
-  openrouter: async (modelId: string, apiKey?: string) => {
-    // OpenRouter is OpenAI-compatible
-    const { createOpenAI } = (await import("@ai-sdk/openai" as string)) as {
-      createOpenAI: (opts: {
-        apiKey?: string;
-        baseURL?: string;
-      }) => (id: string) => unknown;
-    };
+  openrouter: (modelId, apiKey) => {
     const provider = createOpenAI({
       apiKey: apiKey ?? process.env[PROVIDER_ENV_KEYS.openrouter],
       baseURL: "https://openrouter.ai/api/v1",
@@ -175,16 +118,9 @@ const PROVIDER_FACTORIES: Record<string, ProviderFactory> = {
     return provider(modelId);
   },
 
-  ollama: async (modelId: string, _apiKey?: string) => {
-    // Ollama is OpenAI-compatible on localhost
-    const { createOpenAI } = (await import("@ai-sdk/openai" as string)) as {
-      createOpenAI: (opts: {
-        apiKey?: string;
-        baseURL?: string;
-      }) => (id: string) => unknown;
-    };
+  ollama: (modelId) => {
     const provider = createOpenAI({
-      apiKey: "ollama", // Ollama doesn't require a real key
+      apiKey: "ollama",
       baseURL: process.env.OLLAMA_URL ?? "http://localhost:11434/v1",
     });
     return provider(modelId);
@@ -196,59 +132,27 @@ const PROVIDER_FACTORIES: Record<string, ProviderFactory> = {
 // ---------------------------------------------------------------------------
 
 /**
- * Create a Vercel AI SDK provider instance from a provider config.
- *
- * Returns a language model that can be passed to `streamText()`, `generateText()`,
- * or `generateObject()` from the Vercel AI SDK.
- *
- * @example
- * ```ts
- * import { streamText } from 'ai';
- * import { createVercelProvider } from '@prometheus/ai';
- *
- * const model = await createVercelProvider({
- *   provider: 'anthropic',
- *   modelId: 'claude-sonnet-4-6',
- * });
- *
- * const result = await streamText({ model, prompt: 'Hello' });
- * ```
+ * Create an AI SDK 6 language model from a provider config.
+ * Returns a LanguageModel that can be passed to `generateText()`,
+ * `streamText()`, or `generateObject()`.
  */
-export async function createVercelProvider(
+export function createVercelProvider(
   config: VercelProviderConfig
-): Promise<VercelLanguageModel> {
+): VercelLanguageModel {
   const factory = PROVIDER_FACTORIES[config.provider];
 
   if (!factory) {
     throw new Error(
-      `Unsupported Vercel AI SDK provider: "${config.provider}". ` +
+      `Unsupported AI SDK provider: "${config.provider}". ` +
         `Supported: ${Object.keys(PROVIDER_FACTORIES).join(", ")}`
     );
   }
 
-  try {
-    return await factory(config.modelId, config.apiKey);
-  } catch (error) {
-    const msg = error instanceof Error ? error.message : String(error);
-
-    // If the import fails because the package isn't installed, give a clear message
-    if (
-      msg.includes("Cannot find module") ||
-      msg.includes("MODULE_NOT_FOUND")
-    ) {
-      throw new Error(
-        `Vercel AI SDK provider package not installed for "${config.provider}". ` +
-          "Install with: pnpm add @ai-sdk/openai @ai-sdk/anthropic @ai-sdk/google @ai-sdk/mistral"
-      );
-    }
-
-    throw error;
-  }
+  return factory(config.modelId, config.apiKey, config.baseURL);
 }
 
 /**
- * Parse a MODEL_REGISTRY key (e.g. "anthropic/claude-sonnet-4-6") into a
- * VercelProviderConfig.
+ * Parse a MODEL_REGISTRY key into a VercelProviderConfig.
  */
 function registryKeyToProviderConfig(
   _registryKey: string,
@@ -257,21 +161,12 @@ function registryKeyToProviderConfig(
   return {
     provider: modelConfig.provider,
     modelId: modelConfig.id,
-    apiKey: undefined, // Resolved from env at creation time
+    apiKey: undefined,
   };
 }
 
 /**
- * Resolve a Prometheus routing slot name to a Vercel AI SDK provider config.
- *
- * Looks up the slot in SLOT_CONFIGS, then resolves the primary model and
- * fallbacks from MODEL_REGISTRY into VercelProviderConfig objects.
- *
- * @example
- * ```ts
- * const resolution = slotToVercelModel('think');
- * const model = await createVercelProvider(resolution.primary);
- * ```
+ * Resolve a Prometheus routing slot to AI SDK 6 provider configs.
  */
 export function slotToVercelModel(slotName: string): SlotResolution {
   const slot = slotName as RoutingSlot;
@@ -318,18 +213,19 @@ export function slotToVercelModel(slotName: string): SlotResolution {
 }
 
 /**
- * Convenience: resolve a slot and create the primary Vercel AI SDK model.
+ * Resolve a slot and create the primary AI SDK 6 model.
  * Falls back through the chain if the primary provider fails.
  */
-export async function createModelForSlot(
+export function createModelForSlot(
   slotName: string,
   apiKeys?: Record<string, string>
-): Promise<{
+): {
   model: VercelLanguageModel;
   providerConfig: VercelProviderConfig;
-}> {
+} {
   const resolution = slotToVercelModel(slotName);
   const allConfigs = [resolution.primary, ...resolution.fallbacks];
+  const errors: string[] = [];
 
   for (const config of allConfigs) {
     try {
@@ -337,15 +233,18 @@ export async function createModelForSlot(
         ...config,
         apiKey: apiKeys?.[config.provider] ?? config.apiKey,
       };
-      const model = await createVercelProvider(configWithKey);
+      const model = createVercelProvider(configWithKey);
       return { model, providerConfig: configWithKey };
-    } catch {
-      // Provider failed, try next fallback
+    } catch (err) {
+      errors.push(
+        `${config.provider}/${config.modelId}: ${err instanceof Error ? err.message : String(err)}`
+      );
     }
   }
 
   throw new Error(
     `All providers failed for slot "${slotName}". ` +
-      `Tried: ${allConfigs.map((c) => `${c.provider}/${c.modelId}`).join(", ")}`
+      `Tried: ${allConfigs.map((c) => `${c.provider}/${c.modelId}`).join(", ")}. ` +
+      `Errors: ${errors.join("; ")}`
   );
 }

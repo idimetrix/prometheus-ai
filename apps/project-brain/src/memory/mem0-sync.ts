@@ -1,16 +1,29 @@
+/**
+ * Phase 7.19: Enhanced Mem0 Sync with user preference learning.
+ *
+ * Syncs episodic memories to Mem0 and retrieves user preferences.
+ * Enhanced with thumbs up/down feedback for preference learning.
+ */
 import { createLogger } from "@prometheus/logger";
 import { EpisodicLayer } from "../layers/episodic";
 import { Mem0Client } from "./mem0-client";
 
 const logger = createLogger("project-brain:mem0-sync");
 
+interface FeedbackRecord {
+  memoryId: string;
+  thumbsUp: boolean;
+  timestamp: number;
+}
+
 /**
- * Syncs episodic memories from the local database to Mem0
- * and retrieves user preferences from Mem0's semantic search.
+ * Mem0Sync handles bidirectional sync with Mem0 and
+ * user preference learning from thumbs up/down feedback.
  */
 export class Mem0Sync {
   private readonly mem0: Mem0Client;
   private readonly episodic: EpisodicLayer;
+  private readonly feedbackLog: Map<string, FeedbackRecord[]> = new Map();
 
   constructor(mem0?: Mem0Client, episodic?: EpisodicLayer) {
     this.mem0 = mem0 ?? new Mem0Client();
@@ -74,6 +87,100 @@ export class Mem0Sync {
     }
   }
 
+  /**
+   * Record user feedback (thumbs up/down) for a memory.
+   * Used to learn and refine user preferences over time.
+   */
+  recordFeedback(memoryId: string, thumbsUp: boolean): void {
+    const userId = this.getUserIdFromMemory(memoryId);
+    const records = this.feedbackLog.get(userId) ?? [];
+
+    records.push({
+      memoryId,
+      thumbsUp,
+      timestamp: Date.now(),
+    });
+
+    this.feedbackLog.set(userId, records);
+
+    logger.debug({ memoryId, thumbsUp, userId }, "Memory feedback recorded");
+  }
+
+  /**
+   * Sync accumulated user preferences from feedback to Mem0.
+   * Positive feedback reinforces memories; negative feedback reduces their weight.
+   */
+  async syncPreferences(userId: string): Promise<number> {
+    const records = this.feedbackLog.get(userId);
+    if (!records || records.length === 0) {
+      return 0;
+    }
+
+    let synced = 0;
+
+    // Group feedback by memory
+    const feedbackByMemory = new Map<
+      string,
+      { positive: number; negative: number }
+    >();
+    for (const record of records) {
+      const existing = feedbackByMemory.get(record.memoryId) ?? {
+        positive: 0,
+        negative: 0,
+      };
+      if (record.thumbsUp) {
+        existing.positive++;
+      } else {
+        existing.negative++;
+      }
+      feedbackByMemory.set(record.memoryId, existing);
+    }
+
+    // Sync to Mem0 as preference signals
+    for (const [memoryId, feedback] of feedbackByMemory) {
+      const net = feedback.positive - feedback.negative;
+      if (net > 0) {
+        try {
+          await this.mem0.addMemory(
+            `[preference:positive] Memory ${memoryId} was helpful (net score: ${net})`,
+            userId,
+            { source: "feedback", memoryId, netScore: net }
+          );
+          synced++;
+        } catch (err) {
+          logger.warn(
+            { userId, memoryId, err },
+            "Failed to sync positive preference to Mem0"
+          );
+        }
+      } else if (net < 0) {
+        try {
+          await this.mem0.addMemory(
+            `[preference:negative] Memory ${memoryId} was not helpful (net score: ${net})`,
+            userId,
+            { source: "feedback", memoryId, netScore: net }
+          );
+          synced++;
+        } catch (err) {
+          logger.warn(
+            { userId, memoryId, err },
+            "Failed to sync negative preference to Mem0"
+          );
+        }
+      }
+    }
+
+    // Clear synced records
+    this.feedbackLog.delete(userId);
+
+    logger.info(
+      { userId, synced, totalRecords: records.length },
+      "User preferences synced to Mem0"
+    );
+
+    return synced;
+  }
+
   private formatMemoryForMem0(memory: {
     decision: string;
     eventType: string;
@@ -90,5 +197,11 @@ export class Mem0Sync {
     }
 
     return parts.join(" | ");
+  }
+
+  private getUserIdFromMemory(memoryId: string): string {
+    // Extract user context from memory ID prefix
+    // In practice this would look up the memory's project/user association
+    return memoryId.split("_")[0] ?? "unknown";
   }
 }

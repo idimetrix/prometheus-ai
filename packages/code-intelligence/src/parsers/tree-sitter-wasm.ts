@@ -5,8 +5,9 @@
  * using Tree-sitter compiled to WebAssembly.
  */
 
+import { createHash } from "node:crypto";
 import { createLogger } from "@prometheus/logger";
-import type { Language, Parser, Tree } from "web-tree-sitter";
+import type { Language, Parser, Tree, Edit as TreeEdit } from "web-tree-sitter";
 import { FILE_EXTENSION_MAP, LANGUAGE_GRAMMAR_URLS } from "./language-grammars";
 
 const logger = createLogger("code-intelligence:tree-sitter");
@@ -44,6 +45,20 @@ export type SupportedLanguage =
   | "markdown";
 
 /**
+ * Edit range for incremental parsing.
+ */
+export interface EditRange {
+  /** New end column (0-indexed) */
+  newEndColumn: number;
+  /** New end row (0-indexed) */
+  newEndRow: number;
+  /** Start column (0-indexed) */
+  startColumn: number;
+  /** Start row (0-indexed) */
+  startRow: number;
+}
+
+/**
  * Parsed tree result with metadata.
  */
 export interface ParseResult {
@@ -74,6 +89,11 @@ export interface ParseResult {
 export class TreeSitterParser {
   private parser: Parser | null = null;
   private readonly languageCache = new Map<string, Language>();
+  private readonly treeCache = new Map<
+    string,
+    { tree: Tree; language: SupportedLanguage }
+  >();
+  private static readonly MAX_CACHE_SIZE = 200;
   private initialized = false;
   private treeSitter: {
     Parser: new () => Parser;
@@ -191,6 +211,166 @@ export class TreeSitterParser {
   }
 
   /**
+   * Parse source code incrementally by applying an edit to a previously cached tree.
+   *
+   * Falls back to a full parse if no cached tree is found for the old content.
+   *
+   * @param filePath - File path used for cache key identification
+   * @param newContent - The updated source code
+   * @param oldContent - The previous source code (used to look up the cached tree)
+   * @param editRange - The range of the edit applied
+   * @returns Parsed tree result with metadata
+   */
+  async parseIncremental(
+    filePath: string,
+    newContent: string,
+    oldContent: string,
+    editRange: EditRange
+  ): Promise<ParseResult> {
+    if (!(this.parser && this.initialized)) {
+      throw new Error(
+        "TreeSitterParser not initialized. Call init() before parsing."
+      );
+    }
+
+    const language = TreeSitterParser.getLanguageForFile(filePath);
+    if (!language) {
+      throw new Error(`Unable to determine language for file: ${filePath}`);
+    }
+
+    const oldHash = TreeSitterParser.computeContentHash(oldContent);
+    const cached = this.treeCache.get(oldHash);
+
+    if (cached && cached.language === language) {
+      const lang = await this.loadLanguage(language);
+      this.parser.setLanguage(lang);
+
+      // Apply the edit to the old tree
+      const oldTree = cached.tree;
+      const startIndex = this.offsetFromPosition(
+        oldContent,
+        editRange.startRow,
+        editRange.startColumn
+      );
+      const oldEndIndex = oldContent.length;
+      const newEndIndex = newContent.length;
+
+      const editData = {
+        startIndex,
+        oldEndIndex,
+        newEndIndex,
+        startPosition: {
+          row: editRange.startRow,
+          column: editRange.startColumn,
+        },
+        oldEndPosition: {
+          row: oldContent.split("\n").length - 1,
+          column: (oldContent.split("\n").pop() ?? "").length,
+        },
+        newEndPosition: {
+          row: editRange.newEndRow,
+          column: editRange.newEndColumn,
+        },
+      } as unknown as TreeEdit;
+
+      oldTree.edit(editData);
+
+      const start = performance.now();
+      const newTree = this.parser.parse(newContent, oldTree);
+      const parseTimeMs = Math.round(performance.now() - start);
+
+      if (!newTree) {
+        throw new Error(`Incremental parse failed for ${filePath}`);
+      }
+
+      // Cache the new tree
+      const newHash = TreeSitterParser.computeContentHash(newContent);
+      this.cacheTree(newHash, newTree, language);
+
+      // Remove old tree from cache
+      this.treeCache.delete(oldHash);
+
+      logger.debug(
+        { filePath, language, parseTimeMs, incremental: true },
+        `Incremental parse of ${filePath} in ${parseTimeMs}ms`
+      );
+
+      return {
+        tree: newTree,
+        language,
+        hasErrors: newTree.rootNode.hasError,
+        parseTimeMs,
+      };
+    }
+
+    // Fallback to full parse
+    logger.debug(
+      { filePath },
+      "No cached tree found for incremental parse, falling back to full parse"
+    );
+    const result = await this.parse(newContent, language);
+
+    // Cache the result
+    const newHash = TreeSitterParser.computeContentHash(newContent);
+    this.cacheTree(newHash, result.tree, language);
+
+    return result;
+  }
+
+  /**
+   * Retrieve a cached parse tree by content hash.
+   *
+   * @param contentHash - SHA-256 hex hash of the source content
+   * @returns The cached tree and language, or undefined if not found
+   */
+  getCachedTree(
+    contentHash: string
+  ): { tree: Tree; language: SupportedLanguage } | undefined {
+    return this.treeCache.get(contentHash);
+  }
+
+  /**
+   * Compute a SHA-256 content hash for cache keying.
+   */
+  static computeContentHash(content: string): string {
+    return createHash("sha256").update(content).digest("hex");
+  }
+
+  /**
+   * Store a tree in the cache, evicting oldest entries if over capacity.
+   */
+  private cacheTree(
+    hash: string,
+    tree: Tree,
+    language: SupportedLanguage
+  ): void {
+    if (this.treeCache.size >= TreeSitterParser.MAX_CACHE_SIZE) {
+      // Evict the oldest entry (first key in insertion order)
+      const firstKey = this.treeCache.keys().next().value;
+      if (firstKey !== undefined) {
+        this.treeCache.delete(firstKey);
+      }
+    }
+    this.treeCache.set(hash, { tree, language });
+  }
+
+  /**
+   * Convert a row/column position to a byte offset in the source string.
+   */
+  private offsetFromPosition(
+    content: string,
+    row: number,
+    column: number
+  ): number {
+    const lines = content.split("\n");
+    let offset = 0;
+    for (let i = 0; i < row && i < lines.length; i++) {
+      offset += (lines[i]?.length ?? 0) + 1; // +1 for newline
+    }
+    return offset + column;
+  }
+
+  /**
    * Release all loaded languages and the parser instance.
    */
   dispose(): void {
@@ -199,6 +379,7 @@ export class TreeSitterParser {
       this.parser = null;
     }
     this.languageCache.clear();
+    this.treeCache.clear();
     this.initialized = false;
     logger.debug("Tree-sitter parser disposed");
   }

@@ -1,4 +1,5 @@
 import { createLogger } from "@prometheus/logger";
+import { Inngest } from "inngest";
 
 const logger = createLogger("workflow:inngest");
 
@@ -66,15 +67,65 @@ export interface FleetAgentCompletedEvent {
   name: "prometheus/fleet.agent.completed";
 }
 
+export interface AgentExecutionCancelledEvent {
+  data: {
+    reason: string;
+    sessionId: string;
+    taskId: string;
+  };
+  name: "prometheus/agent.execution.cancelled";
+}
+
+export interface FleetCoordinationCancelledEvent {
+  data: {
+    reason: string;
+    sessionId: string;
+  };
+  name: "prometheus/fleet.coordination.cancelled";
+}
+
+export interface AgentApprovalEvent {
+  data: {
+    approved: boolean;
+    approvedBy: string;
+    modifications?: string[];
+    taskId: string;
+    timestamp: string;
+  };
+  name: "prometheus/agent.execution.approved";
+}
+
 export type PrometheusEvent =
   | AgentExecutionEvent
   | FleetCoordinationEvent
   | StepCompletedEvent
-  | FleetAgentCompletedEvent;
+  | FleetAgentCompletedEvent
+  | AgentExecutionCancelledEvent
+  | FleetCoordinationCancelledEvent
+  | AgentApprovalEvent;
 
 /**
- * Step interface for durable workflow execution.
- * When Inngest is installed, replace with the real Inngest step API.
+ * Real Inngest client for the Prometheus platform.
+ *
+ * Inngest v4 uses simple event typing via generics.
+ * Durable workflow execution with automatic retries, checkpointing,
+ * and fan-out capabilities.
+ */
+export const inngest = new Inngest({
+  id: "prometheus",
+});
+
+logger.info("Inngest client initialized");
+
+/**
+ * Re-export the createFunction helper for convenience.
+ * Inngest v4 uses 2-arg form: createFunction(config, handler)
+ * where config includes the trigger.
+ */
+export const createFunction = inngest.createFunction.bind(inngest);
+
+/**
+ * Legacy WorkflowStep interface for backwards compatibility.
  */
 export interface WorkflowStep {
   run: <T>(id: string, fn: () => T | Promise<T>) => Promise<T>;
@@ -82,6 +133,7 @@ export interface WorkflowStep {
     id: string,
     event: { name: string; data: unknown }
   ) => Promise<void>;
+  sleep: (id: string, duration: string) => Promise<void>;
   waitForEvent: (
     id: string,
     opts: { event: string; match: string; timeout: string }
@@ -93,29 +145,11 @@ export interface WorkflowContext<E extends PrometheusEvent> {
   step: WorkflowStep;
 }
 
-/**
- * Inngest client stub for the Prometheus platform.
- *
- * When the inngest package is installed, this can be replaced with
- * the actual Inngest client. For now, provides type-safe function
- * definition that can be wired to any durable execution engine.
- */
-export const inngest = {
-  createFunction<E extends PrometheusEvent>(
-    config: {
-      id: string;
-      name: string;
-      retries?: number;
-      concurrency?: Array<{ limit: number; key: string }>;
-      cancelOn?: Array<{ event: string; match: string }>;
-    },
-    trigger: { event: E["name"] },
-    handler: (ctx: WorkflowContext<E>) => Promise<unknown>
-  ) {
-    logger.info(
-      { functionId: config.id, trigger: trigger.event },
-      "Registered Inngest function"
-    );
-    return { config, trigger, handler };
-  },
+/** Concurrency limits by organization tier */
+export const TIER_CONCURRENCY_LIMITS: Record<string, number> = {
+  hobby: 1,
+  starter: 2,
+  pro: 4,
+  team: 8,
+  studio: 16,
 };

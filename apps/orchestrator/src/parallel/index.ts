@@ -6,6 +6,8 @@ export type {
   TaggedEvent,
 } from "./fan-out-gather";
 export { FanOutGather } from "./fan-out-gather";
+export type { LockInfo, LockResult, LockType } from "./resource-lock";
+export { ResourceLock } from "./resource-lock";
 export type {
   AgentSummary,
   ConflictedFile,
@@ -15,7 +17,10 @@ export type {
 export { ResultSynthesizer } from "./result-synthesizer";
 export type {
   CPMAnalysis,
+  CriticalPathInfo,
+  DAGVisualizationEvent,
   SchedulableTask,
+  ScheduleProgress,
   ScheduleResult,
   TaskTiming,
 } from "./scheduler";

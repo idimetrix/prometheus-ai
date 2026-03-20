@@ -7,6 +7,7 @@ export {
   soc2AuditMiddleware,
 } from "./audit-logger";
 export { invalidateCache, queryCacheMiddleware } from "./cache";
+export { compressionMiddleware } from "./compression";
 export { orgContextMiddleware } from "./org-context";
 export type { ProjectRole } from "./project-auth";
 export {
@@ -18,9 +19,13 @@ export { rateLimitMiddleware } from "./rate-limit";
 export type { EndpointTier } from "./rate-limit-enhanced";
 export { perUserRateLimitMiddleware } from "./rate-limit-enhanced";
 export {
+  bruteForceProtection,
+  orgMembershipMiddleware,
   requestIdMiddleware,
   requestLoggingMiddleware,
+  sanitizeInput,
   securityHeaders,
+  securityMiddleware,
 } from "./security";
 export {
   addBreadcrumb,

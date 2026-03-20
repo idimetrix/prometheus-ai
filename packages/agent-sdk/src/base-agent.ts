@@ -10,6 +10,7 @@ import type { AgentToolDefinition } from "./tools/types";
 export interface AgentContext {
   agentRole: AgentRole;
   blueprintContent: string | null;
+  mcpTools?: Record<string, unknown>;
   memory?: AgentMessage[];
   model?: string;
   orgId: string;
@@ -134,6 +135,7 @@ export abstract class BaseAgent {
   protected messages: AgentMessage[] = [];
   protected context: AgentContext | null = null;
   protected eventPublisher: EventPublisherInterface | null = null;
+  protected _mcpTools: Record<string, unknown> = {};
 
   constructor(role: AgentRole, tools: AgentToolDefinition[] = []) {
     this.role = role;
@@ -188,6 +190,15 @@ export abstract class BaseAgent {
           this.toolRegistry.register(tool);
         }
       }
+    }
+
+    // Store MCP tools for AI SDK 6 integration
+    if (context.mcpTools) {
+      this._mcpTools = context.mcpTools;
+      this.logger.info(
+        { mcpToolCount: Object.keys(context.mcpTools).length },
+        "MCP tools loaded into agent context"
+      );
     }
 
     // Build initial message history with reasoning protocol prepended
@@ -257,5 +268,13 @@ export abstract class BaseAgent {
 
   getContext(): AgentContext | null {
     return this.context;
+  }
+
+  /**
+   * Get MCP tools loaded via AI SDK 6 MCPClient.
+   * These can be merged into the AI SDK tool set for generateText/streamText.
+   */
+  getMcpTools(): Record<string, unknown> {
+    return this._mcpTools;
   }
 }

@@ -274,6 +274,38 @@ export class ZoektClient {
 
     return results;
   }
+
+  /**
+   * Search and return results formatted for the fusion search pipeline.
+   *
+   * Wraps the standard search method and transforms results into a
+   * format compatible with RRF fusion ranking.
+   *
+   * @param query - The search query string
+   * @param opts - Search options
+   * @returns Results formatted for fusion with method attribution
+   */
+  async searchForFusion(
+    query: string,
+    opts?: ZoektSearchOptions
+  ): Promise<
+    Array<{
+      id: string;
+      filePath: string;
+      content: string;
+      score: number;
+      startLine?: number;
+    }>
+  > {
+    const response = await this.search(query, opts);
+    return response.results.map((result, index) => ({
+      id: `zoekt:${result.file}:${result.lineNum}`,
+      filePath: result.file,
+      content: result.content,
+      score: 1.0 - index * 0.02,
+      startLine: result.lineNum,
+    }));
+  }
 }
 
 /**

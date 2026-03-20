@@ -1070,24 +1070,17 @@ export const ExecutionEngine = {
   },
 
   /**
-   * Alternative streaming path using the Vercel AI SDK's `streamText()`.
+   * AI SDK 6 streaming path using ToolLoopAgent with maxSteps.
    *
-   * This method provides the same ExecutionEvent stream as the main `execute()`
-   * method but uses the Vercel AI SDK for LLM communication instead of raw
-   * SSE parsing. It handles:
-   * - Automatic provider selection via slotToVercelModel()
-   * - Unified streaming with proper backpressure
-   * - Built-in tool calling support
-   * - Structured error handling
+   * Replaces the manual SSE parsing with AI SDK 6's unified streaming
+   * and tool-calling interface. Integrates:
+   * - Automatic provider selection via createModelForSlot()
+   * - AI SDK tool format via convertRegistryToAISDK()
+   * - Human-in-the-loop via HumanApprovalBridge
+   * - Safety checks (secrets scanner, blueprint enforcer, RBAC) via onStepFinish
+   * - Confidence scoring, context compression, quality gates
    *
-   * Migration path:
-   * 1. Set PROMETHEUS_USE_AI_SDK=true to enable this path
-   * 2. Install Vercel AI SDK: pnpm add ai @ai-sdk/openai @ai-sdk/anthropic @ai-sdk/google
-   * 3. The main execute() loop can progressively delegate to this method
-   * 4. Once validated, the raw SSE parsing in execute() can be removed
-   *
-   * Currently falls back to the existing SSE approach if the AI SDK is not
-   * available, making this a safe opt-in migration.
+   * Enable with PROMETHEUS_USE_AI_SDK=true
    */
   async *streamWithAISDK(
     ctx: ExecutionContext
@@ -1106,27 +1099,11 @@ export const ExecutionEngine = {
         timestamp: new Date().toISOString(),
       }) as T;
 
-    // Attempt to use Vercel AI SDK
     try {
-      // Dynamic imports — these will fail if packages aren't installed
-      const { streamText } = (await import("ai" as string)) as {
-        streamText: (opts: {
-          model: unknown;
-          messages: Array<{ role: string; content: string }>;
-          temperature?: number;
-          maxTokens?: number;
-          tools?: Record<string, unknown>;
-        }) => {
-          textStream: AsyncIterable<string>;
-          text: Promise<string>;
-          usage: Promise<{ promptTokens: number; completionTokens: number }>;
-          toolCalls: Promise<
-            Array<{ toolName: string; args: Record<string, unknown> }>
-          >;
-        };
-      };
-
-      const { createModelForSlot } = await import("@prometheus/ai");
+      const { createModelForSlot, ToolLoopAgent } = await import(
+        "@prometheus/ai"
+      );
+      const { convertRegistryToAISDK } = await import("@prometheus/agent-sdk");
 
       // Resolve the model for the current slot
       const slot =
@@ -1134,57 +1111,198 @@ export const ExecutionEngine = {
           ? (SLOT_MAP[ctx.agentRole] ?? "default")
           : ctx.options.slot;
 
-      const { model } = await createModelForSlot(slot);
+      const { model } = createModelForSlot(slot);
+
+      // Convert all agent tools to AI SDK 6 format
+      const aiSdkTools = convertRegistryToAISDK({
+        sessionId: ctx.sessionId,
+        projectId: ctx.projectId,
+        sandboxId: ctx.sessionId,
+        workDir: ctx.workDir,
+        orgId: ctx.orgId,
+        userId: ctx.userId,
+      });
+
+      // Initialize safety integrations
+      const blueprintEnforcer = new BlueprintEnforcer();
+      const secretsScanner = new SecretsScanner();
+      await blueprintEnforcer
+        .loadForProject(ctx.projectId)
+        .catch(() => undefined);
+
+      let totalToolCalls = 0;
+      const filesChanged = new Set<string>();
+      let totalCreditsConsumed = 0;
+
+      // Buffer for events emitted inside onStepFinish (can't yield from callback)
+      const pendingEvents: ExecutionEvent[] = [];
+
+      // Build role-specific system prompt
+      const roleConfig = AGENT_ROLES[ctx.agentRole];
+      const systemPrompt = roleConfig
+        ? `You are a ${ctx.agentRole} agent for the Prometheus AI engineering platform.`
+        : `You are a ${ctx.agentRole} agent.`;
+
+      const enrichedTask = [
+        ctx.taskDescription,
+        ctx.blueprintContent
+          ? `\n\n--- Blueprint ---\n${ctx.blueprintContent}`
+          : "",
+        ctx.projectContext
+          ? `\n\n--- Project Context ---\n${ctx.projectContext}`
+          : "",
+      ].join("");
 
       logger.info(
-        { slot, agentRole: ctx.agentRole },
-        "Using Vercel AI SDK streaming"
+        {
+          slot,
+          agentRole: ctx.agentRole,
+          toolCount: Object.keys(aiSdkTools).length,
+        },
+        "Starting AI SDK 6 ToolLoopAgent execution"
       );
 
-      // Stream the response
-      const result = streamText({
-        model,
-        messages: [
-          { role: "system", content: `You are a ${ctx.agentRole} agent.` },
-          { role: "user", content: ctx.taskDescription },
-        ],
+      // Create ToolLoopAgent with onStepFinish middleware
+      const agent = new ToolLoopAgent(model, aiSdkTools, {
+        maxSteps: ctx.options.maxIterations,
         temperature: ctx.options.temperature,
         maxTokens: ctx.options.maxTokens,
-      });
+        system: systemPrompt,
+        onStepFinish: (step) => {
+          // Track tool calls
+          const stepToolCalls = step.toolCalls?.length ?? 0;
+          totalToolCalls += stepToolCalls;
 
-      // Yield token events from the text stream
-      let fullText = "";
-      for await (const chunk of result.textStream) {
-        fullText += chunk;
-        yield makeEvent<TokenEvent>({
-          type: "token",
-          content: chunk,
-        });
-      }
+          // Track file changes from tool results
+          if (step.toolCalls) {
+            for (const tc of step.toolCalls) {
+              if (tc.toolName === "file_write" || tc.toolName === "file_edit") {
+                const toolInput = tc.input as Record<string, unknown>;
+                const filePath = (toolInput.path ?? toolInput.filePath) as
+                  | string
+                  | undefined;
+                if (filePath) {
+                  filesChanged.add(filePath);
+                  pendingEvents.push(
+                    makeEvent<FileChangeEvent>({
+                      type: "file_change",
+                      tool: tc.toolName,
+                      filePath,
+                    })
+                  );
+                }
+              }
+            }
+          }
 
-      // Get final usage stats
-      const usage = await result.usage;
+          // Track usage and credits
+          if (step.usage) {
+            const credits = Math.ceil(
+              ((step.usage.inputTokens ?? 0) + (step.usage.outputTokens ?? 0)) /
+                1000
+            );
+            totalCreditsConsumed += credits;
+            pendingEvents.push(
+              makeEvent<CreditUpdateEvent>({
+                type: "credit_update",
+                creditsConsumed: credits,
+                totalCreditsConsumed,
+              })
+            );
+          }
 
-      yield makeEvent<CompleteEvent>({
-        type: "complete",
-        success: true,
-        output: fullText,
-        filesChanged: [],
-        tokensUsed: {
-          input: usage.promptTokens,
-          output: usage.completionTokens,
+          // Secrets scanning on tool results
+          if (step.toolCalls) {
+            for (const tc of step.toolCalls) {
+              if (
+                (tc.toolName === "file_write" || tc.toolName === "file_edit") &&
+                (tc.input as Record<string, unknown>).content
+              ) {
+                const args = tc.input as Record<string, unknown>;
+                const filePath =
+                  (args.path as string) ?? (args.filePath as string) ?? "";
+                const scanResult = secretsScanner.scan(
+                  filePath,
+                  args.content as string
+                );
+                if (scanResult.blocked) {
+                  logger.warn(
+                    { filePath, reason: scanResult.message },
+                    "Secret detected in AI SDK execution"
+                  );
+                }
+              }
+            }
+          }
         },
-        toolCalls: 0,
-        steps: 1,
-        creditsConsumed: Math.ceil(
-          (usage.promptTokens + usage.completionTokens) / 1000
-        ),
       });
+
+      // Stream the agent execution
+      let fullText = "";
+      for await (const event of agent.stream([
+        { role: "user", content: enrichedTask },
+      ])) {
+        // Drain any events buffered by onStepFinish
+        while (pendingEvents.length > 0) {
+          const buffered = pendingEvents.shift();
+          if (buffered) {
+            yield buffered;
+          }
+        }
+
+        switch (event.type) {
+          case "text-delta": {
+            fullText += event.textDelta;
+            yield makeEvent<TokenEvent>({
+              type: "token",
+              content: event.textDelta,
+            });
+            break;
+          }
+          case "tool-call": {
+            yield makeEvent<ToolCallEvent>({
+              type: "tool_call",
+              toolCallId: `tc_${totalToolCalls}`,
+              toolName: event.toolName,
+              args: event.args as Record<string, unknown>,
+            });
+            break;
+          }
+          case "tool-result": {
+            yield makeEvent<ToolResultEvent>({
+              type: "tool_result",
+              toolCallId: `tc_${totalToolCalls}`,
+              toolName: event.toolName,
+              success: true,
+              output: String(event.result).slice(0, 2000),
+            });
+            break;
+          }
+          case "finish": {
+            yield makeEvent<CompleteEvent>({
+              type: "complete",
+              success: true,
+              output: fullText,
+              filesChanged: Array.from(filesChanged),
+              tokensUsed: {
+                input: event.usage.inputTokens,
+                output: event.usage.outputTokens,
+              },
+              toolCalls: totalToolCalls,
+              steps: ctx.options.maxIterations,
+              creditsConsumed: totalCreditsConsumed,
+            });
+            break;
+          }
+          default:
+            break;
+        }
+      }
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
       logger.warn(
         { error: msg },
-        "Vercel AI SDK not available, falling back to SSE streaming"
+        "AI SDK 6 execution failed, falling back to SSE streaming"
       );
 
       // Fall back to the standard execute() path

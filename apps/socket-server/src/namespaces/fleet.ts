@@ -149,6 +149,22 @@ export function setupFleetNamespace(namespace: Namespace) {
       );
     });
 
+    // Subscribe to worker events for a specific session (parallel execution)
+    socket.on("subscribe_session", (data: { sessionId: string }) => {
+      const room = `session:${data.sessionId}:workers`;
+      socket.join(room);
+      logger.debug(
+        { userId, sessionId: data.sessionId },
+        "Subscribed to session worker events"
+      );
+    });
+
+    // Unsubscribe from session worker events
+    socket.on("unsubscribe_session", (data: { sessionId: string }) => {
+      const room = `session:${data.sessionId}:workers`;
+      socket.leave(room);
+    });
+
     socket.on("disconnect", () => {
       logger.debug(
         { userId, socketId: socket.id },
@@ -173,6 +189,16 @@ export function setupFleetNamespace(namespace: Namespace) {
       logger.error(
         { error: err.message },
         "Failed to subscribe to indexing progress channel"
+      );
+    }
+  });
+
+  // Subscribe to worker events channel for parallel execution tracking
+  subscriber.subscribe("fleet:worker_events", (err) => {
+    if (err) {
+      logger.error(
+        { error: err.message },
+        "Failed to subscribe to worker events channel"
       );
     }
   });
@@ -204,6 +230,45 @@ export function setupFleetNamespace(namespace: Namespace) {
           { channel, error },
           "Failed to parse indexing progress event"
         );
+      }
+    }
+
+    // Multiplex parallel worker events tagged with agentId
+    if (channel === "fleet:worker_events") {
+      try {
+        const event = JSON.parse(message) as {
+          sessionId?: string;
+          orgId?: string;
+          agentId?: string;
+          type?: string;
+          data?: Record<string, unknown>;
+        };
+
+        // Emit to session-specific room for worker tracking
+        if (event.sessionId) {
+          const room = `session:${event.sessionId}:workers`;
+          const eventType = event.type ?? "worker_event";
+
+          // Tag event with agentId for client-side demuxing
+          namespace.to(room).emit(eventType, {
+            agentId: event.agentId,
+            sessionId: event.sessionId,
+            ...(event.data ?? event),
+            timestamp: new Date().toISOString(),
+          });
+        }
+
+        // Also emit to org fleet room
+        if (event.orgId) {
+          namespace
+            .to(`org:${event.orgId}:fleet`)
+            .emit(event.type ?? "worker_event", {
+              agentId: event.agentId,
+              ...(event.data ?? event),
+            });
+        }
+      } catch (error) {
+        logger.error({ channel, error }, "Failed to parse worker event");
       }
     }
   });

@@ -11,7 +11,14 @@ export type {
   WorkflowStep,
 } from "./inngest";
 // Inngest integration
-export { inngest } from "./inngest";
+export { inngest, TIER_CONCURRENCY_LIMITS } from "./inngest";
+// Workflow routing
+export type {
+  TaskMode,
+  WorkflowPhase,
+  WorkflowRoute,
+} from "./workflow-router";
+export { routeWorkflow } from "./workflow-router";
 export type {
   AgentExecutionWorkflow,
   AgentExecutionWorkflowInput,
@@ -22,7 +29,10 @@ export type {
   PRResult,
   ReviewResult,
 } from "./workflows/agent-execution";
-export { agentExecutionWorkflow } from "./workflows/agent-execution.inngest";
+export {
+  agentExecutionWorkflow,
+  getConcurrencyForTier,
+} from "./workflows/agent-execution.inngest";
 export type {
   ConflictResolution,
   FleetAgentAssignment,

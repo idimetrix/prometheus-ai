@@ -8,6 +8,8 @@ import {
 export type { Span, SpanOptions } from "@opentelemetry/api";
 export { context, SpanStatusCode, trace } from "@opentelemetry/api";
 export { registerDebugEndpoints } from "./debug";
+export type { InitTelemetryConfig } from "./init";
+export { initTelemetry as initTelemetryV2 } from "./init";
 export { metrics, metricsRegistry } from "./metrics";
 export { metricsHandler, metricsMiddleware } from "./metrics-middleware";
 export {
@@ -24,6 +26,17 @@ export {
   initSentry,
   setUser,
 } from "./sentry";
+export type {
+  ApiMetrics,
+  GenericServiceMetrics,
+  ModelRouterMetrics,
+  OrchestratorMetrics,
+  QueueMetrics,
+  ServiceMetrics,
+} from "./service-metrics";
+export { createServiceMetrics } from "./service-metrics";
+export type { SLODefinition } from "./slo";
+export { DEFAULT_SLOS, SLOMonitor } from "./slo";
 
 export interface TelemetryConfig {
   /** Whether to enable auto-instrumentation of HTTP, DB, Redis, etc. (default: true) */

@@ -73,6 +73,7 @@ export interface LearnedConvention {
 export class ConventionLearner {
   private readonly conventionMemory: ConventionMemoryLayer;
   private readonly extractor: AnalyzerConventionExtractor | null;
+  private readonly learnedProjects: Set<string> = new Set();
 
   constructor(
     conventionMemory: ConventionMemoryLayer,
@@ -80,6 +81,35 @@ export class ConventionLearner {
   ) {
     this.conventionMemory = conventionMemory;
     this.extractor = extractor ?? null;
+  }
+
+  /**
+   * Auto-run convention learning on first index of a project.
+   * Returns existing conventions if already learned.
+   */
+  async learnConventions(
+    projectId: string,
+    files?: FileContent[]
+  ): Promise<LearnedConvention[]> {
+    if (this.learnedProjects.has(projectId)) {
+      logger.debug({ projectId }, "Conventions already learned for project");
+      return [];
+    }
+
+    if (!files || files.length === 0) {
+      logger.debug({ projectId }, "No files provided for convention learning");
+      return [];
+    }
+
+    const result = await this.learn(projectId, files);
+    this.learnedProjects.add(projectId);
+
+    logger.info(
+      { projectId, conventions: result.conventions.length },
+      "Auto-learned conventions on first index"
+    );
+
+    return result.conventions;
   }
 
   /**

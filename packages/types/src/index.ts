@@ -2,6 +2,18 @@ export * from "./agent";
 export * from "./credit";
 export * from "./enums";
 export {
+  AuthError,
+  CreditError as TypedCreditError,
+  isPrometheusError,
+  PrometheusError as TypedPrometheusError,
+  ProviderError,
+  RateLimitError,
+  ResourceNotFoundError,
+  SandboxError as TypedSandboxError,
+  toPrometheusError,
+  ValidationError,
+} from "./errors";
+export {
   type AgentOutputEvent as VersionedAgentOutputEvent,
   type AgentStatusEvent as VersionedAgentStatusEvent,
   type BaseEvent as VersionedBaseEvent,
@@ -22,3 +34,4 @@ export * from "./project";
 export * from "./session";
 export * from "./task";
 export * from "./user";
+export * from "./workflow-visualization";

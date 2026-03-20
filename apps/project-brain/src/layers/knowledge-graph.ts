@@ -8,6 +8,11 @@
  *
  * Targets: <50ms 2-hop traversal, 500K nodes per project.
  */
+import {
+  type CodeFile,
+  type KnowledgeGraph as CogneeKnowledgeGraph,
+  CogneePipeline,
+} from "@prometheus/code-intelligence";
 import { db, graphEdges, graphNodes } from "@prometheus/db";
 import { createLogger } from "@prometheus/logger";
 import { generateId } from "@prometheus/utils";
@@ -631,6 +636,63 @@ export class KnowledgeGraphLayer {
     );
   }
 
+  // ─── Cognee Pipeline Integration ──────────────────────────────────
+
+  /**
+   * Run the Cognee pipeline on a set of files and persist the resulting
+   * knowledge graph (call graph, class hierarchy, module dependencies,
+   * data flow edges) into the graph_nodes/graph_edges tables.
+   *
+   * @param projectId - The project identifier
+   * @param files - Array of files with path, content, and language
+   * @returns The raw Cognee knowledge graph before persistence
+   */
+  async extractFromCognee(
+    projectId: string,
+    files: CodeFile[]
+  ): Promise<CogneeKnowledgeGraph> {
+    const pipeline = new CogneePipeline();
+    const graph = pipeline.process(files);
+
+    logger.info(
+      {
+        projectId,
+        fileCount: files.length,
+        nodeCount: graph.nodes.length,
+        edgeCount: graph.edges.length,
+      },
+      "Cognee pipeline produced knowledge graph; persisting to database"
+    );
+
+    // Persist nodes
+    for (const node of graph.nodes) {
+      await this.addNode(projectId, {
+        id: node.id,
+        type: mapCogneeNodeType(node.type),
+        name: node.name,
+        filePath: node.filePath,
+        metadata: node.metadata,
+      });
+    }
+
+    // Persist edges
+    for (const edge of graph.edges) {
+      await this.addEdge(projectId, {
+        source: edge.source,
+        target: edge.target,
+        type: edge.type,
+        metadata: { ...edge.metadata, weight: edge.weight },
+      });
+    }
+
+    logger.info(
+      { projectId, nodes: graph.nodes.length, edges: graph.edges.length },
+      "Cognee knowledge graph persisted"
+    );
+
+    return graph;
+  }
+
   // ─── Bulk Operations ─────────────────────────────────────────────
 
   async clearProject(projectId: string): Promise<void> {
@@ -903,4 +965,22 @@ function extractClasses(content: string): Array<{
     }
   }
   return classes;
+}
+
+/**
+ * Map Cognee pipeline node types to the knowledge graph layer's node types.
+ */
+function mapCogneeNodeType(type: string): GraphNode["type"] {
+  const mapping: Record<string, GraphNode["type"]> = {
+    file: "file",
+    function: "function",
+    class: "class",
+    module: "module",
+    interface: "module",
+    type: "module",
+    variable: "module",
+    component: "component",
+    export: "export",
+  };
+  return mapping[type] ?? "module";
 }

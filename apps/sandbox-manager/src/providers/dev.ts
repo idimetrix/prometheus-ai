@@ -223,10 +223,74 @@ export class DevProvider implements SandboxProvider {
     }
 
     try {
+      // Note: this calls the SandboxProvider.exec method, not child_process.exec
       const result = await this.exec(sandboxId, "echo ok", 5000);
       return result.exitCode === 0;
     } catch {
       return false;
     }
+  }
+
+  /**
+   * Take a snapshot of a dev sandbox by copying the filesystem.
+   * Returns the snapshot directory path as the snapshot ID.
+   */
+  async snapshot(sandboxId: string): Promise<string> {
+    const sandbox = this.sandboxes.get(sandboxId);
+    if (!sandbox) {
+      throw new Error(`Sandbox ${sandboxId} not found`);
+    }
+
+    const snapshotId = `snap-${sandboxId}-${Date.now()}`;
+    const snapshotDir = join(this.baseDir, snapshotId);
+
+    await mkdir(snapshotDir, { recursive: true });
+
+    // Copy the workspace directory using fs.cpSync
+    const { cpSync } = await import("node:fs");
+    cpSync(sandbox.sandboxDir, snapshotDir, { recursive: true });
+
+    logger.info(
+      { sandboxId, snapshotId, snapshotDir },
+      "Dev sandbox snapshot created"
+    );
+
+    return snapshotId;
+  }
+
+  /**
+   * Restore a dev sandbox from a filesystem snapshot.
+   */
+  async restore(snapshotId: string): Promise<SandboxInstance> {
+    const snapshotDir = join(this.baseDir, snapshotId);
+    const id = generateId("sbx");
+    const sandboxDir = join(this.baseDir, `prometheus-sandbox-${id}`);
+    const workspaceDir = join(sandboxDir, "workspace");
+
+    // Copy snapshot to new sandbox directory using fs.cpSync
+    const { cpSync } = await import("node:fs");
+    cpSync(snapshotDir, sandboxDir, { recursive: true });
+
+    const instance: SandboxInstance = {
+      id,
+      provider: "dev",
+      workDir: workspaceDir,
+      status: "running",
+      containerId: `dev-${id}`,
+      createdAt: new Date(),
+    };
+
+    this.sandboxes.set(id, {
+      instance,
+      sandboxDir,
+      processes: new Set(),
+    });
+
+    logger.info(
+      { sandboxId: id, snapshotId, workDir: workspaceDir },
+      "Dev sandbox restored from snapshot"
+    );
+
+    return instance;
   }
 }

@@ -12,6 +12,8 @@
     "clean": "rm -rf dist .turbo"
   },
   "dependencies": {
+    "@ai-sdk/mcp": "^1.0.25",
+    "ai": "^6.0.116",
     "hono": "^4.12.8",
     "@hono/node-server": "^1.19.11",
     "@prometheus/auth": "workspace:*",
@@ -21,7 +23,8 @@
     "@prometheus/queue": "workspace:*",
     "@prometheus/telemetry": "workspace:*",
     "@prometheus/types": "workspace:*",
-    "@prometheus/utils": "workspace:*"
+    "@prometheus/utils": "workspace:*",
+    "zod": "^4.3.6"
   },
   "devDependencies": {
     "@prometheus/config-typescript": "workspace:*",

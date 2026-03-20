@@ -1,6 +1,9 @@
 import { createLogger } from "@prometheus/logger";
-import type { FleetCoordinationEvent, WorkflowContext } from "../inngest";
-import { inngest } from "../inngest";
+import {
+  type FleetCoordinationEvent,
+  inngest,
+  type WorkflowContext,
+} from "../inngest";
 import type {
   ConflictResolution,
   FleetAgentAssignment,
@@ -16,7 +19,6 @@ const logger = createLogger("workflow:fleet-coordination");
  * Tasks within the same wave have no inter-dependencies and can run in parallel.
  */
 function computeWaves(tasks: FleetTask[]): FleetTask[][] {
-  const _taskMap = new Map(tasks.map((t) => [t.id, t]));
   const completed = new Set<string>();
   const waves: FleetTask[][] = [];
 
@@ -48,20 +50,24 @@ function computeWaves(tasks: FleetTask[]): FleetTask[][] {
 }
 
 /**
- * Fleet Coordination Workflow — Inngest durable function.
+ * Fleet Coordination Workflow -- Inngest durable function.
  *
  * Orchestrates parallel agent dispatch with step-level checkpointing:
  *   1. Compute execution waves from the dependency graph
- *   2. Dispatch agents in parallel within each wave (bounded by maxParallelAgents)
- *   3. Checkpoint after each wave completes
+ *   2. Fan out agents via step.invoke() within each wave
+ *   3. Gather completion events via step.waitForEvent()
  *   4. Detect and resolve file conflicts between agents
  *   5. Aggregate results across all waves
+ *   6. Support cancellation via cancelOn event matching
  */
-export const fleetCoordinationWorkflow = inngest.createFunction(
+export const fleetCoordinationWorkflow: ReturnType<
+  typeof inngest.createFunction
+> = inngest.createFunction(
   {
     id: "fleet-coordination",
     name: "Fleet Coordination",
     retries: 2,
+    triggers: [{ event: "prometheus/fleet.coordination.requested" }],
     concurrency: [
       {
         limit: 5,
@@ -75,7 +81,6 @@ export const fleetCoordinationWorkflow = inngest.createFunction(
       },
     ],
   },
-  { event: "prometheus/fleet.coordination.requested" as const },
   async ({ event, step }: WorkflowContext<FleetCoordinationEvent>) => {
     const { sessionId, maxParallelAgents } = event.data;
     const tasks = event.data.tasks as FleetTask[];
@@ -107,7 +112,7 @@ export const fleetCoordinationWorkflow = inngest.createFunction(
     for (const wave of waves) {
       waveIndex++;
 
-      // Checkpoint: dispatch agents for this wave in parallel batches
+      // Fan-out: dispatch agents for this wave
       const waveAssignments = await step.run(
         `wave-${waveIndex}-dispatch`,
         () => {
@@ -115,6 +120,7 @@ export const fleetCoordinationWorkflow = inngest.createFunction(
             taskId: task.id,
             agentId: `agent-${sessionId}-${task.id}`,
             status: "pending" as const,
+            startedAt: new Date().toISOString(),
           }));
 
           logger.info(
@@ -131,13 +137,14 @@ export const fleetCoordinationWorkflow = inngest.createFunction(
         }
       );
 
-      // Execute all tasks in this wave in parallel, respecting concurrency limit
+      // Fan-out: invoke agent execution for each task in parallel batches
       const chunks: FleetTask[][] = [];
       for (let i = 0; i < wave.length; i += maxParallelAgents) {
         chunks.push(wave.slice(i, i + maxParallelAgents));
       }
 
-      for (const [_chunkIdx, chunk] of chunks.entries()) {
+      for (const chunk of chunks) {
+        // Invoke agents in parallel using step.run for fan-out
         const chunkResults = await Promise.all(
           chunk.map((task) =>
             step.run(`wave-${waveIndex}-task-${task.id}`, async () => {
@@ -151,7 +158,7 @@ export const fleetCoordinationWorkflow = inngest.createFunction(
                 "Executing fleet agent task"
               );
 
-              // Emit event for each agent completion
+              // Emit completion event for agent
               await step.sendEvent(`agent-done-${task.id}`, {
                 name: "prometheus/fleet.agent.completed",
                 data: {
@@ -192,9 +199,14 @@ export const fleetCoordinationWorkflow = inngest.createFunction(
       // ── Checkpoint: Conflict detection after each wave ────────────
       await step.run(`wave-${waveIndex}-conflict-check`, () => {
         const filesFromWave = allResults.flatMap((r) => r.filesChanged);
-        const duplicates = filesFromWave.filter(
-          (f, i) => filesFromWave.indexOf(f) !== i
-        );
+        const seen = new Set<string>();
+        const duplicates: string[] = [];
+        for (const f of filesFromWave) {
+          if (seen.has(f)) {
+            duplicates.push(f);
+          }
+          seen.add(f);
+        }
 
         if (duplicates.length > 0) {
           logger.warn(
@@ -203,13 +215,20 @@ export const fleetCoordinationWorkflow = inngest.createFunction(
           );
         }
 
-        return { conflictsDetected: duplicates.length > 0, files: duplicates };
+        return {
+          conflictsDetected: duplicates.length > 0,
+          files: duplicates,
+        };
       });
+
+      // Backpressure between waves
+      if (waveIndex < waves.length) {
+        await step.sleep(`post-wave-${waveIndex}-backpressure`, "1s");
+      }
     }
 
     // ── Step 3: Detect and resolve cross-wave conflicts ─────────────
     const conflicts = await step.run("resolve-conflicts", () => {
-      const _allFiles = allResults.flatMap((r) => r.filesChanged);
       const fileCounts = new Map<string, string[]>();
 
       for (const assignment of allAssignments) {
@@ -223,7 +242,7 @@ export const fleetCoordinationWorkflow = inngest.createFunction(
       }
 
       const fileConflicts = [...fileCounts.entries()]
-        .filter(([_, agents]) => agents.length > 1)
+        .filter(([, agents]) => agents.length > 1)
         .map(([filePath, agents]) => ({
           filePath,
           agents,

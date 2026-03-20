@@ -10,6 +10,9 @@ import {
 } from "react";
 import { useUIStore } from "@/stores/ui.store";
 
+/** Breakpoint for responsive collapse (px) */
+const RESPONSIVE_BREAKPOINT = 768;
+
 interface WorkspaceLayoutProps {
   agentPanel?: ReactNode;
   center: ReactNode;
@@ -105,6 +108,23 @@ export function WorkspaceLayout({
 
   const [terminalCollapsed, setTerminalCollapsed] = useState(false);
   const [agentPanelCollapsed, setAgentPanelCollapsed] = useState(false);
+  const [_isSmallScreen, setIsSmallScreen] = useState(false);
+
+  // Responsive: collapse panels on small screens
+  useEffect(() => {
+    const checkSize = () => {
+      const small = window.innerWidth < RESPONSIVE_BREAKPOINT;
+      setIsSmallScreen(small);
+      if (small) {
+        setAgentPanelCollapsed(true);
+        setTerminalCollapsed(true);
+      }
+    };
+
+    checkSize();
+    window.addEventListener("resize", checkSize);
+    return () => window.removeEventListener("resize", checkSize);
+  }, []);
 
   const containerRef = useRef<HTMLDivElement>(null);
   const draggingRef = useRef<{

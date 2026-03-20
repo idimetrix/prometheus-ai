@@ -146,4 +146,123 @@ export class SharedContext {
     }
     return this.bus.drainMessages();
   }
+
+  // ---------------------------------------------------------------------------
+  // Agent Handoff Protocol
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Transfer working memory and context from one agent to another.
+   * This enables seamless transitions when tasks are reassigned or
+   * when a specialist agent needs to pick up where another left off.
+   */
+  async handoff(
+    fromAgentId: string,
+    toAgentId: string,
+    context: HandoffContext
+  ): Promise<void> {
+    const handoffKey = `${this.prefix}:handoff:${fromAgentId}:${toAgentId}`;
+
+    const handoffData: HandoffData = {
+      fromAgentId,
+      toAgentId,
+      context,
+      timestamp: Date.now(),
+    };
+
+    const { redis } = await import("@prometheus/queue");
+    await redis.set(handoffKey, JSON.stringify(handoffData), "EX", 3600);
+
+    // Also store the context under the receiving agent's namespace
+    // so it can be retrieved during initialization
+    const receiverKey = `${this.prefix}:handoff:pending:${toAgentId}`;
+    await redis.set(receiverKey, JSON.stringify(handoffData), "EX", 3600);
+
+    logger.info(
+      {
+        fromAgentId,
+        toAgentId,
+        sessionId: this.sessionId,
+        fileContextCount: context.fileContext?.length ?? 0,
+        decisionLogCount: context.decisionLog?.length ?? 0,
+      },
+      "Agent handoff completed"
+    );
+
+    // Broadcast handoff event via bus
+    if (this.bus) {
+      await this.bus
+        .publish("decision", {
+          type: "handoff",
+          fromAgentId,
+          toAgentId,
+          summary: context.summary,
+        })
+        .catch(() => {
+          /* best-effort broadcast */
+        });
+    }
+  }
+
+  /**
+   * Retrieve pending handoff context for an agent.
+   * Called during agent initialization to inherit context from predecessor.
+   */
+  async getHandoffContext(agentId: string): Promise<HandoffData | null> {
+    const { redis } = await import("@prometheus/queue");
+    const receiverKey = `${this.prefix}:handoff:pending:${agentId}`;
+    const raw = await redis.get(receiverKey);
+
+    if (!raw) {
+      return null;
+    }
+
+    // Clean up the pending handoff after retrieval
+    await redis.del(receiverKey);
+
+    return JSON.parse(raw) as HandoffData;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Handoff types
+// ---------------------------------------------------------------------------
+
+/** Context transferred between agents during handoff. */
+export interface HandoffContext {
+  /** Decision log entries from the source agent */
+  decisionLog?: DecisionLogEntry[];
+  /** Files the source agent was working with */
+  fileContext?: FileContextEntry[];
+  /** Summary of work completed so far */
+  summary: string;
+  /** Working memory / key-value pairs */
+  workingMemory?: Record<string, unknown>;
+}
+
+export interface HandoffData {
+  context: HandoffContext;
+  fromAgentId: string;
+  timestamp: number;
+  toAgentId: string;
+}
+
+export interface FileContextEntry {
+  /** Brief description of why this file is relevant */
+  description: string;
+  /** File path */
+  path: string;
+  /** What the agent did with this file */
+  status: "read" | "modified" | "created" | "planned";
+}
+
+export interface DecisionLogEntry {
+  /** What alternatives were considered */
+  alternatives?: string[];
+  /** The decision made */
+  decision: string;
+  /** Why this decision was made */
+  reasoning: string;
+  /** When the decision was made */
+  timestamp: number;
 }

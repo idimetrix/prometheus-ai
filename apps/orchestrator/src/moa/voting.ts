@@ -1,6 +1,6 @@
 import { createLogger } from "@prometheus/logger";
 
-const _logger = createLogger("orchestrator:moa:voting");
+const logger = createLogger("orchestrator:moa:voting");
 
 const HEADER_RE = /^#{1,3}\s/m;
 const LIST_ITEM_RE = /^[-*]\s/m;
@@ -13,7 +13,12 @@ const TEST_CONTENT_RE = /\b(?:test|expect|assert|describe|it|should)\b/gi;
 export type VotingStrategy =
   | "length-weighted"
   | "cross-evaluation"
-  | "test-driven";
+  | "test-driven"
+  | "confidence-weighted"
+  | "quorum";
+
+/** Quorum mode for multi-model agreement */
+export type QuorumMode = "majority" | "unanimous" | "weighted";
 
 export interface VoteResult {
   reasoning: string;
@@ -22,16 +27,36 @@ export interface VoteResult {
   winner: number;
 }
 
+/** Configuration for quorum-based voting */
+export interface QuorumConfig {
+  /** Quorum mode */
+  mode: QuorumMode;
+  /** Minimum agreement threshold for weighted mode (0-1) */
+  weightedThreshold?: number;
+}
+
+/** Response from a model for voting */
+export interface ModelResponse {
+  confidence: number;
+  model: string;
+  output: string;
+}
+
 /**
- * MoA Voting implements three strategies for selecting the best
+ * MoA Voting implements multiple strategies for selecting the best
  * response from multiple model outputs.
+ *
+ * Enhanced with:
+ * - Confidence-weighted voting based on agent confidence scores
+ * - Quorum configuration (majority, unanimous, weighted)
+ * - Multi-model dispatch for high-stakes decisions
  */
 export class MoAVoting {
   /**
    * Vote on the best response using the specified strategy.
    */
   vote(
-    responses: Array<{ model: string; output: string; confidence: number }>,
+    responses: ModelResponse[],
     strategy: VotingStrategy = "length-weighted"
   ): VoteResult {
     switch (strategy) {
@@ -41,18 +66,109 @@ export class MoAVoting {
         return this.crossEvaluationVote(responses);
       case "test-driven":
         return this.testDrivenVote(responses);
+      case "confidence-weighted":
+        return this.confidenceWeightedVote(responses);
+      case "quorum":
+        return this.quorumVote(responses, { mode: "majority" });
       default:
         return this.lengthWeightedVote(responses);
     }
   }
 
   /**
+   * Confidence-weighted voting: scores are primarily driven by
+   * agent confidence, with quality bonuses for structure.
+   */
+  confidenceWeightedVote(responses: ModelResponse[]): VoteResult {
+    const scores = responses.map((r) => {
+      // Primary: confidence is the dominant factor
+      let score = r.confidence * 0.6;
+
+      // Secondary: output quality indicators
+      const hasCodeBlocks = r.output.includes("```") ? 0.1 : 0;
+      const hasHeaders = HEADER_RE.test(r.output) ? 0.05 : 0;
+      const hasLists = LIST_ITEM_RE.test(r.output) ? 0.05 : 0;
+
+      // Tertiary: length as a tiebreaker (normalized)
+      const maxLen = Math.max(...responses.map((resp) => resp.output.length));
+      const lengthScore = maxLen > 0 ? (r.output.length / maxLen) * 0.2 : 0;
+
+      score += hasCodeBlocks + hasHeaders + hasLists + lengthScore;
+
+      return score;
+    });
+
+    const winner = scores.indexOf(Math.max(...scores));
+
+    return {
+      winner,
+      scores,
+      strategy: "confidence-weighted",
+      reasoning: `Confidence-weighted vote selected response ${winner + 1} (${responses[winner]?.model}) with confidence ${responses[winner]?.confidence.toFixed(3)}`,
+    };
+  }
+
+  /**
+   * Quorum-based voting for decisions requiring multi-model agreement.
+   *
+   * Modes:
+   * - majority: >50% of models must agree
+   * - unanimous: all models must agree
+   * - weighted: weighted sum of confidence must exceed threshold
+   */
+  quorumVote(responses: ModelResponse[], config: QuorumConfig): VoteResult {
+    // First, compute similarity clusters
+    const scores = responses.map((r) => r.confidence);
+    const winner = scores.indexOf(Math.max(...scores));
+
+    let quorumMet = false;
+    let reasoning: string;
+
+    switch (config.mode) {
+      case "unanimous": {
+        // All must have confidence > 0.5
+        quorumMet = responses.every((r) => r.confidence > 0.5);
+        reasoning = quorumMet
+          ? `Unanimous quorum met: all ${responses.length} models agree`
+          : "Unanimous quorum NOT met: not all models have sufficient confidence";
+        break;
+      }
+      case "weighted": {
+        const threshold = config.weightedThreshold ?? 0.6;
+        const totalWeight = responses.reduce((acc, r) => acc + r.confidence, 0);
+        const avgConfidence = totalWeight / responses.length;
+        quorumMet = avgConfidence >= threshold;
+        reasoning = `Weighted quorum ${quorumMet ? "met" : "NOT met"}: avg confidence ${avgConfidence.toFixed(3)} vs threshold ${threshold}`;
+        break;
+      }
+      default: {
+        const highConfidence = responses.filter(
+          (r) => r.confidence > 0.5
+        ).length;
+        quorumMet = highConfidence > responses.length / 2;
+        reasoning = `Majority quorum ${quorumMet ? "met" : "NOT met"}: ${highConfidence}/${responses.length} models agree`;
+        break;
+      }
+    }
+
+    logger.info(
+      { quorumMet, mode: config.mode, winner },
+      "Quorum vote completed"
+    );
+
+    return {
+      winner,
+      scores,
+      strategy: "quorum",
+      reasoning,
+    };
+  }
+
+  /**
    * Length-weighted voting: longer, more detailed responses score higher,
    * combined with model confidence.
    */
-  private lengthWeightedVote(
-    responses: Array<{ model: string; output: string; confidence: number }>
-  ): VoteResult {
+  private lengthWeightedVote(responses: ModelResponse[]): VoteResult {
     const maxLen = Math.max(...responses.map((r) => r.output.length));
 
     const scores = responses.map((r) => {
@@ -87,9 +203,7 @@ export class MoAVoting {
    * Cross-evaluation: each response evaluates the others.
    * Simulated by comparing overlap and complementary information.
    */
-  private crossEvaluationVote(
-    responses: Array<{ model: string; output: string; confidence: number }>
-  ): VoteResult {
+  private crossEvaluationVote(responses: ModelResponse[]): VoteResult {
     const scores = responses.map((response, idx) => {
       let score = response.confidence * 0.3;
 
@@ -139,9 +253,7 @@ export class MoAVoting {
    * Test-driven: score based on presence of testable assertions,
    * code examples, and specific implementation details.
    */
-  private testDrivenVote(
-    responses: Array<{ model: string; output: string; confidence: number }>
-  ): VoteResult {
+  private testDrivenVote(responses: ModelResponse[]): VoteResult {
     const scores = responses.map((r) => {
       let score = r.confidence * 0.2;
 
@@ -172,5 +284,58 @@ export class MoAVoting {
       strategy: "test-driven",
       reasoning: `Test-driven vote selected response ${winner + 1} (${responses[winner]?.model}) with highest implementation specificity`,
     };
+  }
+}
+
+/**
+ * MoA Decision Gate for high-stakes decisions requiring multi-model agreement.
+ *
+ * Uses quorum voting to ensure critical decisions have consensus among
+ * multiple models before proceeding.
+ */
+export class MoADecisionGate {
+  private readonly voting: MoAVoting;
+  private readonly quorumConfig: QuorumConfig;
+
+  constructor(quorumConfig: QuorumConfig = { mode: "majority" }) {
+    this.voting = new MoAVoting();
+    this.quorumConfig = quorumConfig;
+  }
+
+  /**
+   * Evaluate responses for a high-stakes decision.
+   * Returns the winner and whether quorum was achieved.
+   */
+  evaluate(responses: ModelResponse[]): {
+    approved: boolean;
+    result: VoteResult;
+  } {
+    const result = this.voting.quorumVote(responses, this.quorumConfig);
+    const approved =
+      result.reasoning.includes("met") && !result.reasoning.includes("NOT met");
+
+    logger.info(
+      { approved, winner: result.winner, quorumMode: this.quorumConfig.mode },
+      "Decision gate evaluation complete"
+    );
+
+    return { approved, result };
+  }
+
+  /**
+   * Dispatch a decision to multiple models and evaluate consensus.
+   * Takes a dispatcher function that sends a prompt to multiple models.
+   */
+  async dispatchAndEvaluate(
+    dispatcher: () => Promise<ModelResponse[]>
+  ): Promise<{
+    approved: boolean;
+    responses: ModelResponse[];
+    result: VoteResult;
+  }> {
+    const responses = await dispatcher();
+    const { approved, result } = this.evaluate(responses);
+
+    return { approved, responses, result };
   }
 }

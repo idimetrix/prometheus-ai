@@ -1,54 +1,167 @@
 import type { ChildProcess } from "node:child_process";
+import { spawn } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createLogger } from "@prometheus/logger";
 import { DevProvider } from "./providers/dev";
 import { DockerProvider } from "./providers/docker";
+import { E2BProvider } from "./providers/e2b";
 import { FirecrackerProvider } from "./providers/firecracker";
 import type { SandboxProvider } from "./sandbox-provider";
 import { validateCommand, validateTimeout } from "./security";
 
 const logger = createLogger("sandbox-manager:container");
 
-type SandboxMode = "docker" | "firecracker" | "dev";
+type SandboxMode = "docker" | "firecracker" | "dev" | "e2b";
 
 /**
- * Determine sandbox execution mode:
- * 1. SANDBOX_MODE env var takes priority ("docker" | "firecracker" | "dev")
- * 2. NODE_ENV=production defaults to "docker"
- * 3. Otherwise, auto-detect: use Docker if available, fall back to dev
+ * Check if KVM is available (required for Firecracker).
+ * Uses spawn with explicit args to avoid shell injection.
  */
-async function detectSandboxMode(): Promise<SandboxMode> {
+function isKvmAvailable(): Promise<boolean> {
+  return new Promise<boolean>((resolve) => {
+    const child = spawn("test", ["-e", "/dev/kvm"], {
+      timeout: 2000,
+      stdio: "ignore",
+    });
+    child.on("close", (code) => resolve(code === 0));
+    child.on("error", () => resolve(false));
+  });
+}
+
+/**
+ * Select the best available sandbox provider with fallback chain:
+ * 1. Firecracker (if KVM is available)
+ * 2. Docker (if daemon is reachable)
+ * 3. E2B (if API key is configured)
+ * 4. Dev (always available)
+ */
+async function selectProvider(
+  projectOverride?: SandboxMode
+): Promise<{ mode: SandboxMode; provider: SandboxProvider }> {
+  // Explicit project-level override
+  if (projectOverride) {
+    return createProviderForMode(projectOverride);
+  }
+
+  // Environment variable override
   const explicit = process.env.SANDBOX_MODE?.toLowerCase();
-  if (explicit === "docker") {
-    return "docker";
-  }
-  if (explicit === "firecracker") {
-    return "firecracker";
-  }
-  if (explicit === "dev") {
-    return "dev";
+  if (
+    explicit === "docker" ||
+    explicit === "firecracker" ||
+    explicit === "dev" ||
+    explicit === "e2b"
+  ) {
+    return createProviderForMode(explicit as SandboxMode);
   }
 
+  // Production auto-detection with priority chain
   if (process.env.NODE_ENV === "production") {
-    return "docker";
+    // Priority 1: Firecracker if KVM is available
+    const kvmAvailable = await isKvmAvailable();
+    if (kvmAvailable) {
+      logger.info("KVM detected, using Firecracker provider");
+      return createProviderForMode("firecracker");
+    }
+
+    // Priority 2: Docker
+    try {
+      const dockerAvailable = await DockerProvider.isAvailable();
+      if (dockerAvailable) {
+        logger.info("Docker detected, using Docker provider");
+        return createProviderForMode("docker");
+      }
+    } catch {
+      // Fall through
+    }
+
+    // Priority 3: E2B if API key is set
+    if (process.env.E2B_API_KEY) {
+      logger.info("E2B API key found, using E2B provider");
+      return createProviderForMode("e2b");
+    }
+
+    // Priority 4: Dev mode fallback
+    logger.warn(
+      "No production sandbox provider available, falling back to dev mode"
+    );
+    return createProviderForMode("dev");
   }
 
-  // Auto-detect: check if Docker daemon is reachable via spawn (not shell)
+  // Development auto-detection
   try {
-    const available = await DockerProvider.isAvailable();
-    if (available) {
+    const dockerAvailable = await DockerProvider.isAvailable();
+    if (dockerAvailable) {
       logger.info("Docker detected, using container mode");
-      return "docker";
+      return createProviderForMode("docker");
     }
   } catch {
     // Fall through to dev mode
   }
 
-  logger.info(
-    "Docker not available, using dev mode (temp directories + child_process)"
-  );
-  return "dev";
+  logger.info("Docker not available, using dev mode (temp directories)");
+  return createProviderForMode("dev");
+}
+
+/**
+ * Create a provider instance for the given mode.
+ */
+function createProviderForMode(mode: SandboxMode): {
+  mode: SandboxMode;
+  provider: SandboxProvider;
+} {
+  const image = process.env.SANDBOX_IMAGE ?? "node:22-alpine";
+  const sandboxBaseDir =
+    process.env.SANDBOX_BASE_DIR ?? join(tmpdir(), "prometheus-sandboxes");
+
+  switch (mode) {
+    case "firecracker":
+      return { mode, provider: new FirecrackerProvider() };
+    case "docker":
+      return { mode, provider: new DockerProvider(image) };
+    case "e2b":
+      return { mode, provider: new E2BProvider() };
+    default:
+      return { mode: "dev", provider: new DevProvider(sandboxBaseDir) };
+  }
+}
+
+/**
+ * Health check all available providers and return their status.
+ */
+async function checkProviderHealth(): Promise<
+  Record<string, { available: boolean; latencyMs: number }>
+> {
+  const results: Record<string, { available: boolean; latencyMs: number }> = {};
+
+  // Check Docker
+  try {
+    const start = Date.now();
+    const available = await DockerProvider.isAvailable();
+    results.docker = { available, latencyMs: Date.now() - start };
+  } catch {
+    results.docker = { available: false, latencyMs: 0 };
+  }
+
+  // Check Firecracker (KVM)
+  try {
+    const start = Date.now();
+    const available = await isKvmAvailable();
+    results.firecracker = { available, latencyMs: Date.now() - start };
+  } catch {
+    results.firecracker = { available: false, latencyMs: 0 };
+  }
+
+  // Check E2B
+  results.e2b = {
+    available: Boolean(process.env.E2B_API_KEY),
+    latencyMs: 0,
+  };
+
+  // Dev is always available
+  results.dev = { available: true, latencyMs: 0 };
+
+  return results;
 }
 
 export interface ContainerInfo {
@@ -77,17 +190,19 @@ export interface CreateContainerOptions {
   memoryLimitMb?: number;
   projectId?: string;
   repoUrl?: string;
+  /** Override sandbox provider for this project */
+  sandboxProvider?: SandboxMode;
 }
 
 /**
  * ContainerManager uses the SandboxProvider abstraction to manage sandboxes.
  *
- * Supports three modes: docker, firecracker, and dev.
+ * Supports four modes: docker, firecracker, e2b, and dev.
+ * Provider selection follows a priority chain with per-project overrides:
+ *   Firecracker (KVM available) -> Docker -> E2B -> Dev
+ *
  * Maintains backward compatibility with the original API while delegating
  * to the appropriate provider implementation.
- *
- * Note: All process spawning is handled by the individual providers
- * using spawn() with explicit argument arrays (not shell strings).
  */
 export class ContainerManager {
   private provider: SandboxProvider | null = null;
@@ -95,39 +210,20 @@ export class ContainerManager {
   private modeResolved = false;
   private readonly containers = new Map<string, ContainerInfo>();
   private readonly runningProcesses = new Map<string, Set<ChildProcess>>();
-  private readonly image = process.env.SANDBOX_IMAGE ?? "node:22-alpine";
-  private readonly sandboxBaseDir: string;
-
-  constructor() {
-    this.sandboxBaseDir =
-      process.env.SANDBOX_BASE_DIR ?? join(tmpdir(), "prometheus-sandboxes");
-  }
 
   /**
    * Resolve the sandbox mode and initialize the appropriate provider.
+   * Uses the priority-based selection with fallback chain.
    * Called lazily to avoid blocking the constructor.
    */
-  private async ensureMode(): Promise<void> {
-    if (this.modeResolved) {
+  private async ensureMode(projectOverride?: SandboxMode): Promise<void> {
+    if (this.modeResolved && !projectOverride) {
       return;
     }
 
-    this.mode = await detectSandboxMode();
-
-    switch (this.mode) {
-      case "docker": {
-        this.provider = new DockerProvider(this.image);
-        break;
-      }
-      case "firecracker": {
-        this.provider = new FirecrackerProvider();
-        break;
-      }
-      default: {
-        this.provider = new DevProvider(this.sandboxBaseDir);
-        break;
-      }
-    }
+    const { mode, provider } = await selectProvider(projectOverride);
+    this.mode = mode;
+    this.provider = provider;
 
     logger.info({ mode: this.mode }, "Sandbox provider initialized");
     this.modeResolved = true;
@@ -144,11 +240,21 @@ export class ContainerManager {
   }
 
   /**
+   * Check health of all available providers.
+   */
+  async getProviderHealth(): Promise<
+    Record<string, { available: boolean; latencyMs: number }>
+  > {
+    return await checkProviderHealth();
+  }
+
+  /**
    * Create a new sandbox environment.
    * Delegates to the active provider based on the resolved mode.
+   * Supports per-project provider override via options.sandboxProvider.
    */
   async create(options?: CreateContainerOptions): Promise<ContainerInfo> {
-    await this.ensureMode();
+    await this.ensureMode(options?.sandboxProvider);
 
     if (!this.provider) {
       throw new Error("No sandbox provider available");
@@ -369,6 +475,6 @@ export class ContainerManager {
     if (this.mode === "docker") {
       return await DockerProvider.isAvailable();
     }
-    return true; // Dev and Firecracker modes don't need Docker
+    return true; // Dev, E2B, and Firecracker modes don't need Docker
   }
 }
