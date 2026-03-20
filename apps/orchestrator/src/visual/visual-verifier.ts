@@ -190,7 +190,7 @@ export class VisualVerifier {
     pages: string[]
   ): Promise<Array<{ url: string; base64: string }>> {
     try {
-      const devServerUrl = "http://localhost:3000";
+      const devServerUrl = process.env.WEB_URL ?? "http://localhost:3000";
       const urls = pages.map((p) => `${devServerUrl}${p}`);
 
       const response = await sandboxManagerClient.post<{

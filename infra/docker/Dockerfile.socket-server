@@ -1,0 +1,34 @@
+FROM node:22-alpine AS base
+RUN apk add --no-cache libc6-compat
+RUN corepack enable && corepack prepare pnpm@10 --activate
+WORKDIR /app
+
+# Install dependencies
+FROM base AS deps
+COPY package.json pnpm-workspace.yaml pnpm-lock.yaml .npmrc ./
+COPY apps/socket-server/package.json ./apps/socket-server/
+COPY packages/auth/package.json ./packages/auth/
+COPY packages/db/package.json ./packages/db/
+COPY packages/queue/package.json ./packages/queue/
+COPY packages/logger/package.json ./packages/logger/
+COPY packages/utils/package.json ./packages/utils/
+COPY packages/config-typescript/package.json ./packages/config-typescript/
+RUN pnpm install --frozen-lockfile
+
+# Build
+FROM base AS builder
+COPY --from=deps /app/node_modules ./node_modules
+COPY --from=deps /app/apps/socket-server/node_modules ./apps/socket-server/node_modules
+COPY . .
+RUN pnpm turbo build --filter=@prometheus/socket-server
+
+# Production
+FROM node:22-alpine AS runner
+WORKDIR /app
+RUN addgroup --system --gid 1001 nodejs && adduser --system --uid 1001 appuser
+COPY --from=builder /app/apps/socket-server/dist ./dist
+COPY --from=builder /app/node_modules ./node_modules
+USER appuser
+ENV NODE_ENV=production
+EXPOSE 4001
+CMD ["node", "dist/index.js"]

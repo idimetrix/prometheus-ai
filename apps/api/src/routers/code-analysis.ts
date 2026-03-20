@@ -13,7 +13,8 @@ import { protectedProcedure, router } from "../trpc";
 
 const logger = createLogger("code-analysis-router");
 
-const PROJECT_BRAIN_URL = "http://localhost:4003";
+const PROJECT_BRAIN_URL =
+  process.env.PROJECT_BRAIN_URL ?? "http://localhost:4003";
 
 /**
  * Verify that a project belongs to the caller's org.

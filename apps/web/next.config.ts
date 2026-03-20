@@ -1,5 +1,11 @@
 import type { NextConfig } from "next";
 
+const PROTOCOL_RE = /^https?:\/\//;
+
+const socketHost = (
+  process.env.NEXT_PUBLIC_SOCKET_URL ?? "http://localhost:4001"
+).replace(PROTOCOL_RE, "");
+
 /**
  * Content Security Policy for the web application.
  * Includes WebSocket and SSE connect-src directives.
@@ -18,15 +24,15 @@ const cspDirectives = [
   [
     "connect-src 'self'",
     // API server
-    "http://localhost:4000",
+    process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000",
     "https://api.prometheus.dev",
     // WebSocket server
-    "ws://localhost:4001",
-    "wss://localhost:4001",
+    `ws://${socketHost}`,
+    `wss://${socketHost}`,
     "ws://*.prometheus.dev",
     "wss://*.prometheus.dev",
     // SSE endpoints (same as API)
-    "http://localhost:4000/events",
+    `${process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000"}/events`,
     "https://api.prometheus.dev/events",
     // Clerk auth
     "https://*.clerk.com",

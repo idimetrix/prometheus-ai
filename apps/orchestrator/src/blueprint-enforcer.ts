@@ -31,7 +31,7 @@ import { createLogger } from "@prometheus/logger";
 const logger = createLogger("orchestrator:blueprint-enforcer");
 
 const PROJECT_BRAIN_URL =
-  process.env.PROJECT_BRAIN_URL ?? "http://localhost:4005";
+  process.env.PROJECT_BRAIN_URL ?? "http://localhost:4003";
 
 export interface BlueprintViolation {
   description: string;

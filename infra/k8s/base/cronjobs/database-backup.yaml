@@ -1,0 +1,77 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: database-backup
+  namespace: prometheus
+spec:
+  schedule: "0 2 * * *"  # Daily at 2 AM UTC
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 7
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      activeDeadlineSeconds: 1800  # 30 min timeout
+      template:
+        spec:
+          restartPolicy: Never
+          containers:
+            - name: pg-backup
+              image: postgres:16-alpine
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  set -e
+                  TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+                  FILENAME="prometheus_backup_${TIMESTAMP}.sql.gz"
+                  echo "Starting backup: ${FILENAME}"
+                  pg_dump "$DATABASE_URL" | gzip > "/tmp/${FILENAME}"
+                  echo "Backup complete. Size: $(du -h /tmp/${FILENAME} | cut -f1)"
+                  # Upload to MinIO/S3
+                  if [ -n "$S3_ENDPOINT" ]; then
+                    apt-get update -qq && apt-get install -qq -y awscli > /dev/null 2>&1
+                    aws --endpoint-url "$S3_ENDPOINT" s3 cp "/tmp/${FILENAME}" "s3://${S3_BUCKET}/backups/${FILENAME}"
+                    echo "Uploaded to s3://${S3_BUCKET}/backups/${FILENAME}"
+                    # Clean up backups older than 30 days
+                    aws --endpoint-url "$S3_ENDPOINT" s3 ls "s3://${S3_BUCKET}/backups/" | \
+                      awk '{print $4}' | while read -r file; do
+                        file_date=$(echo "$file" | grep -oP '\d{8}' | head -1)
+                        if [ -n "$file_date" ]; then
+                          cutoff=$(date -d '30 days ago' +%Y%m%d)
+                          if [ "$file_date" -lt "$cutoff" ]; then
+                            aws --endpoint-url "$S3_ENDPOINT" s3 rm "s3://${S3_BUCKET}/backups/${file}"
+                            echo "Deleted old backup: ${file}"
+                          fi
+                        fi
+                      done
+                  fi
+              env:
+                - name: DATABASE_URL
+                  valueFrom:
+                    secretKeyRef:
+                      name: api-secrets
+                      key: database-url
+                - name: S3_ENDPOINT
+                  value: "http://minio.prometheus.svc.cluster.local:9000"
+                - name: S3_BUCKET
+                  value: "prometheus-backups"
+                - name: AWS_ACCESS_KEY_ID
+                  valueFrom:
+                    secretKeyRef:
+                      name: minio-credentials
+                      key: access-key
+                      optional: true
+                - name: AWS_SECRET_ACCESS_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: minio-credentials
+                      key: secret-key
+                      optional: true
+              resources:
+                requests:
+                  cpu: 100m
+                  memory: 256Mi
+                limits:
+                  cpu: 500m
+                  memory: 512Mi

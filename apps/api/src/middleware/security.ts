@@ -5,6 +5,8 @@ import type { Context, MiddlewareHandler } from "hono";
 
 const logger = createLogger("api");
 
+const PROTOCOL_RE = /^https?:\/\//;
+
 // ---------------------------------------------------------------------------
 // CSP Configuration
 // ---------------------------------------------------------------------------
@@ -29,15 +31,18 @@ export function generateCspNonce(): string {
  * Build a Content-Security-Policy header value with WebSocket and SSE support.
  */
 export function buildCspHeader(options?: CspConfig): string {
+  const socketHost = (
+    process.env.SOCKET_SERVER_URL ?? "http://localhost:4001"
+  ).replace(PROTOCOL_RE, "");
   const connectSrc = [
     "'self'",
     // WebSocket connections
-    "ws://localhost:4001",
-    "wss://localhost:4001",
+    `ws://${socketHost}`,
+    `wss://${socketHost}`,
     "ws://*.prometheus.dev",
     "wss://*.prometheus.dev",
     // SSE connections (same-origin by default)
-    "http://localhost:4000",
+    process.env.API_URL ?? "http://localhost:4000",
     "https://*.prometheus.dev",
     ...(options?.wsSrc ?? []),
     ...(options?.connectSrc ?? []),
@@ -118,7 +123,7 @@ export function securityHeaders(cspConfig?: CspConfig): MiddlewareHandler {
 // ---------------------------------------------------------------------------
 
 const ALLOWED_WS_ORIGINS = new Set([
-  "http://localhost:3000",
+  process.env.CORS_ORIGIN ?? "http://localhost:3000",
   "https://app.prometheus.dev",
 ]);
 

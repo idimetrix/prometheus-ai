@@ -69,7 +69,7 @@ interface GrafanaMetric {
 const SERVICE_URLS: Record<string, string> = {
   web: process.env.WEB_URL ?? "http://localhost:3000",
   api: process.env.API_URL ?? "http://localhost:4000",
-  "socket-server": process.env.SOCKET_URL ?? "http://localhost:4001",
+  "socket-server": process.env.SOCKET_SERVER_URL ?? "http://localhost:4001",
   orchestrator: process.env.ORCHESTRATOR_URL ?? "http://localhost:4002",
   "project-brain": process.env.PROJECT_BRAIN_URL ?? "http://localhost:4003",
   "model-router": process.env.MODEL_ROUTER_URL ?? "http://localhost:4004",

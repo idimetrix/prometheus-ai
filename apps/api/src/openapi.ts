@@ -261,8 +261,11 @@ export function generateOpenAPISpec(): object {
     },
     servers: [
       {
-        url: "http://localhost:4000",
-        description: "Local development",
+        url: process.env.API_URL ?? "http://localhost:4000",
+        description:
+          process.env.NODE_ENV === "production"
+            ? "Production"
+            : "Local development",
       },
     ],
     paths,

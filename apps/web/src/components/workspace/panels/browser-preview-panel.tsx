@@ -20,7 +20,8 @@ const DEVICE_PRESETS: Record<DevicePreset, DeviceConfig> = {
   mobile: { label: "Mobile", width: 375, height: 812 },
 };
 
-const DEFAULT_URL = "http://localhost:3001";
+const DEFAULT_URL =
+  process.env.NEXT_PUBLIC_PREVIEW_URL ?? "http://localhost:3001";
 
 // ---------------------------------------------------------------------------
 // BrowserPreviewPanel

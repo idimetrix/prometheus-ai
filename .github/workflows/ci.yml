@@ -112,6 +112,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Secret scanning with Gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
@@ -119,10 +125,9 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - name: Audit dependencies
-        run: pnpm audit --audit-level=high || true
+        run: pnpm audit --audit-level=critical
       - name: Check for known vulnerabilities
-        run: |
-          npx better-npm-audit audit --level high || true
+        run: npx better-npm-audit audit --level critical
 
   build:
     name: Build

@@ -24,7 +24,8 @@ import { protectedProcedure, router } from "../trpc";
 
 const logger = createLogger("sessions-router");
 
-const ORCHESTRATOR_URL = "http://localhost:4002";
+const ORCHESTRATOR_URL =
+  process.env.ORCHESTRATOR_URL ?? "http://localhost:4002";
 
 /**
  * Verify that a session belongs to the caller's org.
