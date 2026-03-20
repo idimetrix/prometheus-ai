@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -10,16 +10,20 @@ export interface WorkerInfo {
   currentOutput?: string;
   currentTask?: string;
   elapsedMs: number;
+  estimatedTotalMs?: number;
   filesModified: string[];
   id: string;
   role: string;
   status: "idle" | "working" | "paused" | "completed" | "failed";
+  tokensIn?: number;
+  tokensOut?: number;
   tokensUsed: number;
 }
 
 interface WorkerCardProps {
   onKill?: (workerId: string) => void;
   onPause?: (workerId: string) => void;
+  onReassign?: (workerId: string) => void;
   onResume?: (workerId: string) => void;
   worker: WorkerInfo;
 }
@@ -47,6 +51,8 @@ const ROLE_COLORS: Record<string, string> = {
   security: "bg-red-500/20 text-red-400",
 };
 
+const MAX_MINI_TERMINAL_LINES = 5;
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -68,6 +74,108 @@ function formatTokens(tokens: number): string {
   return tokens.toString();
 }
 
+function getProgressBarColor(percentage: number): string {
+  if (percentage >= 90) {
+    return "bg-green-500";
+  }
+  if (percentage >= 50) {
+    return "bg-blue-500";
+  }
+  return "bg-violet-500";
+}
+
+// ---------------------------------------------------------------------------
+// Sub-components
+// ---------------------------------------------------------------------------
+
+function ProgressBar({
+  elapsedMs,
+  estimatedTotalMs,
+}: {
+  elapsedMs: number;
+  estimatedTotalMs: number;
+}) {
+  const percentage = Math.min(
+    100,
+    (elapsedMs / Math.max(estimatedTotalMs, 1)) * 100
+  );
+  const barColor = getProgressBarColor(percentage);
+
+  return (
+    <div className="mt-2">
+      <div className="flex items-center justify-between text-[9px]">
+        <span className="text-zinc-500">Progress</span>
+        <span className="font-mono text-zinc-400">
+          {Math.round(percentage)}%
+        </span>
+      </div>
+      <div className="mt-0.5 h-1.5 w-full overflow-hidden rounded-full bg-zinc-800">
+        <div
+          className={`h-full rounded-full transition-all duration-500 ${barColor}`}
+          style={{ width: `${percentage}%` }}
+        />
+      </div>
+    </div>
+  );
+}
+
+function MiniTerminal({ output }: { output: string }) {
+  const lines = useMemo(() => {
+    const allLines = output.split("\n");
+    return allLines.slice(-MAX_MINI_TERMINAL_LINES);
+  }, [output]);
+
+  return (
+    <div className="mt-2 overflow-hidden rounded bg-zinc-950 p-2">
+      <div className="mb-1 flex items-center gap-1 text-[9px] text-zinc-600">
+        <svg
+          aria-hidden="true"
+          className="h-2.5 w-2.5"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth={2}
+          viewBox="0 0 24 24"
+        >
+          <path
+            d="M6.75 7.5l3 2.25-3 2.25m4.5 0h3"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+        </svg>
+        Output
+      </div>
+      <pre className="font-mono text-[10px] text-zinc-500 leading-relaxed">
+        {lines.map((line, idx) => (
+          <div className="truncate" key={`line-${String(idx)}`}>
+            {line}
+          </div>
+        ))}
+      </pre>
+    </div>
+  );
+}
+
+function ElapsedTimer({ initialMs }: { initialMs: number }) {
+  const [displayMs, setDisplayMs] = useState(initialMs);
+
+  useEffect(() => {
+    setDisplayMs(initialMs);
+  }, [initialMs]);
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setDisplayMs((prev) => prev + 1000);
+    }, 1000);
+    return () => clearInterval(interval);
+  }, []);
+
+  return (
+    <span className="font-mono text-xs text-zinc-300">
+      {formatElapsed(displayMs)}
+    </span>
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Component
 // ---------------------------------------------------------------------------
@@ -77,6 +185,7 @@ export function WorkerCard({
   onPause,
   onResume,
   onKill,
+  onReassign,
 }: WorkerCardProps) {
   const statusInfo: { color: string; label: string } = STATUS_INDICATORS[
     worker.status
@@ -94,6 +203,13 @@ export function WorkerCard({
   const handleKill = useCallback(() => {
     onKill?.(worker.id);
   }, [onKill, worker.id]);
+
+  const handleReassign = useCallback(() => {
+    onReassign?.(worker.id);
+  }, [onReassign, worker.id]);
+
+  const tokensIn = worker.tokensIn ?? 0;
+  const tokensOut = worker.tokensOut ?? 0;
 
   return (
     <div className="group rounded-xl border border-zinc-800 bg-zinc-900/50 p-4 transition-colors hover:border-zinc-700">
@@ -125,33 +241,57 @@ export function WorkerCard({
         </div>
       )}
 
-      {/* Streaming output preview */}
-      {worker.currentOutput && worker.status === "working" && (
-        <div className="mt-2 max-h-16 overflow-hidden rounded bg-zinc-950 p-2">
-          <pre className="font-mono text-[10px] text-zinc-500 leading-relaxed">
-            {worker.currentOutput.slice(-200)}
-          </pre>
-        </div>
+      {/* Progress bar */}
+      {worker.estimatedTotalMs && worker.status === "working" && (
+        <ProgressBar
+          elapsedMs={worker.elapsedMs}
+          estimatedTotalMs={worker.estimatedTotalMs}
+        />
       )}
 
-      {/* Metrics */}
-      <div className="mt-3 grid grid-cols-3 gap-2">
-        <div>
-          <div className="text-[10px] text-zinc-600">Files</div>
-          <div className="font-mono text-xs text-zinc-300">
-            {worker.filesModified.length}
+      {/* Mini terminal showing last 5 lines of output */}
+      {worker.currentOutput && worker.status === "working" && (
+        <MiniTerminal output={worker.currentOutput} />
+      )}
+
+      {/* Token counter and metrics */}
+      <div className="mt-3 flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <div>
+            <div className="text-[9px] text-zinc-600">In</div>
+            <div className="font-mono text-[10px] text-zinc-400">
+              {formatTokens(tokensIn)}
+            </div>
+          </div>
+          <div>
+            <div className="text-[9px] text-zinc-600">Out</div>
+            <div className="font-mono text-[10px] text-zinc-400">
+              {formatTokens(tokensOut)}
+            </div>
+          </div>
+          <div>
+            <div className="text-[9px] text-zinc-600">Total</div>
+            <div className="font-mono text-[10px] text-zinc-300">
+              {formatTokens(worker.tokensUsed)}
+            </div>
           </div>
         </div>
-        <div>
-          <div className="text-[10px] text-zinc-600">Tokens</div>
-          <div className="font-mono text-xs text-zinc-300">
-            {formatTokens(worker.tokensUsed)}
+        <div className="flex items-center gap-2">
+          <div>
+            <div className="text-[9px] text-zinc-600">Files</div>
+            <div className="font-mono text-[10px] text-zinc-400">
+              {worker.filesModified.length}
+            </div>
           </div>
-        </div>
-        <div>
-          <div className="text-[10px] text-zinc-600">Elapsed</div>
-          <div className="font-mono text-xs text-zinc-300">
-            {formatElapsed(worker.elapsedMs)}
+          <div>
+            <div className="text-[9px] text-zinc-600">Elapsed</div>
+            {worker.status === "working" ? (
+              <ElapsedTimer initialMs={worker.elapsedMs} />
+            ) : (
+              <div className="font-mono text-xs text-zinc-300">
+                {formatElapsed(worker.elapsedMs)}
+              </div>
+            )}
           </div>
         </div>
       </div>
@@ -183,7 +323,16 @@ export function WorkerCard({
               onClick={handleKill}
               type="button"
             >
-              Kill
+              Stop
+            </button>
+          )}
+          {onReassign && (
+            <button
+              className="flex-1 rounded-lg border border-violet-500/30 bg-violet-500/10 px-2 py-1 font-medium text-[10px] text-violet-300 hover:bg-violet-500/20"
+              onClick={handleReassign}
+              type="button"
+            >
+              Reassign
             </button>
           )}
         </div>

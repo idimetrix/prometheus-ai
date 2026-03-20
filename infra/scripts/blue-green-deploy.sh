@@ -49,14 +49,81 @@ if [ -n "$NEW_POD" ]; then
   fi
 fi
 
-# Switch service selectors to new color
-echo "Switching traffic to ${NEW_COLOR}..."
-for svc in api orchestrator project-brain model-router mcp-gateway socket-server; do
-  kubectl patch svc ${svc} -n "$NAMESPACE" \
-    -p "{\"spec\":{\"selector\":{\"color\":\"${NEW_COLOR}\"}}}" 2>/dev/null || true
+# ─── Canary Phase: Shift traffic gradually ────────────────────────────
+CANARY_PERCENTAGES="${CANARY_STEPS:-10 25 50 100}"
+CANARY_INTERVAL="${CANARY_INTERVAL_SEC:-60}"
+ERROR_THRESHOLD="${ERROR_THRESHOLD:-0.05}"
+
+echo "Starting canary rollout with steps: ${CANARY_PERCENTAGES}"
+
+for PERCENT in $CANARY_PERCENTAGES; do
+  echo "Shifting ${PERCENT}% traffic to ${NEW_COLOR}..."
+
+  if [ "$PERCENT" -ge 100 ]; then
+    # Full cutover: switch service selectors entirely
+    for svc in api orchestrator project-brain model-router mcp-gateway socket-server; do
+      kubectl patch svc ${svc} -n "$NAMESPACE" \
+        -p "{\"spec\":{\"selector\":{\"color\":\"${NEW_COLOR}\"}}}" 2>/dev/null || true
+    done
+  else
+    # Partial traffic: use annotation-based weight for ingress/service mesh
+    for svc in api orchestrator project-brain model-router mcp-gateway socket-server; do
+      kubectl annotate svc ${svc} -n "$NAMESPACE" \
+        "prometheus.dev/canary-weight=${PERCENT}" \
+        "prometheus.dev/canary-color=${NEW_COLOR}" \
+        --overwrite 2>/dev/null || true
+    done
+  fi
+
+  # Wait and observe error rates
+  echo "Observing error rates for ${CANARY_INTERVAL}s at ${PERCENT}% traffic..."
+  sleep "$CANARY_INTERVAL"
+
+  # Auto-rollback check: query error rate from the new deployment
+  CANARY_POD=$(kubectl get pods -n "$NAMESPACE" -l "app=api,color=${NEW_COLOR}" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
+  if [ -n "$CANARY_POD" ]; then
+    METRICS=$(kubectl exec -n "$NAMESPACE" "$CANARY_POD" -- wget -qO- http://localhost:4000/metrics 2>/dev/null || echo "")
+    ERROR_COUNT=$(echo "$METRICS" | grep -c 'status="5' || echo "0")
+    TOTAL_COUNT=$(echo "$METRICS" | grep -c 'http_requests_total' || echo "1")
+
+    if [ "$TOTAL_COUNT" -gt 0 ]; then
+      ERROR_RATE=$(awk "BEGIN {printf \"%.4f\", $ERROR_COUNT / $TOTAL_COUNT}")
+      echo "Current error rate: ${ERROR_RATE} (threshold: ${ERROR_THRESHOLD})"
+
+      EXCEEDS=$(awk "BEGIN {print ($ERROR_RATE > $ERROR_THRESHOLD) ? 1 : 0}")
+      if [ "$EXCEEDS" -eq 1 ]; then
+        echo "ERROR: Error rate ${ERROR_RATE} exceeds threshold ${ERROR_THRESHOLD}!"
+        echo "AUTO-ROLLBACK: Reverting traffic to ${CURRENT_COLOR}..."
+
+        # Remove canary annotations and revert selectors
+        for svc in api orchestrator project-brain model-router mcp-gateway socket-server; do
+          kubectl annotate svc ${svc} -n "$NAMESPACE" \
+            "prometheus.dev/canary-weight-" \
+            "prometheus.dev/canary-color-" \
+            --overwrite 2>/dev/null || true
+          kubectl patch svc ${svc} -n "$NAMESPACE" \
+            -p "{\"spec\":{\"selector\":{\"color\":\"${CURRENT_COLOR}\"}}}" 2>/dev/null || true
+        done
+
+        echo "Rollback complete. Traffic restored to ${CURRENT_COLOR}."
+        exit 1
+      fi
+    fi
+  fi
+
+  echo "Canary at ${PERCENT}% looks healthy."
 done
 
-echo "Traffic switched to ${NEW_COLOR}!"
+echo "Traffic fully switched to ${NEW_COLOR}!"
+
+# Clean up canary annotations
+for svc in api orchestrator project-brain model-router mcp-gateway socket-server; do
+  kubectl annotate svc ${svc} -n "$NAMESPACE" \
+    "prometheus.dev/canary-weight-" \
+    "prometheus.dev/canary-color-" \
+    --overwrite 2>/dev/null || true
+done
+
 echo "Old color (${CURRENT_COLOR}) will remain for ${ROLLBACK_TIMEOUT}s for instant rollback."
 echo ""
 echo "To rollback immediately:"

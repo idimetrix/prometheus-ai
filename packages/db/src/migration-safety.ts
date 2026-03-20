@@ -454,3 +454,124 @@ export async function runSafeMigration(
     await releaseMigrationLock(db, lock.lockId);
   }
 }
+
+// ─── Enhanced Safety Checks ──────────────────────────────────────────────────
+
+const ALTER_TABLE_RE = /ALTER\s+TABLE\s+(\w+)/gi;
+const CREATE_INDEX_RE = /CREATE\s+INDEX\s+(?!CONCURRENTLY)/gi;
+const DROP_INDEX_RE = /DROP\s+INDEX\s+(?!CONCURRENTLY)/gi;
+const ADD_COLUMN_NOT_NULL_RE =
+  /ADD\s+COLUMN\s+\w+\s+\w+.*NOT\s+NULL(?!\s+DEFAULT)/gi;
+
+export async function estimateAlterTableDuration(
+  db: Database,
+  tableName: string
+): Promise<{ estimatedMs: number; rowCount: number }> {
+  try {
+    const result = await db.execute(
+      sql`SELECT reltuples::bigint AS row_count FROM pg_class WHERE relname = ${tableName}`
+    );
+    const rows = result as unknown as Array<{ row_count: string }>;
+    const rowCount = Number(rows[0]?.row_count ?? 0);
+    // Rough estimate: 1ms per 1000 rows for ALTER TABLE with rewrite
+    const estimatedMs = Math.max(100, Math.ceil(rowCount / 1000));
+    return { rowCount, estimatedMs };
+  } catch {
+    return { rowCount: 0, estimatedMs: 0 };
+  }
+}
+
+export function detectNonConcurrentIndexCreation(
+  migrationSql: string
+): string[] {
+  const issues: string[] = [];
+
+  const createMatches = migrationSql.match(CREATE_INDEX_RE);
+  if (createMatches) {
+    for (const match of createMatches) {
+      issues.push(
+        `Non-concurrent CREATE INDEX detected: "${match.trim()}". Use CREATE INDEX CONCURRENTLY to avoid locking the table.`
+      );
+    }
+  }
+
+  const dropMatches = migrationSql.match(DROP_INDEX_RE);
+  if (dropMatches) {
+    for (const match of dropMatches) {
+      issues.push(
+        `Non-concurrent DROP INDEX detected: "${match.trim()}". Use DROP INDEX CONCURRENTLY to avoid locking.`
+      );
+    }
+  }
+
+  return issues;
+}
+
+export function verifyForwardBackwardCompatibility(migrationSql: string): {
+  compatible: boolean;
+  issues: string[];
+} {
+  const issues: string[] = [];
+
+  // Check for NOT NULL columns without DEFAULT
+  const notNullMatches = migrationSql.match(ADD_COLUMN_NOT_NULL_RE);
+  if (notNullMatches) {
+    for (const match of notNullMatches) {
+      issues.push(
+        `Adding NOT NULL column without DEFAULT: "${match.trim()}". Old code will fail to INSERT. Add a DEFAULT or make nullable first.`
+      );
+    }
+  }
+
+  // Check for ALTER TABLE that may require table rewrite
+  const alterMatches = [...migrationSql.matchAll(ALTER_TABLE_RE)];
+  for (const match of alterMatches) {
+    const tableName = match[1] ?? "unknown";
+    if (
+      migrationSql.includes("ALTER COLUMN") &&
+      migrationSql.includes("TYPE")
+    ) {
+      issues.push(
+        `ALTER COLUMN TYPE on "${tableName}" requires a full table rewrite. Consider a two-phase migration.`
+      );
+    }
+  }
+
+  return { compatible: issues.length === 0, issues };
+}
+
+export async function analyzeMigration(
+  db: Database,
+  migrationSql: string
+): Promise<{
+  compatible: boolean;
+  duration: Array<{ estimatedMs: number; rowCount: number; table: string }>;
+  indexIssues: string[];
+  issues: string[];
+  validation: MigrationValidationResult;
+}> {
+  const validation = validateMigrationSQL(migrationSql);
+  const indexIssues = detectNonConcurrentIndexCreation(migrationSql);
+  const compatibility = verifyForwardBackwardCompatibility(migrationSql);
+
+  // Estimate duration for each ALTER TABLE
+  const alterMatches = [...migrationSql.matchAll(ALTER_TABLE_RE)];
+  const duration: Array<{
+    estimatedMs: number;
+    rowCount: number;
+    table: string;
+  }> = [];
+  for (const match of alterMatches) {
+    const tableName = match[1] ?? "unknown";
+    const estimate = await estimateAlterTableDuration(db, tableName);
+    duration.push({ table: tableName, ...estimate });
+  }
+
+  return {
+    validation,
+    indexIssues,
+    compatible: compatibility.compatible,
+    issues: [...validation.errors, ...indexIssues, ...compatibility.issues],
+    duration,
+  };
+}

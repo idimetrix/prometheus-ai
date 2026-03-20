@@ -1,10 +1,15 @@
 import { serve } from "@hono/node-server";
 import { createLogger } from "@prometheus/logger";
 import { initSentry, initTelemetry } from "@prometheus/telemetry";
+import {
+  installShutdownHandlers,
+  isProcessShuttingDown,
+} from "@prometheus/utils";
 import { Hono } from "hono";
 
 await initTelemetry({ serviceName: "project-brain" });
 initSentry({ serviceName: "project-brain" });
+installShutdownHandlers();
 
 import { ConventionExtractor } from "./analyzers/convention-extractor";
 import { BlueprintAutoUpdater } from "./blueprint/auto-updater";
@@ -67,6 +72,9 @@ const blueprintEnforcer = new BlueprintEnforcer();
 // ---- Health ----
 
 app.get("/health", async (c) => {
+  if (isProcessShuttingDown()) {
+    return c.json({ status: "draining" }, 503);
+  }
   const checks: Record<string, boolean> = {};
 
   // Check Redis connectivity (used by working memory layer)

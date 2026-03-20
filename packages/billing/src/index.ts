@@ -1,4 +1,5 @@
 export type {
+  AuditedTransaction,
   CreditBalance,
   CreditOperation,
   ReservationResult,

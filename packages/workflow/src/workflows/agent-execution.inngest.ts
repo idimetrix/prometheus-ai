@@ -13,31 +13,26 @@ import type {
   PRResult,
   ReviewResult,
 } from "./agent-execution";
+import { runCILoop } from "./phases/ci-loop";
+import { runCodingStep } from "./phases/coding";
+import { runDiscovery } from "./phases/discovery";
+import { runReviewPhase } from "./phases/review";
+import { runSecurityPhase } from "./phases/security";
+import { runTestingPhase } from "./phases/testing";
 
 const logger = createLogger("workflow:agent-execution");
 
-/** Default retry configuration for agent execution steps */
-const RETRY_CONFIG = {
-  retries: 3 as const,
-};
+const RETRY_CONFIG = { retries: 3 as const };
 
-/**
- * Agent Execution Workflow -- Inngest durable function.
- *
- * Implements the full agent pipeline as durable steps:
- *   discovery -> architecture -> planning -> coding -> testing -> CI loop -> security -> deploy
- *
- * Each phase is a durable step that can be retried independently.
- * The workflow survives process restarts and will resume from the last
- * completed step.
- *
- * Features:
- * - step.run() for each phase with automatic checkpointing
- * - step.sleep() for backpressure between phases
- * - step.sendEvent() for emitting Redis events on phase completion
- * - step.waitForEvent() for human approval checkpoints
- * - Proper error handling and retry configuration
- */
+const JSON_ARRAY_RE = /\[[\s\S]*\]/;
+
+const PROJECT_BRAIN_URL =
+  process.env.PROJECT_BRAIN_URL ?? "http://localhost:4003";
+const ORCHESTRATOR_URL =
+  process.env.ORCHESTRATOR_URL ?? "http://localhost:4002";
+const MODEL_ROUTER_URL =
+  process.env.MODEL_ROUTER_URL ?? "http://localhost:4004";
+
 export const agentExecutionWorkflow: ReturnType<typeof inngest.createFunction> =
   inngest.createFunction(
     {
@@ -45,12 +40,7 @@ export const agentExecutionWorkflow: ReturnType<typeof inngest.createFunction> =
       name: "Agent Execution Pipeline",
       ...RETRY_CONFIG,
       triggers: [{ event: "prometheus/agent.execution.requested" }],
-      concurrency: [
-        {
-          limit: 10,
-          key: "event.data.orgId",
-        },
-      ],
+      concurrency: [{ limit: 10, key: "event.data.orgId" }],
       cancelOn: [
         {
           event: "prometheus/agent.execution.cancelled",
@@ -59,8 +49,15 @@ export const agentExecutionWorkflow: ReturnType<typeof inngest.createFunction> =
       ],
     },
     async ({ event, step }: WorkflowContext<AgentExecutionEvent>) => {
-      const { taskId, sessionId, taskDescription, mode, agentRole, orgId } =
-        event.data;
+      const {
+        taskId,
+        sessionId,
+        taskDescription,
+        mode,
+        agentRole,
+        orgId,
+        projectId,
+      } = event.data;
 
       logger.info(
         { taskId, sessionId, mode, orgId },
@@ -68,20 +65,16 @@ export const agentExecutionWorkflow: ReturnType<typeof inngest.createFunction> =
       );
 
       // ── Phase 1: Discovery ──────────────────────────────────────────
-      const discoveryResult = await step.run("discovery", () => {
-        logger.info({ taskId }, "Phase: Discovery -- analyzing codebase");
-        return {
-          codebaseContext: {
-            languages: [] as string[],
-            frameworks: [] as string[],
-            entryPoints: [] as string[],
-          },
-          relevantFiles: [] as string[],
+      const discoveryResult = await step.run("discovery", () =>
+        runDiscovery({
           taskId,
-        };
-      });
+          taskDescription,
+          projectId,
+          orgId,
+          projectBrainUrl: PROJECT_BRAIN_URL,
+        })
+      );
 
-      // Emit discovery completion event
       await step.sendEvent("discovery-completed", {
         name: "prometheus/agent.step.completed",
         data: {
@@ -96,15 +89,16 @@ export const agentExecutionWorkflow: ReturnType<typeof inngest.createFunction> =
         },
       });
 
-      // Backpressure between phases
       await step.sleep("post-discovery-backpressure", "1s");
 
       // ── Phase 2: Architecture ───────────────────────────────────────
       const architectureResult = await step.run("architecture", () => {
-        logger.info({ taskId }, "Phase: Architecture -- determining approach");
+        logger.info({ taskId }, "Phase: Architecture");
         return {
           approach: "incremental" as const,
-          affectedModules: [] as string[],
+          affectedModules: discoveryResult.relevantFiles.map((f) =>
+            f.split("/").slice(0, 3).join("/")
+          ),
           estimatedComplexity: "medium" as const,
           discoveredFiles: discoveryResult.relevantFiles,
         };
@@ -118,7 +112,7 @@ export const agentExecutionWorkflow: ReturnType<typeof inngest.createFunction> =
           stepId: "architecture",
           phase: "architecture",
           success: true,
-          output: `Architecture: ${architectureResult.approach} approach, ${architectureResult.affectedModules.length} modules affected`,
+          output: `Architecture: ${architectureResult.approach}, ${architectureResult.affectedModules.length} modules`,
           filesChanged: [],
           tokensUsed: { input: 0, output: 0 },
         },
@@ -126,10 +120,66 @@ export const agentExecutionWorkflow: ReturnType<typeof inngest.createFunction> =
 
       await step.sleep("post-architecture-backpressure", "1s");
 
-      // ── Phase 3: Planning ───────────────────────────────────────────
-      const plan = await step.run("planning", () => {
-        logger.info({ taskId }, "Phase: Planning -- generating execution plan");
-        const steps: PlanStep[] = [
+      // ── Phase 3: Planning (LLM-generated) ───────────────────────────
+      const plan = await step.run("planning", async () => {
+        logger.info({ taskId }, "Phase: Planning");
+
+        try {
+          const response = await fetch(`${MODEL_ROUTER_URL}/route`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              slot: "default",
+              messages: [
+                {
+                  role: "system",
+                  content:
+                    "You are a planning agent. Break the task into steps. Return JSON array with id, title, description, agentRole, estimatedTokens.",
+                },
+                {
+                  role: "user",
+                  content: `Task: ${taskDescription}\nRelevant files: ${discoveryResult.relevantFiles.join(", ")}`,
+                },
+              ],
+              options: { maxTokens: 4096 },
+            }),
+          });
+
+          if (response.ok) {
+            const data = (await response.json()) as {
+              content?: string;
+              choices?: Array<{ message?: { content?: string } }>;
+            };
+            const content =
+              data.content ?? data.choices?.[0]?.message?.content ?? "";
+            const jsonMatch = content.match(JSON_ARRAY_RE);
+            if (jsonMatch) {
+              const parsed = JSON.parse(jsonMatch[0]) as Array<{
+                id?: string;
+                title: string;
+                description: string;
+                agentRole?: string;
+                estimatedTokens?: number;
+                dependencies?: string[];
+              }>;
+              return parsed.map((s, i) => ({
+                id: s.id ?? `${taskId}-step-${i + 1}`,
+                title: s.title,
+                description: s.description,
+                agentRole: s.agentRole ?? agentRole ?? "coder",
+                estimatedTokens: s.estimatedTokens ?? 5000,
+                dependencies: s.dependencies,
+              }));
+            }
+          }
+        } catch (error) {
+          logger.warn(
+            { taskId, error: String(error) },
+            "LLM planning failed, using single-step plan"
+          );
+        }
+
+        return [
           {
             id: `${taskId}-step-1`,
             title: "Implement changes",
@@ -137,8 +187,7 @@ export const agentExecutionWorkflow: ReturnType<typeof inngest.createFunction> =
             agentRole: agentRole ?? "coder",
             estimatedTokens: 5000,
           },
-        ];
-        return steps;
+        ] satisfies PlanStep[];
       });
 
       await step.sendEvent("planning-completed", {
@@ -155,7 +204,7 @@ export const agentExecutionWorkflow: ReturnType<typeof inngest.createFunction> =
         },
       });
 
-      // ── Phase 4: Approval (wait for human signal if required) ───────
+      // ── Phase 4: Approval (if supervised) ───────────────────────────
       let approval: ApprovalResult | null = null;
       if (mode === "supervised") {
         approval = (await step.waitForEvent("wait-for-approval", {
@@ -179,55 +228,146 @@ export const agentExecutionWorkflow: ReturnType<typeof inngest.createFunction> =
         }
       }
 
-      // ── Phase 5: Coding -- execute each plan step ────────────────────
+      // ── Phase 5: Coding (parallel where possible) ───────────────────
       const executions: ExecutionResult[] = [];
-      for (const planStep of plan) {
-        const result = await step.run(`coding-${planStep.id}`, () => {
-          logger.info(
-            { taskId, stepId: planStep.id },
-            "Phase: Coding -- executing step"
+      const completedStepIds = new Set<string>();
+      const remainingSteps = [...plan];
+
+      while (remainingSteps.length > 0) {
+        // Find steps whose dependencies are satisfied
+        const readySteps = remainingSteps.filter((s) => {
+          const deps = (s as PlanStep & { dependencies?: string[] })
+            .dependencies;
+          if (!deps || deps.length === 0) {
+            return true;
+          }
+          return deps.every((depId) => completedStepIds.has(depId));
+        });
+
+        const stepsToExecute =
+          readySteps.length > 0 ? readySteps : [remainingSteps[0] as PlanStep];
+
+        // Remove selected from remaining
+        const selectedIds = new Set(stepsToExecute.map((s) => s.id));
+        const nextRemaining = remainingSteps.filter(
+          (s) => !selectedIds.has(s.id)
+        );
+        remainingSteps.length = 0;
+        remainingSteps.push(...nextRemaining);
+
+        if (stepsToExecute.length === 1) {
+          const planStep = stepsToExecute[0] as PlanStep;
+          const result = await step.run(`coding-${planStep.id}`, () =>
+            runCodingStep(
+              {
+                taskId,
+                sessionId,
+                projectId,
+                orgId,
+                orchestratorUrl: ORCHESTRATOR_URL,
+              },
+              planStep
+            )
           );
 
-          return {
-            stepId: planStep.id,
-            success: true,
-            output: `Executed: ${planStep.title}`,
-            filesChanged: [] as string[],
-            tokensUsed: { input: 0, output: 0 },
-          } satisfies ExecutionResult;
-        });
+          await step.sendEvent(`coding-step-completed-${planStep.id}`, {
+            name: "prometheus/agent.step.completed",
+            data: {
+              taskId,
+              sessionId,
+              stepId: planStep.id,
+              phase: "coding",
+              success: result.success,
+              output: result.output,
+              filesChanged: result.filesChanged,
+              tokensUsed: result.tokensUsed,
+            },
+          });
 
-        // Emit progress event for each coding step
-        await step.sendEvent(`coding-step-completed-${planStep.id}`, {
-          name: "prometheus/agent.step.completed",
-          data: {
-            taskId,
-            sessionId,
-            stepId: planStep.id,
-            phase: "coding",
-            success: result.success,
-            output: result.output,
-            filesChanged: result.filesChanged,
-            tokensUsed: result.tokensUsed,
-          },
-        });
+          executions.push(result);
+          completedStepIds.add(planStep.id);
+          await step.sleep(`post-coding-${planStep.id}`, "500ms");
+        } else {
+          // Parallel execution via Promise.allSettled
+          logger.info(
+            { taskId, parallelCount: stepsToExecute.length },
+            "Executing steps in parallel"
+          );
 
-        executions.push(result);
+          const parallelResults = await Promise.allSettled(
+            stepsToExecute.map((planStep) =>
+              step.run(`coding-${planStep.id}`, () =>
+                runCodingStep(
+                  {
+                    taskId,
+                    sessionId,
+                    projectId,
+                    orgId,
+                    orchestratorUrl: ORCHESTRATOR_URL,
+                  },
+                  planStep
+                )
+              )
+            )
+          );
 
-        // Backpressure between coding steps
-        await step.sleep(`post-coding-${planStep.id}-backpressure`, "500ms");
+          for (let idx = 0; idx < stepsToExecute.length; idx++) {
+            const planStep = stepsToExecute[idx] as PlanStep;
+            const settled = parallelResults[idx];
+            const result: ExecutionResult =
+              settled && settled.status === "fulfilled"
+                ? settled.value
+                : {
+                    stepId: planStep.id,
+                    success: false,
+                    output:
+                      settled && settled.status === "rejected"
+                        ? String(settled.reason)
+                        : "Unknown error",
+                    filesChanged: [],
+                    tokensUsed: { input: 0, output: 0 },
+                    error:
+                      settled && settled.status === "rejected"
+                        ? String(settled.reason)
+                        : "Unknown error",
+                  };
+
+            await step.sendEvent(`coding-step-completed-${planStep.id}`, {
+              name: "prometheus/agent.step.completed",
+              data: {
+                taskId,
+                sessionId,
+                stepId: planStep.id,
+                phase: "coding",
+                success: result.success,
+                output: result.output,
+                filesChanged: result.filesChanged,
+                tokensUsed: result.tokensUsed,
+              },
+            });
+
+            executions.push(result);
+            completedStepIds.add(planStep.id);
+          }
+
+          await step.sleep("post-parallel-coding", "500ms");
+        }
       }
 
+      const allFilesChanged = executions.flatMap((e) => e.filesChanged);
+
       // ── Phase 6: Testing ────────────────────────────────────────────
-      const testResult = await step.run("testing", () => {
-        logger.info({ taskId }, "Phase: Testing -- running test suite");
-        return {
-          passed: true,
-          testsRun: 0,
-          testsFailed: 0,
-          coverage: null as number | null,
-        };
-      });
+      const testResult = await step.run("testing", () =>
+        runTestingPhase({
+          taskId,
+          sessionId,
+          projectId,
+          orgId,
+          filesChanged: allFilesChanged,
+          testRunner: discoveryResult.codebaseContext.testRunner,
+          orchestratorUrl: ORCHESTRATOR_URL,
+        })
+      );
 
       await step.sendEvent("testing-completed", {
         name: "prometheus/agent.step.completed",
@@ -246,15 +386,15 @@ export const agentExecutionWorkflow: ReturnType<typeof inngest.createFunction> =
       await step.sleep("post-testing-backpressure", "1s");
 
       // ── Phase 7: CI Loop ────────────────────────────────────────────
-      const ciResult = await step.run("ci-loop", () => {
-        logger.info({ taskId }, "Phase: CI Loop -- verifying build and lint");
-        return {
-          buildPassed: true,
-          lintPassed: true,
-          typecheckPassed: true,
-          iterations: 1,
-        };
-      });
+      const ciResult = await step.run("ci-loop", () =>
+        runCILoop({
+          taskId,
+          sessionId,
+          projectId,
+          orgId,
+          orchestratorUrl: ORCHESTRATOR_URL,
+        })
+      );
 
       await step.sendEvent("ci-completed", {
         name: "prometheus/agent.step.completed",
@@ -263,24 +403,27 @@ export const agentExecutionWorkflow: ReturnType<typeof inngest.createFunction> =
           sessionId,
           stepId: "ci-loop",
           phase: "ci",
-          success: ciResult.buildPassed && ciResult.lintPassed,
-          output: `CI: build=${ciResult.buildPassed}, lint=${ciResult.lintPassed}, typecheck=${ciResult.typecheckPassed}`,
+          success:
+            ciResult.buildPassed &&
+            ciResult.lintPassed &&
+            ciResult.typecheckPassed,
+          output: `CI: build=${ciResult.buildPassed}, lint=${ciResult.lintPassed}, typecheck=${ciResult.typecheckPassed} (${ciResult.iterations} iters)`,
           filesChanged: [],
           tokensUsed: { input: 0, output: 0 },
         },
       });
 
       // ── Phase 8: Security ───────────────────────────────────────────
-      const securityResult = await step.run("security", () => {
-        logger.info({ taskId }, "Phase: Security -- running security scan");
-        return {
-          vulnerabilities: [] as Array<{
-            severity: string;
-            description: string;
-          }>,
-          passed: true,
-        };
-      });
+      const securityResult = await step.run("security", () =>
+        runSecurityPhase({
+          taskId,
+          sessionId,
+          projectId,
+          orgId,
+          filesChanged: allFilesChanged,
+          orchestratorUrl: ORCHESTRATOR_URL,
+        })
+      );
 
       await step.sendEvent("security-completed", {
         name: "prometheus/agent.step.completed",
@@ -290,29 +433,34 @@ export const agentExecutionWorkflow: ReturnType<typeof inngest.createFunction> =
           stepId: "security",
           phase: "security",
           success: securityResult.passed,
-          output: `Security: ${securityResult.vulnerabilities.length} vulnerabilities found`,
+          output: `Security: ${securityResult.vulnerabilities.length} vulns, ${securityResult.secretsFound} secrets`,
           filesChanged: [],
           tokensUsed: { input: 0, output: 0 },
         },
       });
 
       // ── Phase 9: Review ─────────────────────────────────────────────
-      const review = await step.run("review", () => {
-        logger.info({ taskId }, "Phase: Review -- automated code review");
-        return {
-          passed:
-            testResult.passed && ciResult.buildPassed && securityResult.passed,
-          reviewer: "prometheus-auto-reviewer",
-          comments: [] as string[],
-          suggestedFixes: [] as string[],
-        } satisfies ReviewResult;
-      });
+      const review: ReviewResult = await step.run("review", () =>
+        runReviewPhase({
+          taskId,
+          sessionId,
+          projectId,
+          orgId,
+          filesChanged: allFilesChanged,
+          orchestratorUrl: ORCHESTRATOR_URL,
+        })
+      );
 
       // ── Phase 10: Deploy / PR ───────────────────────────────────────
       let pr: PRResult | null = null;
-      if (review.passed) {
+      if (
+        review.passed &&
+        testResult.passed &&
+        ciResult.buildPassed &&
+        securityResult.passed
+      ) {
         pr = await step.run("deploy", () => {
-          logger.info({ taskId }, "Phase: Deploy -- creating pull request");
+          logger.info({ taskId }, "Phase: Deploy");
           return {
             url: "",
             number: 0,
@@ -343,12 +491,7 @@ export const agentExecutionWorkflow: ReturnType<typeof inngest.createFunction> =
       };
 
       logger.info(
-        {
-          taskId,
-          success: output.success,
-          steps: executions.length,
-          totalTokens,
-        },
+        { taskId, success: output.success, steps: executions.length },
         "Agent execution workflow completed"
       );
 
@@ -356,10 +499,6 @@ export const agentExecutionWorkflow: ReturnType<typeof inngest.createFunction> =
     }
   );
 
-/**
- * Get the concurrency limit for a given tier.
- * Used to configure per-organization concurrency in Inngest.
- */
 export function getConcurrencyForTier(tier: string): number {
   return TIER_CONCURRENCY_LIMITS[tier] ?? 1;
 }

@@ -11,6 +11,8 @@ const HTTP_STATUS_MAP: Record<string, number> = {
   INTERNAL_ERROR: 500,
   FORBIDDEN: 403,
   CONFLICT: 409,
+  TIMEOUT_ERROR: 504,
+  CONCURRENCY_ERROR: 409,
 };
 
 const TRPC_ERROR_MAP: Record<string, string> = {
@@ -24,7 +26,16 @@ const TRPC_ERROR_MAP: Record<string, string> = {
   INTERNAL_ERROR: "INTERNAL_SERVER_ERROR",
   FORBIDDEN: "FORBIDDEN",
   CONFLICT: "CONFLICT",
+  TIMEOUT_ERROR: "INTERNAL_SERVER_ERROR",
+  CONCURRENCY_ERROR: "CONFLICT",
 };
+
+// ─── Options for error construction ──────────────────────────────────────────
+
+interface PrometheusErrorOptions {
+  cause?: Error;
+  correlationId?: string;
+}
 
 // ─── Base Error ───────────────────────────────────────────────────────────────
 
@@ -32,17 +43,20 @@ export class PrometheusError extends Error {
   readonly code: string;
   readonly statusCode: number;
   readonly metadata: Record<string, unknown>;
+  readonly correlationId?: string;
 
   constructor(
     message: string,
     code: string,
-    metadata: Record<string, unknown> = {}
+    metadata: Record<string, unknown> = {},
+    options?: PrometheusErrorOptions
   ) {
-    super(message);
+    super(message, options?.cause ? { cause: options.cause } : undefined);
     this.name = "PrometheusError";
     this.code = code;
     this.statusCode = HTTP_STATUS_MAP[code] ?? 500;
     this.metadata = metadata;
+    this.correlationId = options?.correlationId;
   }
 
   /**
@@ -57,6 +71,7 @@ export class PrometheusError extends Error {
    */
   toJSON(): {
     code: string;
+    correlationId?: string;
     message: string;
     metadata: Record<string, unknown>;
     statusCode: number;
@@ -66,15 +81,54 @@ export class PrometheusError extends Error {
       message: this.message,
       statusCode: this.statusCode,
       metadata: this.metadata,
+      ...(this.correlationId === undefined
+        ? {}
+        : { correlationId: this.correlationId }),
     };
+  }
+
+  /**
+   * Generate telemetry attributes for observability.
+   */
+  toTelemetry(): Record<string, boolean | number | string> {
+    const attrs: Record<string, boolean | number | string> = {
+      "error.type": this.name,
+      "error.code": this.code,
+      "error.message": this.message,
+      "error.status_code": this.statusCode,
+    };
+
+    if (this.correlationId) {
+      attrs["error.correlation_id"] = this.correlationId;
+    }
+
+    if (this.cause instanceof Error) {
+      attrs["error.cause"] = this.cause.message;
+    }
+
+    for (const [key, value] of Object.entries(this.metadata)) {
+      if (
+        typeof value === "string" ||
+        typeof value === "number" ||
+        typeof value === "boolean"
+      ) {
+        attrs[`error.meta.${key}`] = value;
+      }
+    }
+
+    return attrs;
   }
 }
 
 // ─── Auth Error ───────────────────────────────────────────────────────────────
 
 export class AuthError extends PrometheusError {
-  constructor(message: string, metadata?: Record<string, unknown>) {
-    super(message, "AUTH_ERROR", metadata);
+  constructor(
+    message: string,
+    metadata?: Record<string, unknown>,
+    options?: PrometheusErrorOptions
+  ) {
+    super(message, "AUTH_ERROR", metadata, options);
     this.name = "AuthError";
   }
 }
@@ -82,8 +136,12 @@ export class AuthError extends PrometheusError {
 // ─── Validation Error ─────────────────────────────────────────────────────────
 
 export class ValidationError extends PrometheusError {
-  constructor(message: string, metadata?: Record<string, unknown>) {
-    super(message, "VALIDATION_ERROR", metadata);
+  constructor(
+    message: string,
+    metadata?: Record<string, unknown>,
+    options?: PrometheusErrorOptions
+  ) {
+    super(message, "VALIDATION_ERROR", metadata, options);
     this.name = "ValidationError";
   }
 }
@@ -155,6 +213,38 @@ export class SandboxError extends PrometheusError {
   }
 }
 
+// ─── Timeout Error ────────────────────────────────────────────────────────────
+
+export class TimeoutError extends PrometheusError {
+  readonly timeoutMs: number;
+
+  constructor(
+    message: string,
+    timeoutMs: number,
+    metadata?: Record<string, unknown>
+  ) {
+    super(message, "TIMEOUT_ERROR", { timeoutMs, ...metadata });
+    this.name = "TimeoutError";
+    this.timeoutMs = timeoutMs;
+  }
+}
+
+// ─── Concurrency Error ───────────────────────────────────────────────────────
+
+export class ConcurrencyError extends PrometheusError {
+  readonly resource: string;
+
+  constructor(
+    message: string,
+    resource: string,
+    metadata?: Record<string, unknown>
+  ) {
+    super(message, "CONCURRENCY_ERROR", { resource, ...metadata });
+    this.name = "ConcurrencyError";
+    this.resource = resource;
+  }
+}
+
 // ─── Helper: Check if value is a PrometheusError ──────────────────────────────
 
 export function isPrometheusError(error: unknown): error is PrometheusError {
@@ -164,16 +254,29 @@ export function isPrometheusError(error: unknown): error is PrometheusError {
 /**
  * Convert any error to a PrometheusError for consistent error handling.
  */
-export function toPrometheusError(error: unknown): PrometheusError {
+export function toPrometheusError(
+  error: unknown,
+  correlationId?: string
+): PrometheusError {
   if (error instanceof PrometheusError) {
     return error;
   }
 
   if (error instanceof Error) {
-    return new PrometheusError(error.message, "INTERNAL_ERROR", {
-      originalName: error.name,
-    });
+    return new PrometheusError(
+      error.message,
+      "INTERNAL_ERROR",
+      {
+        originalName: error.name,
+      },
+      { cause: error, correlationId }
+    );
   }
 
-  return new PrometheusError(String(error), "INTERNAL_ERROR");
+  return new PrometheusError(
+    String(error),
+    "INTERNAL_ERROR",
+    {},
+    { correlationId }
+  );
 }

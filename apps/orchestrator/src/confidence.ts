@@ -196,12 +196,12 @@ export class ConfidenceScorer {
       action = "escalate";
     }
 
-    // Determine model slot override
+    // Determine model slot override (check lowest threshold first)
     let recommendedSlot: string | null = null;
-    if (score < 0.5) {
-      recommendedSlot = "think"; // Upgrade to reasoning model
-    } else if (score < 0.3) {
+    if (score < 0.3) {
       recommendedSlot = "premium"; // Upgrade to most capable model
+    } else if (score < 0.5) {
+      recommendedSlot = "think"; // Upgrade to reasoning model
     }
 
     const result: ConfidenceResult = {

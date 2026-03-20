@@ -11,7 +11,9 @@
     "clean": "rm -rf dist .turbo"
   },
   "dependencies": {
+    "@prometheus/billing": "workspace:*",
     "@prometheus/logger": "workspace:*",
+    "@prometheus/utils": "workspace:*",
     "inngest": "^4.0.2"
   },
   "devDependencies": {

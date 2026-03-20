@@ -108,7 +108,10 @@ export function WorkspaceLayout({
 
   const [terminalCollapsed, setTerminalCollapsed] = useState(false);
   const [agentPanelCollapsed, setAgentPanelCollapsed] = useState(false);
-  const [_isSmallScreen, setIsSmallScreen] = useState(false);
+  const [isSmallScreen, setIsSmallScreen] = useState(false);
+  const [mobileActiveTab, setMobileActiveTab] = useState<
+    "editor" | "files" | "agent" | "terminal"
+  >("editor");
 
   // Responsive: collapse panels on small screens
   useEffect(() => {
@@ -337,8 +340,51 @@ export function WorkspaceLayout({
         )}
       </AnimatePresence>
 
-      {/* Panel Toggle Bar */}
-      <div className="pointer-events-none fixed right-4 bottom-4 z-10 flex gap-2">
+      {/* Mobile Tab Bar (visible below 768px) */}
+      {isSmallScreen && (
+        <div className="fixed right-0 bottom-0 left-0 z-20 flex border-zinc-700 border-t bg-zinc-900">
+          {(
+            [
+              { key: "files", label: "Files" },
+              { key: "editor", label: "Editor" },
+              { key: "agent", label: "Agent" },
+              { key: "terminal", label: "Terminal" },
+            ] as const
+          ).map((tab) => (
+            <button
+              className={[
+                "flex-1 py-3 text-center text-xs transition-colors",
+                mobileActiveTab === tab.key
+                  ? "bg-zinc-800 text-white"
+                  : "text-zinc-500",
+              ].join(" ")}
+              key={tab.key}
+              onClick={() => {
+                setMobileActiveTab(tab.key);
+                if (tab.key === "files" && sidebarCollapsed) {
+                  toggleSidebar();
+                }
+                if (tab.key !== "files" && !sidebarCollapsed) {
+                  toggleSidebar();
+                }
+                setAgentPanelCollapsed(tab.key !== "agent");
+                setTerminalCollapsed(tab.key !== "terminal");
+              }}
+              type="button"
+            >
+              {tab.label}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {/* Panel Toggle Bar (hidden on mobile) */}
+      <div
+        className={[
+          "pointer-events-none fixed right-4 bottom-4 z-10 flex gap-2",
+          isSmallScreen ? "hidden" : "",
+        ].join(" ")}
+      >
         <button
           className="pointer-events-auto rounded-md border border-zinc-700 bg-zinc-800/80 px-2 py-1 text-xs text-zinc-400 backdrop-blur-sm hover:text-white"
           onClick={toggleSidebar}

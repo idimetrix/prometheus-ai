@@ -1,7 +1,12 @@
 import { serve } from "@hono/node-server";
 import { createLogger } from "@prometheus/logger";
 import { initSentry } from "@prometheus/telemetry";
-import { decrypt, encrypt } from "@prometheus/utils";
+import {
+  decrypt,
+  encrypt,
+  installShutdownHandlers,
+  isProcessShuttingDown,
+} from "@prometheus/utils";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { registerConfluenceAdapter } from "./adapters/confluence";
@@ -18,6 +23,7 @@ import { registerVercelAdapter } from "./adapters/vercel";
 import { ToolRegistry } from "./registry";
 
 initSentry({ serviceName: "mcp-gateway" });
+installShutdownHandlers();
 
 const logger = createLogger("mcp-gateway");
 const app = new Hono();
@@ -72,6 +78,9 @@ registry.startHealthChecks(5 * 60 * 1000);
 // ---- Health ----
 
 app.get("/health", async (c) => {
+  if (isProcessShuttingDown()) {
+    return c.json({ status: "draining" }, 503);
+  }
   const checks: Record<string, boolean> = {};
   const healthStatuses = registry.getHealthStatuses();
 

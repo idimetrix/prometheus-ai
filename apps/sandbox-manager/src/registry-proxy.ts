@@ -15,6 +15,9 @@ const DEFAULT_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 /** Maximum cache size in bytes (1GB) */
 const DEFAULT_MAX_CACHE_BYTES = 1024 * 1024 * 1024;
 
+/** Default rate limit: max installs per sandbox per minute */
+const DEFAULT_RATE_LIMIT_PER_MINUTE = 30;
+
 /** Known vulnerable packages (basic CVE list for scanning) */
 const KNOWN_VULNERABILITIES: Map<string, string[]> = new Map([
   // Example known CVEs -- in production, this would be sourced from
@@ -24,6 +27,61 @@ const KNOWN_VULNERABILITIES: Map<string, string[]> = new Map([
   ["colors@1.4.1", ["CVE-2022-23601"]],
   ["node-ipc@10.1.1", ["CVE-2022-23812"]],
 ]);
+
+/** Known malicious packages that should always be blocked */
+const PACKAGE_BLOCKLIST: Set<string> = new Set([
+  // npm malicious packages
+  "flatmap-stream",
+  "event-stream-fork",
+  "crossenv",
+  "cross-env.js",
+  "d3.js",
+  "fabric-js",
+  "ffmpegs",
+  "grpc-native",
+  "http-proxy.js",
+  "jquery.js",
+  "mariadb",
+  "mongose",
+  "mssql.js",
+  "mssql-node",
+  "mysqljs",
+  "nodecaffe",
+  "nodefabric",
+  "nodemailer-js",
+  "noderequest",
+  "nodesass",
+  "nodesqlite",
+  "node-tkinter",
+  "opencv.js",
+  "openssl.js",
+  "proxy.js",
+  "shadowsock",
+  "smb",
+  "sqlite.js",
+  "sqliter",
+  "sqlserver",
+  "tkinter",
+  // pip malicious packages
+  "colourama",
+  "python-dateutil2",
+  "jeIlyfish",
+  "python3-dateutil",
+  "requesocks",
+  // cargo malicious packages
+  "rustdecimal",
+]);
+
+/** Suspicious patterns in post-install scripts */
+const SUSPICIOUS_POSTINSTALL_PATTERNS = [
+  /\b(curl|wget)\b.*\|.*\b(sh|bash|zsh)\b/,
+  /\b(curl|wget)\b.*-o\s+\/tmp\//,
+  /\beval\s*\(\s*(require|Buffer|atob)\b/,
+  /\bchild_process\b.*\bexec\b/,
+  /base64\s+(-d|--decode)/,
+  /\/dev\/tcp\//,
+  /\bnc\s+-e\b/,
+];
 
 interface CachedPackage {
   cachedAt: number;
@@ -36,10 +94,13 @@ interface CachedPackage {
 }
 
 export interface ProxyResult {
+  blocked: boolean;
+  blockReason?: string;
   cached: boolean;
   contentType: string;
   data: string;
   statusCode: number;
+  suspiciousPostInstall: boolean;
   vulnerabilities: string[];
 }
 
@@ -48,6 +109,14 @@ interface RegistryProxyConfig {
   cacheTtlMs?: number;
   /** Maximum cache size in bytes (default: 1GB) */
   maxCacheBytes?: number;
+  /** Max installs per sandbox per minute (default: 30) */
+  rateLimitPerMinute?: number;
+}
+
+/** Rate limit tracker per sandbox */
+interface RateLimitEntry {
+  count: number;
+  windowStart: number;
 }
 
 /**
@@ -56,6 +125,9 @@ interface RegistryProxyConfig {
  * Features:
  * - Transparent caching of downloaded packages
  * - Basic vulnerability scanning against known CVE list
+ * - Package blocklist for known malicious packages
+ * - Suspicious post-install script detection
+ * - Per-sandbox rate limiting for installs
  * - Support for npm, pip, and cargo registries
  * - Automatic cache eviction when size exceeds limit
  */
@@ -63,24 +135,65 @@ export class RegistryProxy {
   private readonly cache = new Map<string, CachedPackage>();
   private readonly cacheTtlMs: number;
   private readonly maxCacheBytes: number;
+  private readonly rateLimitPerMinute: number;
+  private readonly rateLimits = new Map<string, RateLimitEntry>();
   private totalCacheBytes = 0;
 
   constructor(config?: RegistryProxyConfig) {
     this.cacheTtlMs = config?.cacheTtlMs ?? DEFAULT_CACHE_TTL_MS;
     this.maxCacheBytes = config?.maxCacheBytes ?? DEFAULT_MAX_CACHE_BYTES;
+    this.rateLimitPerMinute =
+      config?.rateLimitPerMinute ?? DEFAULT_RATE_LIMIT_PER_MINUTE;
   }
 
   /**
    * Proxy a package request through the cache.
-   * Checks cache first, then fetches from the registry if needed.
-   * Performs basic vulnerability scanning before returning.
+   * Checks blocklist, rate limits, cache, then fetches from the registry if needed.
+   * Performs basic vulnerability scanning and post-install script detection before returning.
    */
   async proxyRequest(
     registry: "npm" | "pip" | "cargo",
     packageName: string,
-    version?: string
+    version?: string,
+    sandboxId?: string
   ): Promise<ProxyResult> {
     const cacheKey = `${registry}:${packageName}:${version ?? "latest"}`;
+
+    // Check blocklist first
+    if (PACKAGE_BLOCKLIST.has(packageName)) {
+      logger.warn(
+        { registry, packageName },
+        "Blocked malicious package install attempt"
+      );
+      return {
+        data: `Package "${packageName}" is blocked: known malicious package`,
+        contentType: "text/plain",
+        statusCode: 403,
+        cached: false,
+        blocked: true,
+        blockReason: "Package is on the malicious package blocklist",
+        vulnerabilities: [],
+        suspiciousPostInstall: false,
+      };
+    }
+
+    // Check per-sandbox rate limit
+    if (sandboxId && !this.checkRateLimit(sandboxId)) {
+      logger.warn(
+        { registry, packageName, sandboxId },
+        "Rate limit exceeded for sandbox"
+      );
+      return {
+        data: "Rate limit exceeded: too many package installs per minute",
+        contentType: "text/plain",
+        statusCode: 429,
+        cached: false,
+        blocked: true,
+        blockReason: `Rate limit exceeded (max ${this.rateLimitPerMinute}/min)`,
+        vulnerabilities: [],
+        suspiciousPostInstall: false,
+      };
+    }
 
     // Check vulnerability list before proceeding
     const vulns = this.scanForVulnerabilities(packageName, version ?? "latest");
@@ -92,12 +205,19 @@ export class RegistryProxy {
         { registry, packageName, version, cached: true },
         "Registry proxy cache hit"
       );
+
+      const suspiciousPostInstall = this.detectSuspiciousPostInstall(
+        cached.data
+      );
+
       return {
         data: cached.data,
         contentType: cached.contentType,
         statusCode: 200,
         cached: true,
+        blocked: false,
         vulnerabilities: vulns,
+        suspiciousPostInstall,
       };
     }
 
@@ -109,7 +229,9 @@ export class RegistryProxy {
         contentType: "text/plain",
         statusCode: 400,
         cached: false,
+        blocked: false,
         vulnerabilities: vulns,
+        suspiciousPostInstall: false,
       };
     }
 
@@ -135,7 +257,9 @@ export class RegistryProxy {
           contentType: "text/plain",
           statusCode: response.status,
           cached: false,
+          blocked: false,
           vulnerabilities: vulns,
+          suspiciousPostInstall: false,
         };
       }
 
@@ -143,6 +267,15 @@ export class RegistryProxy {
       const contentType =
         response.headers.get("content-type") ?? "application/json";
       const sizeBytes = new TextEncoder().encode(data).length;
+
+      // Detect suspicious post-install scripts
+      const suspiciousPostInstall = this.detectSuspiciousPostInstall(data);
+      if (suspiciousPostInstall) {
+        logger.warn(
+          { registry, packageName, version },
+          "Suspicious post-install script detected in package"
+        );
+      }
 
       // Cache the response
       this.addToCache(cacheKey, {
@@ -162,6 +295,7 @@ export class RegistryProxy {
           version,
           sizeBytes,
           vulnerabilities: vulns.length,
+          suspiciousPostInstall,
         },
         "Package fetched and cached"
       );
@@ -171,7 +305,9 @@ export class RegistryProxy {
         contentType,
         statusCode: 200,
         cached: false,
+        blocked: false,
         vulnerabilities: vulns,
+        suspiciousPostInstall,
       };
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
@@ -185,7 +321,9 @@ export class RegistryProxy {
         contentType: "text/plain",
         statusCode: 502,
         cached: false,
+        blocked: false,
         vulnerabilities: vulns,
+        suspiciousPostInstall: false,
       };
     }
   }
@@ -245,6 +383,68 @@ export class RegistryProxy {
   }
 
   // ─── Private helpers ────────────────────────────────────────────────
+
+  /**
+   * Check and update rate limit for a sandbox.
+   * Returns true if the request is within limits.
+   */
+  private checkRateLimit(sandboxId: string): boolean {
+    const now = Date.now();
+    const windowMs = 60_000; // 1 minute window
+    const existing = this.rateLimits.get(sandboxId);
+
+    if (!existing || now - existing.windowStart > windowMs) {
+      // New window
+      this.rateLimits.set(sandboxId, { count: 1, windowStart: now });
+      return true;
+    }
+
+    if (existing.count >= this.rateLimitPerMinute) {
+      return false;
+    }
+
+    existing.count++;
+    return true;
+  }
+
+  /**
+   * Detect suspicious patterns in post-install scripts.
+   * Checks the package metadata JSON for scripts.postinstall or scripts.preinstall
+   * containing dangerous commands.
+   */
+  private detectSuspiciousPostInstall(data: string): boolean {
+    try {
+      const parsed = JSON.parse(data) as Record<string, unknown>;
+      const scripts = parsed.scripts as Record<string, string> | undefined;
+
+      if (!scripts) {
+        return false;
+      }
+
+      const scriptFields = ["postinstall", "preinstall", "install", "prepare"];
+
+      for (const field of scriptFields) {
+        const script = scripts[field];
+        if (!script) {
+          continue;
+        }
+
+        for (const pattern of SUSPICIOUS_POSTINSTALL_PATTERNS) {
+          if (pattern.test(script)) {
+            logger.warn(
+              { scriptField: field, pattern: pattern.source },
+              "Suspicious post-install script pattern detected"
+            );
+            return true;
+          }
+        }
+      }
+    } catch {
+      // Not valid JSON or no scripts field - not suspicious
+    }
+
+    return false;
+  }
 
   /**
    * Build the appropriate URL for each registry type.

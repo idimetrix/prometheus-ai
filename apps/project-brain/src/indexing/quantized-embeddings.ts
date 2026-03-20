@@ -177,3 +177,84 @@ export function multiResolutionSearch(
 
   return preciseScores.slice(0, topK);
 }
+
+/**
+ * Binary quantization: convert float32 embedding to bit vector (32x size reduction).
+ * Each float is mapped to 1 bit: positive → 1, non-positive → 0.
+ */
+export function binaryQuantize(embedding: number[]): Uint32Array {
+  const numWords = Math.ceil(embedding.length / 32);
+  const bits = new Uint32Array(numWords);
+
+  for (let i = 0; i < embedding.length; i++) {
+    if ((embedding[i] ?? 0) > 0) {
+      const wordIdx = Math.floor(i / 32);
+      const bitIdx = i % 32;
+      // biome-ignore lint/suspicious/noBitwiseOperators: intentional bit packing for binary quantization
+      bits[wordIdx] = (bits[wordIdx] ?? 0) | (1 << bitIdx);
+    }
+  }
+
+  return bits;
+}
+
+/**
+ * Hamming distance between two binary quantized vectors.
+ * Counts the number of differing bits using Brian Kernighan's popcount.
+ */
+export function hammingDistance(a: Uint32Array, b: Uint32Array): number {
+  let distance = 0;
+  const len = Math.min(a.length, b.length);
+
+  for (let i = 0; i < len; i++) {
+    // biome-ignore lint/suspicious/noBitwiseOperators: intentional XOR for hamming distance
+    let xor = ((a[i] ?? 0) ^ (b[i] ?? 0)) >>> 0;
+    while (xor !== 0) {
+      // biome-ignore lint/suspicious/noBitwiseOperators: intentional bit manipulation for popcount
+      xor &= xor - 1;
+      distance++;
+    }
+  }
+
+  return distance;
+}
+
+/**
+ * Binary similarity: normalized hamming similarity (0-1).
+ */
+export function binarySimilarity(a: Uint32Array, b: Uint32Array): number {
+  const totalBits = Math.max(a.length, b.length) * 32;
+  if (totalBits === 0) {
+    return 1;
+  }
+  return 1 - hammingDistance(a, b) / totalBits;
+}
+
+/**
+ * Two-phase search: binary hamming filter (phase 1) then full cosine rerank (phase 2).
+ */
+export function twoPhaseSearch(
+  query: number[],
+  candidates: Array<{ id: string; embedding: number[] }>,
+  topK = 10
+): Array<{ id: string; score: number }> {
+  const queryBits = binaryQuantize(query);
+
+  // Phase 1: Fast binary filter — keep top 5x candidates by hamming similarity
+  const binaryScored = candidates.map((c) => ({
+    ...c,
+    binaryScore: binarySimilarity(queryBits, binaryQuantize(c.embedding)),
+  }));
+
+  binaryScored.sort((a, b) => b.binaryScore - a.binaryScore);
+  const shortlist = binaryScored.slice(0, topK * 5);
+
+  // Phase 2: Precise cosine rerank on shortlist
+  const reranked = shortlist.map((c) => ({
+    id: c.id,
+    score: cosineSimilarity(query, c.embedding),
+  }));
+
+  reranked.sort((a, b) => b.score - a.score);
+  return reranked.slice(0, topK);
+}

@@ -1,4 +1,9 @@
 export {
+  createTestAgent,
+  createTestApiKey,
+  createTestCheckpoint,
+  createTestCreditTransaction,
+  createTestIterationSignals,
   createTestOrg,
   createTestProject,
   createTestSession,

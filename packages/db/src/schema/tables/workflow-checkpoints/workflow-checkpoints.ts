@@ -9,7 +9,9 @@ export const workflowCheckpoints = pgTable(
       .notNull()
       .references(() => sessions.id, { onDelete: "cascade" }),
     taskId: text("task_id").notNull(),
+    orgId: text("org_id").notNull(),
     phase: text("phase").notNull(),
+    iteration: text("iteration"),
     state: jsonb("state").notNull().default({}),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
@@ -21,5 +23,6 @@ export const workflowCheckpoints = pgTable(
       table.sessionId,
       table.taskId
     ),
+    index("workflow_checkpoints_org_id_idx").on(table.orgId),
   ]
 );

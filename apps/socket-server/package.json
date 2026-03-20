@@ -13,15 +13,18 @@
   "dependencies": {
     "socket.io": "^4.8.3",
     "@socket.io/redis-adapter": "^8.3.0",
+    "ws": "^8.19.0",
     "@prometheus/auth": "workspace:*",
     "@prometheus/db": "workspace:*",
     "@prometheus/queue": "workspace:*",
     "@prometheus/logger": "workspace:*",
     "@prometheus/telemetry": "workspace:*",
     "@prometheus/types": "workspace:*",
+    "@prometheus/utils": "workspace:*",
     "drizzle-orm": "^0.45.1"
   },
   "devDependencies": {
+    "@types/ws": "^8.18.1",
     "@prometheus/config-typescript": "workspace:*",
     "tsx": "^4.21.0",
     "tsup": "^8.5.1",

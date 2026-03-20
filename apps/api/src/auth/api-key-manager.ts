@@ -1,5 +1,5 @@
 import { createHash, randomBytes } from "node:crypto";
-import { apiKeys, db } from "@prometheus/db";
+import { API_KEY_SCOPES, type ApiKeyScope, apiKeys, db } from "@prometheus/db";
 import { createLogger } from "@prometheus/logger";
 import { generateId } from "@prometheus/utils";
 import { and, eq, gt, isNull, lt } from "drizzle-orm";
@@ -11,6 +11,7 @@ const logger = createLogger("api:api-key-manager");
 export interface CreateApiKeyOptions {
   name: string;
   orgId: string;
+  scopes?: ApiKeyScope[];
   ttlDays: number;
   userId: string;
 }
@@ -23,12 +24,14 @@ export interface ApiKeyInfo {
   isExpired: boolean;
   lastUsed: Date | null;
   name: string;
+  scopes: ApiKeyScope[];
 }
 
 export interface ValidateResult {
   keyId?: string;
   orgId?: string;
   reason?: string;
+  scopes?: ApiKeyScope[];
   userId?: string;
   valid: boolean;
 }
@@ -48,9 +51,56 @@ function generateRawKey(): string {
   return `${KEY_PREFIX}${randomBytes(32).toString("hex")}`;
 }
 
+/**
+ * Validate that all scopes in an array are valid API key scopes.
+ */
+export function validateScopes(scopes: string[]): scopes is ApiKeyScope[] {
+  const validScopes: readonly string[] = API_KEY_SCOPES;
+  return scopes.every((s) => validScopes.includes(s));
+}
+
+/**
+ * Check whether a key's scopes include the requested scope.
+ * Supports wildcard matching: "sessions:write" implies "sessions:read".
+ */
+export function hasScope(
+  keyScopes: ApiKeyScope[],
+  requiredScope: ApiKeyScope
+): boolean {
+  // Empty scopes array means full access (legacy keys)
+  if (keyScopes.length === 0) {
+    return true;
+  }
+
+  // Direct match
+  if (keyScopes.includes(requiredScope)) {
+    return true;
+  }
+
+  // Write implies read for the same resource
+  if (requiredScope.endsWith(":read")) {
+    const resource = requiredScope.replace(":read", "");
+    const writeScope = `${resource}:write` as ApiKeyScope;
+    if (keyScopes.includes(writeScope)) {
+      return true;
+    }
+  }
+
+  // fleet:manage implies fleet read/write
+  if (
+    (requiredScope === ("fleet:read" as ApiKeyScope) ||
+      requiredScope === ("fleet:write" as ApiKeyScope)) &&
+    keyScopes.includes("fleet:manage")
+  ) {
+    return true;
+  }
+
+  return false;
+}
+
 export class ApiKeyManager {
   /**
-   * Create a new API key with expiry.
+   * Create a new API key with expiry and scopes.
    * Returns the raw key (only shown once) and the key metadata.
    */
   async create(
@@ -65,17 +115,33 @@ export class ApiKeyManager {
         ? new Date(Date.now() + options.ttlDays * 24 * 60 * 60 * 1000)
         : null;
 
+    const scopes = options.scopes ?? [];
+
+    // Validate scopes
+    if (scopes.length > 0) {
+      const scopeStrings: string[] = scopes;
+      if (!validateScopes(scopeStrings)) {
+        throw new Error(`Invalid scopes: ${scopes.join(", ")}`);
+      }
+    }
+
     await db.insert(apiKeys).values({
       id: keyId,
       orgId: options.orgId,
       userId: options.userId,
       name: options.name,
       keyHash,
+      scopes,
       expiresAt,
     });
 
     logger.info(
-      { keyId, orgId: options.orgId, ttlDays: options.ttlDays },
+      {
+        keyId,
+        orgId: options.orgId,
+        ttlDays: options.ttlDays,
+        scopeCount: scopes.length,
+      },
       "API key created"
     );
 
@@ -96,10 +162,13 @@ export class ApiKeyManager {
     }
 
     // Create replacement key with same config
+    const existingScopes = (existing.scopes ?? []) as ApiKeyScope[];
+
     const result = await this.create({
       orgId: existing.orgId,
       userId: existing.userId,
       name: `${existing.name} (rotated)`,
+      scopes: existingScopes,
       ttlDays: existing.expiresAt
         ? Math.ceil(
             (existing.expiresAt.getTime() - Date.now()) / (24 * 60 * 60 * 1000)
@@ -131,7 +200,7 @@ export class ApiKeyManager {
   }
 
   /**
-   * Validate a raw API key.
+   * Validate a raw API key and return its scopes.
    * Supports a 24-hour grace period after expiry.
    */
   async validate(rawKey: string): Promise<ValidateResult> {
@@ -180,7 +249,27 @@ export class ApiKeyManager {
       keyId: key.id,
       orgId: key.orgId,
       userId: key.userId,
+      scopes: (key.scopes ?? []) as ApiKeyScope[],
     };
+  }
+
+  /**
+   * Check if a key has a specific scope.
+   */
+  async checkScope(
+    keyId: string,
+    requiredScope: ApiKeyScope
+  ): Promise<boolean> {
+    const key = await db.query.apiKeys.findFirst({
+      where: and(eq(apiKeys.id, keyId), isNull(apiKeys.revokedAt)),
+    });
+
+    if (!key) {
+      return false;
+    }
+
+    const scopes = (key.scopes ?? []) as ApiKeyScope[];
+    return hasScope(scopes, requiredScope);
   }
 
   /**
@@ -206,6 +295,7 @@ export class ApiKeyManager {
       return {
         id: key.id,
         name: key.name,
+        scopes: (key.scopes ?? []) as ApiKeyScope[],
         createdAt: key.createdAt,
         expiresAt: key.expiresAt,
         lastUsed: key.lastUsed,
@@ -234,11 +324,29 @@ export class ApiKeyManager {
     return keys.map((key) => ({
       id: key.id,
       name: key.name,
+      scopes: (key.scopes ?? []) as ApiKeyScope[],
       createdAt: key.createdAt,
       expiresAt: key.expiresAt,
       lastUsed: key.lastUsed,
       isExpired: false,
       inGracePeriod: false,
     }));
+  }
+
+  /**
+   * Update scopes for an existing key.
+   */
+  async updateScopes(keyId: string, scopes: ApiKeyScope[]): Promise<void> {
+    const scopeStrings: string[] = scopes;
+    if (!validateScopes(scopeStrings)) {
+      throw new Error(`Invalid scopes: ${scopes.join(", ")}`);
+    }
+
+    await db
+      .update(apiKeys)
+      .set({ scopes })
+      .where(and(eq(apiKeys.id, keyId), isNull(apiKeys.revokedAt)));
+
+    logger.info({ keyId, scopes }, "API key scopes updated");
   }
 }

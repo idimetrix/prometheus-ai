@@ -2,6 +2,10 @@ import { createServer } from "node:http";
 import { createLogger } from "@prometheus/logger";
 import { createRedisConnection } from "@prometheus/queue";
 import { initSentry } from "@prometheus/telemetry";
+import {
+  installShutdownHandlers,
+  isProcessShuttingDown,
+} from "@prometheus/utils";
 import { createAdapter } from "@socket.io/redis-adapter";
 // MessagePack binary protocol for improved WebSocket performance (Phase 5.3)
 // Reduces payload size by ~30-40% compared to JSON for typical messages.
@@ -14,10 +18,16 @@ import { setupNotificationNamespace } from "./namespaces/notifications";
 import { setupSessionNamespace } from "./namespaces/sessions";
 
 initSentry({ serviceName: "socket-server" });
+installShutdownHandlers();
 
 const logger = createLogger("socket-server");
 const httpServer = createServer((req, res) => {
   if (req.url === "/health") {
+    if (isProcessShuttingDown()) {
+      res.writeHead(503, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ status: "draining" }));
+      return;
+    }
     res.writeHead(200, { "Content-Type": "application/json" });
     res.end(JSON.stringify({ status: "ok", service: "socket-server" }));
     return;

@@ -75,6 +75,11 @@
       "persistent": true,
       "env": ["DATABASE_URL"]
     },
+    "test:coverage": {
+      "dependsOn": ["^build"],
+      "outputs": ["coverage/**"],
+      "env": ["DATABASE_URL", "REDIS_URL", "CI"]
+    },
     "clean": {
       "cache": false
     },

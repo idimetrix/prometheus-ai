@@ -94,6 +94,27 @@ const FILE_TYPE_WEIGHTS: Record<string, number> = {
   ".tf": 1.5,
 };
 
+/** Trivial task patterns — map directly to fastLoop (complexity=1) */
+const TRIVIAL_PATTERNS = [
+  /\bfix\s+(?:a\s+)?typo\b/i,
+  /\brename\s+(?:a\s+)?(?:variable|function|class|method|file)\b/i,
+  /\b(?:add|remove)\s+(?:a\s+)?comment\b/i,
+  /\bupdate\s+(?:a\s+)?(?:version|dependency)\b/i,
+  /\blint\s+fix\b/i,
+  /\bformat(?:ting)?\s+(?:fix|code)\b/i,
+  /\bfix\s+import\b/i,
+];
+
+/** Deep reasoning patterns — force escalation to think slot (complexity>=4) */
+const DEEP_REASONING_PATTERNS = [
+  /\brefactor\s+(?:to|into|using)\s+(?:strategy|observer|factory|decorator)\s+pattern\b/i,
+  /\bdesign\s+(?:a\s+)?(?:system|architecture|service)\b/i,
+  /\bdebug\s+(?:the\s+)?root\s+cause\b/i,
+  /\bimplement\s+(?:a\s+)?(?:distributed|concurrent|lock-free)\b/i,
+  /\bmigrate\s+(?:from|to)\b/i,
+  /\boptimize\s+(?:the\s+)?(?:query|algorithm|performance)\b/i,
+];
+
 /** Slot recommendations by complexity score — aligned with router SLOT_CONFIGS */
 const SLOT_MAP: Record<number, string> = {
   1: "fastLoop",
@@ -212,6 +233,39 @@ export class ComplexityEstimator {
     const fullText = request.messages
       .map((m) => (typeof m.content === "string" ? m.content : ""))
       .join("\n");
+
+    // Early exit: trivial tasks → fastLoop
+    if (TRIVIAL_PATTERNS.some((p) => p.test(fullText))) {
+      return {
+        score: 1,
+        reasoning: "Trivial task detected (typo fix, rename, lint fix)",
+        recommendedSlot: "fastLoop",
+        signals: {
+          tokenCount: 0,
+          fileCount: 0,
+          isMultiStep: false,
+          hasDomainKeywords: false,
+          historicalDifficulty: 0,
+        },
+      };
+    }
+
+    // Early escalation: deep reasoning tasks → think
+    if (DEEP_REASONING_PATTERNS.some((p) => p.test(fullText))) {
+      return {
+        score: 4,
+        reasoning:
+          "Deep reasoning task detected (architecture, strategy pattern, root cause debug)",
+        recommendedSlot: "think",
+        signals: {
+          tokenCount: 0,
+          fileCount: 0,
+          isMultiStep: true,
+          hasDomainKeywords: true,
+          historicalDifficulty: 0.8,
+        },
+      };
+    }
 
     const tokenCount = estimateTokenCount(fullText);
     const fileCount = countFileReferences(fullText);

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -80,6 +80,16 @@ function formatTime(ms: number): string {
 // Component
 // ---------------------------------------------------------------------------
 
+const ALL_TYPES: SessionEventType[] = [
+  "message",
+  "file_change",
+  "tool_call",
+  "terminal_output",
+  "reasoning",
+  "approval",
+  "error",
+];
+
 export function SessionReplay({
   sessionId: _sessionId,
   events,
@@ -87,7 +97,28 @@ export function SessionReplay({
   const [currentIndex, setCurrentIndex] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
   const [speed, setSpeed] = useState<PlaybackSpeed>(1);
+  const [activeFilters, setActiveFilters] = useState<Set<SessionEventType>>(
+    () => new Set(ALL_TYPES)
+  );
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  const filteredEvents = useMemo(
+    () => events.filter((e) => activeFilters.has(e.type)),
+    [events, activeFilters]
+  );
+
+  const toggleFilter = useCallback((type: SessionEventType) => {
+    setActiveFilters((prev) => {
+      const next = new Set(prev);
+      if (next.has(type)) {
+        next.delete(type);
+      } else {
+        next.add(type);
+      }
+      return next;
+    });
+  }, []);
 
   // Compute relative timestamps from first event
   const firstTimestamp = events[0]
@@ -156,6 +187,47 @@ export function SessionReplay({
     });
   }, []);
 
+  // Keyboard shortcuts
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (e.target instanceof HTMLInputElement) {
+        return;
+      }
+      switch (e.key) {
+        case " ":
+          e.preventDefault();
+          handlePlayPause();
+          break;
+        case "ArrowRight":
+          setCurrentIndex((p) => Math.min(p + 1, filteredEvents.length - 1));
+          setIsPlaying(false);
+          break;
+        case "ArrowLeft":
+          setCurrentIndex((p) => Math.max(p - 1, 0));
+          setIsPlaying(false);
+          break;
+        case "s":
+          handleSpeedChange();
+          break;
+        case "Home":
+          setCurrentIndex(0);
+          setIsPlaying(false);
+          break;
+        case "End":
+          setCurrentIndex(filteredEvents.length - 1);
+          setIsPlaying(false);
+          break;
+        default:
+          break;
+      }
+    };
+    const el = containerRef.current;
+    if (el) {
+      el.addEventListener("keydown", handler);
+      return () => el.removeEventListener("keydown", handler);
+    }
+  }, [handlePlayPause, handleSpeedChange, filteredEvents.length]);
+
   if (events.length === 0) {
     return (
       <div className="flex h-full items-center justify-center bg-zinc-950 text-xs text-zinc-600">
@@ -165,10 +237,29 @@ export function SessionReplay({
   }
 
   // Visible events up to current index
-  const visibleEvents = events.slice(0, currentIndex + 1);
+  const visibleEvents = filteredEvents.slice(0, currentIndex + 1);
 
   return (
-    <div className="flex h-full flex-col bg-zinc-950">
+    <div className="flex h-full flex-col bg-zinc-950" ref={containerRef}>
+      {/* Event type filters */}
+      <div className="flex flex-wrap gap-1 border-zinc-800 border-b px-3 py-2">
+        {ALL_TYPES.map((type) => (
+          <button
+            className={[
+              "rounded px-2 py-0.5 text-[10px] transition-colors",
+              activeFilters.has(type)
+                ? `${EVENT_TYPE_COLORS[type]} text-white`
+                : "bg-zinc-800 text-zinc-500",
+            ].join(" ")}
+            key={type}
+            onClick={() => toggleFilter(type)}
+            type="button"
+          >
+            {EVENT_TYPE_LABELS[type]}
+          </button>
+        ))}
+      </div>
+
       {/* Event display area */}
       <div className="flex-1 overflow-auto p-3">
         <div className="space-y-1.5">
@@ -218,7 +309,7 @@ export function SessionReplay({
           </span>
           <input
             className="h-1 flex-1 cursor-pointer appearance-none rounded-full bg-zinc-800 accent-violet-500"
-            max={events.length - 1}
+            max={filteredEvents.length - 1}
             min={0}
             onChange={handleScrub}
             type="range"
@@ -279,7 +370,7 @@ export function SessionReplay({
 
           {/* Event counter */}
           <span className="text-[10px] text-zinc-600">
-            Event {currentIndex + 1} / {events.length}
+            Event {currentIndex + 1} / {filteredEvents.length}
           </span>
         </div>
       </div>

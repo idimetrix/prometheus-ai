@@ -2,6 +2,10 @@ import { serve } from "@hono/node-server";
 import { createLogger } from "@prometheus/logger";
 import { initSentry, initTelemetry } from "@prometheus/telemetry";
 import type { AgentMode, AgentRole } from "@prometheus/types";
+import {
+  installShutdownHandlers,
+  isProcessShuttingDown,
+} from "@prometheus/utils";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { CheckpointManager } from "./checkpoint";
@@ -11,6 +15,7 @@ import { TaskRouter } from "./task-router";
 
 await initTelemetry({ serviceName: "orchestrator" });
 initSentry({ serviceName: "orchestrator" });
+installShutdownHandlers();
 
 const logger = createLogger("orchestrator");
 
@@ -25,14 +30,17 @@ app.use("/*", cors());
 
 // ─── Health Check ────────────────────────────────────────────────
 
-app.get("/health", (c) =>
-  c.json({
+app.get("/health", (c) => {
+  if (isProcessShuttingDown()) {
+    return c.json({ status: "draining" }, 503);
+  }
+  return c.json({
     status: "ok",
     service: "orchestrator",
     activeSessions: sessionManager.getActiveSessionCount(),
     timestamp: new Date().toISOString(),
-  })
-);
+  });
+});
 
 // Liveness probe — lightweight, just confirms process is responsive
 app.get("/live", (c) => c.json({ status: "ok" }));

@@ -50,6 +50,26 @@ export interface GraphQueryResult {
   nodes: GraphNode[];
 }
 
+/** Result from "what calls X" or "what uses X" traversal queries. */
+export interface TraversalQueryResult {
+  callers: GraphNode[];
+  edges: GraphEdge[];
+  target: GraphNode | null;
+}
+
+/** Matches method calls like ClassName.methodName() */
+const METHOD_CALL_RE = /\b([A-Z]\w+)\.(\w+)\s*\(/g;
+/** Matches function calls like functionName() */
+const FUNCTION_CALL_RE = /\b([a-z]\w+)\s*\(/g;
+/** Matches type references in annotations */
+const TYPE_USAGE_RE = /(?::\s*|as\s+|<\s*)([A-Z]\w+)(?:\s*[>,;)\]|}]|\s*$)/g;
+/** Matches arrow function assignments */
+const ARROW_FN_RE =
+  /(?:export\s+)?(?:const|let)\s+(\w+)\s*=\s*(?:async\s+)?(?:\([^)]*\)|[a-zA-Z_]\w*)\s*(?::\s*\w+(?:<[^>]+>)?\s*)?=>/g;
+/** Matches interface and type definitions */
+const INTERFACE_TYPE_RE =
+  /(?:export\s+)?(?:interface|type)\s+(\w+)(?:\s*<[^>]+>)?\s*(?:extends\s+([\w,\s<>]+))?\s*[={]/g;
+
 /**
  * Knowledge Graph backed by graph_nodes and graph_edges tables.
  * All queries use SQL — no in-memory loading of the full graph.
@@ -294,6 +314,207 @@ export class KnowledgeGraphLayer {
       .where(inArray(graphNodes.id, sourceIds));
 
     return nodes.map(toGraphNode);
+  }
+
+  // ─── Graph Traversal Queries ────────────────────────────────────
+
+  /** Find all callers of a function/method. Answers "what calls X.method". */
+  async findCallers(
+    projectId: string,
+    entityName: string
+  ): Promise<TraversalQueryResult> {
+    const dotIdx = entityName.indexOf(".");
+    const namePattern = dotIdx > 0 ? entityName.slice(dotIdx + 1) : entityName;
+    const classPattern = dotIdx > 0 ? entityName.slice(0, dotIdx) : null;
+
+    const targetNodes = await db
+      .select()
+      .from(graphNodes)
+      .where(
+        and(
+          eq(graphNodes.projectId, projectId),
+          sql`${graphNodes.name} ILIKE ${namePattern}`
+        )
+      )
+      .limit(20);
+
+    let filteredTargets = targetNodes;
+    if (classPattern) {
+      const filtered = targetNodes.filter((n) =>
+        n.id.toLowerCase().includes(classPattern.toLowerCase())
+      );
+      if (filtered.length > 0) {
+        filteredTargets = filtered;
+      }
+    }
+    if (filteredTargets.length === 0) {
+      return { target: null, callers: [], edges: [] };
+    }
+
+    const targetIds = filteredTargets.map((n) => n.id);
+    const callEdges = await db
+      .select()
+      .from(graphEdges)
+      .where(
+        and(
+          eq(graphEdges.projectId, projectId),
+          eq(graphEdges.edgeType, "calls"),
+          inArray(graphEdges.targetId, targetIds)
+        )
+      )
+      .limit(200);
+
+    if (callEdges.length === 0) {
+      return {
+        target: filteredTargets[0] ? toGraphNode(filteredTargets[0]) : null,
+        callers: [],
+        edges: [],
+      };
+    }
+
+    const callerNodes = await db
+      .select()
+      .from(graphNodes)
+      .where(
+        inArray(
+          graphNodes.id,
+          callEdges.map((e) => e.sourceId)
+        )
+      );
+    return {
+      target: filteredTargets[0] ? toGraphNode(filteredTargets[0]) : null,
+      callers: callerNodes.map(toGraphNode),
+      edges: callEdges.map(toGraphEdge),
+    };
+  }
+
+  /** Find all entities that use a specific type. */
+  async findTypeUsages(
+    projectId: string,
+    typeName: string
+  ): Promise<TraversalQueryResult> {
+    const typeNodes = await db
+      .select()
+      .from(graphNodes)
+      .where(
+        and(
+          eq(graphNodes.projectId, projectId),
+          sql`${graphNodes.name} ILIKE ${typeName}`,
+          or(
+            eq(graphNodes.nodeType, "class"),
+            eq(graphNodes.nodeType, "interface"),
+            eq(graphNodes.nodeType, "type"),
+            eq(graphNodes.nodeType, "module")
+          )
+        )
+      )
+      .limit(10);
+
+    if (typeNodes.length === 0) {
+      return { target: null, callers: [], edges: [] };
+    }
+
+    const usageEdges = await db
+      .select()
+      .from(graphEdges)
+      .where(
+        and(
+          eq(graphEdges.projectId, projectId),
+          inArray(
+            graphEdges.targetId,
+            typeNodes.map((n) => n.id)
+          ),
+          or(
+            eq(graphEdges.edgeType, "uses_type"),
+            eq(graphEdges.edgeType, "extends"),
+            eq(graphEdges.edgeType, "implements")
+          )
+        )
+      )
+      .limit(200);
+
+    if (usageEdges.length === 0) {
+      return {
+        target: typeNodes[0] ? toGraphNode(typeNodes[0]) : null,
+        callers: [],
+        edges: [],
+      };
+    }
+
+    const userNodes = await db
+      .select()
+      .from(graphNodes)
+      .where(
+        inArray(
+          graphNodes.id,
+          usageEdges.map((e) => e.sourceId)
+        )
+      );
+    return {
+      target: typeNodes[0] ? toGraphNode(typeNodes[0]) : null,
+      callers: userNodes.map(toGraphNode),
+      edges: usageEdges.map(toGraphEdge),
+    };
+  }
+
+  /** Find all importers of a specific module. */
+  async findImporters(
+    projectId: string,
+    modulePath: string
+  ): Promise<TraversalQueryResult> {
+    const targetPattern = `%${modulePath}%`;
+    const targetNodes = await db
+      .select()
+      .from(graphNodes)
+      .where(
+        and(
+          eq(graphNodes.projectId, projectId),
+          or(
+            sql`${graphNodes.id} ILIKE ${targetPattern}`,
+            sql`${graphNodes.filePath} ILIKE ${targetPattern}`
+          )
+        )
+      )
+      .limit(20);
+
+    const targetIds =
+      targetNodes.length > 0
+        ? targetNodes.map((n) => n.id)
+        : [`file:${modulePath}`];
+    const importEdges = await db
+      .select()
+      .from(graphEdges)
+      .where(
+        and(
+          eq(graphEdges.projectId, projectId),
+          eq(graphEdges.edgeType, "imports"),
+          inArray(graphEdges.targetId, targetIds)
+        )
+      )
+      .limit(200);
+
+    if (importEdges.length === 0) {
+      return {
+        target: targetNodes[0] ? toGraphNode(targetNodes[0]) : null,
+        callers: [],
+        edges: [],
+      };
+    }
+
+    const importerNodes = await db
+      .select()
+      .from(graphNodes)
+      .where(
+        inArray(
+          graphNodes.id,
+          importEdges.map((e) => e.sourceId)
+        )
+      );
+    return {
+      target: targetNodes[0] ? toGraphNode(targetNodes[0]) : null,
+      callers: importerNodes.map(toGraphNode),
+      edges: importEdges.map(toGraphEdge),
+    };
   }
 
   // ─── N-Hop Traversal via Recursive CTE ─────────────────────────
@@ -612,6 +833,144 @@ export class KnowledgeGraphLayer {
       }
     }
 
+    // Extract and persist arrow functions
+    for (const match of content.matchAll(ARROW_FN_RE)) {
+      if (match[1]) {
+        await this.addNode(projectId, {
+          id: `fn:${filePath}:${match[1]}`,
+          type: "function",
+          name: match[1],
+          filePath,
+          metadata: {
+            arrowFunction: true,
+            exported: match[0].startsWith("export"),
+          },
+        });
+        await this.addEdge(projectId, {
+          source: fileNode.id,
+          target: `fn:${filePath}:${match[1]}`,
+          type: "contains",
+        });
+      }
+    }
+
+    // Extract and persist interface/type definitions
+    for (const match of content.matchAll(INTERFACE_TYPE_RE)) {
+      if (match[1]) {
+        const kind = match[0].includes("interface") ? "interface" : "type";
+        await this.addNode(projectId, {
+          id: `type:${filePath}:${match[1]}`,
+          type: "module",
+          name: match[1],
+          filePath,
+          metadata: { kind },
+        });
+        await this.addEdge(projectId, {
+          source: fileNode.id,
+          target: `type:${filePath}:${match[1]}`,
+          type: "contains",
+        });
+        if (match[2]) {
+          for (const ext of match[2]
+            .split(",")
+            .map((s) => s.trim())
+            .filter((s) => s.length > 0)) {
+            await this.addEdge(projectId, {
+              source: `type:${filePath}:${match[1]}`,
+              target: `type:unknown:${ext}`,
+              type: "extends",
+            });
+          }
+        }
+      }
+    }
+
+    // Extract method calls (e.g., ClassName.method()) and create "calls" edges
+    const methodCallsSeen = new Set<string>();
+    for (const match of content.matchAll(METHOD_CALL_RE)) {
+      if (match[1] && match[2]) {
+        const key = `${match[1]}.${match[2]}`;
+        if (!methodCallsSeen.has(key)) {
+          methodCallsSeen.add(key);
+          await this.addEdge(projectId, {
+            source: fileNode.id,
+            target: `fn:unknown:${key}`,
+            type: "calls",
+            metadata: { className: match[1], methodName: match[2] },
+          });
+        }
+      }
+    }
+
+    // Extract standalone function calls and create "calls" edges
+    const fnNames = new Set(functions.map((f) => f.name));
+    const callKeywords = new Set([
+      "if",
+      "for",
+      "while",
+      "switch",
+      "catch",
+      "return",
+      "import",
+      "export",
+      "function",
+      "class",
+      "new",
+      "typeof",
+      "require",
+      "await",
+      "async",
+      "yield",
+    ]);
+    const fnCallsSeen = new Set<string>();
+    for (const match of content.matchAll(FUNCTION_CALL_RE)) {
+      if (
+        match[1] &&
+        !callKeywords.has(match[1]) &&
+        !fnNames.has(match[1]) &&
+        !fnCallsSeen.has(match[1])
+      ) {
+        fnCallsSeen.add(match[1]);
+        await this.addEdge(projectId, {
+          source: fileNode.id,
+          target: `fn:unknown:${match[1]}`,
+          type: "calls",
+        });
+      }
+    }
+
+    // Extract type usages and create "uses_type" edges
+    const builtinTypes = new Set([
+      "String",
+      "Number",
+      "Boolean",
+      "Array",
+      "Object",
+      "Promise",
+      "Map",
+      "Set",
+      "Date",
+      "Error",
+      "RegExp",
+      "Record",
+      "Partial",
+      "Required",
+      "Omit",
+      "Pick",
+      "Readonly",
+    ]);
+    const typesSeen = new Set<string>();
+    for (const match of content.matchAll(TYPE_USAGE_RE)) {
+      if (match[1] && !builtinTypes.has(match[1]) && !typesSeen.has(match[1])) {
+        typesSeen.add(match[1]);
+        await this.addEdge(projectId, {
+          source: fileNode.id,
+          target: `type:unknown:${match[1]}`,
+          type: "uses_type",
+        });
+      }
+    }
+
     for (const imp of imports) {
       await this.addEdge(projectId, {
         source: fileNode.id,
@@ -631,6 +990,8 @@ export class KnowledgeGraphLayer {
         filePath,
         functions: functions.length,
         classes: classes.length,
+        methodCalls: methodCallsSeen.size,
+        typeUsages: typesSeen.size,
       },
       "File analyzed for knowledge graph"
     );

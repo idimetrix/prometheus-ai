@@ -34,3 +34,12 @@ export {
   isReadReplicaAvailable,
 } from "./read-replica";
 export * from "./schema";
+export {
+  markOrgScoped,
+  type OrgScopedQuery,
+  type OrgScopeOptions,
+  requiresOrgScope,
+  verifyOrgIdInQuery,
+  warnIfMissingScopeFilter,
+  withOrgScope,
+} from "./tenant-isolation";

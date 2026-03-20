@@ -4,10 +4,15 @@ import type { AuthContext } from "@prometheus/auth";
 import { db, modelUsageLogs } from "@prometheus/db";
 import { createLogger } from "@prometheus/logger";
 import { initSentry, initTelemetry } from "@prometheus/telemetry";
-import { generateId } from "@prometheus/utils";
+import {
+  generateId,
+  installShutdownHandlers,
+  isProcessShuttingDown,
+} from "@prometheus/utils";
 
 await initTelemetry({ serviceName: "api" });
 initSentry({ serviceName: "api" });
+installShutdownHandlers();
 
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
@@ -98,6 +103,9 @@ app.use("/*", rateLimitMiddleware());
 // Health check
 // ---------------------------------------------------------------------------
 app.get("/health", async (c) => {
+  if (isProcessShuttingDown()) {
+    return c.json({ status: "draining" }, 503);
+  }
   const startTime = process.uptime();
   const checks: Record<string, boolean> = {};
 

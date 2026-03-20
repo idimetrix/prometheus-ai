@@ -14,8 +14,12 @@ export const creditTransactions = pgTable(
       .references(() => organizations.id, { onDelete: "cascade" }),
     type: creditTransactionTypeEnum("type").notNull(),
     amount: integer("amount").notNull(),
+    balanceBefore: integer("balance_before"),
     balanceAfter: integer("balance_after").notNull(),
     taskId: text("task_id"),
+    userId: text("user_id"),
+    triggerSource: text("trigger_source"),
+    stripeId: text("stripe_id"),
     description: text("description").notNull(),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
@@ -29,7 +33,25 @@ export const creditTransactions = pgTable(
       table.orgId,
       table.createdAt
     ),
+    index("credit_transactions_stripe_id_idx").on(table.stripeId),
   ]
+);
+
+/**
+ * Tracks processed Stripe webhook event IDs for idempotency.
+ * Events are stored with a TTL so old records can be pruned.
+ */
+export const processedWebhookEvents = pgTable(
+  "processed_webhook_events",
+  {
+    eventId: text("event_id").primaryKey(),
+    eventType: text("event_type").notNull(),
+    processedAt: timestamp("processed_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  },
+  (table) => [index("processed_webhook_events_expires_idx").on(table.expiresAt)]
 );
 
 export const creditBalances = pgTable("credit_balances", {

@@ -16,9 +16,14 @@ import {
   type ToolCall,
 } from "@prometheus/agent-sdk";
 import { createLogger } from "@prometheus/logger";
+import { SpanStatusCode, startSpan } from "@prometheus/telemetry";
 import type { AgentRole } from "@prometheus/types";
 import { AgentError, modelRouterClient } from "@prometheus/utils";
 import { BlueprintEnforcer } from "../blueprint-enforcer";
+import {
+  CheckpointPersistence,
+  type CheckpointState,
+} from "../checkpoint-persistence";
 import { type ConfidenceResult, ConfidenceScorer } from "../confidence";
 import { ContextCompressor } from "../context/context-compressor";
 import { SecretsScanner } from "../guardian/secrets-scanner";
@@ -245,6 +250,16 @@ export const ExecutionEngine = {
     const { maxIterations, temperature, maxTokens } = ctx.options;
 
     for (let i = 0; i < maxIterations; i++) {
+      const iterationSpan = startSpan("gen_ai.execution.iteration", {
+        attributes: {
+          "gen_ai.session.id": ctx.sessionId,
+          "gen_ai.agent.role": ctx.agentRole,
+          "gen_ai.iteration": i,
+          "gen_ai.model.slot": slot,
+          "gen_ai.project.id": ctx.projectId,
+        },
+      });
+
       // Every 5 iterations, check if context compression is needed
       if (i > 0 && i % 5 === 0) {
         const currentMessages = agent.getMessages().map((m) => ({
@@ -523,6 +538,11 @@ export const ExecutionEngine = {
             steps: i,
             creditsConsumed: totalCreditsConsumed,
           });
+          iterationSpan.setStatus({
+            code: SpanStatusCode.ERROR,
+            message: msg,
+          });
+          iterationSpan.end();
           return;
         }
 
@@ -533,6 +553,11 @@ export const ExecutionEngine = {
         });
 
         await new Promise((r) => setTimeout(r, 2000));
+        iterationSpan.setStatus({
+          code: SpanStatusCode.ERROR,
+          message: msg,
+        });
+        iterationSpan.end();
         continue;
       }
 
@@ -553,6 +578,8 @@ export const ExecutionEngine = {
       const choice = response.choices[0];
       if (!choice) {
         logger.warn("Empty response from LLM");
+        iterationSpan.setStatus({ code: SpanStatusCode.OK });
+        iterationSpan.end();
         continue;
       }
 
@@ -573,6 +600,8 @@ export const ExecutionEngine = {
       // No tool calls = agent is done
       if (!toolCalls || toolCalls.length === 0) {
         agent.addAssistantMessage(assistantContent);
+        iterationSpan.setStatus({ code: SpanStatusCode.OK });
+        iterationSpan.end();
         break;
       }
 
@@ -951,6 +980,11 @@ export const ExecutionEngine = {
             steps: i,
             creditsConsumed: totalCreditsConsumed,
           });
+          iterationSpan.setStatus({
+            code: SpanStatusCode.ERROR,
+            message: `${consecutiveFailures} consecutive tool failures`,
+          });
+          iterationSpan.end();
           return;
         }
       }
@@ -1046,6 +1080,11 @@ export const ExecutionEngine = {
           steps: i,
           creditsConsumed: totalCreditsConsumed,
         });
+        iterationSpan.setStatus({
+          code: SpanStatusCode.ERROR,
+          message: `Low confidence: ${confidence.score.toFixed(2)}`,
+        });
+        iterationSpan.end();
         return;
       }
 
@@ -1054,6 +1093,22 @@ export const ExecutionEngine = {
           "[System] Your confidence appears moderate. Please verify your approach before proceeding."
         );
       }
+
+      iterationSpan.setAttribute("gen_ai.iteration.tool_calls", totalToolCalls);
+      iterationSpan.setAttribute(
+        "gen_ai.iteration.tokens.input",
+        totalInputTokens
+      );
+      iterationSpan.setAttribute(
+        "gen_ai.iteration.tokens.output",
+        totalOutputTokens
+      );
+      iterationSpan.setAttribute(
+        "gen_ai.iteration.confidence",
+        confidence.score
+      );
+      iterationSpan.setStatus({ code: SpanStatusCode.OK });
+      iterationSpan.end();
     }
 
     // Completed all iterations or agent finished naturally
@@ -1067,6 +1122,40 @@ export const ExecutionEngine = {
       steps: ctx.options.maxIterations,
       creditsConsumed: totalCreditsConsumed,
     });
+  },
+
+  /**
+   * Resume execution from the last checkpoint for a given session and task.
+   * Restores the checkpoint state and returns it so the caller can
+   * reconstruct context and continue from the last saved iteration.
+   */
+  async resume(
+    sessionId: string,
+    taskId: string,
+    orgId: string
+  ): Promise<CheckpointState | null> {
+    const resumeLogger = createLogger(`engine:resume:${sessionId}`);
+    const persistence = new CheckpointPersistence(orgId);
+
+    const checkpoint = await persistence.restore(sessionId, taskId);
+    if (!checkpoint) {
+      resumeLogger.info({ sessionId, taskId }, "No checkpoint found to resume");
+      return null;
+    }
+
+    resumeLogger.info(
+      {
+        sessionId,
+        taskId,
+        phase: checkpoint.phase,
+        savedAt: checkpoint.savedAt,
+        completedSteps: checkpoint.completedSteps.length,
+        modifiedFiles: checkpoint.modifiedFiles.length,
+      },
+      "Resuming from checkpoint"
+    );
+
+    return checkpoint;
   },
 
   /**

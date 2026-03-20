@@ -2,8 +2,12 @@ export type {
   CircuitBreakerConfig,
   CircuitBreakerMetrics,
   CircuitBreakerState,
+  TransitionRecord,
 } from "./circuit-breaker";
-export { CircuitBreaker } from "./circuit-breaker";
+export {
+  CircuitBreaker,
+  ProviderCircuitBreakerRegistry,
+} from "./circuit-breaker";
 export {
   generateCorrelationId,
   getCorrelationHeaderName,
@@ -45,6 +49,7 @@ export {
 } from "./errors";
 export { GitHubClient } from "./github-client";
 export {
+  getHealthStatus,
   gracefulShutdown,
   installShutdownHandlers,
   isProcessShuttingDown,
@@ -69,7 +74,9 @@ export {
 export {
   getSignatureHeaderName,
   signRequest,
+  signRequestWithKeyId,
   verifyRequest,
+  verifyRequestMultiKey,
 } from "./hmac-signing";
 export { HttpClient, HttpClientError } from "./http-client";
 export { generateId } from "./id";

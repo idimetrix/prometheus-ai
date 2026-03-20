@@ -14,6 +14,32 @@ const logger = createLogger("sandbox-manager:container");
 
 type SandboxMode = "docker" | "firecracker" | "dev" | "e2b";
 
+// ─── Resource Limits ──────────────────────────────────────────────────────────
+
+export interface ResourceLimits {
+  /** CPU core limit */
+  cpu: number;
+  /** Disk space limit in MB */
+  diskMb: number;
+  /** Memory limit in MB */
+  memoryMb: number;
+  /** Maximum number of processes/threads */
+  pids: number;
+  /** Maximum wall clock time in minutes before forced termination */
+  wallClockMinutes: number;
+}
+
+/** Default resource limits applied to all sandboxes */
+export const DEFAULT_RESOURCE_LIMITS: ResourceLimits = {
+  memoryMb: 2048,
+  cpu: 2,
+  diskMb: 10_240,
+  pids: 256,
+  wallClockMinutes: 30,
+};
+
+// ─── Provider Selection ───────────────────────────────────────────────────────
+
 /**
  * Check if KVM is available (required for Firecracker).
  * Uses spawn with explicit args to avoid shell injection.
@@ -190,6 +216,8 @@ export interface CreateContainerOptions {
   memoryLimitMb?: number;
   projectId?: string;
   repoUrl?: string;
+  /** Resource limits for the sandbox (merged with DEFAULT_RESOURCE_LIMITS) */
+  resourceLimits?: Partial<ResourceLimits>;
   /** Override sandbox provider for this project */
   sandboxProvider?: SandboxMode;
 }
@@ -249,6 +277,19 @@ export class ContainerManager {
   }
 
   /**
+   * Resolve effective resource limits by merging user-provided limits
+   * with defaults.
+   */
+  private resolveResourceLimits(
+    overrides?: Partial<ResourceLimits>
+  ): ResourceLimits {
+    return {
+      ...DEFAULT_RESOURCE_LIMITS,
+      ...overrides,
+    };
+  }
+
+  /**
    * Create a new sandbox environment.
    * Delegates to the active provider based on the resolved mode.
    * Supports per-project provider override via options.sandboxProvider.
@@ -260,8 +301,11 @@ export class ContainerManager {
       throw new Error("No sandbox provider available");
     }
 
-    const cpuLimit = options?.cpuLimit ?? 1;
-    const memoryLimitMb = options?.memoryLimitMb ?? 2048;
+    const limits = this.resolveResourceLimits(options?.resourceLimits);
+
+    // Allow legacy cpuLimit/memoryLimitMb to override resource limits
+    const cpuLimit = options?.cpuLimit ?? limits.cpu;
+    const memoryLimitMb = options?.memoryLimitMb ?? limits.memoryMb;
 
     try {
       const instance = await this.provider.create({
@@ -291,6 +335,7 @@ export class ContainerManager {
           sandboxId: instance.id,
           mode: this.mode,
           workspace: instance.workDir,
+          resourceLimits: limits,
         },
         "Sandbox created"
       );

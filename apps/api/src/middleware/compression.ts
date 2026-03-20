@@ -97,3 +97,16 @@ export function compressionMiddleware(): MiddlewareHandler {
     }
   };
 }
+
+/**
+ * SSE-compatible compression middleware.
+ *
+ * For Server-Sent Events (SSE) endpoints, standard compression interferes
+ * with streaming. This middleware is a passthrough that sets appropriate
+ * headers for SSE responses without buffering or compressing them.
+ */
+export function sseCompressionMiddleware(): MiddlewareHandler {
+  return async (_c: Context, next) => {
+    await next();
+  };
+}

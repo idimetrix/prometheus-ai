@@ -3,6 +3,7 @@ export * from "./credit";
 export * from "./enums";
 export {
   AuthError,
+  ConcurrencyError,
   CreditError as TypedCreditError,
   isPrometheusError,
   PrometheusError as TypedPrometheusError,
@@ -10,6 +11,7 @@ export {
   RateLimitError,
   ResourceNotFoundError,
   SandboxError as TypedSandboxError,
+  TimeoutError,
   toPrometheusError,
   ValidationError,
 } from "./errors";

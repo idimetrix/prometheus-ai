@@ -491,6 +491,9 @@ importers:
       '@prometheus/types':
         specifier: workspace:*
         version: link:../../packages/types
+      '@prometheus/utils':
+        specifier: workspace:*
+        version: link:../../packages/utils
       '@socket.io/redis-adapter':
         specifier: ^8.3.0
         version: 8.3.0(socket.io-adapter@2.5.6)
@@ -500,10 +503,16 @@ importers:
       socket.io:
         specifier: ^4.8.3
         version: 4.8.3
+      ws:
+        specifier: ^8.19.0
+        version: 8.19.0
     devDependencies:
       '@prometheus/config-typescript':
         specifier: workspace:*
         version: link:../../packages/config-typescript
+      '@types/ws':
+        specifier: ^8.18.1
+        version: 8.18.1
       tsup:
         specifier: ^8.5.1
         version: 8.5.1(jiti@2.6.1)(postcss@8.5.8)(tsx@4.21.0)(typescript@5.9.3)(yaml@2.8.2)
@@ -747,7 +756,7 @@ importers:
         version: 6.0.116(zod@4.3.6)
       openai:
         specifier: ^6.32.0
-        version: 6.32.0(ws@8.18.3)(zod@4.3.6)
+        version: 6.32.0(ws@8.19.0)(zod@4.3.6)
       zod:
         specifier: ^4.3.6
         version: 4.3.6
@@ -787,7 +796,7 @@ importers:
         version: 6.0.116(zod@4.3.6)
       openai:
         specifier: ^6.32.0
-        version: 6.32.0(ws@8.18.3)(zod@4.3.6)
+        version: 6.32.0(ws@8.19.0)(zod@4.3.6)
       zod:
         specifier: ^4.3.6
         version: 4.3.6
@@ -1374,9 +1383,15 @@ importers:
 
   packages/workflow:
     dependencies:
+      '@prometheus/billing':
+        specifier: workspace:*
+        version: link:../billing
       '@prometheus/logger':
         specifier: workspace:*
         version: link:../logger
+      '@prometheus/utils':
+        specifier: workspace:*
+        version: link:../utils
       inngest:
         specifier: ^4.0.2
         version: 4.0.2(@opentelemetry/core@2.6.0(@opentelemetry/api@1.9.0))(hono@4.12.8)(next@16.2.0(@opentelemetry/api@1.9.0)(@playwright/test@1.58.2)(react-dom@19.2.4(react@19.2.4))(react@19.2.4))(typescript@5.9.3)(zod@4.3.6)
@@ -7069,6 +7084,18 @@ packages:
       utf-8-validate:
         optional: true
 
+  ws@8.19.0:
+    resolution: {integrity: sha512-blAT2mjOEIi0ZzruJfIhb3nps74PRWTCz1IjglWEEpQl5XS/UNama6u2/rjFkDDouqr4L67ry+1aGIALViWjDg==}
+    engines: {node: '>=10.0.0'}
+    peerDependencies:
+      bufferutil: ^4.0.1
+      utf-8-validate: '>=5.0.2'
+    peerDependenciesMeta:
+      bufferutil:
+        optional: true
+      utf-8-validate:
+        optional: true
+
   xmlhttprequest-ssl@2.1.2:
     resolution: {integrity: sha512-TEU+nJVUUnA4CYJFLvK5X9AOeH4KvDvhIfm0vV1GaQRtchnG0hgK5p8hw/xjv8cunWYCsiPCSDzObPyhEwq3KQ==}
     engines: {node: '>=0.4.0'}
@@ -12167,9 +12194,9 @@ snapshots:
     dependencies:
       mimic-function: 5.0.1
 
-  openai@6.32.0(ws@8.18.3)(zod@4.3.6):
+  openai@6.32.0(ws@8.19.0)(zod@4.3.6):
     optionalDependencies:
-      ws: 8.18.3
+      ws: 8.19.0
       zod: 4.3.6
 
   ora@9.3.0:
@@ -13236,6 +13263,8 @@ snapshots:
   wrappy@1.0.2: {}
 
   ws@8.18.3: {}
+
+  ws@8.19.0: {}
 
   xmlhttprequest-ssl@2.1.2: {}
 

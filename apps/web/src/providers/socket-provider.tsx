@@ -12,15 +12,19 @@ import type { Socket } from "socket.io-client";
 import {
   type ConnectionStatus,
   connectSocket,
+  disconnectAllNamespaces,
   disconnectSocket,
+  getNamespaceSocket,
 } from "@/lib/socket";
 
 interface SocketContextValue {
+  getNamespaceSocket: (namespace: string) => Socket;
   socket: Socket | null;
   status: ConnectionStatus;
 }
 
 const SocketContext = createContext<SocketContextValue>({
+  getNamespaceSocket: (ns: string) => getNamespaceSocket(ns),
   socket: null,
   status: "disconnected",
 });
@@ -43,6 +47,7 @@ export function SocketProvider({ children }: { children: ReactNode }) {
     socketRef.current = socket;
 
     return () => {
+      disconnectAllNamespaces();
       disconnectSocket();
       socketRef.current = null;
       setStatus("disconnected");
@@ -50,7 +55,9 @@ export function SocketProvider({ children }: { children: ReactNode }) {
   }, []);
 
   return (
-    <SocketContext.Provider value={{ socket: socketRef.current, status }}>
+    <SocketContext.Provider
+      value={{ socket: socketRef.current, status, getNamespaceSocket }}
+    >
       {children}
     </SocketContext.Provider>
   );

@@ -7,6 +7,16 @@ const logger = createLogger("sandbox-manager:health");
 
 const WHITESPACE_RE = /\s+/;
 
+/** OOM detection thresholds */
+const OOM_WARNING_THRESHOLD = 90;
+const OOM_CRITICAL_THRESHOLD = 95;
+
+/** Zombie container detection: containers stuck for more than 10 minutes */
+const ZOMBIE_TIMEOUT_MS = 10 * 60 * 1000;
+
+/** Maximum heartbeat history entries to keep */
+const MAX_HEARTBEAT_HISTORY = 100;
+
 export interface HealthStatus {
   checks: Record<string, boolean>;
   docker: {
@@ -14,6 +24,12 @@ export interface HealthStatus {
     activeContainers: number;
   };
   mode: "docker" | "firecracker" | "dev" | "e2b";
+  oom: {
+    lastOomAt: string | null;
+    memoryWarning: boolean;
+    memoryCritical: boolean;
+    oomCount: number;
+  };
   pool: {
     total: number;
     active: number;
@@ -33,12 +49,31 @@ export interface HealthStatus {
   timestamp: string;
   uptime: number;
   version: string;
+  zombies: {
+    zombiesDetected: number;
+    zombiesCleaned: number;
+  };
+}
+
+/** Heartbeat entry for tracking health check history */
+interface HeartbeatEntry {
+  memoryUsagePercent: number;
+  status: "healthy" | "degraded" | "unhealthy";
+  timestamp: string;
 }
 
 const startTime = Date.now();
 
+/** OOM and zombie tracking state */
+let oomCount = 0;
+let lastOomAt: string | null = null;
+let totalZombiesDetected = 0;
+let totalZombiesCleaned = 0;
+const heartbeatHistory: HeartbeatEntry[] = [];
+
 /**
  * Create a health check function that inspects Docker, pool, and system resources.
+ * Includes OOM detection, zombie container cleanup, and heartbeat tracking.
  */
 export function createHealthChecker(
   containerManager: ContainerManager,
@@ -61,6 +96,21 @@ export function createHealthChecker(
     const usedMem = totalMem - freeMem;
     const memoryUsagePercent = Math.round((usedMem / totalMem) * 100);
 
+    // OOM detection at 90%/95% thresholds
+    const memoryWarning = memoryUsagePercent >= OOM_WARNING_THRESHOLD;
+    const memoryCritical = memoryUsagePercent >= OOM_CRITICAL_THRESHOLD;
+
+    if (memoryCritical) {
+      oomCount++;
+      lastOomAt = new Date().toISOString();
+      logger.error(
+        { memoryUsagePercent, oomCount },
+        "OOM critical threshold reached"
+      );
+    } else if (memoryWarning) {
+      logger.warn({ memoryUsagePercent }, "OOM warning threshold reached");
+    }
+
     // Disk usage for sandbox directory
     let diskUsagePercent: number | null = null;
     let diskFreeMb: number | null = null;
@@ -72,16 +122,21 @@ export function createHealthChecker(
       logger.debug("Could not determine disk usage");
     }
 
+    // Zombie container cleanup: detect containers stuck in creating/stopping
+    const zombieResult = detectAndCleanZombies(containerManager);
+    totalZombiesDetected += zombieResult.detected;
+    totalZombiesCleaned += zombieResult.cleaned;
+
     // Determine overall health status
     let status: "healthy" | "degraded" | "unhealthy" = "healthy";
 
     if (
-      memoryUsagePercent > 95 ||
+      memoryCritical ||
       (diskUsagePercent !== null && diskUsagePercent > 95)
     ) {
       status = "unhealthy";
     } else if (
-      memoryUsagePercent > 85 ||
+      memoryWarning ||
       (diskUsagePercent !== null && diskUsagePercent > 85) ||
       (process.env.NODE_ENV === "production" && !dockerAvailable)
     ) {
@@ -100,6 +155,17 @@ export function createHealthChecker(
       redisOk = pong === "PONG";
     } catch {
       redisOk = false;
+    }
+
+    // Record heartbeat (bounded history)
+    const timestamp = new Date().toISOString();
+    heartbeatHistory.push({
+      status,
+      memoryUsagePercent,
+      timestamp,
+    });
+    if (heartbeatHistory.length > MAX_HEARTBEAT_HISTORY) {
+      heartbeatHistory.shift();
     }
 
     return {
@@ -130,9 +196,82 @@ export function createHealthChecker(
         diskUsagePercent,
         diskFreeMb,
       },
-      timestamp: new Date().toISOString(),
+      oom: {
+        oomCount,
+        lastOomAt,
+        memoryWarning,
+        memoryCritical,
+      },
+      zombies: {
+        zombiesDetected: totalZombiesDetected,
+        zombiesCleaned: totalZombiesCleaned,
+      },
+      timestamp,
     };
   };
+}
+
+/**
+ * Get the heartbeat history (bounded to MAX_HEARTBEAT_HISTORY entries).
+ */
+export function getHeartbeatHistory(): HeartbeatEntry[] {
+  return [...heartbeatHistory];
+}
+
+/**
+ * Detect and clean up zombie containers that are stuck in
+ * "creating" or "stopping" status for more than ZOMBIE_TIMEOUT_MS.
+ */
+function detectAndCleanZombies(containerManager: ContainerManager): {
+  detected: number;
+  cleaned: number;
+} {
+  const now = Date.now();
+  let detected = 0;
+  let cleaned = 0;
+
+  for (const container of containerManager.getAllContainers()) {
+    if (
+      (container.status === "creating" || container.status === "stopping") &&
+      now - container.createdAt.getTime() > ZOMBIE_TIMEOUT_MS
+    ) {
+      detected++;
+
+      logger.warn(
+        {
+          sandboxId: container.id,
+          status: container.status,
+          ageMs: now - container.createdAt.getTime(),
+        },
+        "Zombie container detected"
+      );
+
+      // Attempt async cleanup - fire and forget
+      containerManager.destroy(container.id).then(
+        () => {
+          logger.info(
+            { sandboxId: container.id },
+            "Zombie container cleaned up"
+          );
+        },
+        (error) => {
+          const msg = error instanceof Error ? error.message : String(error);
+          logger.error(
+            { sandboxId: container.id, error: msg },
+            "Failed to clean up zombie container"
+          );
+        }
+      );
+
+      cleaned++;
+    }
+  }
+
+  if (detected > 0) {
+    logger.info({ detected, cleaned }, "Zombie container detection completed");
+  }
+
+  return { detected, cleaned };
 }
 
 /**

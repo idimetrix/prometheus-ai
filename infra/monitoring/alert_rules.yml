@@ -241,6 +241,120 @@ groups:
           summary: "High model router latency for {{ $labels.provider }}"
           description: "Provider {{ $labels.provider }} p95 latency exceeds 30 seconds."
 
+  # ─── SLO Burn Rate Alerting ───────────────────────────────────
+  # Multi-window burn rate alerts based on Google SRE practices.
+  # SLO target: 99.9% availability (error budget: 0.1%)
+  # Fast burn (1h) catches acute incidents; slow burn (6h) catches gradual degradation.
+  - name: slo_burn_rate
+    rules:
+      # Fast burn: 1h window, 14.4x burn rate (consumes 30-day budget in 2 days)
+      - alert: SLOBurnRateFastHigh
+        expr: |
+          (
+            1 - (
+              sum(rate(http_requests_total{status!~"5.."}[1h])) by (job)
+              / sum(rate(http_requests_total[1h])) by (job)
+            )
+          ) > (14.4 * 0.001)
+        for: 2m
+        labels:
+          severity: critical
+          slo: availability
+          window: 1h
+        annotations:
+          summary: "SLO burn rate critical for {{ $labels.job }} (1h window)"
+          description: "{{ $labels.job }} is burning error budget at 14.4x the sustainable rate over 1 hour. At this rate, the 30-day budget will be exhausted in ~2 days."
+
+      # Fast burn: 1h window, 6x burn rate (consumes 30-day budget in 5 days)
+      - alert: SLOBurnRateFastMedium
+        expr: |
+          (
+            1 - (
+              sum(rate(http_requests_total{status!~"5.."}[1h])) by (job)
+              / sum(rate(http_requests_total[1h])) by (job)
+            )
+          ) > (6 * 0.001)
+        for: 5m
+        labels:
+          severity: warning
+          slo: availability
+          window: 1h
+        annotations:
+          summary: "SLO burn rate elevated for {{ $labels.job }} (1h window)"
+          description: "{{ $labels.job }} is burning error budget at 6x the sustainable rate over 1 hour. At this rate, the 30-day budget will be exhausted in ~5 days."
+
+      # Slow burn: 6h window, 3x burn rate (consumes 30-day budget in 10 days)
+      - alert: SLOBurnRateSlowHigh
+        expr: |
+          (
+            1 - (
+              sum(rate(http_requests_total{status!~"5.."}[6h])) by (job)
+              / sum(rate(http_requests_total[6h])) by (job)
+            )
+          ) > (3 * 0.001)
+        for: 15m
+        labels:
+          severity: warning
+          slo: availability
+          window: 6h
+        annotations:
+          summary: "SLO burn rate elevated for {{ $labels.job }} (6h window)"
+          description: "{{ $labels.job }} is burning error budget at 3x the sustainable rate over 6 hours. Gradual degradation detected."
+
+      # Slow burn: 6h window, 1x burn rate (on track to exhaust budget)
+      - alert: SLOBurnRateSlowSteady
+        expr: |
+          (
+            1 - (
+              sum(rate(http_requests_total{status!~"5.."}[6h])) by (job)
+              / sum(rate(http_requests_total[6h])) by (job)
+            )
+          ) > (1 * 0.001)
+        for: 30m
+        labels:
+          severity: info
+          slo: availability
+          window: 6h
+        annotations:
+          summary: "SLO burn rate at budget limit for {{ $labels.job }} (6h window)"
+          description: "{{ $labels.job }} is consuming error budget at exactly the sustainable rate over 6 hours. Investigate before it worsens."
+
+      # Latency SLO: p99 latency burn rate (fast window)
+      - alert: SLOLatencyBurnRateFast
+        expr: |
+          (
+            1 - (
+              sum(rate(http_request_duration_seconds_bucket{le="1.0"}[1h])) by (job)
+              / sum(rate(http_request_duration_seconds_count[1h])) by (job)
+            )
+          ) > (14.4 * 0.001)
+        for: 2m
+        labels:
+          severity: critical
+          slo: latency
+          window: 1h
+        annotations:
+          summary: "Latency SLO burn rate critical for {{ $labels.job }} (1h window)"
+          description: "{{ $labels.job }} latency SLO burn rate exceeds 14.4x over 1 hour. Too many requests exceeding 1s p99 target."
+
+      # Latency SLO: p99 latency burn rate (slow window)
+      - alert: SLOLatencyBurnRateSlow
+        expr: |
+          (
+            1 - (
+              sum(rate(http_request_duration_seconds_bucket{le="1.0"}[6h])) by (job)
+              / sum(rate(http_request_duration_seconds_count[6h])) by (job)
+            )
+          ) > (3 * 0.001)
+        for: 15m
+        labels:
+          severity: warning
+          slo: latency
+          window: 6h
+        annotations:
+          summary: "Latency SLO burn rate elevated for {{ $labels.job }} (6h window)"
+          description: "{{ $labels.job }} latency SLO burn rate exceeds 3x over 6 hours. Gradual latency degradation detected."
+
   # ─── Credit Depletion ──────────────────────────────────────────
   - name: credit_depletion
     rules:

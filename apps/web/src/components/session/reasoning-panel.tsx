@@ -1,14 +1,17 @@
 "use client";
 
-import { useCallback, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
 
 export interface ReasoningBlock {
+  confidenceScore?: number;
   content: string;
+  durationMs?: number;
   id: string;
+  isToolCall?: boolean;
   phase: string;
   timestamp: string;
 }
@@ -29,9 +32,33 @@ const PHASE_COLORS: Record<string, string> = {
   review: "bg-amber-500/20 text-amber-300",
   testing: "bg-cyan-500/20 text-cyan-300",
   debugging: "bg-red-500/20 text-red-300",
+  decision: "bg-violet-500/20 text-violet-300",
+  tool_call: "bg-orange-500/20 text-orange-300",
 };
 
-/** Simple code block detection and highlight */
+function formatDuration(ms: number): string {
+  if (ms < 1000) {
+    return `${ms}ms`;
+  }
+  const seconds = ms / 1000;
+  if (seconds < 60) {
+    return `${seconds.toFixed(1)}s`;
+  }
+  const minutes = Math.floor(seconds / 60);
+  const remainingSeconds = Math.round(seconds % 60);
+  return `${minutes}m ${remainingSeconds}s`;
+}
+
+function getConfidenceBadgeClass(percentage: number): string {
+  if (percentage >= 75) {
+    return "text-green-400 bg-green-500/10";
+  }
+  if (percentage >= 50) {
+    return "text-yellow-400 bg-yellow-500/10";
+  }
+  return "text-red-400 bg-red-500/10";
+}
+
 function renderContent(content: string) {
   const parts = content.split(/(```[\s\S]*?```)/g);
   return parts.map((part, idx) => {
@@ -42,14 +69,14 @@ function renderContent(content: string) {
       return (
         <pre
           className="my-1.5 overflow-auto rounded bg-zinc-950 p-2 font-mono text-[10px] text-zinc-300"
-          key={`code-${idx.toString()}`}
+          key={`code-${String(idx)}`}
         >
           {code}
         </pre>
       );
     }
     return (
-      <span className="whitespace-pre-wrap" key={`text-${idx.toString()}`}>
+      <span className="whitespace-pre-wrap" key={`text-${String(idx)}`}>
         {part}
       </span>
     );
@@ -60,10 +87,37 @@ function renderContent(content: string) {
 // Sub-components
 // ---------------------------------------------------------------------------
 
-function ReasoningEntry({ block }: { block: ReasoningBlock }) {
+function ConfidenceBadge({ score }: { score: number }) {
+  const percentage = Math.round(score * 100);
+  const cls = getConfidenceBadgeClass(percentage);
+  return (
+    <span className={`rounded px-1.5 py-0.5 font-mono text-[9px] ${cls}`}>
+      {percentage}%
+    </span>
+  );
+}
+
+function ToolCallBadge() {
+  return (
+    <span className="flex items-center gap-0.5 rounded bg-orange-500/10 px-1.5 py-0.5 text-[9px] text-orange-300">
+      Tool Call
+    </span>
+  );
+}
+
+function ReasoningEntry({
+  block,
+  stepNumber,
+}: {
+  block: ReasoningBlock;
+  stepNumber: number;
+}) {
   const [open, setOpen] = useState(false);
   const phaseColor =
     PHASE_COLORS[block.phase] ?? "bg-zinc-700/50 text-zinc-400";
+  const chevronCls = open
+    ? "h-3 w-3 shrink-0 text-zinc-500 transition-transform rotate-90"
+    : "h-3 w-3 shrink-0 text-zinc-500 transition-transform";
 
   const toggleOpen = useCallback(() => {
     setOpen((p) => !p);
@@ -76,9 +130,12 @@ function ReasoningEntry({ block }: { block: ReasoningBlock }) {
         onClick={toggleOpen}
         type="button"
       >
+        <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-zinc-800 font-mono text-[9px] text-zinc-500">
+          {stepNumber}
+        </span>
         <svg
           aria-hidden="true"
-          className={`h-3 w-3 shrink-0 text-zinc-500 transition-transform ${open ? "rotate-90" : ""}`}
+          className={chevronCls}
           fill="none"
           stroke="currentColor"
           strokeWidth={2}
@@ -89,20 +146,45 @@ function ReasoningEntry({ block }: { block: ReasoningBlock }) {
         <span className={`rounded-full px-2 py-0.5 text-[10px] ${phaseColor}`}>
           {block.phase}
         </span>
+        {block.isToolCall && <ToolCallBadge />}
         <span className="min-w-0 flex-1 truncate text-xs text-zinc-400">
           {block.content.slice(0, 80)}
           {block.content.length > 80 ? "..." : ""}
         </span>
-        <span className="shrink-0 text-[10px] text-zinc-600">
-          {new Date(block.timestamp).toLocaleTimeString([], {
-            hour: "2-digit",
-            minute: "2-digit",
-            second: "2-digit",
-          })}
-        </span>
+        <div className="flex shrink-0 items-center gap-2">
+          {block.confidenceScore !== undefined && (
+            <ConfidenceBadge score={block.confidenceScore} />
+          )}
+          {block.durationMs !== undefined && (
+            <span className="font-mono text-[9px] text-zinc-600">
+              {formatDuration(block.durationMs)}
+            </span>
+          )}
+          <span className="text-[10px] text-zinc-600">
+            {new Date(block.timestamp).toLocaleTimeString([], {
+              hour: "2-digit",
+              minute: "2-digit",
+              second: "2-digit",
+            })}
+          </span>
+        </div>
       </button>
       {open && (
-        <div className="bg-zinc-900/30 px-3 pb-3 pl-8 text-xs text-zinc-400 leading-relaxed">
+        <div className="bg-zinc-900/30 px-3 pb-3 pl-12 text-xs text-zinc-400 leading-relaxed">
+          <div className="mb-2 flex flex-wrap items-center gap-3 text-[10px] text-zinc-600">
+            <span>Step #{stepNumber}</span>
+            {block.durationMs !== undefined && (
+              <span>Duration: {formatDuration(block.durationMs)}</span>
+            )}
+            {block.confidenceScore !== undefined && (
+              <span>
+                Confidence: {Math.round(block.confidenceScore * 100)}%
+              </span>
+            )}
+            {block.isToolCall && (
+              <span className="text-orange-400">Tool Decision</span>
+            )}
+          </div>
           {renderContent(block.content)}
         </div>
       )}
@@ -119,14 +201,45 @@ export function ReasoningPanel({
   isExpanded: initialExpanded = false,
 }: ReasoningPanelProps) {
   const [expanded, setExpanded] = useState(initialExpanded);
+  const [filterPhase, setFilterPhase] = useState<string>("");
 
   const toggleExpanded = useCallback(() => {
     setExpanded((p) => !p);
   }, []);
 
+  const availablePhases = useMemo(() => {
+    const phases = new Set(reasoning.map((b) => b.phase));
+    return [...phases].sort();
+  }, [reasoning]);
+
+  const filteredReasoning = useMemo(() => {
+    if (!filterPhase) {
+      return reasoning;
+    }
+    return reasoning.filter((b) => b.phase === filterPhase);
+  }, [reasoning, filterPhase]);
+
+  const totalDuration = useMemo(() => {
+    return reasoning.reduce((sum, b) => sum + (b.durationMs ?? 0), 0);
+  }, [reasoning]);
+
+  const avgConfidence = useMemo(() => {
+    const withScore = reasoning.filter((b) => b.confidenceScore !== undefined);
+    if (withScore.length === 0) {
+      return undefined;
+    }
+    return (
+      withScore.reduce((sum, b) => sum + (b.confidenceScore ?? 0), 0) /
+      withScore.length
+    );
+  }, [reasoning]);
+
+  const expandedChevronCls = expanded
+    ? "h-3.5 w-3.5 text-indigo-400 transition-transform rotate-90"
+    : "h-3.5 w-3.5 text-indigo-400 transition-transform";
+
   return (
     <div className="flex flex-col overflow-hidden rounded-lg border border-zinc-800 bg-zinc-900/50">
-      {/* Header */}
       <button
         className="flex items-center gap-2 px-3 py-2 hover:bg-zinc-800/30"
         onClick={toggleExpanded}
@@ -134,7 +247,7 @@ export function ReasoningPanel({
       >
         <svg
           aria-hidden="true"
-          className={`h-3.5 w-3.5 text-indigo-400 transition-transform ${expanded ? "rotate-90" : ""}`}
+          className={expandedChevronCls}
           fill="none"
           stroke="currentColor"
           strokeWidth={2}
@@ -162,20 +275,70 @@ export function ReasoningPanel({
         <span className="rounded bg-zinc-800 px-1.5 py-0.5 text-[10px] text-zinc-500">
           {reasoning.length}
         </span>
+        {reasoning.length > 0 && (
+          <div className="ml-auto flex items-center gap-2">
+            {totalDuration > 0 && (
+              <span className="font-mono text-[9px] text-zinc-600">
+                {formatDuration(totalDuration)}
+              </span>
+            )}
+            {avgConfidence !== undefined && (
+              <ConfidenceBadge score={avgConfidence} />
+            )}
+          </div>
+        )}
       </button>
 
-      {/* Content */}
       {expanded && (
-        <div className="max-h-96 overflow-auto border-zinc-800 border-t">
-          {reasoning.length === 0 ? (
-            <div className="px-3 py-6 text-center text-xs text-zinc-600">
-              No reasoning blocks yet
+        <div className="border-zinc-800 border-t">
+          {availablePhases.length > 1 && (
+            <div className="flex items-center gap-2 border-zinc-800 border-b px-3 py-1.5">
+              <span className="text-[10px] text-zinc-600">Filter:</span>
+              <button
+                className={
+                  filterPhase
+                    ? "rounded px-1.5 py-0.5 text-[10px] text-zinc-500 hover:text-zinc-300"
+                    : "rounded bg-violet-500/20 px-1.5 py-0.5 text-[10px] text-violet-400"
+                }
+                onClick={() => setFilterPhase("")}
+                type="button"
+              >
+                All
+              </button>
+              {availablePhases.map((phase) => (
+                <button
+                  className={
+                    filterPhase === phase
+                      ? "rounded bg-violet-500/20 px-1.5 py-0.5 text-[10px] text-violet-400"
+                      : "rounded px-1.5 py-0.5 text-[10px] text-zinc-500 hover:text-zinc-300"
+                  }
+                  key={phase}
+                  onClick={() => setFilterPhase(phase)}
+                  type="button"
+                >
+                  {phase}
+                </button>
+              ))}
             </div>
-          ) : (
-            reasoning.map((block) => (
-              <ReasoningEntry block={block} key={block.id} />
-            ))
           )}
+
+          <div className="max-h-96 overflow-auto">
+            {filteredReasoning.length === 0 ? (
+              <div className="px-3 py-6 text-center text-xs text-zinc-600">
+                {reasoning.length === 0
+                  ? "No reasoning blocks yet"
+                  : "No matching reasoning blocks"}
+              </div>
+            ) : (
+              filteredReasoning.map((block, idx) => (
+                <ReasoningEntry
+                  block={block}
+                  key={block.id}
+                  stepNumber={idx + 1}
+                />
+              ))
+            )}
+          </div>
         </div>
       )}
     </div>

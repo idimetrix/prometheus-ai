@@ -11,6 +11,10 @@ import type {
 } from "@prometheus/queue";
 import { createRedisConnection } from "@prometheus/queue";
 import { initSentry, initTelemetry } from "@prometheus/telemetry";
+import {
+  installShutdownHandlers,
+  isProcessShuttingDown,
+} from "@prometheus/utils";
 import { Queue, Worker } from "bullmq";
 import { processCleanupSandbox } from "./jobs/cleanup-sandbox";
 import { processCreditGrant } from "./jobs/credit-grant";
@@ -23,6 +27,7 @@ import { setupScheduledJobs } from "./scheduler";
 
 await initTelemetry({ serviceName: "queue-worker" });
 initSentry({ serviceName: "queue-worker" });
+installShutdownHandlers();
 
 const logger = createLogger("queue-worker");
 const processor = new TaskProcessor();
@@ -298,6 +303,11 @@ logger.info(
 const healthPort = Number(process.env.HEALTH_PORT ?? 4007);
 const healthServer = createServer((req, res) => {
   if (req.url === "/health") {
+    if (isProcessShuttingDown()) {
+      res.writeHead(503, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ status: "draining" }));
+      return;
+    }
     res.writeHead(200, { "Content-Type": "application/json" });
     res.end(
       JSON.stringify({

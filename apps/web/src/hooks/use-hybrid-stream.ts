@@ -32,6 +32,24 @@ const MAX_RECONNECT_ATTEMPTS = 12;
 const BASE_DELAY_MS = 1000;
 const MAX_DELAY_MS = 30_000;
 const WS_CLOSE_NORMAL = 1000;
+const TRANSPORT_PREF_KEY = "prometheus:preferred-transport";
+
+function _getPreferredTransport(): "ws" | "sse" | null {
+  try {
+    const val = globalThis.sessionStorage?.getItem(TRANSPORT_PREF_KEY);
+    return val === "ws" || val === "sse" ? val : null;
+  } catch {
+    return null;
+  }
+}
+
+function savePreferredTransport(transport: "ws" | "sse"): void {
+  try {
+    globalThis.sessionStorage?.setItem(TRANSPORT_PREF_KEY, transport);
+  } catch {
+    // sessionStorage unavailable (SSR)
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Hook
@@ -118,6 +136,7 @@ export function useHybridStream(sessionId: string): HybridStreamReturn {
       ws.onopen = () => {
         setIsConnected(true);
         setTransport("websocket");
+        savePreferredTransport("ws");
         store.setConnected(true);
         reconnectAttempts.current = 0;
 
@@ -177,6 +196,7 @@ export function useHybridStream(sessionId: string): HybridStreamReturn {
     es.onopen = () => {
       setIsConnected(true);
       setTransport("sse");
+      savePreferredTransport("sse");
       store.setConnected(true);
       reconnectAttempts.current = 0;
     };
@@ -235,10 +255,12 @@ export function useHybridStream(sessionId: string): HybridStreamReturn {
       return;
     }
     reconnectAttempts.current++;
-    const delay = Math.min(
+    const exponential = Math.min(
       BASE_DELAY_MS * 2 ** (reconnectAttempts.current - 1),
       MAX_DELAY_MS
     );
+    // Add jitter to prevent thundering herd on server restart
+    const delay = exponential * (0.5 + Math.random());
     reconnectTimer.current = setTimeout(() => {
       connectRef.current();
     }, delay);

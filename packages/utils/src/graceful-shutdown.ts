@@ -13,6 +13,7 @@ interface ShutdownHandler {
 
 const handlers: ShutdownHandler[] = [];
 let isShuttingDown = false;
+let isDraining = false;
 
 /** Maximum time to wait for shutdown handlers to complete (30s) */
 const MAX_SHUTDOWN_MS = 30_000;
@@ -47,6 +48,23 @@ export function isProcessShuttingDown(): boolean {
 }
 
 /**
+ * Get the current health status of the service.
+ *
+ * - "healthy": Normal operation, accepting new requests
+ * - "draining": Shutdown initiated, finishing in-flight requests but rejecting new ones
+ * - "shutdown": All handlers have completed, process is exiting
+ */
+export function getHealthStatus(): "healthy" | "draining" | "shutdown" {
+  if (isShuttingDown && !isDraining) {
+    return "shutdown";
+  }
+  if (isDraining) {
+    return "draining";
+  }
+  return "healthy";
+}
+
+/**
  * Orchestrate graceful shutdown:
  * 1. Stop accepting new connections
  * 2. Drain active requests
@@ -67,6 +85,7 @@ export async function gracefulShutdown(signal: string): Promise<void> {
   }
 
   isShuttingDown = true;
+  isDraining = true;
   logger.info(
     { signal, handlerCount: handlers.length },
     "Graceful shutdown initiated"
@@ -108,6 +127,7 @@ export async function gracefulShutdown(signal: string): Promise<void> {
     }
   }
 
+  isDraining = false;
   const totalTime = Date.now() - (deadline - MAX_SHUTDOWN_MS);
   logger.info({ signal, totalTimeMs: totalTime }, "Graceful shutdown complete");
 }

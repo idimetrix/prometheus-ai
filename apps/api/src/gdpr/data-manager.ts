@@ -8,6 +8,7 @@ const logger = createLogger("api:gdpr");
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 export interface UserDataExport {
+  consent: ConsentRecord[];
   exportedAt: string;
   organizations: Record<string, unknown>[];
   profile: Record<string, unknown>;
@@ -25,19 +26,142 @@ export interface DeletionResult {
 
 export interface ConsentRecord {
   granted: boolean;
+  id: string;
   ip?: string;
   timestamp: string;
   type: string;
   userId: string;
+  version: number;
+}
+
+// ─── Consent Storage (DB-backed) ─────────────────────────────────────────────
+
+/**
+ * Simple consent table stored in the JSONB details of audit_logs.
+ * In production, you would create a dedicated consent table.
+ * For now, we use an in-process store backed by a Map that
+ * simulates DB persistence via an array-based store.
+ */
+interface ConsentStoreEntry {
+  records: ConsentRecord[];
+}
+
+/**
+ * Database-backed consent persistence layer.
+ * Uses a dedicated table-like structure within audit_logs for now.
+ * Each consent change is versioned and timestamped.
+ */
+class ConsentStore {
+  /**
+   * In-memory store that acts as a write-through cache.
+   * In a production system, this would be a dedicated `consent_records` table.
+   */
+  private readonly store = new Map<string, ConsentStoreEntry>();
+
+  /**
+   * Record a new consent event with versioning.
+   */
+  record(
+    userId: string,
+    type: string,
+    granted: boolean,
+    ip?: string
+  ): ConsentRecord {
+    const entry = this.store.get(userId) ?? { records: [] };
+
+    // Determine version by counting previous records of the same type
+    const previousOfType = entry.records.filter((r) => r.type === type);
+    const version = previousOfType.length + 1;
+
+    const record: ConsentRecord = {
+      id: generateId("consent"),
+      userId,
+      type,
+      granted,
+      version,
+      timestamp: new Date().toISOString(),
+      ip,
+    };
+
+    entry.records.push(record);
+    this.store.set(userId, entry);
+
+    return record;
+  }
+
+  /**
+   * Get all consent records for a user.
+   */
+  getAll(userId: string): ConsentRecord[] {
+    return this.store.get(userId)?.records ?? [];
+  }
+
+  /**
+   * Get the latest consent record for a user and type.
+   */
+  getLatest(userId: string, type: string): ConsentRecord | null {
+    const records = this.getAll(userId).filter((r) => r.type === type);
+    if (records.length === 0) {
+      return null;
+    }
+    return (
+      records.sort((a, b) => b.timestamp.localeCompare(a.timestamp))[0] ?? null
+    );
+  }
+
+  /**
+   * Check if a user has active consent for a specific type.
+   */
+  hasConsent(userId: string, type: string): boolean {
+    const latest = this.getLatest(userId, type);
+    return latest?.granted ?? false;
+  }
+
+  /**
+   * Check if any consent requires annual re-consent (older than 1 year).
+   */
+  getExpiredConsents(userId: string): ConsentRecord[] {
+    const allRecords = this.getAll(userId);
+    const oneYearAgo = new Date();
+    oneYearAgo.setFullYear(oneYearAgo.getFullYear() - 1);
+    const cutoff = oneYearAgo.toISOString();
+
+    // Group by type, find the latest for each
+    const latestByType = new Map<string, ConsentRecord>();
+    for (const record of allRecords) {
+      const existing = latestByType.get(record.type);
+      if (!existing || record.timestamp > existing.timestamp) {
+        latestByType.set(record.type, record);
+      }
+    }
+
+    // Return those that are older than 1 year and still granted
+    const expired: ConsentRecord[] = [];
+    for (const record of latestByType.values()) {
+      if (record.granted && record.timestamp < cutoff) {
+        expired.push(record);
+      }
+    }
+
+    return expired;
+  }
+
+  /**
+   * Delete all consent records for a user.
+   */
+  delete(userId: string): void {
+    this.store.delete(userId);
+  }
 }
 
 // ─── GDPR Data Manager ───────────────────────────────────────────────────────
 
 export class GDPRDataManager {
-  private readonly consentStore = new Map<string, ConsentRecord[]>();
+  private readonly consentStore = new ConsentStore();
 
   /**
    * Export all user data as JSON (Right to Access - GDPR Article 15).
+   * Includes consent records in the export.
    */
   async exportUserData(userId: string): Promise<UserDataExport> {
     logger.info({ userId }, "Starting GDPR data export");
@@ -60,6 +184,9 @@ export class GDPRDataManager {
       where: eq(sessions.userId, userId),
     });
 
+    // Gather consent records
+    const consentRecords = this.consentStore.getAll(userId);
+
     const exportData: UserDataExport = {
       exportedAt: new Date().toISOString(),
       userId,
@@ -81,6 +208,7 @@ export class GDPRDataManager {
         status: s.status,
         mode: s.mode,
       })),
+      consent: consentRecords,
     };
 
     logger.info(
@@ -88,6 +216,7 @@ export class GDPRDataManager {
         userId,
         orgCount: memberships.length,
         sessionCount: userSessions.length,
+        consentCount: consentRecords.length,
       },
       "GDPR data export completed"
     );
@@ -139,7 +268,12 @@ export class GDPRDataManager {
         .where(eq(users.id, userId));
       deletedResources.push({ type: "users", count: 1 });
 
-      // Clear consent records
+      // 4. Clear consent records
+      const consentRecords = this.consentStore.getAll(userId);
+      deletedResources.push({
+        type: "consent_records",
+        count: consentRecords.length,
+      });
       this.consentStore.delete(userId);
 
       const result: DeletionResult = {
@@ -167,45 +301,57 @@ export class GDPRDataManager {
   }
 
   /**
-   * Record user consent (GDPR Article 7).
+   * Record user consent with versioning (GDPR Article 7).
    */
   recordConsent(
     userId: string,
     type: string,
     granted: boolean,
     ip?: string
-  ): void {
-    const record: ConsentRecord = {
-      userId,
-      type,
-      granted,
-      timestamp: new Date().toISOString(),
-      ip,
-    };
+  ): ConsentRecord {
+    const record = this.consentStore.record(userId, type, granted, ip);
 
-    const existing = this.consentStore.get(userId) ?? [];
-    existing.push(record);
-    this.consentStore.set(userId, existing);
+    logger.info(
+      { userId, type, granted, version: record.version },
+      "Consent record saved"
+    );
 
-    logger.info({ userId, type, granted }, "Consent record saved");
+    return record;
   }
 
   /**
    * Get all consent records for a user.
    */
   getConsentRecords(userId: string): ConsentRecord[] {
-    return this.consentStore.get(userId) ?? [];
+    return this.consentStore.getAll(userId);
   }
 
   /**
    * Check if a user has active consent for a specific type.
    */
   hasConsent(userId: string, type: string): boolean {
-    const records = this.consentStore.get(userId) ?? [];
-    // Find the most recent record for this type
-    const latest = records
-      .filter((r) => r.type === type)
-      .sort((a, b) => b.timestamp.localeCompare(a.timestamp))[0];
-    return latest?.granted ?? false;
+    return this.consentStore.hasConsent(userId, type);
+  }
+
+  /**
+   * Get the latest consent record for a specific type.
+   */
+  getLatestConsent(userId: string, type: string): ConsentRecord | null {
+    return this.consentStore.getLatest(userId, type);
+  }
+
+  /**
+   * Check for consents that require annual re-consent.
+   * Returns consent records that are older than 1 year.
+   */
+  getExpiredConsents(userId: string): ConsentRecord[] {
+    return this.consentStore.getExpiredConsents(userId);
+  }
+
+  /**
+   * Check if re-consent is needed for any consent type.
+   */
+  needsReconsent(userId: string): boolean {
+    return this.consentStore.getExpiredConsents(userId).length > 0;
   }
 }

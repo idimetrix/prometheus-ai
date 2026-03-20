@@ -1,8 +1,11 @@
+## API server: ingress from nginx, egress to postgres + redis only
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
   name: allow-api-ingress
   namespace: prometheus
+  labels:
+    app.kubernetes.io/part-of: prometheus
 spec:
   podSelector:
     matchLabels:
@@ -15,7 +18,22 @@ spec:
       ports:
         - port: 4000
           protocol: TCP
+    # Allow internal service-to-service calls
+    - from:
+        - podSelector:
+            matchLabels:
+              app: orchestrator
+        - podSelector:
+            matchLabels:
+              app: queue-worker
+        - podSelector:
+            matchLabels:
+              app: web
+      ports:
+        - port: 4000
+          protocol: TCP
   egress:
+    # Only API can talk to the database
     - to:
         - podSelector:
             matchLabels:
@@ -23,6 +41,7 @@ spec:
       ports:
         - port: 5432
           protocol: TCP
+    # API can access Redis for caching/rate-limiting
     - to:
         - podSelector:
             matchLabels:
@@ -34,30 +53,225 @@ spec:
     - Ingress
     - Egress
 ---
+## Socket server: ingress from nginx (WebSocket upgrades), egress to Redis pub/sub only
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: allow-sandbox-restricted-egress
+  name: allow-socket-server
   namespace: prometheus
+  labels:
+    app.kubernetes.io/part-of: prometheus
 spec:
   podSelector:
     matchLabels:
-      app: sandbox
-  egress:
-    - to: []
+      app: socket-server
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ingress-nginx
       ports:
-        - port: 443
+        - port: 4001
           protocol: TCP
-        - port: 80
+  egress:
+    # Socket server only needs Redis for pub/sub
+    - to:
+        - podSelector:
+            matchLabels:
+              app: redis
+      ports:
+        - port: 6379
+          protocol: TCP
+  policyTypes:
+    - Ingress
+    - Egress
+---
+## Orchestrator: can reach API and Redis
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-orchestrator
+  namespace: prometheus
+  labels:
+    app.kubernetes.io/part-of: prometheus
+spec:
+  podSelector:
+    matchLabels:
+      app: orchestrator
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: api
+      ports:
+        - port: 4002
+          protocol: TCP
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app: api
+      ports:
+        - port: 4000
+          protocol: TCP
+    - to:
+        - podSelector:
+            matchLabels:
+              app: redis
+      ports:
+        - port: 6379
+          protocol: TCP
+    - to:
+        - podSelector:
+            matchLabels:
+              app: sandbox-manager
+      ports:
+        - port: 4006
+          protocol: TCP
+  policyTypes:
+    - Ingress
+    - Egress
+---
+## Sandbox manager: accepts from orchestrator, manages sandbox pods
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-sandbox-manager
+  namespace: prometheus
+  labels:
+    app.kubernetes.io/part-of: prometheus
+spec:
+  podSelector:
+    matchLabels:
+      app: sandbox-manager
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: orchestrator
+        - podSelector:
+            matchLabels:
+              app: api
+      ports:
+        - port: 4006
+          protocol: TCP
+  egress:
+    # Can talk to sandbox pods it manages
+    - to:
+        - podSelector:
+            matchLabels:
+              app: sandbox
+      ports:
+        - port: 8080
+          protocol: TCP
+    # Can reach Redis for queue processing
+    - to:
+        - podSelector:
+            matchLabels:
+              app: redis
+      ports:
+        - port: 6379
+          protocol: TCP
+  policyTypes:
+    - Ingress
+    - Egress
+---
+## Queue worker: egress to redis + API
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-queue-worker
+  namespace: prometheus
+  labels:
+    app.kubernetes.io/part-of: prometheus
+spec:
+  podSelector:
+    matchLabels:
+      app: queue-worker
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app: redis
+      ports:
+        - port: 6379
+          protocol: TCP
+    - to:
+        - podSelector:
+            matchLabels:
+              app: api
+      ports:
+        - port: 4000
           protocol: TCP
   policyTypes:
     - Egress
 ---
+## Postgres: only accept connections from API
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-postgres-ingress
+  namespace: prometheus
+  labels:
+    app.kubernetes.io/part-of: prometheus
+spec:
+  podSelector:
+    matchLabels:
+      app: postgres
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: api
+      ports:
+        - port: 5432
+          protocol: TCP
+  policyTypes:
+    - Ingress
+---
+## Redis: accept from api, socket-server, orchestrator, queue-worker, sandbox-manager
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-redis-ingress
+  namespace: prometheus
+  labels:
+    app.kubernetes.io/part-of: prometheus
+spec:
+  podSelector:
+    matchLabels:
+      app: redis
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: api
+        - podSelector:
+            matchLabels:
+              app: socket-server
+        - podSelector:
+            matchLabels:
+              app: orchestrator
+        - podSelector:
+            matchLabels:
+              app: queue-worker
+        - podSelector:
+            matchLabels:
+              app: sandbox-manager
+      ports:
+        - port: 6379
+          protocol: TCP
+  policyTypes:
+    - Ingress
+---
+## DNS: allow all pods to resolve DNS
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
   name: allow-dns
   namespace: prometheus
+  labels:
+    app.kubernetes.io/part-of: prometheus
 spec:
   podSelector: {}
   egress:

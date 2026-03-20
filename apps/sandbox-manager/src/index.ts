@@ -1,6 +1,10 @@
 import { serve } from "@hono/node-server";
 import { createLogger } from "@prometheus/logger";
 import { initSentry, initTelemetry } from "@prometheus/telemetry";
+import {
+  installShutdownHandlers,
+  isProcessShuttingDown,
+} from "@prometheus/utils";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { ContainerManager } from "./container";
@@ -12,6 +16,7 @@ import { validateTimeout } from "./security";
 
 await initTelemetry({ serviceName: "sandbox-manager" });
 initSentry({ serviceName: "sandbox-manager" });
+installShutdownHandlers();
 
 const logger = createLogger("sandbox-manager");
 const app = new Hono();
@@ -26,6 +31,9 @@ const healthCheck = createHealthChecker(containerManager, sandboxPool);
 // ---- Health ----
 
 app.get("/health", async (c) => {
+  if (isProcessShuttingDown()) {
+    return c.json({ status: "draining" }, 503);
+  }
   const health = await healthCheck();
   const statusCode = health.status === "unhealthy" ? 503 : 200;
   return c.json(health, statusCode);

@@ -8,6 +8,7 @@ import { createLogger } from "@prometheus/logger";
 import { withSpan } from "@prometheus/telemetry";
 import { generateId } from "@prometheus/utils";
 import { ResponseCache } from "./cache";
+import { type CascadeMessage, ModelCascade } from "./model-cascade";
 import { ModelScorer } from "./model-scorer";
 import type { RateLimitManager } from "./rate-limiter";
 
@@ -251,6 +252,7 @@ const CIRCUIT_BREAKER_RECOVERY_TIMEOUT_MS = 60_000;
 export class ModelRouterService {
   private readonly logger = createLogger("model-router:service");
   private readonly cache: ResponseCache;
+  private readonly cascade: ModelCascade;
   private readonly rateLimiter: RateLimitManager;
   private readonly scorer: ModelScorer;
   /** Cache provider health status with TTL to avoid hammering providers */
@@ -267,6 +269,28 @@ export class ModelRouterService {
     this.rateLimiter = rateLimiter;
     this.cache = new ResponseCache();
     this.scorer = new ModelScorer();
+    this.cascade = new ModelCascade(async (model, messages) => {
+      const config = MODEL_REGISTRY[model];
+      if (!config) {
+        throw new Error(`Model not found: ${model}`);
+      }
+      const client = createLLMClient({ provider: config.provider });
+      const response = await client.chat.completions.create({
+        model: config.id,
+        messages: messages as Parameters<
+          typeof client.chat.completions.create
+        >[0]["messages"],
+        temperature: 0.1,
+        max_tokens: 4096,
+        stream: false,
+      });
+      const choice = response.choices[0];
+      return {
+        content: choice?.message?.content ?? "",
+        inputTokens: response.usage?.prompt_tokens ?? 0,
+        outputTokens: response.usage?.completion_tokens ?? 0,
+      };
+    });
   }
 
   // ─── Circuit Breaker Methods ──────────────────────────────────────────
@@ -448,6 +472,74 @@ export class ModelRouterService {
         return result;
       }
       // Fall through to slot-based routing if override fails
+    }
+
+    // For default and fastLoop slots with non-streaming requests, use the
+    // model cascade to start cheap and escalate only when quality is low.
+    const isStreamingRequest = request.options?.stream === true;
+    if (
+      !isStreamingRequest &&
+      (request.slot === "default" || request.slot === "fastLoop")
+    ) {
+      try {
+        const cascadeMessages = request.messages.map((m) => ({
+          role: m.role as CascadeMessage["role"],
+          content: m.content,
+        }));
+        const cascadeResult = await this.cascade.execute(cascadeMessages);
+        this.logger.info(
+          {
+            slot: request.slot,
+            tier: cascadeResult.tier,
+            model: cascadeResult.model,
+            quality: cascadeResult.quality.toFixed(3),
+            savingsUsd: cascadeResult.savingsUsd.toFixed(6),
+          },
+          "Cascade routing completed"
+        );
+
+        const result: RouteResponse = {
+          id: generateId("cmpl"),
+          model: cascadeResult.model,
+          provider: MODEL_REGISTRY[cascadeResult.model]?.provider ?? "unknown",
+          slot: request.slot,
+          choices: [
+            {
+              message: {
+                role: "assistant",
+                content: cascadeResult.content,
+              },
+              finish_reason: "stop",
+            },
+          ],
+          usage: {
+            prompt_tokens: 0,
+            completion_tokens: 0,
+            total_tokens: 0,
+            cost_usd: cascadeResult.costUsd,
+          },
+          routing: {
+            primaryModel: slotConfig.primary,
+            modelUsed: cascadeResult.model,
+            wasFallback: cascadeResult.escalated,
+            attemptsCount: 1,
+          },
+        };
+
+        await this.cache.set(
+          request.slot,
+          request.messages as Array<{ role: string; content: string }>,
+          request.options?.tools as unknown[] | undefined,
+          result
+        );
+        return result;
+      } catch (error) {
+        const msg = error instanceof Error ? error.message : String(error);
+        this.logger.warn(
+          { slot: request.slot, error: msg },
+          "Cascade routing failed, falling back to standard routing"
+        );
+      }
     }
 
     // Build the candidate chain: primary + fallbacks

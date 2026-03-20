@@ -3,6 +3,7 @@ import {
   creditBalances,
   creditReservations,
   creditTransactions,
+  processedWebhookEvents,
 } from "./credits";
 
 export const insertCreditTransactionSchema =
@@ -23,3 +24,13 @@ export const selectCreditReservationSchema =
   createSelectSchema(creditReservations);
 export type CreditReservation = typeof creditReservations.$inferSelect;
 export type NewCreditReservation = typeof creditReservations.$inferInsert;
+
+export const insertProcessedWebhookEventSchema = createInsertSchema(
+  processedWebhookEvents
+);
+export const selectProcessedWebhookEventSchema = createSelectSchema(
+  processedWebhookEvents
+);
+export type ProcessedWebhookEvent = typeof processedWebhookEvents.$inferSelect;
+export type NewProcessedWebhookEvent =
+  typeof processedWebhookEvents.$inferInsert;

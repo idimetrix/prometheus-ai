@@ -127,3 +127,88 @@ export function joinRoom(room: string): void {
 export function leaveRoom(room: string): void {
   socket?.emit("leave", { room });
 }
+
+// ─── Namespace Multiplexing ──────────────────────────────────────────────────
+
+/**
+ * Cache of namespace-specific sockets that share the same underlying
+ * transport connection (multiplexing). Each namespace gets its own
+ * Socket.IO socket instance but reuses the WebSocket transport.
+ */
+const namespaceSockets = new Map<string, Socket>();
+
+/**
+ * Get or create a socket for a specific namespace, sharing the
+ * underlying transport with the main socket connection.
+ *
+ * This enables namespace multiplexing: multiple logical channels
+ * (e.g., /agents, /notifications, /sessions) over a single
+ * WebSocket connection.
+ *
+ * @param namespace - The namespace path (e.g., "/agents", "/sessions")
+ * @param config - Optional socket configuration
+ * @returns A Socket instance connected to the given namespace
+ */
+export function getNamespaceSocket(
+  namespace: string,
+  config?: SocketConfig
+): Socket {
+  const existing = namespaceSockets.get(namespace);
+  if (existing?.connected) {
+    return existing;
+  }
+
+  const url =
+    config?.url ??
+    process.env.NEXT_PUBLIC_SOCKET_URL ??
+    "http://localhost:4001";
+
+  const nsSocket = io(`${url}${namespace}`, {
+    autoConnect: false,
+    transports: ["websocket", "polling"],
+    // Share the transport by using the same multiplex flag
+    multiplex: true,
+    auth: async (cb) => {
+      const token = await getClerkToken();
+      cb({ token });
+    },
+  });
+
+  nsSocket.on("connect", () => {
+    config?.onStatusChange?.("connected");
+  });
+
+  nsSocket.on("disconnect", () => {
+    config?.onStatusChange?.("disconnected");
+  });
+
+  nsSocket.on("connect_error", (error) => {
+    config?.onStatusChange?.("error");
+    config?.onError?.(error);
+  });
+
+  namespaceSockets.set(namespace, nsSocket);
+  nsSocket.connect();
+  return nsSocket;
+}
+
+/**
+ * Disconnect and remove a namespace socket.
+ */
+export function disconnectNamespaceSocket(namespace: string): void {
+  const nsSocket = namespaceSockets.get(namespace);
+  if (nsSocket) {
+    nsSocket.disconnect();
+    namespaceSockets.delete(namespace);
+  }
+}
+
+/**
+ * Disconnect all namespace sockets.
+ */
+export function disconnectAllNamespaces(): void {
+  for (const [ns, nsSocket] of namespaceSockets) {
+    nsSocket.disconnect();
+    namespaceSockets.delete(ns);
+  }
+}

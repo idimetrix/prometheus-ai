@@ -1,6 +1,13 @@
+/**
+ * Reranker Layer - Multi-signal reranking with optional Voyage AI cross-encoder.
+ *
+ * Signals: Cosine similarity (40%), Path relevance (20%), Recency (15%),
+ * File type match (10%), Symbol density (15%).
+ * Enhanced with cross-encoder reranking and Redis caching.
+ */
 import { createLogger } from "@prometheus/logger";
 
-const _logger = createLogger("project-brain:reranker");
+const logger = createLogger("project-brain:reranker");
 
 const WHITESPACE_RE = /\s+/;
 const EXPORT_RE = /\bexport\b/g;
@@ -10,6 +17,9 @@ const INTERFACE_RE = /\binterface\b/g;
 const TYPE_RE = /\btype\b/g;
 const CONST_RE = /\bconst\b/g;
 const ASYNC_RE = /\basync\b/g;
+const VOYAGE_API_BASE = "https://api.voyageai.com/v1";
+const RERANK_CACHE_TTL = 600;
+const RERANK_CACHE_PREFIX = "layer-rerank:";
 
 export interface RerankableResult {
   content: string;
@@ -19,25 +29,52 @@ export interface RerankableResult {
 }
 
 export interface RerankOptions {
-  /** Paths to boost in ranking */
   boostPaths?: string[];
-  /** Paths to exclude */
+  crossEncoderCandidates?: number;
   excludePaths?: string[];
-  /** Boost for specific file types */
   fileTypes?: string[];
-  /** Boost recently modified files */
   recentlyModified?: boolean;
+  useCrossEncoder?: boolean;
 }
 
-/**
- * Reranker improves semantic search results by combining multiple signals:
- * - Cosine similarity (40%)
- * - Path relevance (20%)
- * - Recency (15%)
- * - File type match (10%)
- * - Symbol density (15%)
- */
+interface RedisLike {
+  get(key: string): Promise<string | null>;
+  set(key: string, value: string, options?: { EX?: number }): Promise<unknown>;
+}
+
 export class Reranker {
+  private readonly redis: RedisLike | null;
+
+  constructor(redis?: RedisLike) {
+    this.redis = redis ?? null;
+  }
+
+  async rerankAsync(
+    results: RerankableResult[],
+    query: string,
+    options: RerankOptions = {}
+  ): Promise<RerankableResult[]> {
+    const cacheKey = this.buildCacheKey(query, results.length, options);
+    const cached = await this.getFromCache(cacheKey);
+    if (cached) {
+      logger.debug({ query: query.slice(0, 50) }, "Reranker cache hit");
+      return cached;
+    }
+
+    let ranked = this.rerank(results, query, options);
+
+    if (options.useCrossEncoder) {
+      const candidateCount = options.crossEncoderCandidates ?? 20;
+      const topCandidates = ranked.slice(0, candidateCount);
+      const rest = ranked.slice(candidateCount);
+      const reranked = await this.crossEncoderRerank(topCandidates, query);
+      ranked = [...reranked, ...rest];
+    }
+
+    await this.setInCache(cacheKey, ranked);
+    return ranked;
+  }
+
   rerank(
     results: RerankableResult[],
     query: string,
@@ -50,22 +87,77 @@ export class Reranker {
       const recency = this.scoreRecency(result, options) * 0.15;
       const fileType = this.scoreFileType(result.filePath, options) * 0.1;
       const symbolDensity = this.scoreSymbolDensity(result.content) * 0.15;
-
-      const combinedScore =
-        similarity + pathRelevance + recency + fileType + symbolDensity;
-
-      return { ...result, score: combinedScore };
+      return {
+        ...result,
+        score: similarity + pathRelevance + recency + fileType + symbolDensity,
+      };
     });
 
-    // Filter excluded paths
     const filtered = options.excludePaths
       ? scored.filter(
           (r) => !options.excludePaths?.some((p) => r.filePath.includes(p))
         )
       : scored;
 
-    // Sort by combined score descending
     return filtered.sort((a, b) => b.score - a.score);
+  }
+
+  private async crossEncoderRerank(
+    results: RerankableResult[],
+    query: string
+  ): Promise<RerankableResult[]> {
+    const apiKey = process.env.VOYAGE_API_KEY;
+    if (!apiKey) {
+      logger.debug("VOYAGE_API_KEY not set, skipping cross-encoder reranking");
+      return results;
+    }
+    try {
+      const docTexts = results.map(
+        (r) => `${r.filePath}\n${r.content.slice(0, 1000)}`
+      );
+      const response = await fetch(`${VOYAGE_API_BASE}/rerank`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify({
+          model: "rerank-2.5",
+          query,
+          documents: docTexts,
+          top_k: results.length,
+        }),
+        signal: AbortSignal.timeout(15_000),
+      });
+      if (!response.ok) {
+        logger.warn(
+          { status: response.status },
+          "Voyage rerank API failed, using local scores"
+        );
+        return results;
+      }
+      const data = (await response.json()) as {
+        data: Array<{ index: number; relevance_score: number }>;
+      };
+      return data.data.map((item) => {
+        const original = results[item.index] as RerankableResult;
+        return {
+          ...original,
+          score: item.relevance_score * 0.6 + original.score * 0.4,
+          metadata: {
+            ...original.metadata,
+            crossEncoderScore: item.relevance_score,
+          },
+        };
+      });
+    } catch (error: unknown) {
+      const msg = error instanceof Error ? error.message : String(error);
+      logger.warn(
+        { error: msg },
+        "Cross-encoder reranking failed, using local scores"
+      );
+      return results;
+    }
   }
 
   private scorePathRelevance(
@@ -74,8 +166,6 @@ export class Reranker {
     options: RerankOptions
   ): number {
     let score = 0;
-
-    // Boost if path matches query keywords
     const queryWords = query.toLowerCase().split(WHITESPACE_RE);
     const pathLower = filePath.toLowerCase();
     for (const word of queryWords) {
@@ -83,8 +173,6 @@ export class Reranker {
         score += 0.3;
       }
     }
-
-    // Boost configured paths
     if (options.boostPaths) {
       for (const boostPath of options.boostPaths) {
         if (filePath.includes(boostPath)) {
@@ -93,8 +181,6 @@ export class Reranker {
         }
       }
     }
-
-    // Prefer src/ over test files for non-test queries
     if (
       !query.toLowerCase().includes("test") &&
       (pathLower.includes("__tests__") ||
@@ -103,7 +189,6 @@ export class Reranker {
     ) {
       score -= 0.2;
     }
-
     return Math.min(1, Math.max(0, score));
   }
 
@@ -112,37 +197,31 @@ export class Reranker {
     options: RerankOptions
   ): number {
     if (!options.recentlyModified) {
-      return 0.5; // neutral
+      return 0.5;
     }
-
     const modifiedAt = result.metadata?.modifiedAt;
     if (!modifiedAt) {
       return 0.3;
     }
-
     const age = Date.now() - new Date(modifiedAt as string).getTime();
     const dayMs = 86_400_000;
-
     if (age < dayMs) {
-      return 1.0; // Today
+      return 1.0;
     }
     if (age < 7 * dayMs) {
-      return 0.8; // This week
+      return 0.8;
     }
     if (age < 30 * dayMs) {
-      return 0.5; // This month
+      return 0.5;
     }
     return 0.2;
   }
 
   private scoreFileType(filePath: string, options: RerankOptions): number {
     const ext = filePath.split(".").pop()?.toLowerCase() ?? "";
-
     if (options.fileTypes && options.fileTypes.length > 0) {
       return options.fileTypes.includes(ext) ? 1.0 : 0.3;
     }
-
-    // Default preference: source files > config > docs
     const typeScores: Record<string, number> = {
       ts: 0.9,
       tsx: 0.85,
@@ -154,12 +233,10 @@ export class Reranker {
       md: 0.3,
       css: 0.5,
     };
-
     return typeScores[ext] ?? 0.3;
   }
 
   private scoreSymbolDensity(content: string): number {
-    // Count meaningful code symbols: functions, classes, interfaces, exports
     const symbols = [
       EXPORT_RE,
       FUNCTION_RE,
@@ -169,14 +246,54 @@ export class Reranker {
       CONST_RE,
       ASYNC_RE,
     ];
-
     let count = 0;
     for (const pattern of symbols) {
-      const matches = content.match(pattern);
-      count += matches?.length ?? 0;
+      count += content.match(pattern)?.length ?? 0;
     }
-
-    // Normalize: expect ~5-20 symbols per meaningful code chunk
     return Math.min(1, count / 15);
+  }
+
+  private buildCacheKey(
+    query: string,
+    resultCount: number,
+    options: RerankOptions
+  ): string {
+    const input = `${query}:${resultCount}:${options.useCrossEncoder ?? false}`;
+    let hash = 0;
+    for (let i = 0; i < input.length; i++) {
+      hash = Math.imul(31, hash) + input.charCodeAt(i);
+    }
+    return `${RERANK_CACHE_PREFIX}${Math.abs(hash)}`;
+  }
+
+  private async getFromCache(key: string): Promise<RerankableResult[] | null> {
+    if (!this.redis) {
+      return null;
+    }
+    try {
+      const cached = await this.redis.get(key);
+      if (cached) {
+        return JSON.parse(cached) as RerankableResult[];
+      }
+    } catch {
+      /* miss */
+    }
+    return null;
+  }
+
+  private async setInCache(
+    key: string,
+    results: RerankableResult[]
+  ): Promise<void> {
+    if (!this.redis) {
+      return;
+    }
+    try {
+      await this.redis.set(key, JSON.stringify(results), {
+        EX: RERANK_CACHE_TTL,
+      });
+    } catch {
+      /* ignore */
+    }
   }
 }

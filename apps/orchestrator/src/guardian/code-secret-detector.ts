@@ -1,4 +1,5 @@
 import { createLogger } from "@prometheus/logger";
+import type { SemgrepResult } from "./semgrep-scanner";
 
 const logger = createLogger("orchestrator:code-secret-detector");
 
@@ -8,11 +9,29 @@ export type SecretSeverity = "low" | "medium" | "high" | "critical";
 
 export interface SecretFinding {
   column: number;
+  file?: string;
   line: number;
   match: string;
   severity: SecretSeverity;
   suggestion: string;
   type: string;
+}
+
+export interface SecretScanResult {
+  blocked: boolean;
+  findings: SecretFinding[];
+  summary: {
+    critical: number;
+    high: number;
+    low: number;
+    medium: number;
+  };
+}
+
+export interface SecretNotification {
+  file: string;
+  findings: SecretFinding[];
+  message: string;
 }
 
 // ─── Detection Rules ──────────────────────────────────────────────────────────
@@ -38,6 +57,28 @@ const DETECTION_RULES: DetectionRule[] = [
       /(?:aws_secret_access_key|AWS_SECRET)['":\s=]+([A-Za-z0-9/+=]{40})/g,
     severity: "critical",
     suggestion: "Use process.env.AWS_SECRET_ACCESS_KEY instead",
+  },
+  // Google Cloud
+  {
+    name: "gcp_service_account",
+    pattern: /"type"\s*:\s*"service_account"/g,
+    severity: "critical",
+    suggestion:
+      "Store GCP service account keys in environment variables or secret manager",
+  },
+  {
+    name: "gcp_api_key",
+    pattern: /\bAIza[0-9A-Za-z_-]{35}\b/g,
+    severity: "high",
+    suggestion: "Use process.env.GOOGLE_API_KEY instead",
+  },
+  // Azure
+  {
+    name: "azure_connection_string",
+    pattern:
+      /DefaultEndpointsProtocol=https?;AccountName=[^;]+;AccountKey=[^;]+/g,
+    severity: "critical",
+    suggestion: "Use process.env for Azure connection strings",
   },
   // Generic API keys
   {
@@ -105,6 +146,35 @@ const DETECTION_RULES: DetectionRule[] = [
     severity: "high",
     suggestion: "Use process.env.JWT_SECRET instead",
   },
+  // SendGrid API key
+  {
+    name: "sendgrid_key",
+    pattern: /\bSG\.[a-zA-Z0-9_-]{22,}\.[a-zA-Z0-9_-]{22,}\b/g,
+    severity: "critical",
+    suggestion: "Use process.env.SENDGRID_API_KEY instead",
+  },
+  // Twilio
+  {
+    name: "twilio_key",
+    pattern: /\bSK[a-f0-9]{32}\b/g,
+    severity: "high",
+    suggestion: "Use process.env for Twilio credentials",
+  },
+  // NPM tokens
+  {
+    name: "npm_token",
+    pattern: /\bnpm_[a-zA-Z0-9]{36}\b/g,
+    severity: "critical",
+    suggestion: "Use .npmrc with env variable substitution",
+  },
+  // Heroku API key
+  {
+    name: "heroku_api_key",
+    pattern:
+      /(?:heroku[_-]?api[_-]?key|HEROKU_API_KEY)['":\s=]+['"]([a-f0-9-]{36})['"]/gi,
+    severity: "high",
+    suggestion: "Use process.env.HEROKU_API_KEY instead",
+  },
 ];
 
 // ─── Entropy Analysis ─────────────────────────────────────────────────────────
@@ -131,15 +201,30 @@ function calculateShannonEntropy(str: string): number {
 const HIGH_ENTROPY_THRESHOLD = 4.5;
 const MIN_ENTROPY_LENGTH = 20;
 
+// ─── Semgrep Integration Rules ───────────────────────────────────────────────
+
+/**
+ * Semgrep rule IDs that indicate secret/credential findings.
+ * These are matched against the Semgrep scan results.
+ */
+const SEMGREP_SECRET_RULES = new Set([
+  "generic.secrets.security.detected-generic-secret",
+  "generic.secrets.security.detected-aws-account-key",
+  "generic.secrets.security.detected-private-key",
+  "javascript.lang.security.hardcoded-credential",
+  "typescript.lang.security.hardcoded-credential",
+  "generic.secrets.security.detected-api-key",
+]);
+
 // ─── Code Secret Detector ─────────────────────────────────────────────────────
 
 export class CodeSecretDetector {
   /**
    * Scan code for potential secrets using regex patterns and entropy analysis.
+   * Optionally integrates Semgrep findings to enrich the results.
    */
-  scan(code: string): SecretFinding[] {
+  scan(code: string, fileName?: string): SecretFinding[] {
     const findings: SecretFinding[] = [];
-    const lines = code.split("\n");
 
     // Pattern-based detection
     for (const rule of DETECTION_RULES) {
@@ -167,11 +252,13 @@ export class CodeSecretDetector {
           column: lineInfo.column,
           match: matchText,
           suggestion: rule.suggestion,
+          file: fileName,
         });
       }
     }
 
     // Entropy-based detection for string literals
+    const lines = code.split("\n");
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i] ?? "";
       const stringMatches = line.matchAll(
@@ -199,6 +286,7 @@ export class CodeSecretDetector {
               match: value.length > 40 ? `${value.slice(0, 20)}...` : value,
               suggestion:
                 "High-entropy string detected. If this is a secret, use an environment variable instead.",
+              file: fileName,
             });
           }
         }
@@ -210,6 +298,7 @@ export class CodeSecretDetector {
         {
           findingCount: findings.length,
           types: [...new Set(findings.map((f) => f.type))],
+          file: fileName,
         },
         "Secrets detected in generated code"
       );
@@ -218,15 +307,153 @@ export class CodeSecretDetector {
     return findings;
   }
 
+  /**
+   * Merge Semgrep scan results with regex/entropy findings.
+   * This enriches the detection pipeline with Semgrep's rules.
+   */
+  mergeWithSemgrep(
+    regexFindings: SecretFinding[],
+    semgrepResult: SemgrepResult
+  ): SecretFinding[] {
+    const merged = [...regexFindings];
+
+    for (const finding of semgrepResult.findings) {
+      // Only include findings from secret-related rules
+      if (!SEMGREP_SECRET_RULES.has(finding.ruleId)) {
+        continue;
+      }
+
+      // Deduplicate against existing regex findings (same file + line)
+      const isDuplicate = merged.some(
+        (f) => f.file === finding.filePath && f.line === finding.line
+      );
+
+      if (!isDuplicate) {
+        merged.push({
+          type: `semgrep:${finding.ruleId}`,
+          severity: this.mapSemgrepSeverity(finding.severity),
+          line: finding.line,
+          column: finding.column,
+          match: finding.message.slice(0, 60),
+          suggestion: finding.message,
+          file: finding.filePath,
+        });
+      }
+    }
+
+    return merged;
+  }
+
+  /**
+   * Determine whether findings should block the commit.
+   * Any critical or high severity finding blocks.
+   */
+  shouldBlock(findings: SecretFinding[]): boolean {
+    return findings.some(
+      (f) => f.severity === "critical" || f.severity === "high"
+    );
+  }
+
+  /**
+   * Perform a full scan and return structured results with blocking decision.
+   */
+  fullScan(
+    code: string,
+    fileName?: string,
+    semgrepResult?: SemgrepResult
+  ): SecretScanResult {
+    let findings = this.scan(code, fileName);
+
+    if (semgrepResult) {
+      findings = this.mergeWithSemgrep(findings, semgrepResult);
+    }
+
+    const summary = {
+      critical: findings.filter((f) => f.severity === "critical").length,
+      high: findings.filter((f) => f.severity === "high").length,
+      medium: findings.filter((f) => f.severity === "medium").length,
+      low: findings.filter((f) => f.severity === "low").length,
+    };
+
+    const blocked = this.shouldBlock(findings);
+
+    if (blocked) {
+      logger.error(
+        {
+          fileName,
+          critical: summary.critical,
+          high: summary.high,
+          total: findings.length,
+        },
+        "Commit blocked: secrets detected"
+      );
+    }
+
+    return { findings, summary, blocked };
+  }
+
+  /**
+   * Build user-friendly notification about detected secrets.
+   */
+  buildNotification(
+    findings: SecretFinding[],
+    fileName: string
+  ): SecretNotification {
+    const lines: string[] = [
+      `Secret detection found ${findings.length} potential secret(s) in ${fileName}:`,
+      "",
+    ];
+
+    for (const finding of findings) {
+      const severity = finding.severity.toUpperCase();
+      lines.push(
+        `  [${severity}] ${finding.type} at line ${finding.line}:${finding.column}`
+      );
+      lines.push(`    Match: ${finding.match}`);
+      lines.push(`    Fix: ${finding.suggestion}`);
+      lines.push("");
+    }
+
+    if (this.shouldBlock(findings)) {
+      lines.push(
+        "BLOCKED: This commit has been blocked because it contains critical or high severity secrets."
+      );
+      lines.push(
+        "Please remove the secrets and use environment variables instead."
+      );
+    }
+
+    return {
+      file: fileName,
+      findings,
+      message: lines.join("\n"),
+    };
+  }
+
   private getLineInfo(
     code: string,
     index: number
-  ): { line: number; column: number } {
+  ): { column: number; line: number } {
     const upToIndex = code.slice(0, index);
     const lines = upToIndex.split("\n");
     return {
       line: lines.length,
       column: (lines.at(-1)?.length ?? 0) + 1,
     };
+  }
+
+  private mapSemgrepSeverity(
+    severity: "HIGH" | "MEDIUM" | "LOW"
+  ): SecretSeverity {
+    switch (severity) {
+      case "HIGH":
+        return "critical";
+      case "MEDIUM":
+        return "high";
+      case "LOW":
+        return "medium";
+      default:
+        return "low";
+    }
   }
 }

@@ -5,16 +5,68 @@ import {
   PRICING_TIERS,
 } from "@prometheus/billing/products";
 import { StripeService } from "@prometheus/billing/stripe";
-import { db, organizations, subscriptions } from "@prometheus/db";
+import {
+  db,
+  organizations,
+  processedWebhookEvents,
+  subscriptions,
+} from "@prometheus/db";
 import { createLogger } from "@prometheus/logger";
 import { generateId } from "@prometheus/utils";
-import { and, eq } from "drizzle-orm";
+import { and, eq, lt } from "drizzle-orm";
 import { Hono } from "hono";
 
 const logger = createLogger("api:webhooks:stripe");
 const stripeService = new StripeService();
 const creditService = new CreditService();
 const stripeWebhookApp = new Hono();
+
+/** TTL for webhook idempotency records: 48 hours */
+const WEBHOOK_IDEMPOTENCY_TTL_MS = 48 * 60 * 60 * 1000;
+
+// ---------------------------------------------------------------------------
+// DB-backed idempotency
+// ---------------------------------------------------------------------------
+
+async function isEventAlreadyProcessed(eventId: string): Promise<boolean> {
+  const existing = await db.query.processedWebhookEvents.findFirst({
+    where: eq(processedWebhookEvents.eventId, eventId),
+  });
+  return !!existing;
+}
+
+async function recordProcessedEvent(
+  eventId: string,
+  eventType: string
+): Promise<void> {
+  await db
+    .insert(processedWebhookEvents)
+    .values({
+      eventId,
+      eventType,
+      processedAt: new Date(),
+      expiresAt: new Date(Date.now() + WEBHOOK_IDEMPOTENCY_TTL_MS),
+    })
+    .onConflictDoNothing();
+}
+
+function pruneExpiredWebhookEvents(): void {
+  db.delete(processedWebhookEvents)
+    .where(lt(processedWebhookEvents.expiresAt, new Date()))
+    .then(() => {
+      // pruning complete
+    })
+    .catch((err: unknown) => {
+      logger.warn(
+        { error: String(err) },
+        "Failed to prune expired webhook events"
+      );
+    });
+}
+
+// ---------------------------------------------------------------------------
+// Stripe status mapping
+// ---------------------------------------------------------------------------
 
 function mapStripeStatus(
   status: string
@@ -387,6 +439,16 @@ stripeWebhookApp.post("/", async (c) => {
   try {
     const event = await stripeService.constructWebhookEvent(body, signature);
 
+    // DB-backed idempotency: skip already-processed events
+    const alreadyProcessed = await isEventAlreadyProcessed(event.id);
+    if (alreadyProcessed) {
+      logger.info(
+        { type: event.type, eventId: event.id },
+        "Duplicate webhook event, skipping"
+      );
+      return c.json({ received: true, duplicate: true });
+    }
+
     logger.info(
       { type: event.type, eventId: event.id },
       "Processing Stripe webhook"
@@ -397,6 +459,14 @@ stripeWebhookApp.post("/", async (c) => {
       await handler(event.data.object as unknown as Record<string, unknown>);
     } else {
       logger.debug({ type: event.type }, "Unhandled webhook event");
+    }
+
+    // Record event as processed after successful handling
+    await recordProcessedEvent(event.id, event.type);
+
+    // Periodically prune expired records (1% chance per request)
+    if (Math.random() < 0.01) {
+      pruneExpiredWebhookEvents();
     }
 
     return c.json({ received: true });

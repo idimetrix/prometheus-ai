@@ -307,8 +307,188 @@ export class StripeService {
     logger.info({ subscriptionId }, "Subscription reactivated");
   }
 
+  // -----------------------------------------------------------------------
+  // Trial period handling (Task 9.7)
+  // -----------------------------------------------------------------------
+
+  async createTrialSubscription(params: {
+    customerId: string;
+    priceId: string;
+    orgId: string;
+    trialDays: number;
+  }): Promise<Stripe.Subscription> {
+    const subscription = await this.stripe.subscriptions.create({
+      customer: params.customerId,
+      items: [{ price: params.priceId }],
+      trial_period_days: params.trialDays,
+      payment_settings: { save_default_payment_method: "on_subscription" },
+      metadata: { orgId: params.orgId },
+    });
+
+    const periodStart = subscription.trial_start
+      ? new Date(subscription.trial_start * 1000)
+      : new Date();
+    const periodEnd = subscription.trial_end
+      ? new Date(subscription.trial_end * 1000)
+      : new Date(Date.now() + params.trialDays * 24 * 60 * 60 * 1000);
+
+    await db.insert(subscriptions).values({
+      id: generateId("sub"),
+      orgId: params.orgId,
+      planId: this.planIdFromPriceId(params.priceId),
+      stripeSubscriptionId: subscription.id,
+      status: "trialing",
+      currentPeriodStart: periodStart,
+      currentPeriodEnd: periodEnd,
+    });
+
+    logger.info(
+      {
+        subscriptionId: subscription.id,
+        orgId: params.orgId,
+        trialDays: params.trialDays,
+      },
+      "Trial subscription created"
+    );
+    return subscription;
+  }
+
+  // -----------------------------------------------------------------------
+  // Cancellation with grace period (Task 9.7)
+  // -----------------------------------------------------------------------
+
+  async cancelWithGracePeriod(
+    subscriptionId: string,
+    graceDays: number
+  ): Promise<void> {
+    const cancelAt = Math.floor(
+      (Date.now() + graceDays * 24 * 60 * 60 * 1000) / 1000
+    );
+
+    await this.stripe.subscriptions.update(subscriptionId, {
+      cancel_at: cancelAt,
+    });
+
+    logger.info(
+      {
+        subscriptionId,
+        graceDays,
+        cancelAt: new Date(cancelAt * 1000).toISOString(),
+      },
+      "Subscription cancellation scheduled with grace period"
+    );
+  }
+
+  // -----------------------------------------------------------------------
+  // Pause / resume (Task 9.7)
+  // -----------------------------------------------------------------------
+
+  async pauseSubscription(
+    subscriptionId: string,
+    resumeAt?: Date
+  ): Promise<void> {
+    const pauseConfig: Stripe.SubscriptionUpdateParams["pause_collection"] = {
+      behavior: "void",
+    };
+
+    if (resumeAt) {
+      pauseConfig.resumes_at = Math.floor(resumeAt.getTime() / 1000);
+    }
+
+    await this.stripe.subscriptions.update(subscriptionId, {
+      pause_collection: pauseConfig,
+    });
+
+    await db
+      .update(subscriptions)
+      .set({ status: "cancelled" })
+      .where(eq(subscriptions.stripeSubscriptionId, subscriptionId));
+
+    logger.info(
+      { subscriptionId, resumeAt: resumeAt?.toISOString() ?? "indefinite" },
+      "Subscription paused"
+    );
+  }
+
+  async resumeSubscription(subscriptionId: string): Promise<void> {
+    await this.stripe.subscriptions.update(subscriptionId, {
+      pause_collection: "",
+    });
+
+    await db
+      .update(subscriptions)
+      .set({ status: "active" })
+      .where(eq(subscriptions.stripeSubscriptionId, subscriptionId));
+
+    logger.info({ subscriptionId }, "Subscription resumed");
+  }
+
+  // -----------------------------------------------------------------------
+  // Dunning / payment retry (Task 9.7)
+  // -----------------------------------------------------------------------
+
+  async retryPayment(invoiceId: string): Promise<Stripe.Invoice> {
+    const invoice = await this.stripe.invoices.pay(invoiceId);
+    logger.info(
+      { invoiceId, status: invoice.status },
+      "Payment retry attempted"
+    );
+    return invoice;
+  }
+
+  async getDunningStatus(subscriptionId: string): Promise<{
+    invoiceId: string | null;
+    attemptCount: number;
+    nextAttempt: string | null;
+    isPastDue: boolean;
+  }> {
+    const sub = await this.stripe.subscriptions.retrieve(subscriptionId, {
+      expand: ["latest_invoice"],
+    });
+
+    const latestInvoice = sub.latest_invoice as Stripe.Invoice | null;
+
+    if (!latestInvoice || typeof latestInvoice === "string") {
+      return {
+        invoiceId: null,
+        attemptCount: 0,
+        nextAttempt: null,
+        isPastDue: sub.status === "past_due",
+      };
+    }
+
+    return {
+      invoiceId: latestInvoice.id,
+      attemptCount: latestInvoice.attempt_count ?? 0,
+      nextAttempt: latestInvoice.next_payment_attempt
+        ? new Date(latestInvoice.next_payment_attempt * 1000).toISOString()
+        : null,
+      isPastDue: sub.status === "past_due",
+    };
+  }
+
   async getSubscription(subscriptionId: string): Promise<Stripe.Subscription> {
     return await this.stripe.subscriptions.retrieve(subscriptionId);
+  }
+
+  // -----------------------------------------------------------------------
+  // Metered billing (stub for usage reporting)
+  // -----------------------------------------------------------------------
+
+  reportMeteredUsage(params: {
+    subscriptionItemId: string;
+    quantity: number;
+    timestamp: number;
+    action?: "set" | "increment";
+  }): void {
+    logger.info(
+      {
+        subscriptionItemId: params.subscriptionItemId,
+        quantity: params.quantity,
+        action: params.action ?? "set",
+      },
+      "Metered usage reported to Stripe (stub)"
+    );
   }
 
   // -----------------------------------------------------------------------

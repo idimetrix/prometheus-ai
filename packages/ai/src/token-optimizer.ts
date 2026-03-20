@@ -294,6 +294,149 @@ export class TokenOptimizer {
   }
 
   /**
+   * Predict the total token count for a message array.
+   *
+   * @param messages - Array of messages to estimate
+   * @returns Estimated total tokens including message framing overhead
+   */
+  predictTokenBudget(messages: Message[]): number {
+    return estimateMessageTokens(
+      messages.map((m) => ({ role: m.role, content: m.content }))
+    );
+  }
+
+  /**
+   * Intelligently truncate messages to fit within a context window budget.
+   *
+   * Strategy prioritises retaining:
+   * 1. The system message (always kept in full)
+   * 2. The most recent user messages and tool results
+   * 3. Recent assistant messages
+   *
+   * Older messages are progressively truncated or removed, starting from
+   * the oldest non-system messages. Tool result messages are truncated
+   * before other message types.
+   *
+   * @param messages - Full message history
+   * @param maxTokens - Maximum token budget for the entire message array
+   * @returns Message array that fits within the budget
+   */
+  fitToBudget(messages: Message[], maxTokens: number): Message[] {
+    const currentTokens = this.predictTokenBudget(messages);
+
+    if (currentTokens <= maxTokens) {
+      return messages;
+    }
+
+    logger.info(
+      { currentTokens, maxTokens, messageCount: messages.length },
+      "Fitting messages to token budget"
+    );
+
+    const result = [...messages];
+
+    // Identify protected indices: first system message and recent user messages
+    const systemIdx = result.findIndex((m) => m.role === "system");
+
+    // Find the last 3 user message indices (high priority to keep)
+    const recentUserIndices: number[] = [];
+    for (let i = result.length - 1; i >= 0; i--) {
+      if ((result[i] as Message).role === "user") {
+        recentUserIndices.push(i);
+        if (recentUserIndices.length >= 3) {
+          break;
+        }
+      }
+    }
+
+    // Find recent tool result indices (keep last 2)
+    const recentToolIndices: number[] = [];
+    for (let i = result.length - 1; i >= 0; i--) {
+      if ((result[i] as Message).role === "tool") {
+        recentToolIndices.push(i);
+        if (recentToolIndices.length >= 2) {
+          break;
+        }
+      }
+    }
+
+    const protectedIndices = new Set([
+      ...(systemIdx >= 0 ? [systemIdx] : []),
+      ...recentUserIndices,
+      ...recentToolIndices,
+    ]);
+
+    // Phase 1: Truncate older tool results aggressively
+    for (let i = 0; i < result.length; i++) {
+      if (this.predictTokenBudget(result) <= maxTokens) {
+        break;
+      }
+      const msg = result[i] as Message;
+      if (
+        msg.role === "tool" &&
+        !protectedIndices.has(i) &&
+        msg.content.length > 100
+      ) {
+        result[i] = {
+          ...msg,
+          content: `${msg.content.slice(0, 100)}\n... [truncated]`,
+        };
+      }
+    }
+
+    if (this.predictTokenBudget(result) <= maxTokens) {
+      return result;
+    }
+
+    // Phase 2: Progressively truncate older assistant messages
+    for (let i = 0; i < result.length; i++) {
+      if (this.predictTokenBudget(result) <= maxTokens) {
+        break;
+      }
+      const msg = result[i] as Message;
+      if (
+        msg.role === "assistant" &&
+        !protectedIndices.has(i) &&
+        msg.content.length > 200
+      ) {
+        result[i] = {
+          ...msg,
+          content: `${msg.content.slice(0, 150)}\n... [truncated]`,
+        };
+      }
+    }
+
+    if (this.predictTokenBudget(result) <= maxTokens) {
+      return result;
+    }
+
+    // Phase 3: Remove older non-protected messages entirely
+    const toRemove: number[] = [];
+    for (let i = 0; i < result.length; i++) {
+      if (this.predictTokenBudget(result) <= maxTokens) {
+        break;
+      }
+      if (!protectedIndices.has(i)) {
+        toRemove.push(i);
+      }
+    }
+
+    // Remove from the end to preserve indices
+    const filtered = result.filter((_, idx) => !toRemove.includes(idx));
+
+    logger.info(
+      {
+        originalTokens: currentTokens,
+        fittedTokens: this.predictTokenBudget(filtered),
+        removedMessages: toRemove.length,
+      },
+      "Fitted messages to token budget"
+    );
+
+    return filtered;
+  }
+
+  /**
    * Clear the prompt cache.
    */
   clearCache(): void {

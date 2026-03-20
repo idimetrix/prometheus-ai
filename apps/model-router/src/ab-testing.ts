@@ -168,6 +168,55 @@ function normalCDF(x: number): number {
   return 0.5 * (1.0 + sign * y);
 }
 
+// ─── Beta Distribution Sampling ───────────────────────────────────────
+
+/**
+ * Generate a sample from a Gamma distribution using Marsaglia and Tsang's method.
+ * Used internally by betaSample.
+ */
+function gammaSample(shape: number, scale: number): number {
+  if (shape < 1) {
+    // Boost: gamma(shape) = gamma(shape+1) * U^(1/shape)
+    return gammaSample(shape + 1, scale) * Math.random() ** (1 / shape);
+  }
+
+  const d = shape - 1 / 3;
+  const c = 1 / Math.sqrt(9 * d);
+
+  for (;;) {
+    let x: number;
+    let v: number;
+
+    do {
+      // Generate standard normal using Box-Muller
+      const u1 = Math.random();
+      const u2 = Math.random();
+      x = Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2);
+      v = (1 + c * x) ** 3;
+    } while (v <= 0);
+
+    const u = Math.random();
+    // Squeeze and rejection test
+    if (
+      u < 1 - 0.0331 * x ** 2 * x ** 2 ||
+      Math.log(u) < 0.5 * x * x + d * (1 - v + Math.log(v))
+    ) {
+      return d * v * scale;
+    }
+  }
+}
+
+/**
+ * Sample from a Beta(alpha, beta) distribution.
+ * Uses the relationship: if X ~ Gamma(alpha, 1) and Y ~ Gamma(beta, 1),
+ * then X / (X + Y) ~ Beta(alpha, beta).
+ */
+function betaSample(alpha: number, beta: number): number {
+  const x = gammaSample(alpha, 1);
+  const y = gammaSample(beta, 1);
+  return x / (x + y);
+}
+
 // ─── ABTestManager ───────────────────────────────────────────────────
 
 /**
@@ -452,6 +501,48 @@ export class ABTestManager {
     }
 
     return null;
+  }
+
+  /**
+   * Thompson sampling using Beta distribution to select the best variant.
+   *
+   * Each variant's success/failure counts parameterize a Beta(alpha, beta)
+   * distribution where alpha = successes + 1, beta = failures + 1.
+   * We draw a random sample from each variant's Beta distribution and
+   * pick the variant with the highest sample value.
+   *
+   * This provides Bayesian exploration/exploitation balancing:
+   * variants with less data get explored more, while high-performing
+   * variants get exploited.
+   */
+  thompsonSample(experimentId: string): string {
+    const experiment = this.experiments.get(experimentId);
+    if (!experiment?.active) {
+      return "control";
+    }
+
+    let bestVariantId = "control";
+    let bestSample = -1;
+
+    for (const [variantId, result] of experiment.results) {
+      // Beta distribution parameters: alpha = successes + 1, beta = failures + 1
+      // The +1 acts as a uniform prior (Beta(1,1))
+      const alpha = result.successCount + 1;
+      const beta = result.failureCount + 1;
+      const sample = betaSample(alpha, beta);
+
+      if (sample > bestSample) {
+        bestSample = sample;
+        bestVariantId = variantId;
+      }
+    }
+
+    logger.debug(
+      { experimentId, selectedVariant: bestVariantId, sampleValue: bestSample },
+      "Thompson sampling selected variant"
+    );
+
+    return bestVariantId;
   }
 
   /**

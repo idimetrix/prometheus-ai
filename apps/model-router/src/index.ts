@@ -1,6 +1,10 @@
 import { serve } from "@hono/node-server";
 import { createLogger } from "@prometheus/logger";
 import { initSentry, initTelemetry } from "@prometheus/telemetry";
+import {
+  installShutdownHandlers,
+  isProcessShuttingDown,
+} from "@prometheus/utils";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { streamSSE } from "hono/streaming";
@@ -11,6 +15,7 @@ import { ModelRouterService, routeEmbedding } from "./router";
 
 await initTelemetry({ serviceName: "model-router" });
 initSentry({ serviceName: "model-router" });
+installShutdownHandlers();
 
 const logger = createLogger("model-router");
 const app = new Hono();
@@ -25,6 +30,9 @@ const byoManager = new BYOModelManager();
 // ─── Health Check (verifies connectivity to all configured providers) ──
 
 app.get("/health", async (c) => {
+  if (isProcessShuttingDown()) {
+    return c.json({ status: "draining" }, 503);
+  }
   try {
     const checks: Record<string, boolean> = {};
 

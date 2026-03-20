@@ -88,6 +88,80 @@ export function verifyRequest(
   }
 }
 
+// ─── Multi-Key Signing ────────────────────────────────────────────────────────
+
+/**
+ * Sign an HTTP request using HMAC-SHA256 with a specific key ID.
+ *
+ * The key ID is included in the signature header so the verifier knows
+ * which key was used. This supports key rotation: deploy a new key,
+ * start signing with it, and retire the old key once all services
+ * have the new key.
+ *
+ * @returns The signature string including key ID: `kid=<keyId>,t=<ts>,s=<hex>`
+ */
+export function signRequestWithKeyId(
+  method: string,
+  path: string,
+  body: string,
+  keyId: string,
+  secret: string,
+  timestamp?: number
+): string {
+  const ts = timestamp ?? Date.now();
+  const payload = `${method.toUpperCase()}\n${path}\n${body}\n${ts}`;
+  const hmac = createHmac("sha256", secret);
+  hmac.update(payload);
+  return `kid=${keyId},t=${ts},s=${hmac.digest("hex")}`;
+}
+
+/**
+ * Verify an HMAC-SHA256 signature against multiple possible signing keys.
+ *
+ * Parses the `kid` (key ID) from the signature if present and uses it
+ * to look up the correct key. If no `kid` is present, tries all keys
+ * until one matches (backward-compatible with single-key signatures).
+ *
+ * @param keys - Map of key ID to secret (e.g., `{ "v1": "secret1", "v2": "secret2" }`)
+ * @returns true if the signature is valid for any of the provided keys
+ */
+export function verifyRequestMultiKey(
+  method: string,
+  path: string,
+  body: string,
+  signature: string,
+  keys: Record<string, string>
+): boolean {
+  // Parse key ID from signature if present
+  const parts = signature.split(",");
+  const kidPart = parts.find((p) => p.startsWith("kid="));
+  const keyId = kidPart?.slice(4);
+
+  // Strip the kid= prefix from the signature for verification
+  const signatureWithoutKid = parts
+    .filter((p) => !p.startsWith("kid="))
+    .join(",");
+
+  if (keyId) {
+    // Key ID specified: only try that key
+    const secret = keys[keyId];
+    if (!secret) {
+      logger.warn({ keyId }, "HMAC verification failed: unknown key ID");
+      return false;
+    }
+    return verifyRequest(method, path, body, signatureWithoutKid, secret);
+  }
+
+  // No key ID: try all keys (backward compatibility with single-key signatures)
+  for (const secret of Object.values(keys)) {
+    if (verifyRequest(method, path, body, signature, secret)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
 /**
  * Get the HMAC signature header name.
  */

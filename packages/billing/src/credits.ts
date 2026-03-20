@@ -24,8 +24,11 @@ export interface CreditOperation {
   amount: number;
   description: string;
   orgId: string;
+  stripeId?: string;
   taskId?: string;
+  triggerSource?: string;
   type: "purchase" | "consumption" | "refund" | "bonus" | "subscription_grant";
+  userId?: string;
 }
 
 export interface CreditBalance {
@@ -36,7 +39,23 @@ export interface CreditBalance {
 
 export interface ReservationResult {
   amount: number;
+  expiresAt: Date;
   reservationId: string;
+}
+
+export interface AuditedTransaction {
+  amount: number;
+  balanceAfter: number;
+  balanceBefore: number;
+  createdAt: Date;
+  description: string;
+  id: string;
+  orgId: string;
+  stripeId: string | null;
+  taskId: string | null;
+  triggerSource: string | null;
+  type: string;
+  userId: string | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -95,47 +114,71 @@ export class CreditService {
   async reserveCredits(
     orgId: string,
     taskId: string,
-    amount: number
+    amount: number,
+    ttlMs = 2 * 60 * 60 * 1000 // 2 hours default
   ): Promise<ReservationResult> {
     // Ensure row exists
     await this.getBalance(orgId);
 
-    // Atomic conditional update — prevents overselling under concurrency.
-    // The WHERE clause guarantees we only reserve if sufficient credits exist.
-    const [updated] = await db
-      .update(creditBalances)
-      .set({
-        reserved: sql`${creditBalances.reserved} + ${amount}`,
-        updatedAt: new Date(),
-      })
-      .where(
-        and(
-          eq(creditBalances.orgId, orgId),
-          sql`${creditBalances.balance} - ${creditBalances.reserved} >= ${amount}`
-        )
-      )
-      .returning();
+    const expiresAt = new Date(Date.now() + ttlMs);
 
-    if (!updated) {
-      const balance = await this.getBalance(orgId);
-      throw new Error(
-        `Insufficient credits: need ${amount}, have ${balance.available} available`
-      );
-    }
+    // Use a serialised transaction with SELECT ... FOR UPDATE to prevent
+    // concurrent over-booking. The row-level lock ensures that only one
+    // reservation can succeed at a time for a given org.
+    const result = await db.transaction(async (tx) => {
+      // Lock the balance row for update — blocks concurrent reservations
+      const [locked] = await tx
+        .select()
+        .from(creditBalances)
+        .where(eq(creditBalances.orgId, orgId))
+        .for("update");
 
-    const reservationId = generateId("res");
+      if (!locked) {
+        throw new Error(`No credit balance found for org ${orgId}`);
+      }
 
-    await db.insert(creditReservations).values({
-      id: reservationId,
-      orgId,
-      taskId,
-      amount,
-      status: "active",
-      expiresAt: new Date(Date.now() + 2 * 60 * 60 * 1000), // 2-hour expiry
+      const available = locked.balance - locked.reserved;
+      if (available < amount) {
+        throw new Error(
+          `Insufficient credits: need ${amount}, have ${available} available`
+        );
+      }
+
+      // Reservation ceiling check: cannot reserve more than total balance
+      if (locked.reserved + amount > locked.balance) {
+        throw new Error(
+          `Reservation ceiling exceeded: balance=${locked.balance}, already reserved=${locked.reserved}, requested=${amount}`
+        );
+      }
+
+      // Increment reserved amount
+      await tx
+        .update(creditBalances)
+        .set({
+          reserved: sql`${creditBalances.reserved} + ${amount}`,
+          updatedAt: new Date(),
+        })
+        .where(eq(creditBalances.orgId, orgId));
+
+      const reservationId = generateId("res");
+
+      await tx.insert(creditReservations).values({
+        id: reservationId,
+        orgId,
+        taskId,
+        amount,
+        status: "active",
+        expiresAt,
+      });
+
+      return { reservationId, amount, expiresAt };
     });
 
-    logger.info({ orgId, taskId, amount, reservationId }, "Credits reserved");
-    return { reservationId, amount };
+    logger.info(
+      { orgId, taskId, amount, reservationId: result.reservationId, expiresAt },
+      "Credits reserved"
+    );
+    return result;
   }
 
   // -----------------------------------------------------------------------
@@ -288,8 +331,8 @@ export class CreditService {
   // -----------------------------------------------------------------------
 
   async addCredits(operation: CreditOperation): Promise<void> {
-    // Ensure balance row exists
-    await this.getBalance(operation.orgId);
+    // Ensure balance row exists and get balance before
+    const currentBalance = await this.getBalance(operation.orgId);
 
     await db
       .update(creditBalances)
@@ -299,15 +342,20 @@ export class CreditService {
       })
       .where(eq(creditBalances.orgId, operation.orgId));
 
-    const balance = await this.getBalance(operation.orgId);
+    const newBalance = await this.getBalance(operation.orgId);
 
+    // Append-only transaction record with full audit trail
     await db.insert(creditTransactions).values({
       id: generateId("ctx"),
       orgId: operation.orgId,
       type: operation.type,
       amount: operation.amount,
-      balanceAfter: balance.balance,
+      balanceBefore: currentBalance.balance,
+      balanceAfter: newBalance.balance,
       taskId: operation.taskId ?? null,
+      userId: operation.userId ?? null,
+      triggerSource: operation.triggerSource ?? null,
+      stripeId: operation.stripeId ?? null,
       description: operation.description,
     });
 
@@ -316,12 +364,17 @@ export class CreditService {
         orgId: operation.orgId,
         amount: operation.amount,
         type: operation.type,
+        balanceBefore: currentBalance.balance,
+        balanceAfter: newBalance.balance,
       },
       "Credits added"
     );
   }
 
   async consumeCredits(operation: CreditOperation): Promise<void> {
+    // Get balance before for audit trail
+    const balanceBefore = await this.getBalance(operation.orgId);
+
     // Atomic balance check + deduction
     const [updated] = await db
       .update(creditBalances)
@@ -341,18 +394,28 @@ export class CreditService {
       throw new Error("Insufficient credits for consumption");
     }
 
+    // Append-only transaction with full audit trail
     await db.insert(creditTransactions).values({
       id: generateId("ctx"),
       orgId: operation.orgId,
       type: "consumption",
       amount: -operation.amount,
+      balanceBefore: balanceBefore.balance,
       balanceAfter: updated.balance,
       taskId: operation.taskId ?? null,
+      userId: operation.userId ?? null,
+      triggerSource: operation.triggerSource ?? null,
+      stripeId: operation.stripeId ?? null,
       description: operation.description,
     });
 
     logger.info(
-      { orgId: operation.orgId, amount: operation.amount },
+      {
+        orgId: operation.orgId,
+        amount: operation.amount,
+        balanceBefore: balanceBefore.balance,
+        balanceAfter: updated.balance,
+      },
       "Credits consumed"
     );
   }
@@ -488,5 +551,139 @@ export class CreditService {
       offset,
     });
     return rows;
+  }
+
+  // -----------------------------------------------------------------------
+  // Transaction chain tracing for dispute resolution (Task 9.5)
+  // -----------------------------------------------------------------------
+
+  async traceTransactionChain(taskId: string): Promise<AuditedTransaction[]> {
+    const rows = await db.query.creditTransactions.findMany({
+      where: eq(creditTransactions.taskId, taskId),
+      orderBy: (ct, { asc }) => [asc(ct.createdAt)],
+    });
+
+    return rows.map((row) => ({
+      id: row.id,
+      orgId: row.orgId,
+      type: row.type,
+      amount: row.amount,
+      balanceBefore: row.balanceBefore ?? 0,
+      balanceAfter: row.balanceAfter,
+      taskId: row.taskId,
+      userId: row.userId ?? null,
+      triggerSource: row.triggerSource ?? null,
+      stripeId: row.stripeId ?? null,
+      description: row.description,
+      createdAt: row.createdAt,
+    }));
+  }
+
+  async traceOrgTransactions(
+    orgId: string,
+    startDate: Date,
+    endDate: Date
+  ): Promise<AuditedTransaction[]> {
+    const rows = await db.query.creditTransactions.findMany({
+      where: and(
+        eq(creditTransactions.orgId, orgId),
+        sql`${creditTransactions.createdAt} >= ${startDate}`,
+        sql`${creditTransactions.createdAt} <= ${endDate}`
+      ),
+      orderBy: (ct, { asc }) => [asc(ct.createdAt)],
+    });
+
+    return rows.map((row) => ({
+      id: row.id,
+      orgId: row.orgId,
+      type: row.type,
+      amount: row.amount,
+      balanceBefore: row.balanceBefore ?? 0,
+      balanceAfter: row.balanceAfter,
+      taskId: row.taskId,
+      userId: row.userId ?? null,
+      triggerSource: row.triggerSource ?? null,
+      stripeId: row.stripeId ?? null,
+      description: row.description,
+      createdAt: row.createdAt,
+    }));
+  }
+
+  async verifyTransactionIntegrity(orgId: string): Promise<{
+    consistent: boolean;
+    gapCount: number;
+    gaps: Array<{
+      afterTxId: string;
+      beforeTxId: string;
+      expected: number;
+      actual: number;
+    }>;
+  }> {
+    const rows = await db.query.creditTransactions.findMany({
+      where: eq(creditTransactions.orgId, orgId),
+      orderBy: (ct, { asc }) => [asc(ct.createdAt)],
+    });
+
+    const gaps: Array<{
+      afterTxId: string;
+      beforeTxId: string;
+      expected: number;
+      actual: number;
+    }> = [];
+
+    for (let i = 1; i < rows.length; i++) {
+      const prev = rows[i - 1];
+      const curr = rows[i];
+      if (
+        prev &&
+        curr &&
+        curr.balanceBefore != null &&
+        prev.balanceAfter !== curr.balanceBefore
+      ) {
+        gaps.push({
+          afterTxId: prev.id,
+          beforeTxId: curr.id,
+          expected: prev.balanceAfter,
+          actual: curr.balanceBefore,
+        });
+      }
+    }
+
+    return {
+      consistent: gaps.length === 0,
+      gapCount: gaps.length,
+      gaps,
+    };
+  }
+
+  // -----------------------------------------------------------------------
+  // Background expiry job
+  // -----------------------------------------------------------------------
+
+  private expiryInterval: ReturnType<typeof setInterval> | null = null;
+
+  startExpiryJob(intervalMs = 60_000): void {
+    if (this.expiryInterval) {
+      return;
+    }
+
+    logger.info(
+      { intervalMs },
+      "Starting credit reservation expiry background job"
+    );
+
+    this.expiryInterval = setInterval(() => {
+      this.cleanupExpiredReservations().catch((err) => {
+        logger.error({ error: String(err) }, "Expiry job failed");
+      });
+    }, intervalMs);
+  }
+
+  stopExpiryJob(): void {
+    if (this.expiryInterval) {
+      clearInterval(this.expiryInterval);
+      this.expiryInterval = null;
+      logger.info("Stopped credit reservation expiry background job");
+    }
   }
 }

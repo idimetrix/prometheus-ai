@@ -21,6 +21,48 @@ export interface MonitorState {
   violations: Violation[];
 }
 
+// ─── Blocked Syscalls ────────────────────────────────────────────────────────
+
+/** Dangerous syscalls that should be blocked via seccomp */
+export const BLOCKED_SYSCALLS = [
+  "ptrace",
+  "mount",
+  "umount2",
+  "kexec_load",
+  "kexec_file_load",
+  "init_module",
+  "finit_module",
+  "delete_module",
+  "reboot",
+  "swapon",
+  "swapoff",
+  "pivot_root",
+  "chroot",
+  "acct",
+  "settimeofday",
+  "clock_settime",
+  "stime",
+  "ioperm",
+  "iopl",
+  "create_module",
+  "query_module",
+  "nfsservctl",
+  "personality",
+  "keyctl",
+  "request_key",
+  "add_key",
+  "unshare",
+  "setns",
+  "userfaultfd",
+  "perf_event_open",
+  "bpf",
+  "lookup_dcookie",
+  "move_pages",
+  "mbind",
+  "set_mempolicy",
+  "get_mempolicy",
+] as const;
+
 // ─── Detection Patterns ───────────────────────────────────────────────────────
 
 interface DetectionRule {
@@ -127,6 +169,75 @@ const ESCAPE_PATTERNS: DetectionRule[] = [
     pattern: /bash\s+-i\s+>&?\s*\/dev\/tcp/,
     severity: "critical",
     description: "Bash reverse shell attempt detected",
+  },
+  // Base64 payload piped to shell
+  {
+    name: "base64_pipe_to_shell",
+    pattern: /base64\s+(-d|--decode)\s*\|.*\b(sh|bash|zsh)\b/,
+    severity: "critical",
+    description: "Base64-encoded payload piped to shell",
+  },
+  // curl/wget piped to shell
+  {
+    name: "curl_pipe_to_shell",
+    pattern: /\b(curl|wget)\b.*\|\s*(sh|bash|zsh|sudo\s+(sh|bash))\b/,
+    severity: "critical",
+    description: "Remote script execution via curl/wget pipe to shell",
+  },
+  // Docker socket mount/access via docker commands
+  {
+    name: "docker_socket_mount",
+    pattern: /docker\s+(run|exec|create)\b.*docker\.sock/,
+    severity: "critical",
+    description: "Docker command accessing docker.sock",
+  },
+];
+
+// ─── File Write Detection Patterns ───────────────────────────────────────────
+
+interface FileWriteRule {
+  description: string;
+  name: string;
+  pathPattern: RegExp;
+  severity: ViolationSeverity;
+}
+
+const FILE_WRITE_PATTERNS: FileWriteRule[] = [
+  {
+    name: "crontab_write",
+    pathPattern: /\/(etc\/cron|var\/spool\/cron)/,
+    severity: "high",
+    description: "Write to crontab or cron directory",
+  },
+  {
+    name: "init_write",
+    pathPattern: /\/(etc\/init\.d|etc\/systemd|lib\/systemd)/,
+    severity: "critical",
+    description: "Write to system init/service directory",
+  },
+  {
+    name: "ssh_write",
+    pathPattern: /\/\.ssh\/(authorized_keys|id_rsa|config)/,
+    severity: "critical",
+    description: "Write to SSH configuration or keys",
+  },
+  {
+    name: "etc_passwd_write",
+    pathPattern: /\/etc\/(passwd|shadow|sudoers)/,
+    severity: "critical",
+    description: "Write to system auth files",
+  },
+  {
+    name: "docker_socket_write",
+    pathPattern: /\/var\/run\/docker\.sock/,
+    severity: "critical",
+    description: "Write access to Docker socket",
+  },
+  {
+    name: "proc_sys_write",
+    pathPattern: /\/proc\/sys\//,
+    severity: "critical",
+    description: "Write to /proc/sys kernel parameters",
   },
 ];
 
@@ -319,6 +430,121 @@ export class EscapeDetector {
     }
 
     return newViolations;
+  }
+
+  /**
+   * Check a single command for escape patterns before execution.
+   * Returns null if safe, or a Violation if dangerous.
+   */
+  checkCommand(sandboxId: string, command: string): Violation | null {
+    const state = this.monitors.get(sandboxId);
+    if (!state?.isMonitoring) {
+      return null;
+    }
+
+    for (const rule of ESCAPE_PATTERNS) {
+      if (rule.pattern.test(command)) {
+        const violation: Violation = {
+          type: rule.name,
+          severity: rule.severity,
+          description: rule.description,
+          timestamp: new Date().toISOString(),
+          details: { command: command.slice(0, 200) },
+        };
+
+        state.violations.push(violation);
+
+        logger.warn(
+          {
+            sandboxId,
+            violationType: rule.name,
+            severity: rule.severity,
+            command: command.slice(0, 100),
+          },
+          `Command blocked: ${rule.description}`
+        );
+
+        return violation;
+      }
+    }
+
+    return null;
+  }
+
+  /**
+   * Check a file write operation for suspicious paths.
+   * Returns null if safe, or a Violation if the target path is dangerous.
+   */
+  checkFileWrite(
+    sandboxId: string,
+    filePath: string,
+    content?: string
+  ): Violation | null {
+    const state = this.monitors.get(sandboxId);
+    if (!state?.isMonitoring) {
+      return null;
+    }
+
+    // Check file path against write patterns
+    for (const rule of FILE_WRITE_PATTERNS) {
+      if (rule.pathPattern.test(filePath)) {
+        const violation: Violation = {
+          type: rule.name,
+          severity: rule.severity,
+          description: rule.description,
+          timestamp: new Date().toISOString(),
+          details: { filePath, contentPreview: content?.slice(0, 100) },
+        };
+
+        state.violations.push(violation);
+
+        logger.warn(
+          {
+            sandboxId,
+            violationType: rule.name,
+            severity: rule.severity,
+            filePath,
+          },
+          `File write blocked: ${rule.description}`
+        );
+
+        return violation;
+      }
+    }
+
+    // Also check file content against escape patterns if provided
+    if (content) {
+      for (const rule of ESCAPE_PATTERNS) {
+        if (rule.pattern.test(content)) {
+          const violation: Violation = {
+            type: `file_content_${rule.name}`,
+            severity: rule.severity,
+            description: `Suspicious file content: ${rule.description}`,
+            timestamp: new Date().toISOString(),
+            details: {
+              filePath,
+              contentPreview: content.slice(0, 100),
+            },
+          };
+
+          state.violations.push(violation);
+
+          logger.warn(
+            {
+              sandboxId,
+              violationType: rule.name,
+              severity: rule.severity,
+              filePath,
+            },
+            `Suspicious file content detected: ${rule.description}`
+          );
+
+          return violation;
+        }
+      }
+    }
+
+    return null;
   }
 
   /**

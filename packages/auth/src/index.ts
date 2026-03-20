@@ -24,5 +24,16 @@ export {
   canManageMembers,
   canManageOrgSettings,
 } from "./organizations";
+export type {
+  PermissionCheckParams,
+  PermissionCheckResult,
+  PermissionLevel,
+  PermissionStore,
+  RbacCacheClient,
+  RbacMiddleware,
+  RbacMiddlewareOptions,
+  ResourceAction,
+} from "./rbac-middleware";
+export { createRbacMiddleware, PERMISSION_LEVELS } from "./rbac-middleware";
 export type { AuthContext, OrgRole } from "./server";
 export { getAuthContext, hasOrgRole, ORG_ROLES, requireAuth } from "./server";

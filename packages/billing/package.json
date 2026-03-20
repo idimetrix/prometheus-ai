@@ -11,7 +11,8 @@
     "./credits": "./src/credits.ts",
     "./products": "./src/products.ts",
     "./rate-limiter": "./src/rate-limiter.ts",
-    "./usage-tracker": "./src/usage-tracker.ts"
+    "./usage-tracker": "./src/usage-tracker.ts",
+    "./ledger-integrity": "./src/ledger-integrity.ts"
   },
   "scripts": {
     "test": "vitest run",

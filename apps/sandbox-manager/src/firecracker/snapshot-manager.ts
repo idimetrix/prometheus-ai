@@ -1,8 +1,9 @@
 /**
  * Firecracker Snapshot Manager.
  *
- * Manages base template snapshots (node, python, rust), incremental
- * session snapshots, and TTL-based expiry for automatic cleanup.
+ * Manages base template snapshots (node, python, rust, go, java, multi),
+ * incremental session snapshots, warmup pool for instant allocation,
+ * and TTL-based expiry for automatic cleanup.
  *
  * Snapshots enable sub-100ms VM boot times by restoring from a
  * pre-configured memory image rather than cold-booting.
@@ -12,6 +13,9 @@
  * - Local SSD snapshot storage
  * - Base snapshot creation after VM init
  * - Restore targeting <100ms
+ * - Warmup pool for pre-allocated snapshots
+ * - Boot time tracking with percentile calculation
+ * - Auto-detect template from manifest files
  */
 import { createLogger } from "@prometheus/logger";
 import { generateId } from "@prometheus/utils";
@@ -27,8 +31,17 @@ const DEFAULT_SNAPSHOT_TTL_MS = 60 * 60 * 1000;
 /** Default max storage bytes: 10GB */
 const DEFAULT_MAX_STORAGE_BYTES = 10 * 1024 * 1024 * 1024;
 
+/** Default warmup pool size per template */
+const DEFAULT_WARMUP_POOL_SIZE = 3;
+
 /** Supported template types */
-export type SnapshotTemplate = "node" | "python" | "rust";
+export type SnapshotTemplate =
+  | "node"
+  | "python"
+  | "rust"
+  | "go"
+  | "java"
+  | "multi";
 
 /** Template-specific setup commands */
 const TEMPLATE_SETUP_COMMANDS: Record<SnapshotTemplate, string> = {
@@ -36,6 +49,25 @@ const TEMPLATE_SETUP_COMMANDS: Record<SnapshotTemplate, string> = {
   python:
     "apk add --no-cache python3 py3-pip git && mkdir -p /workspace && python3 --version",
   rust: "apk add --no-cache rust cargo git && mkdir -p /workspace && rustc --version",
+  go: "apk add --no-cache go git && mkdir -p /workspace && go version",
+  java: "apk add --no-cache openjdk17-jdk maven git && mkdir -p /workspace && java --version",
+  multi:
+    "apk add --no-cache nodejs npm python3 py3-pip go git && mkdir -p /workspace",
+};
+
+/** Manifest file to template mapping for auto-detection */
+const MANIFEST_TEMPLATE_MAP: Record<string, SnapshotTemplate> = {
+  "package.json": "node",
+  "requirements.txt": "python",
+  Pipfile: "python",
+  "pyproject.toml": "python",
+  "setup.py": "python",
+  "Cargo.toml": "rust",
+  "go.mod": "go",
+  "go.sum": "go",
+  "pom.xml": "java",
+  "build.gradle": "java",
+  "build.gradle.kts": "java",
 };
 
 interface SnapshotConfig {
@@ -47,6 +79,8 @@ interface SnapshotConfig {
   snapshotDir?: string;
   /** Snapshot TTL in milliseconds (default: 1 hour) */
   ttlMs?: number;
+  /** Number of pre-warmed snapshots per template (default: 3) */
+  warmupPoolSize?: number;
 }
 
 interface BaseSnapshotConfig {
@@ -93,14 +127,38 @@ interface SnapshotInfo {
   vcpuCount: number;
 }
 
+/** Warmup pool entry: a pre-allocated snapshot ready for instant use */
+interface WarmupEntry {
+  createdAt: Date;
+  snapshotId: string;
+  template: SnapshotTemplate;
+}
+
+/** Boot time percentile statistics */
+export interface BootTimeStats {
+  count: number;
+  maxMs: number;
+  meanMs: number;
+  minMs: number;
+  p50Ms: number;
+  p95Ms: number;
+  p99Ms: number;
+}
+
 export class SnapshotManager {
   private readonly apiBase: string;
   private readonly snapshotDir: string;
   private readonly defaultTtlMs: number;
   private readonly maxStorageBytes: number;
+  private readonly warmupPoolSize: number;
   private readonly snapshots = new Map<string, SnapshotInfo>();
   /** Track base snapshots per template for fast lookup */
   private readonly templateSnapshots = new Map<SnapshotTemplate, string>();
+  /** Pre-warmed snapshot pool for instant allocation */
+  private readonly warmupPool = new Map<SnapshotTemplate, WarmupEntry[]>();
+  /** Boot time history for percentile tracking (bounded) */
+  private readonly bootTimes: number[] = [];
+  private static readonly MAX_BOOT_TIME_HISTORY = 1000;
 
   constructor(config?: SnapshotConfig) {
     this.apiBase =
@@ -111,6 +169,7 @@ export class SnapshotManager {
       "/var/lib/firecracker/snapshots";
     this.defaultTtlMs = config?.ttlMs ?? DEFAULT_SNAPSHOT_TTL_MS;
     this.maxStorageBytes = config?.maxStorageBytes ?? DEFAULT_MAX_STORAGE_BYTES;
+    this.warmupPoolSize = config?.warmupPoolSize ?? DEFAULT_WARMUP_POOL_SIZE;
   }
 
   /**
@@ -201,6 +260,7 @@ export class SnapshotManager {
   /**
    * Restore a VM from a snapshot. Target: <100ms restore time.
    * Uses Firecracker's snapshot/load API with memory file backend.
+   * Tracks boot time for percentile calculation.
    */
   async restoreFromSnapshot(snapshotId: string): Promise<SnapshotMetadata> {
     const info = this.snapshots.get(snapshotId);
@@ -227,6 +287,9 @@ export class SnapshotManager {
 
     const restoreTimeMs = Date.now() - startTime;
     info.lastAccessedAt = new Date();
+
+    // Track boot time
+    this.recordBootTime(restoreTimeMs);
 
     logger.info(
       { snapshotId, restoreTimeMs, targetMs: 100 },
@@ -300,6 +363,7 @@ export class SnapshotManager {
    */
   async restoreSnapshot(snapshotPath: string): Promise<string> {
     const sandboxId = generateId("sbx");
+    const startTime = Date.now();
 
     logger.info(
       { snapshotPath, newSandboxId: sandboxId },
@@ -316,7 +380,13 @@ export class SnapshotManager {
       resume_vm: true,
     });
 
-    logger.info({ snapshotPath, sandboxId }, "Snapshot restored");
+    const restoreTimeMs = Date.now() - startTime;
+    this.recordBootTime(restoreTimeMs);
+
+    logger.info(
+      { snapshotPath, sandboxId, restoreTimeMs },
+      "Snapshot restored"
+    );
 
     return sandboxId;
   }
@@ -513,6 +583,10 @@ export class SnapshotManager {
         installCmd = `cd /workspace && npm install ${depString}`;
       } else if (template === "python") {
         installCmd = `cd /workspace && pip install ${depString}`;
+      } else if (template === "go") {
+        installCmd = `cd /workspace && go get ${depString}`;
+      } else if (template === "java") {
+        installCmd = "cd /workspace && mvn dependency:resolve";
       } else {
         installCmd = `cd /workspace && cargo add ${depString}`;
       }
@@ -608,6 +682,207 @@ export class SnapshotManager {
     return total;
   }
 
+  // ─── Warmup Pool ───────────────────────────────────────────────────
+
+  /**
+   * Fill the warmup pool for a given template with pre-allocated snapshots.
+   * Creates snapshots up to the configured pool size for instant allocation.
+   */
+  async fillWarmupPool(template: SnapshotTemplate): Promise<number> {
+    const baseSnapshotId = this.templateSnapshots.get(template);
+    if (!baseSnapshotId) {
+      logger.warn(
+        { template },
+        "Cannot fill warmup pool: no base snapshot for template"
+      );
+      return 0;
+    }
+
+    const existing = this.warmupPool.get(template) ?? [];
+    const needed = this.warmupPoolSize - existing.length;
+
+    if (needed <= 0) {
+      return 0;
+    }
+
+    logger.info(
+      { template, needed, poolSize: this.warmupPoolSize },
+      "Filling warmup pool"
+    );
+
+    let created = 0;
+    for (let i = 0; i < needed; i++) {
+      try {
+        const metadata = await this.restoreFromSnapshot(baseSnapshotId);
+        const entry: WarmupEntry = {
+          snapshotId: metadata.id,
+          template,
+          createdAt: new Date(),
+        };
+
+        if (!this.warmupPool.has(template)) {
+          this.warmupPool.set(template, []);
+        }
+        this.warmupPool.get(template)?.push(entry);
+        created++;
+      } catch (error) {
+        const msg = error instanceof Error ? error.message : String(error);
+        logger.warn(
+          { template, error: msg },
+          "Failed to create warmup pool entry"
+        );
+        break;
+      }
+    }
+
+    logger.info(
+      {
+        template,
+        created,
+        totalInPool: (this.warmupPool.get(template) ?? []).length,
+      },
+      "Warmup pool filled"
+    );
+
+    return created;
+  }
+
+  /**
+   * Acquire a pre-warmed snapshot from the pool.
+   * Returns the snapshot ID or undefined if pool is empty.
+   */
+  acquireFromWarmupPool(template: SnapshotTemplate): string | undefined {
+    const pool = this.warmupPool.get(template);
+    if (!pool || pool.length === 0) {
+      return undefined;
+    }
+
+    const entry = pool.shift();
+    if (!entry) {
+      return undefined;
+    }
+
+    logger.info(
+      {
+        template,
+        snapshotId: entry.snapshotId,
+        remainingInPool: pool.length,
+      },
+      "Acquired snapshot from warmup pool"
+    );
+
+    return entry.snapshotId;
+  }
+
+  /**
+   * Get the current warmup pool status for all templates.
+   */
+  getWarmupPoolStatus(): Record<SnapshotTemplate, number> {
+    const status: Record<string, number> = {};
+    for (const template of Object.keys(TEMPLATE_SETUP_COMMANDS)) {
+      status[template] = (
+        this.warmupPool.get(template as SnapshotTemplate) ?? []
+      ).length;
+    }
+    return status as Record<SnapshotTemplate, number>;
+  }
+
+  // ─── Template Detection ────────────────────────────────────────────
+
+  /**
+   * Auto-detect the appropriate template from a list of manifest files
+   * found in a project directory.
+   */
+  detectTemplate(manifestFiles: string[]): SnapshotTemplate | null {
+    const templateScores = new Map<SnapshotTemplate, number>();
+
+    for (const file of manifestFiles) {
+      // Match against the filename (not full path)
+      const filename = file.split("/").pop() ?? file;
+      const template = MANIFEST_TEMPLATE_MAP[filename];
+      if (template) {
+        templateScores.set(template, (templateScores.get(template) ?? 0) + 1);
+      }
+    }
+
+    if (templateScores.size === 0) {
+      return null;
+    }
+
+    // If multiple templates detected, use "multi"
+    if (templateScores.size > 1) {
+      logger.info(
+        { detectedTemplates: Array.from(templateScores.keys()) },
+        "Multiple templates detected, using multi"
+      );
+      return "multi";
+    }
+
+    // Single template detected
+    const detected = Array.from(templateScores.keys())[0];
+    if (detected) {
+      logger.info({ template: detected }, "Template auto-detected");
+      return detected;
+    }
+
+    return null;
+  }
+
+  // ─── Boot Time Tracking ────────────────────────────────────────────
+
+  /**
+   * Record a boot/restore time measurement.
+   */
+  private recordBootTime(ms: number): void {
+    this.bootTimes.push(ms);
+    // Keep history bounded
+    if (this.bootTimes.length > SnapshotManager.MAX_BOOT_TIME_HISTORY) {
+      this.bootTimes.shift();
+    }
+  }
+
+  /**
+   * Get boot time statistics with percentile calculations.
+   */
+  getBootTimeStats(): BootTimeStats {
+    if (this.bootTimes.length === 0) {
+      return {
+        count: 0,
+        minMs: 0,
+        maxMs: 0,
+        meanMs: 0,
+        p50Ms: 0,
+        p95Ms: 0,
+        p99Ms: 0,
+      };
+    }
+
+    const sorted = [...this.bootTimes].sort((a, b) => a - b);
+    const count = sorted.length;
+    const sum = sorted.reduce((acc, v) => acc + v, 0);
+
+    return {
+      count,
+      minMs: sorted[0] ?? 0,
+      maxMs: sorted[count - 1] ?? 0,
+      meanMs: Math.round(sum / count),
+      p50Ms: this.percentile(sorted, 50),
+      p95Ms: this.percentile(sorted, 95),
+      p99Ms: this.percentile(sorted, 99),
+    };
+  }
+
+  /**
+   * Calculate the Nth percentile from a sorted array.
+   */
+  private percentile(sorted: number[], p: number): number {
+    if (sorted.length === 0) {
+      return 0;
+    }
+    const index = Math.ceil((p / 100) * sorted.length) - 1;
+    return sorted[Math.max(0, Math.min(index, sorted.length - 1))] ?? 0;
+  }
+
   // ─── Private helpers ────────────────────────────────────────────────
 
   /**
@@ -664,7 +939,14 @@ export class SnapshotManager {
   }
 
   private isValidTemplate(template: string): template is SnapshotTemplate {
-    return template === "node" || template === "python" || template === "rust";
+    return (
+      template === "node" ||
+      template === "python" ||
+      template === "rust" ||
+      template === "go" ||
+      template === "java" ||
+      template === "multi"
+    );
   }
 
   /**

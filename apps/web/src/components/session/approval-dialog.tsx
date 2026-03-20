@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -10,7 +10,10 @@ export type RiskLevel = "low" | "medium" | "high" | "critical";
 
 export interface ApprovalRequest {
   affectedFiles: string[];
+  confidenceScore?: number;
+  creditCost?: number;
   description: string;
+  diff?: string;
   id: string;
   riskLevel: RiskLevel;
   toolArgs?: Record<string, unknown>;
@@ -18,7 +21,10 @@ export interface ApprovalRequest {
 }
 
 interface ApprovalDialogProps {
+  batchRequests?: ApprovalRequest[];
   onApprove: (requestId: string) => void;
+  onBatchApprove?: (requestIds: string[]) => void;
+  onBatchReject?: (requestIds: string[]) => void;
   onModify?: (requestId: string) => void;
   onReject: (requestId: string) => void;
   request: ApprovalRequest;
@@ -54,6 +60,233 @@ const RISK_STYLES: Record<
   },
 };
 
+const RISK_ICON_COLORS: Record<RiskLevel, string> = {
+  low: "text-green-400",
+  medium: "text-yellow-400",
+  high: "text-orange-400",
+  critical: "text-red-400",
+};
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+function getConfidenceColor(percentage: number): string {
+  if (percentage >= 75) {
+    return "text-green-400";
+  }
+  if (percentage >= 50) {
+    return "text-yellow-400";
+  }
+  return "text-red-400";
+}
+
+function getConfidenceBarColor(percentage: number): string {
+  if (percentage >= 75) {
+    return "bg-green-500";
+  }
+  if (percentage >= 50) {
+    return "bg-yellow-500";
+  }
+  return "bg-red-500";
+}
+
+// ---------------------------------------------------------------------------
+// Sub-components
+// ---------------------------------------------------------------------------
+
+function RiskBadge({ level }: { level: RiskLevel }) {
+  const style = RISK_STYLES[level];
+  return (
+    <span
+      className={`rounded-full border px-2.5 py-0.5 font-medium text-[10px] ${style.badge}`}
+    >
+      {style.label}
+    </span>
+  );
+}
+
+function ConfidenceScore({ score }: { score: number }) {
+  const percentage = Math.round(score * 100);
+  const color = getConfidenceColor(percentage);
+  const barColor = getConfidenceBarColor(percentage);
+
+  return (
+    <div className="flex items-center gap-2">
+      <span className="text-[10px] text-zinc-500">Confidence</span>
+      <div className="flex items-center gap-1">
+        <div className="h-1.5 w-16 overflow-hidden rounded-full bg-zinc-800">
+          <div
+            className={`h-full rounded-full transition-all duration-300 ${barColor}`}
+            style={{ width: `${percentage}%` }}
+          />
+        </div>
+        <span className={`font-mono text-[10px] ${color}`}>{percentage}%</span>
+      </div>
+    </div>
+  );
+}
+
+function CreditCostEstimate({ cost }: { cost: number }) {
+  return (
+    <div className="flex items-center gap-2 rounded bg-zinc-800/50 px-2 py-1">
+      <svg
+        aria-hidden="true"
+        className="h-3 w-3 text-violet-400"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth={1.5}
+        viewBox="0 0 24 24"
+      >
+        <path
+          d="M12 6v12m-3-2.818l.879.659c1.171.879 3.07.879 4.242 0 1.172-.879 1.172-2.303 0-3.182C13.536 12.219 12.768 12 12 12c-.725 0-1.45-.22-2.003-.659-1.106-.879-1.106-2.303 0-3.182s2.9-.879 4.006 0l.415.33M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+      </svg>
+      <span className="text-[10px] text-zinc-400">Est. cost:</span>
+      <span className="font-mono text-[10px] text-violet-300">
+        {cost.toFixed(2)} credits
+      </span>
+    </div>
+  );
+}
+
+function InlineDiffPreview({ diff }: { diff: string }) {
+  const [expanded, setExpanded] = useState(false);
+  const lines = diff.split("\n");
+  const previewLines = expanded ? lines : lines.slice(0, 10);
+
+  return (
+    <div>
+      <div className="flex items-center justify-between">
+        <span className="font-medium text-[10px] text-zinc-500 uppercase">
+          Changes Preview
+        </span>
+        {lines.length > 10 && (
+          <button
+            className="text-[10px] text-violet-400 hover:text-violet-300"
+            onClick={() => setExpanded((p) => !p)}
+            type="button"
+          >
+            {expanded ? "Show less" : `Show all (${lines.length} lines)`}
+          </button>
+        )}
+      </div>
+      <div className="mt-1 max-h-48 overflow-auto rounded bg-zinc-950 p-2 font-mono text-[10px]">
+        {previewLines.map((line, idx) => {
+          let lineClass = "text-zinc-500";
+          if (line.startsWith("+")) {
+            lineClass = "text-green-400 bg-green-500/5";
+          } else if (line.startsWith("-")) {
+            lineClass = "text-red-400 bg-red-500/5";
+          } else if (line.startsWith("@@")) {
+            lineClass = "text-violet-400";
+          }
+          return (
+            <div
+              className={`whitespace-pre ${lineClass}`}
+              key={`diff-${String(idx)}`}
+            >
+              {line}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function BatchApprovalPanel({
+  requests,
+  onApproveAll,
+  onRejectAll,
+}: {
+  onApproveAll: (ids: string[]) => void;
+  onRejectAll: (ids: string[]) => void;
+  requests: ApprovalRequest[];
+}) {
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(
+    new Set(requests.map((r) => r.id))
+  );
+
+  const toggleSelection = useCallback((id: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
+  }, []);
+
+  const toggleAll = useCallback(() => {
+    if (selectedIds.size === requests.length) {
+      setSelectedIds(new Set());
+    } else {
+      setSelectedIds(new Set(requests.map((r) => r.id)));
+    }
+  }, [selectedIds.size, requests]);
+
+  const selectedArray = useMemo(() => [...selectedIds], [selectedIds]);
+
+  return (
+    <div className="border-zinc-800 border-t">
+      <div className="flex items-center gap-2 px-5 py-2">
+        <button
+          className="text-[10px] text-violet-400 hover:text-violet-300"
+          onClick={toggleAll}
+          type="button"
+        >
+          {selectedIds.size === requests.length ? "Deselect All" : "Select All"}
+        </button>
+        <span className="text-[10px] text-zinc-600">
+          {selectedIds.size} of {requests.length} selected
+        </span>
+      </div>
+      <div className="max-h-40 overflow-auto px-5">
+        {requests.map((req) => (
+          <label
+            className="flex cursor-pointer items-center gap-2 py-1 text-xs hover:bg-zinc-800/30"
+            key={req.id}
+          >
+            <input
+              checked={selectedIds.has(req.id)}
+              className="rounded border-zinc-600"
+              onChange={() => toggleSelection(req.id)}
+              type="checkbox"
+            />
+            <RiskBadge level={req.riskLevel} />
+            <span className="min-w-0 flex-1 truncate text-zinc-300">
+              {req.toolName}: {req.description.slice(0, 60)}
+            </span>
+          </label>
+        ))}
+      </div>
+      <div className="flex gap-2 px-5 py-2">
+        <button
+          className="flex-1 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-1.5 font-medium text-red-300 text-xs hover:bg-red-500/20 disabled:opacity-50"
+          disabled={selectedIds.size === 0}
+          onClick={() => onRejectAll(selectedArray)}
+          type="button"
+        >
+          Reject Selected ({selectedIds.size})
+        </button>
+        <button
+          className="flex-1 rounded-lg bg-green-600 px-3 py-1.5 font-medium text-white text-xs hover:bg-green-500 disabled:opacity-50"
+          disabled={selectedIds.size === 0}
+          onClick={() => onApproveAll(selectedArray)}
+          type="button"
+        >
+          Approve Selected ({selectedIds.size})
+        </button>
+      </div>
+    </div>
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Component
 // ---------------------------------------------------------------------------
@@ -63,8 +296,12 @@ export function ApprovalDialog({
   onApprove,
   onReject,
   onModify,
+  batchRequests,
+  onBatchApprove,
+  onBatchReject,
 }: ApprovalDialogProps) {
   const riskStyle = RISK_STYLES[request.riskLevel];
+  const [showBatch, setShowBatch] = useState(false);
 
   const handleApprove = useCallback(() => {
     onApprove(request.id);
@@ -78,17 +315,14 @@ export function ApprovalDialog({
     onModify?.(request.id);
   }, [onModify, request.id]);
 
-  // Keyboard shortcuts: Y=Approve, N=Reject, M=Modify
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      // Don't capture when user is typing in an input
       if (
         e.target instanceof HTMLInputElement ||
         e.target instanceof HTMLTextAreaElement
       ) {
         return;
       }
-
       if (e.key === "y" || e.key === "Y") {
         e.preventDefault();
         handleApprove();
@@ -103,10 +337,11 @@ export function ApprovalDialog({
         handleReject();
       }
     };
-
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [handleApprove, handleReject, handleModify, onModify]);
+
+  const hasBatch = batchRequests && batchRequests.length > 1;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
@@ -117,7 +352,7 @@ export function ApprovalDialog({
         <div className="flex items-center gap-3 border-zinc-800 border-b px-5 py-4">
           <svg
             aria-hidden="true"
-            className="h-5 w-5 text-yellow-400"
+            className={`h-5 w-5 ${RISK_ICON_COLORS[request.riskLevel]}`}
             fill="none"
             stroke="currentColor"
             strokeWidth={1.5}
@@ -137,16 +372,20 @@ export function ApprovalDialog({
               The agent is requesting permission to proceed
             </p>
           </div>
-          <span
-            className={`rounded-full border px-2.5 py-0.5 font-medium text-[10px] ${riskStyle.badge}`}
-          >
-            {riskStyle.label}
-          </span>
+          <RiskBadge level={request.riskLevel} />
         </div>
 
         {/* Body */}
         <div className="space-y-4 px-5 py-4">
-          {/* Description */}
+          <div className="flex flex-wrap items-center gap-3">
+            {request.confidenceScore !== undefined && (
+              <ConfidenceScore score={request.confidenceScore} />
+            )}
+            {request.creditCost !== undefined && (
+              <CreditCostEstimate cost={request.creditCost} />
+            )}
+          </div>
+
           <div>
             <span className="font-medium text-[10px] text-zinc-500 uppercase">
               Action
@@ -156,7 +395,6 @@ export function ApprovalDialog({
             </p>
           </div>
 
-          {/* Tool details */}
           <div>
             <span className="font-medium text-[10px] text-zinc-500 uppercase">
               Tool
@@ -166,7 +404,8 @@ export function ApprovalDialog({
             </div>
           </div>
 
-          {/* Tool args */}
+          {request.diff && <InlineDiffPreview diff={request.diff} />}
+
           {request.toolArgs && Object.keys(request.toolArgs).length > 0 && (
             <div>
               <span className="font-medium text-[10px] text-zinc-500 uppercase">
@@ -178,7 +417,6 @@ export function ApprovalDialog({
             </div>
           )}
 
-          {/* Affected files */}
           {request.affectedFiles.length > 0 && (
             <div>
               <span className="font-medium text-[10px] text-zinc-500 uppercase">
@@ -197,6 +435,39 @@ export function ApprovalDialog({
             </div>
           )}
         </div>
+
+        {hasBatch && onBatchApprove && onBatchReject && (
+          <div className="border-zinc-800 border-t">
+            <button
+              className="flex w-full items-center gap-2 px-5 py-2 text-violet-400 text-xs hover:bg-zinc-800/30"
+              onClick={() => setShowBatch((p) => !p)}
+              type="button"
+            >
+              <svg
+                aria-hidden="true"
+                className={`h-3 w-3 transition-transform ${showBatch ? "rotate-90" : ""}`}
+                fill="none"
+                stroke="currentColor"
+                strokeWidth={2}
+                viewBox="0 0 24 24"
+              >
+                <path
+                  d="m9 5 7 7-7 7"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              </svg>
+              Batch Actions ({batchRequests.length} pending)
+            </button>
+            {showBatch && (
+              <BatchApprovalPanel
+                onApproveAll={onBatchApprove}
+                onRejectAll={onBatchReject}
+                requests={batchRequests}
+              />
+            )}
+          </div>
+        )}
 
         {/* Footer */}
         <div className="flex items-center gap-2 border-zinc-800 border-t px-5 py-3">

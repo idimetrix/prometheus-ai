@@ -5,14 +5,17 @@ const logger = createLogger("model-router:prompt-cache");
 // ─── Types ────────────────────────────────────────────────────────────
 
 interface CacheEntry {
+  fingerprint: Set<string>;
   hitCount: number;
   lastUsedAt: number;
+  prompt: string;
   promptHash: string;
   provider: string;
 }
 
 interface CacheStats {
   cacheHits: number;
+  cacheSavingsUsd: number;
   hitRate: number;
   provider: string;
   totalRequests: number;
@@ -34,6 +37,11 @@ const PROVIDER_CACHE_MIN_CHARS: Record<string, number> = {
  */
 const CACHEABLE_PROVIDERS = new Set(["anthropic", "openai", "gemini"]);
 
+/** Estimated cost per cached token read (avg across providers) in USD */
+const CACHE_COST_SAVINGS_PER_TOKEN = 0.000_001_5; // ~$1.50/M tokens saved
+/** Approximate chars per token for savings estimation */
+const CHARS_PER_TOKEN = 4;
+
 // ─── Hashing ──────────────────────────────────────────────────────────
 
 /**
@@ -50,6 +58,39 @@ function hashPrompt(prompt: string): string {
   return `prompt_${(hash >>> 0).toString(36)}`;
 }
 
+// ─── N-gram Fingerprinting ──────────────────────────────────────────
+
+/**
+ * Generate a set of character-level trigrams from a prompt.
+ * Used for approximate similarity matching when exact hash misses.
+ */
+function createTrigramFingerprint(prompt: string): Set<string> {
+  const normalized = prompt.toLowerCase().replace(/\s+/g, " ").trim();
+  const trigrams = new Set<string>();
+  for (let i = 0; i <= normalized.length - 3; i++) {
+    trigrams.add(normalized.slice(i, i + 3));
+  }
+  return trigrams;
+}
+
+/**
+ * Compute Jaccard similarity between two fingerprint sets.
+ * Returns a value between 0 (no overlap) and 1 (identical).
+ */
+function jaccardSimilarity(a: Set<string>, b: Set<string>): number {
+  if (a.size === 0 && b.size === 0) {
+    return 1;
+  }
+  let intersection = 0;
+  for (const trigram of a) {
+    if (b.has(trigram)) {
+      intersection++;
+    }
+  }
+  const union = a.size + b.size - intersection;
+  return union === 0 ? 0 : intersection / union;
+}
+
 // ─── PromptCacheManager ──────────────────────────────────────────────
 
 /**
@@ -63,17 +104,24 @@ export class PromptCacheManager {
   private readonly entries: Map<string, CacheEntry> = new Map();
   private readonly providerStats: Map<
     string,
-    { totalRequests: number; cacheHits: number }
+    { totalRequests: number; cacheHits: number; savingsUsd: number }
   > = new Map();
 
   /** Maximum number of cached prompt entries before eviction */
   private readonly maxEntries: number;
   /** Minimum number of times a prompt must be seen before caching is enabled */
   private readonly minHitsForCache: number;
+  /** Similarity threshold for fingerprint matching (>95%) */
+  private readonly similarityThreshold: number;
 
-  constructor(options?: { maxEntries?: number; minHitsForCache?: number }) {
+  constructor(options?: {
+    maxEntries?: number;
+    minHitsForCache?: number;
+    similarityThreshold?: number;
+  }) {
     this.maxEntries = options?.maxEntries ?? 500;
     this.minHitsForCache = options?.minHitsForCache ?? 2;
+    this.similarityThreshold = options?.similarityThreshold ?? 0.95;
   }
 
   /**
@@ -108,18 +156,31 @@ export class PromptCacheManager {
     }
 
     const promptHash = hashPrompt(systemPrompt);
-    this.trackPromptUsage(promptHash, provider);
+    this.trackPromptUsage(promptHash, provider, systemPrompt);
 
     // Get or initialize provider stats
     const stats = this.getOrInitStats(provider);
     stats.totalRequests++;
 
-    const entry = this.entries.get(promptHash);
+    // Try exact hash match first, then fall back to fingerprint similarity
+    let entry = this.entries.get(promptHash);
+    if (!entry) {
+      entry = this.findSimilarEntry(systemPrompt, provider) ?? undefined;
+      if (entry) {
+        logger.debug(
+          { provider, originalHash: promptHash, matchedHash: entry.promptHash },
+          "Matched prompt via n-gram fingerprint similarity"
+        );
+      }
+    }
     const isCacheHit =
       entry !== undefined && entry.hitCount >= this.minHitsForCache;
 
     if (isCacheHit) {
       stats.cacheHits++;
+      // Track estimated savings from prompt caching
+      const estimatedTokens = Math.ceil(systemPrompt.length / CHARS_PER_TOKEN);
+      stats.savingsUsd += estimatedTokens * CACHE_COST_SAVINGS_PER_TOKEN;
     }
 
     // Return provider-specific headers
@@ -168,6 +229,7 @@ export class PromptCacheManager {
         cacheHits: stats.cacheHits,
         hitRate:
           stats.totalRequests > 0 ? stats.cacheHits / stats.totalRequests : 0,
+        cacheSavingsUsd: stats.savingsUsd,
       });
     }
 
@@ -205,7 +267,11 @@ export class PromptCacheManager {
 
   // ─── Private Helpers ─────────────────────────────────────────────
 
-  private trackPromptUsage(promptHash: string, provider: string): void {
+  private trackPromptUsage(
+    promptHash: string,
+    provider: string,
+    prompt: string
+  ): void {
     const existing = this.entries.get(promptHash);
 
     if (existing) {
@@ -222,9 +288,51 @@ export class PromptCacheManager {
     this.entries.set(promptHash, {
       promptHash,
       provider,
+      prompt,
+      fingerprint: createTrigramFingerprint(prompt),
       hitCount: 1,
       lastUsedAt: Date.now(),
     });
+  }
+
+  /**
+   * Search for a cached entry with >95% trigram similarity to the given prompt.
+   * Used as fallback when exact hash match misses (e.g., minor whitespace or
+   * punctuation differences between otherwise identical prompts).
+   */
+  private findSimilarEntry(
+    prompt: string,
+    provider: string
+  ): CacheEntry | null {
+    const fingerprint = createTrigramFingerprint(prompt);
+    let bestMatch: CacheEntry | null = null;
+    let bestSimilarity = 0;
+
+    for (const entry of this.entries.values()) {
+      if (entry.provider !== provider) {
+        continue;
+      }
+      const similarity = jaccardSimilarity(fingerprint, entry.fingerprint);
+      if (
+        similarity >= this.similarityThreshold &&
+        similarity > bestSimilarity
+      ) {
+        bestSimilarity = similarity;
+        bestMatch = entry;
+      }
+    }
+
+    if (bestMatch) {
+      logger.debug(
+        {
+          similarity: bestSimilarity.toFixed(4),
+          matchedHash: bestMatch.promptHash,
+        },
+        "Found similar cached prompt via fingerprint"
+      );
+    }
+
+    return bestMatch;
   }
 
   private evictOldest(): void {
@@ -246,10 +354,11 @@ export class PromptCacheManager {
   private getOrInitStats(provider: string): {
     totalRequests: number;
     cacheHits: number;
+    savingsUsd: number;
   } {
     let stats = this.providerStats.get(provider);
     if (!stats) {
-      stats = { totalRequests: 0, cacheHits: 0 };
+      stats = { totalRequests: 0, cacheHits: 0, savingsUsd: 0 };
       this.providerStats.set(provider, stats);
     }
     return stats;
