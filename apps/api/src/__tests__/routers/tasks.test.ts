@@ -120,6 +120,8 @@ function createMockDb() {
 }
 
 function resetChainMocks() {
+  mockFindFirst.mockReset();
+  mockFindMany.mockReset().mockResolvedValue([]);
   mockInsertValues.mockReturnValue({ returning: mockReturning });
   mockInsert.mockReturnValue({ values: mockInsertValues });
   mockUpdateWhere.mockReturnValue({ returning: mockUpdateReturning });

@@ -94,6 +94,7 @@ vi.mock("@prometheus/utils", () => ({
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 function resetChainMocks() {
+  mockFindFirst.mockReset();
   mockInsertValues.mockReturnValue({ returning: mockReturning });
   mockInsert.mockReturnValue({ values: mockInsertValues });
   mockUpdateWhere.mockReturnValue({ returning: mockUpdateReturning });
