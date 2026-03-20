@@ -11,8 +11,8 @@
     "clean": "rm -rf dist .turbo"
   },
   "dependencies": {
-    "@clerk/nextjs": "^7.0.5",
-    "@clerk/backend": "^3.2.1",
+    "@clerk/nextjs": "^7.0.6",
+    "@clerk/backend": "^3.2.2",
     "@prometheus/logger": "workspace:*"
   },
   "devDependencies": {
