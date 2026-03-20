@@ -24,23 +24,54 @@ const mockUpdateWhere = vi.fn().mockReturnValue({
 const mockUpdateSet = vi.fn().mockReturnValue({ where: mockUpdateWhere });
 const mockUpdate = vi.fn().mockReturnValue({ set: mockUpdateSet });
 
+// Build a chainable mock for select().from().where().for()
+const mockSelectFor = vi.fn().mockResolvedValue([]);
+const mockSelectWhere = vi.fn().mockReturnValue({ for: mockSelectFor });
+const mockSelectFrom = vi.fn().mockReturnValue({ where: mockSelectWhere });
+const mockSelect = vi.fn().mockReturnValue({ from: mockSelectFrom });
+
+// Transaction mock: calls the callback with a tx that has same shape as db
+const mockTransaction = vi.fn(
+  <T>(
+    fn: (tx: {
+      select: typeof mockSelect;
+      update: typeof mockUpdate;
+      insert: typeof mockInsert;
+    }) => Promise<T>
+  ): Promise<T> => {
+    return fn({
+      select: mockSelect,
+      update: mockUpdate,
+      insert: mockInsert,
+    });
+  }
+);
+
 vi.mock("@prometheus/db", () => ({
   db: {
     query: {
-      creditBalances: { findFirst: (...args: any[]) => mockFindFirst(...args) },
+      creditBalances: {
+        findFirst: (...args: unknown[]) => mockFindFirst(...args),
+      },
       creditReservations: {
-        findFirst: (...args: any[]) => mockFindFirst(...args),
-        findMany: (...args: any[]) => mockFindMany(...args),
+        findFirst: (...args: unknown[]) => mockFindFirst(...args),
+        findMany: (...args: unknown[]) => mockFindMany(...args),
       },
       creditTransactions: {
-        findMany: (...args: any[]) => mockFindMany(...args),
+        findMany: (...args: unknown[]) => mockFindMany(...args),
       },
     },
-    insert: (...args: any[]) => mockInsert(...args),
-    update: (...args: any[]) => mockUpdate(...args),
+    insert: (...args: unknown[]) => mockInsert(...args),
+    update: (...args: unknown[]) => mockUpdate(...args),
+    transaction: (...args: unknown[]) =>
+      mockTransaction(...(args as Parameters<typeof mockTransaction>)),
   },
   creditBalances: { orgId: "orgId", balance: "balance", reserved: "reserved" },
-  creditTransactions: { orgId: "orgId", createdAt: "createdAt" },
+  creditTransactions: {
+    orgId: "orgId",
+    createdAt: "createdAt",
+    taskId: "taskId",
+  },
   creditReservations: {
     id: "id",
     orgId: "orgId",
@@ -84,6 +115,29 @@ describe("CreditService", () => {
     mockUpdateWhere.mockReturnValue({ returning: mockUpdateReturning });
     mockUpdateSet.mockReturnValue({ where: mockUpdateWhere });
     mockUpdate.mockReturnValue({ set: mockUpdateSet });
+
+    // Reset select chain for transaction support
+    mockSelectFor.mockResolvedValue([]);
+    mockSelectWhere.mockReturnValue({ for: mockSelectFor });
+    mockSelectFrom.mockReturnValue({ where: mockSelectWhere });
+    mockSelect.mockReturnValue({ from: mockSelectFrom });
+
+    // Reset transaction mock
+    mockTransaction.mockImplementation(
+      <T>(
+        fn: (tx: {
+          select: typeof mockSelect;
+          update: typeof mockUpdate;
+          insert: typeof mockInsert;
+        }) => Promise<T>
+      ): Promise<T> => {
+        return fn({
+          select: mockSelect,
+          update: mockUpdate,
+          insert: mockInsert,
+        });
+      }
+    );
   });
 
   // ── getBalance ───────────────────────────────────────────────────────────
@@ -123,9 +177,9 @@ describe("CreditService", () => {
     it("creates reservation and returns reservation result", async () => {
       // getBalance call inside reserveCredits (ensure row exists)
       mockFindFirst.mockResolvedValueOnce({ balance: 100, reserved: 10 });
-      // Atomic update returns the updated row
-      mockUpdateReturning.mockResolvedValueOnce([
-        { orgId: "org_1", balance: 100, reserved: 30 },
+      // Transaction: SELECT ... FOR UPDATE returns locked row
+      mockSelectFor.mockResolvedValueOnce([
+        { balance: 100, reserved: 10, orgId: "org_1" },
       ]);
 
       const result = await service.reserveCredits("org_1", "task_1", 20);
@@ -137,8 +191,9 @@ describe("CreditService", () => {
 
     it("updates reserved amount on credit balance", async () => {
       mockFindFirst.mockResolvedValueOnce({ balance: 100, reserved: 0 });
-      mockUpdateReturning.mockResolvedValueOnce([
-        { orgId: "org_1", balance: 100, reserved: 30 },
+      // Transaction: SELECT ... FOR UPDATE returns locked row
+      mockSelectFor.mockResolvedValueOnce([
+        { balance: 100, reserved: 0, orgId: "org_1" },
       ]);
       await service.reserveCredits("org_1", "task_1", 30);
       expect(mockUpdate).toHaveBeenCalled();
@@ -146,10 +201,10 @@ describe("CreditService", () => {
 
     it("rejects when insufficient available credits", async () => {
       mockFindFirst.mockResolvedValueOnce({ balance: 20, reserved: 15 });
-      // Atomic update returns empty (WHERE clause didn't match)
-      mockUpdateReturning.mockResolvedValueOnce([]);
-      // getBalance for error message
-      mockFindFirst.mockResolvedValueOnce({ balance: 20, reserved: 15 });
+      // Transaction: SELECT ... FOR UPDATE returns locked row with insufficient credits
+      mockSelectFor.mockResolvedValueOnce([
+        { balance: 20, reserved: 15, orgId: "org_1" },
+      ]);
 
       await expect(
         service.reserveCredits("org_1", "task_1", 10)
@@ -158,8 +213,10 @@ describe("CreditService", () => {
 
     it("rejects when fully reserved", async () => {
       mockFindFirst.mockResolvedValueOnce({ balance: 50, reserved: 50 });
-      mockUpdateReturning.mockResolvedValueOnce([]);
-      mockFindFirst.mockResolvedValueOnce({ balance: 50, reserved: 50 });
+      // Transaction: SELECT ... FOR UPDATE returns locked row with no available
+      mockSelectFor.mockResolvedValueOnce([
+        { balance: 50, reserved: 50, orgId: "org_1" },
+      ]);
 
       await expect(
         service.reserveCredits("org_1", "task_1", 1)
@@ -168,8 +225,9 @@ describe("CreditService", () => {
 
     it("sets expiry to 2 hours from now", async () => {
       mockFindFirst.mockResolvedValueOnce({ balance: 100, reserved: 0 });
-      mockUpdateReturning.mockResolvedValueOnce([
-        { orgId: "org_1", balance: 100, reserved: 5 },
+      // Transaction: SELECT ... FOR UPDATE returns locked row
+      mockSelectFor.mockResolvedValueOnce([
+        { balance: 100, reserved: 0, orgId: "org_1" },
       ]);
       await service.reserveCredits("org_1", "task_1", 5);
       // Verify insert was called with values including expiresAt
