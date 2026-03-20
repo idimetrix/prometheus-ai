@@ -20,6 +20,7 @@ export {
 export { rateLimitMiddleware } from "./rate-limit";
 export type { EndpointTier } from "./rate-limit-enhanced";
 export { perUserRateLimitMiddleware } from "./rate-limit-enhanced";
+export { rbacMiddleware } from "./rbac";
 export type {
   BruteForceRedisClient,
   CspConfig,

@@ -90,6 +90,12 @@ export type { RetryOptions } from "./retry";
 export { retry } from "./retry";
 export { decryptSopsValue, loadSopsFile } from "./secrets";
 export {
+  createServiceRequestHeaders,
+  getServiceSignatureHeader,
+  signServiceRequest,
+  verifyServiceRequest,
+} from "./service-auth";
+export {
   modelRouterClient,
   orchestratorClient,
   projectBrainClient,

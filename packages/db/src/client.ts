@@ -3,15 +3,21 @@ import postgres from "postgres";
 // biome-ignore lint/performance/noNamespaceImport: Drizzle ORM requires namespace import for schema
 import * as schema from "./schema";
 
-const connectionString = process.env.DATABASE_URL;
+// Prefer PGBOUNCER_URL for pooled connections (transaction mode),
+// fall back to DATABASE_URL for direct connections or dev mode.
+const connectionString = process.env.PGBOUNCER_URL ?? process.env.DATABASE_URL;
 if (!connectionString) {
-  throw new Error("DATABASE_URL environment variable is required");
+  throw new Error(
+    "DATABASE_URL or PGBOUNCER_URL environment variable is required"
+  );
 }
 
+const isPgBouncer = Boolean(process.env.PGBOUNCER_URL);
+
 // Connection pool configuration
-// In production, use pgBouncer (port 6432) for connection pooling.
-// These settings are for direct connections or dev mode.
-const poolSize = Number(process.env.DB_POOL_SIZE ?? "20");
+// When using PgBouncer (transaction mode), disable prepared statements
+// and use a smaller local pool since PgBouncer handles pooling.
+const poolSize = Number(process.env.DB_POOL_SIZE ?? (isPgBouncer ? "5" : "20"));
 const idleTimeout = Number(process.env.DB_IDLE_TIMEOUT ?? "20");
 const connectTimeout = Number(process.env.DB_CONNECT_TIMEOUT ?? "10");
 
@@ -19,8 +25,8 @@ const client = postgres(connectionString, {
   max: poolSize,
   idle_timeout: idleTimeout,
   connect_timeout: connectTimeout,
-  // Prepared statements for query plan caching
-  prepare: true,
+  // PgBouncer transaction mode does not support prepared statements
+  prepare: !isPgBouncer,
   // Connection lifecycle hooks
   onnotice: () => {
     /* suppress notice messages */

@@ -1,4 +1,5 @@
 import { createLogger } from "@prometheus/logger";
+import { CircuitBreaker } from "@prometheus/utils";
 
 const logger = createLogger("mcp-gateway:registry");
 
@@ -69,6 +70,7 @@ export interface ProjectToolConfig {
 export class ToolRegistry {
   private readonly tools = new Map<string, RegisteredTool>();
   private readonly rateLimits = new Map<string, RateLimitEntry>();
+  private readonly adapterBreakers = new Map<string, CircuitBreaker>();
   private auditLog: AuditLogEntry[] = [];
   private readonly maxAuditLogSize = 10_000;
   private readonly rateLimitWindow = 60 * 60 * 1000; // 1 hour
@@ -240,19 +242,26 @@ export class ToolRegistry {
       }
     }
 
-    // Execute the tool
+    // Execute the tool through circuit breaker
     const startTime = Date.now();
     let result: MCPToolResult;
+    const adapter = tool.definition.adapter;
+    const breaker = this.getAdapterBreaker(adapter);
 
     try {
-      logger.info(
-        { tool: toolName, adapter: tool.definition.adapter },
-        "Executing tool"
+      logger.info({ tool: toolName, adapter }, "Executing tool");
+      result = await breaker.execute(() =>
+        tool.handler(params, ctx.credentials)
       );
-      result = await tool.handler(params, ctx.credentials);
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
-      result = { success: false, error: msg };
+      const isCircuitOpen = msg.includes("Circuit breaker");
+      result = {
+        success: false,
+        error: isCircuitOpen
+          ? `Adapter "${adapter}" is temporarily unavailable. Please try again later.`
+          : msg,
+      };
     }
 
     const durationMs = Date.now() - startTime;
@@ -474,6 +483,21 @@ export class ToolRegistry {
   }
 
   // ---- Private helpers ----
+
+  private getAdapterBreaker(adapter: string): CircuitBreaker {
+    let breaker = this.adapterBreakers.get(adapter);
+    if (!breaker) {
+      breaker = new CircuitBreaker({
+        name: `mcp-adapter:${adapter}`,
+        failureThreshold: 5,
+        failureWindowMs: 60_000,
+        recoveryWindowMs: 30_000,
+        successThreshold: 2,
+      });
+      this.adapterBreakers.set(adapter, breaker);
+    }
+    return breaker;
+  }
 
   private checkRateLimit(key: string): boolean {
     const now = Date.now();

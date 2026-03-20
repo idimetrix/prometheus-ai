@@ -96,6 +96,8 @@ const SLOT_TEMPERATURES: Record<string, number> = {
 
 export interface RouteRequest {
   messages: Array<{ role: string; content: string }>;
+  /** When true, prefer the cheapest model that meets the minimum quality threshold. */
+  optimizeForCost?: boolean;
   options?: {
     model?: string;
     tools?: unknown[];
@@ -546,20 +548,46 @@ export class ModelRouterService {
     const candidates = [slotConfig.primary, ...slotConfig.fallbacks];
 
     // Adaptive model reordering based on historical performance
-    const ranked = this.scorer.getRankedModels(request.slot);
-    if (ranked.length >= 2) {
-      // Reorder candidates based on scoring data
-      const rankedKeys = new Set(ranked.map((r) => r.modelKey));
-      const reordered = [
-        ...ranked.map((r) => r.modelKey).filter((k) => candidates.includes(k)),
-        ...candidates.filter((k) => !rankedKeys.has(k)),
-      ];
-      candidates.length = 0;
-      candidates.push(...reordered);
-      this.logger.debug(
-        { slot: request.slot, reordered: candidates },
-        "Adaptive model reordering"
+    if (request.optimizeForCost) {
+      // Cost-optimized: prefer cheapest model meeting quality threshold
+      const costRanked = this.scorer.getCostOptimizedRanking(
+        request.slot,
+        0.5,
+        request.options?.taskId
       );
+      if (costRanked.length >= 1) {
+        const costKeys = new Set(costRanked.map((r) => r.modelKey));
+        const reordered = [
+          ...costRanked
+            .map((r) => r.modelKey)
+            .filter((k) => candidates.includes(k)),
+          ...candidates.filter((k) => !costKeys.has(k)),
+        ];
+        candidates.length = 0;
+        candidates.push(...reordered);
+        this.logger.debug(
+          { slot: request.slot, reordered: candidates },
+          "Cost-optimized model reordering"
+        );
+      }
+    } else {
+      const ranked = this.scorer.getRankedModels(request.slot);
+      if (ranked.length >= 2) {
+        // Reorder candidates based on scoring data
+        const rankedKeys = new Set(ranked.map((r) => r.modelKey));
+        const reordered = [
+          ...ranked
+            .map((r) => r.modelKey)
+            .filter((k) => candidates.includes(k)),
+          ...candidates.filter((k) => !rankedKeys.has(k)),
+        ];
+        candidates.length = 0;
+        candidates.push(...reordered);
+        this.logger.debug(
+          { slot: request.slot, reordered: candidates },
+          "Adaptive model reordering"
+        );
+      }
     }
 
     let attempts = 0;

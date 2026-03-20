@@ -1,4 +1,6 @@
 import { createLogger } from "@prometheus/logger";
+import { createRedisConnection } from "@prometheus/queue";
+import type IORedis from "ioredis";
 
 const logger = createLogger("model-router:prompt-cache");
 
@@ -100,6 +102,14 @@ function jaccardSimilarity(a: Set<string>, b: Set<string>): number {
  * control headers for Anthropic (prompt caching) and OpenAI (prompt
  * caching beta), enabling significant cost and latency savings.
  */
+/** Serializable subset of CacheEntry for Redis storage (no Set) */
+interface RedisCacheEntry {
+  hitCount: number;
+  lastUsedAt: number;
+  promptHash: string;
+  provider: string;
+}
+
 export class PromptCacheManager {
   private readonly entries: Map<string, CacheEntry> = new Map();
   private readonly providerStats: Map<
@@ -114,14 +124,32 @@ export class PromptCacheManager {
   /** Similarity threshold for fingerprint matching (>95%) */
   private readonly similarityThreshold: number;
 
+  /** Redis L2 cache connection */
+  private redis: IORedis | null = null;
+  private readonly redisKeyPrefix = "prompt-cache:";
+  private readonly redisTtlSeconds = 3600; // 1 hour TTL for Redis entries
+
   constructor(options?: {
     maxEntries?: number;
     minHitsForCache?: number;
     similarityThreshold?: number;
+    enableRedis?: boolean;
   }) {
     this.maxEntries = options?.maxEntries ?? 500;
     this.minHitsForCache = options?.minHitsForCache ?? 2;
     this.similarityThreshold = options?.similarityThreshold ?? 0.95;
+
+    if (options?.enableRedis !== false) {
+      try {
+        this.redis = createRedisConnection();
+        this.redis.on("error", (err) => {
+          logger.warn({ err: String(err) }, "Redis L2 cache connection error");
+          this.redis = null;
+        });
+      } catch {
+        logger.debug("Redis L2 cache not available, using in-memory only");
+      }
+    }
   }
 
   /**
@@ -277,22 +305,86 @@ export class PromptCacheManager {
     if (existing) {
       existing.hitCount++;
       existing.lastUsedAt = Date.now();
+      this.writeToRedis(promptHash, existing);
       return;
     }
+
+    // Try to hydrate from Redis L2 cache
+    this.readFromRedis(promptHash)
+      .then((redisEntry) => {
+        if (redisEntry && !this.entries.has(promptHash)) {
+          this.entries.set(promptHash, {
+            promptHash: redisEntry.promptHash,
+            provider: redisEntry.provider,
+            prompt,
+            fingerprint: createTrigramFingerprint(prompt),
+            hitCount: redisEntry.hitCount + 1,
+            lastUsedAt: Date.now(),
+          });
+          this.writeToRedis(
+            promptHash,
+            this.entries.get(promptHash) as CacheEntry
+          );
+        }
+      })
+      .catch(() => {
+        /* Redis read failed, ignore */
+      });
 
     // Evict oldest entries if at capacity
     if (this.entries.size >= this.maxEntries) {
       this.evictOldest();
     }
 
-    this.entries.set(promptHash, {
+    const newEntry: CacheEntry = {
       promptHash,
       provider,
       prompt,
       fingerprint: createTrigramFingerprint(prompt),
       hitCount: 1,
       lastUsedAt: Date.now(),
-    });
+    };
+
+    this.entries.set(promptHash, newEntry);
+    this.writeToRedis(promptHash, newEntry);
+  }
+
+  /** Write-through to Redis L2 cache */
+  private writeToRedis(promptHash: string, entry: CacheEntry): void {
+    if (!this.redis) {
+      return;
+    }
+    const redisEntry: RedisCacheEntry = {
+      promptHash: entry.promptHash,
+      provider: entry.provider,
+      hitCount: entry.hitCount,
+      lastUsedAt: entry.lastUsedAt,
+    };
+    const key = `${this.redisKeyPrefix}${promptHash}`;
+    this.redis
+      .set(key, JSON.stringify(redisEntry), "EX", this.redisTtlSeconds)
+      .catch((err) => {
+        logger.debug({ err: String(err), promptHash }, "Redis L2 write failed");
+      });
+  }
+
+  /** Read from Redis L2 cache */
+  private async readFromRedis(
+    promptHash: string
+  ): Promise<RedisCacheEntry | null> {
+    if (!this.redis) {
+      return null;
+    }
+    try {
+      const key = `${this.redisKeyPrefix}${promptHash}`;
+      const data = await this.redis.get(key);
+      if (!data) {
+        return null;
+      }
+      return JSON.parse(data) as RedisCacheEntry;
+    } catch {
+      return null;
+    }
   }
 
   /**

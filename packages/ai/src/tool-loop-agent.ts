@@ -20,10 +20,14 @@ import {
 export interface ToolLoopAgentOptions {
   /** Signal to abort the generation. */
   abortSignal?: AbortSignal;
+  /** Callback invoked when a tool call requires approval. Must return true to proceed. */
+  approvalCallback?: (toolName: string, input: unknown) => Promise<boolean>;
   /** Maximum number of tool-use steps before stopping. Defaults to 50. */
   maxSteps?: number;
   /** Maximum tokens per generation step. */
   maxTokens?: number;
+  /** Predicate that determines whether a tool call needs human approval before execution. */
+  needsApproval?: (toolName: string, input: unknown) => boolean;
   /** Callback invoked after each step completes. */
   onStepFinish?: (step: StepResult<ToolSet>) => void | Promise<void>;
   /** System prompt prepended to the conversation. */
@@ -48,6 +52,9 @@ export type StreamEvent =
   | { type: "text-delta"; textDelta: string }
   | { type: "tool-call"; toolName: string; args: unknown }
   | { type: "tool-result"; toolName: string; result: unknown }
+  | { type: "tool-approval-requested"; toolName: string; input: unknown }
+  | { type: "tool-approval-granted"; toolName: string }
+  | { type: "tool-approval-rejected"; toolName: string }
   | { type: "start-step" }
   | {
       type: "finish";
@@ -58,6 +65,22 @@ export type StreamEvent =
         totalTokens: number;
       };
     };
+
+// -----------------------------------------------------------------------------
+// Errors
+// -----------------------------------------------------------------------------
+
+export class ToolApprovalRejectedError extends Error {
+  readonly toolName: string;
+  readonly input: unknown;
+
+  constructor(toolName: string, input: unknown) {
+    super(`Tool call "${toolName}" was rejected by approval callback`);
+    this.name = "ToolApprovalRejectedError";
+    this.toolName = toolName;
+    this.input = input;
+  }
+}
 
 // -----------------------------------------------------------------------------
 // Helper to normalize usage
@@ -88,6 +111,12 @@ export class ToolLoopAgent {
     | undefined;
   private readonly abortSignal: AbortSignal | undefined;
   private readonly system: string | undefined;
+  private readonly needsApproval:
+    | ((toolName: string, input: unknown) => boolean)
+    | undefined;
+  private readonly approvalCallback:
+    | ((toolName: string, input: unknown) => Promise<boolean>)
+    | undefined;
 
   constructor(
     model: LanguageModel,
@@ -102,6 +131,8 @@ export class ToolLoopAgent {
     this.onStepFinish = options?.onStepFinish;
     this.abortSignal = options?.abortSignal;
     this.system = options?.system;
+    this.needsApproval = options?.needsApproval;
+    this.approvalCallback = options?.approvalCallback;
   }
 
   /**
@@ -163,6 +194,34 @@ export class ToolLoopAgent {
           break;
         }
         case "tool-call": {
+          // Check if this tool call needs approval
+          if (this.needsApproval?.(part.toolName, part.input)) {
+            yield {
+              type: "tool-approval-requested",
+              toolName: part.toolName,
+              input: part.input,
+            };
+
+            if (this.approvalCallback) {
+              const approved = await this.approvalCallback(
+                part.toolName,
+                part.input
+              );
+              if (approved) {
+                yield {
+                  type: "tool-approval-granted",
+                  toolName: part.toolName,
+                };
+              } else {
+                yield {
+                  type: "tool-approval-rejected",
+                  toolName: part.toolName,
+                };
+                throw new ToolApprovalRejectedError(part.toolName, part.input);
+              }
+            }
+          }
+
           yield {
             type: "tool-call",
             toolName: part.toolName,

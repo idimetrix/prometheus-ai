@@ -95,6 +95,7 @@ export {
   estimateMessageTokens,
   estimateTextCost,
   estimateTokens,
+  getModelContextWindow,
   remainingContextTokens,
   truncateToTokens,
 } from "./tokens";
@@ -106,7 +107,11 @@ export type {
   StreamEvent,
   ToolLoopAgentOptions,
 } from "./tool-loop-agent";
-export { createToolLoopAgent, ToolLoopAgent } from "./tool-loop-agent";
+export {
+  createToolLoopAgent,
+  ToolApprovalRejectedError,
+  ToolLoopAgent,
+} from "./tool-loop-agent";
 // ---------------------------------------------------------------------------
 // Vercel AI SDK 6 Adapter
 // ---------------------------------------------------------------------------

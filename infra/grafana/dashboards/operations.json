@@ -609,5 +609,64 @@
   "timezone": "browser",
   "title": "Prometheus - Operations Overview",
   "uid": "operations-overview",
-  "version": 1
+  "version": 2,
+  "__customPanels": {
+    "circuit_breaker_state": {
+      "title": "Circuit Breaker State",
+      "description": "Current state of circuit breakers across all services (closed=healthy, open=tripped, half-open=recovering)",
+      "type": "state-timeline",
+      "targets": [
+        {
+          "expr": "circuit_breaker_state{service=~\"$service\"}",
+          "legendFormat": "{{service}} - {{provider}}"
+        }
+      ]
+    },
+    "circuit_breaker_transitions": {
+      "title": "Circuit Breaker Transitions/min",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "rate(circuit_breaker_transitions_total{service=~\"$service\"}[5m]) * 60",
+          "legendFormat": "{{service}} {{from}}→{{to}}"
+        }
+      ]
+    },
+    "dlq_depth": {
+      "title": "Dead Letter Queue Depth",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "bullmq_queue_waiting{queue=~\".*dlq.*\"}",
+          "legendFormat": "{{queue}}"
+        }
+      ]
+    },
+    "dlq_ingestion_rate": {
+      "title": "DLQ Ingestion Rate/min",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "rate(bullmq_queue_completed_total{queue=~\".*dlq.*\"}[5m]) * 60",
+          "legendFormat": "{{queue}}"
+        }
+      ]
+    },
+    "sandbox_pool_utilization": {
+      "title": "Sandbox Pool Utilization",
+      "type": "timeseries",
+      "targets": [
+        { "expr": "sandbox_pool_active", "legendFormat": "Active" },
+        { "expr": "sandbox_pool_idle", "legendFormat": "Idle" },
+        { "expr": "sandbox_pool_max_capacity", "legendFormat": "Max Capacity" }
+      ]
+    },
+    "sandbox_pool_utilization_pct": {
+      "title": "Sandbox Pool Utilization %",
+      "type": "gauge",
+      "targets": [
+        { "expr": "sandbox_pool_active / sandbox_pool_max_capacity * 100" }
+      ]
+    }
+  }
 }

@@ -517,10 +517,60 @@ export class PoolManager {
   }
 
   /**
+   * Acquire multiple sandboxes at once for parallel agent execution (swarm sessions).
+   */
+  async acquireMultiple(
+    count: number,
+    config?: Partial<SandboxConfig>,
+    options?: { sessionId?: string; template?: PoolTemplate }
+  ): Promise<SandboxInstance[]> {
+    const sandboxConfig = {
+      projectId: "batch",
+      cpuLimit: 1,
+      memoryMb: 1024,
+      diskMb: 2048,
+      ...config,
+    } satisfies SandboxConfig;
+    const instances: SandboxInstance[] = [];
+    for (let i = 0; i < count; i++) {
+      if (this.pool.size >= this.maxPoolSize) {
+        logger.warn(
+          { requested: count, acquired: instances.length },
+          "Pool capacity reached during batch acquire"
+        );
+        break;
+      }
+      try {
+        const instance = await this.acquire(sandboxConfig, undefined, options);
+        instances.push(instance);
+      } catch (error) {
+        const msg = error instanceof Error ? error.message : String(error);
+        logger.error(
+          { index: i, count, error: msg },
+          "Failed to acquire sandbox in batch"
+        );
+        break;
+      }
+    }
+    logger.info(
+      {
+        requested: count,
+        acquired: instances.length,
+        sessionId: options?.sessionId,
+      },
+      "Batch sandbox acquisition complete"
+    );
+    return instances;
+  }
+
+  /**
    * Shut down the pool, destroying all sandboxes and stopping timers.
    */
   async shutdown(): Promise<void> {
     logger.info("Shutting down pool manager");
+
+    // Persist state before destroying so next startup can reconcile
+    await this.persistPoolState();
 
     if (this.healthCheckInterval) {
       clearInterval(this.healthCheckInterval);
@@ -552,6 +602,60 @@ export class PoolManager {
     this.pool.clear();
 
     logger.info("Pool manager shut down");
+  }
+
+  /**
+   * Persist current pool state to Redis for recovery on restart.
+   * Called periodically or before graceful shutdown.
+   */
+  async persistPoolState(): Promise<void> {
+    try {
+      const { redis } = await import("@prometheus/queue");
+      const state = Array.from(this.pool.entries()).map(([id, pooled]) => ({
+        sandboxId: id,
+        providerName: pooled.providerName,
+        projectId: pooled.projectId,
+        template: pooled.template,
+        affinitySessionId: pooled.affinitySessionId,
+        createdAt: pooled.createdAt.toISOString(),
+        lastUsedAt: pooled.lastUsedAt.toISOString(),
+        acquired: pooled.acquiredAt !== null,
+        status: pooled.instance.status,
+      }));
+      await redis.set("sandbox-pool:state", JSON.stringify(state), "EX", 3600);
+      logger.debug({ count: state.length }, "Pool state persisted to Redis");
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      logger.error({ error: msg }, "Failed to persist pool state");
+    }
+  }
+
+  /**
+   * Recover pool state from Redis on startup. Returns sandbox IDs that
+   * were previously tracked so the caller can reconcile with actual
+   * container state (e.g., Docker ps).
+   */
+  async recoverPoolState(): Promise<
+    Array<{ sandboxId: string; providerName: string; projectId: string | null }>
+  > {
+    try {
+      const { redis } = await import("@prometheus/queue");
+      const raw = await redis.get("sandbox-pool:state");
+      if (!raw) {
+        return [];
+      }
+      const state = JSON.parse(raw) as Array<{
+        sandboxId: string;
+        providerName: string;
+        projectId: string | null;
+      }>;
+      logger.info({ count: state.length }, "Recovered pool state from Redis");
+      return state;
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      logger.error({ error: msg }, "Failed to recover pool state");
+      return [];
+    }
   }
 
   // ─── Private helpers ───────────────────────────────────────────────

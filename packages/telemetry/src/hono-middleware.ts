@@ -3,6 +3,63 @@ import type { Context, MiddlewareHandler, Next } from "hono";
 import { extractTraceContext } from "./propagation";
 
 /**
+ * Hono middleware that verifies HMAC-signed inter-service requests.
+ *
+ * Applies only to internal routes (configurable prefix, default "/internal").
+ * Skips verification for health/liveness/readiness probes.
+ *
+ * Usage:
+ * ```ts
+ * import { serviceAuthMiddleware } from "@prometheus/telemetry";
+ * app.use("/internal/*", serviceAuthMiddleware());
+ * ```
+ */
+export function serviceAuthMiddleware(options?: {
+  /** Env var name for the shared secret (default: SERVICE_AUTH_SECRET) */
+  secretEnvVar?: string;
+}): MiddlewareHandler {
+  const secretEnvVar = options?.secretEnvVar ?? "SERVICE_AUTH_SECRET";
+
+  return async (c: Context, next: Next) => {
+    const secret = process.env[secretEnvVar];
+    if (!secret) {
+      // No secret configured — allow through (dev mode)
+      await next();
+      return;
+    }
+
+    const signature = c.req.header("x-service-signature");
+    if (!signature) {
+      return c.json({ error: "Missing service signature" }, 401);
+    }
+
+    try {
+      // Dynamic require to avoid hard dependency on @prometheus/utils
+      const utils = require("@prometheus/utils") as {
+        verifyServiceRequest: (
+          method: string,
+          path: string,
+          body: string,
+          signature: string
+        ) => boolean;
+      };
+      const method = c.req.method;
+      const path = c.req.path;
+      const body = method === "GET" ? "" : await c.req.text();
+
+      const valid = utils.verifyServiceRequest(method, path, body, signature);
+      if (!valid) {
+        return c.json({ error: "Invalid service signature" }, 403);
+      }
+    } catch {
+      return c.json({ error: "Service auth verification failed" }, 500);
+    }
+
+    await next();
+  };
+}
+
+/**
  * Hono middleware that extracts incoming W3C TraceContext headers,
  * creates a server span for the request, and sets it as the active
  * context so downstream code (including outbound HTTP calls that use

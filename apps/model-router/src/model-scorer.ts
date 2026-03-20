@@ -228,6 +228,46 @@ export class ModelScorer {
     return score.qualityScore < threshold;
   }
 
+  /**
+   * Get models ranked primarily by cost efficiency while maintaining
+   * a minimum quality threshold. Returns models sorted cheapest-first
+   * that still meet the quality bar.
+   */
+  getCostOptimizedRanking(
+    slotName: string,
+    minQuality = 0.5,
+    taskType?: string
+  ): Array<{
+    modelKey: string;
+    costPerRequest: number;
+    qualityScore: number;
+  }> {
+    const slotScores: ModelScore[] = [];
+    for (const [key, score] of this.scores) {
+      if (key.startsWith(`${slotName}:`) && score.totalRequests >= 5) {
+        slotScores.push(score);
+      }
+    }
+
+    return slotScores
+      .filter((s) => {
+        let quality = s.qualityScore;
+        if (taskType) {
+          const taskQuality = this.getTaskTypeQuality(taskType, s.modelKey);
+          if (taskQuality !== undefined) {
+            quality = quality * 0.6 + taskQuality * 0.4;
+          }
+        }
+        return quality >= minQuality;
+      })
+      .map((s) => ({
+        modelKey: s.modelKey,
+        costPerRequest: s.costPerRequest,
+        qualityScore: s.qualityScore,
+      }))
+      .sort((a, b) => a.costPerRequest - b.costPerRequest);
+  }
+
   /** Get stats for monitoring */
   getStats(): Map<string, ModelScore> {
     return new Map(this.scores);

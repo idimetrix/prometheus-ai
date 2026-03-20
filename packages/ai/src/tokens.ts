@@ -5,6 +5,8 @@
 // Uses heuristics tuned for common LLM tokenizers (BPE-based).
 // =============================================================================
 
+import { MODEL_REGISTRY } from "./models";
+
 /**
  * Approximate token count for a string.
  *
@@ -79,6 +81,15 @@ export function truncateToTokens(text: string, maxTokens: number): string {
   }
 
   return `${text.slice(0, targetLength)}\n... [truncated]`;
+}
+
+/**
+ * Get the context window size (in tokens) for a model from the registry.
+ * Returns undefined if the model key is not found.
+ */
+export function getModelContextWindow(modelKey: string): number | undefined {
+  const config = MODEL_REGISTRY[modelKey];
+  return config?.contextWindow;
 }
 
 /**

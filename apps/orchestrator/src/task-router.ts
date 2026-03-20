@@ -1,7 +1,7 @@
 import type { AgentExecutionResult } from "@prometheus/agent-sdk";
 import { db, tasks } from "@prometheus/db";
 import { createLogger } from "@prometheus/logger";
-import { EventPublisher, QueueEvents } from "@prometheus/queue";
+import { EventPublisher, indexingQueue, QueueEvents } from "@prometheus/queue";
 import type { AgentMode, AgentRole } from "@prometheus/types";
 import { eq } from "drizzle-orm";
 import { type CILoopResult, CILoopRunner } from "./ci-loop/ci-loop-runner";
@@ -332,6 +332,29 @@ export class TaskRouter {
         .catch(() => {
           /* fire-and-forget */
         });
+
+      // Auto-index changed files after task completion
+      const changedFiles = results.flatMap((r) => r.filesChanged);
+      if (changedFiles.length > 0) {
+        indexingQueue
+          .add(
+            "incremental-index",
+            {
+              projectId,
+              orgId,
+              filePaths: changedFiles,
+              fullReindex: false,
+              triggeredBy: "push" as const,
+            },
+            { priority: 10 }
+          )
+          .catch((err) => {
+            this.logger.warn(
+              { err, projectId, fileCount: changedFiles.length },
+              "Failed to enqueue incremental indexing job"
+            );
+          });
+      }
 
       return {
         success: allSuccess,

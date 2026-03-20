@@ -52,6 +52,25 @@ export class ContextCompressor {
     this.summarySlot = summarySlot;
   }
 
+  /**
+   * Create a ContextCompressor sized for a specific model's context window.
+   * Reserves 20% of the context window for output tokens.
+   */
+  static forModel(modelKey: string): ContextCompressor {
+    let contextWindow: number | undefined;
+    try {
+      // Dynamic import to avoid circular dependency at module level
+      const { getModelContextWindow } = require("@prometheus/ai") as {
+        getModelContextWindow: (key: string) => number | undefined;
+      };
+      contextWindow = getModelContextWindow(modelKey);
+    } catch {
+      // Package not available, use default
+    }
+    const budget = contextWindow ? Math.floor(contextWindow * 0.8) : 14_000;
+    return new ContextCompressor(budget);
+  }
+
   shouldCompress(messages: Message[]): boolean {
     const currentTokens = estimateMessageTokens(messages);
     return currentTokens > this.maxTokenBudget * this.compressionThreshold;

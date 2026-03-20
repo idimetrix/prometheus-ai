@@ -127,6 +127,59 @@ export class LearningExtractor {
   }
 
   /**
+   * Extract learning patterns and persist successful tool sequences
+   * to Project Brain's memory store for future retrieval.
+   */
+  async extractAndPersist(
+    analysis: SessionAnalysis
+  ): Promise<LearningPattern[]> {
+    const patterns = await this.extract(analysis);
+
+    // POST successful tool sequences to Project Brain /memory/store
+    if (analysis.success && analysis.toolCalls.length > 0) {
+      const successfulTools = analysis.toolCalls
+        .filter((t) => t.success)
+        .map((t) => t.name);
+
+      if (successfulTools.length > 0) {
+        try {
+          await projectBrainClient.post(
+            "/memory/store",
+            {
+              projectId: analysis.projectId,
+              type: "procedural",
+              data: {
+                id: generateId(),
+                patternType: "tool_sequence",
+                agentRole: analysis.agentRole,
+                taskType: analysis.taskType,
+                decision: `Successful tool sequence: ${successfulTools.join(" -> ")}`,
+                reasoning: `duration=${analysis.totalDuration}ms, tokens=${analysis.totalTokens}, files=${analysis.filesChanged.length}`,
+                outcome: "success",
+              },
+            },
+            { timeout: 5000 }
+          );
+          logger.info(
+            {
+              sessionId: analysis.sessionId,
+              toolCount: successfulTools.length,
+            },
+            "Persisted successful tool sequence to Project Brain"
+          );
+        } catch (err) {
+          logger.warn(
+            { err, sessionId: analysis.sessionId },
+            "Failed to persist tool sequence to Project Brain"
+          );
+        }
+      }
+    }
+
+    return patterns;
+  }
+
+  /**
    * Build a context string suitable for injection into an agent system
    * prompt. Combines locally accumulated patterns with procedural
    * memories fetched from Project Brain.
