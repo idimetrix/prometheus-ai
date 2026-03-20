@@ -2,7 +2,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // ── Mocks ─────────────────────────────────────────────────────────────────────
 
-const mockPublishFleetEvent = vi.fn().mockResolvedValue(undefined);
+const { mockPublishFleetEvent } = vi.hoisted(() => ({
+  mockPublishFleetEvent: vi.fn().mockResolvedValue(undefined),
+}));
 
 vi.mock("@prometheus/queue", () => ({
   EventPublisher: class {
