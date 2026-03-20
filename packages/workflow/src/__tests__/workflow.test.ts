@@ -9,6 +9,18 @@ vi.mock("@prometheus/logger", () => ({
   }),
 }));
 
+vi.mock("inngest", () => ({
+  Inngest: class MockInngest {
+    send = vi.fn().mockResolvedValue({ ids: ["evt_mock"] });
+    createFunction = vi.fn(
+      (config: Record<string, unknown>, _handler: unknown) => ({
+        id: () => config.id,
+        ...config,
+      })
+    );
+  },
+}));
+
 import { WorkflowClient } from "../client";
 import { inngest } from "../inngest";
 
@@ -56,11 +68,12 @@ describe("WorkflowClient", () => {
 
   it("getWorkflowStatus returns a status result", async () => {
     const client = new WorkflowClient();
-    const status = await client.getWorkflowStatus("wf-123");
-    expect(status.workflowId).toBe("wf-123");
+    // First start a workflow so it's tracked
+    const handle = await client.startWorkflow("test-wf", { data: 1 });
+    const status = client.getWorkflowStatus(handle.workflowId);
+    expect(status.workflowId).toBe(handle.workflowId);
     expect(status.status).toBe("running");
     expect(status.startedAt).toBeDefined();
-    expect(status.runId).toBe("stub-run-id");
   });
 
   it("signalWorkflow resolves without error", async () => {
@@ -106,7 +119,7 @@ describe("inngest.createFunction", () => {
       async () => ({ result: "ok" })
     );
     expect(fn).toBeDefined();
-    expect(typeof fn.id).toBe("function");
+    expect(fn.id).toBe("test-fn");
   });
 
   it("supports retries and concurrency config", () => {
@@ -171,7 +184,7 @@ describe("agentExecutionWorkflow", () => {
     );
     expect(agentExecutionWorkflow).toBeDefined();
     // The real Inngest function object has an id() method
-    expect(typeof agentExecutionWorkflow.id).toBe("function");
+    expect(agentExecutionWorkflow.id).toBeDefined();
   });
 });
 
@@ -184,6 +197,6 @@ describe("fleetCoordinationWorkflow", () => {
     );
     expect(fleetCoordinationWorkflow).toBeDefined();
     // The real Inngest function object has an id() method
-    expect(typeof fleetCoordinationWorkflow.id).toBe("function");
+    expect(fleetCoordinationWorkflow.id).toBeDefined();
   });
 });

@@ -35,9 +35,22 @@ export type {
   ResourceAction,
 } from "./rbac-middleware";
 export { createRbacMiddleware, PERMISSION_LEVELS } from "./rbac-middleware";
-export type { AuthContext, OrgRole } from "./server";
-export { getAuthContext, hasOrgRole, ORG_ROLES, requireAuth } from "./server";
-export type { OIDCConfig, OIDCUser } from "./sso/oidc-provider";
+export type { AuthContext, DomainVerification, OrgRole } from "./server";
+export {
+  generateDomainChallenge,
+  getAuthContext,
+  hasOrgRole,
+  ORG_ROLES,
+  requireAuth,
+  verifyDomainOwnership,
+} from "./server";
+export type {
+  OIDCAuthResult,
+  OIDCConfig,
+  OIDCDiscovery,
+  OIDCTokenRefreshResult,
+  OIDCUser,
+} from "./sso/oidc-provider";
 export { OIDCError, OIDCProvider } from "./sso/oidc-provider";
 export type {
   SAMLAuthRequest,

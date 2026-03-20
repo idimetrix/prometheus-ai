@@ -1,3 +1,5 @@
+import { randomBytes } from "node:crypto";
+import { resolve as dnsResolve } from "node:dns/promises";
 import { verifyToken } from "@clerk/backend";
 
 // ---------------------------------------------------------------------------
@@ -57,21 +59,21 @@ export async function getAuthContext(
       return null;
     }
 
-    const raw = session as Record<string, unknown>;
-    const orgRole = (raw.org_role as string | null) ?? null;
+    const raw: Record<string, unknown> = session;
+    const orgRoleRaw = typeof raw.org_role === "string" ? raw.org_role : null;
+    const orgIdRaw = typeof raw.org_id === "string" ? raw.org_id : null;
+
+    let orgRole: OrgRole | null = null;
+    if (orgRoleRaw && ORG_ROLES.includes(orgRoleRaw as OrgRole)) {
+      orgRole = orgRoleRaw as OrgRole;
+    } else if (orgRoleRaw) {
+      orgRole = "member";
+    }
 
     return {
       userId: session.sub,
-      orgId: (raw.org_id as string | null) ?? null,
-      orgRole: (() => {
-        if (orgRole && ORG_ROLES.includes(orgRole as OrgRole)) {
-          return orgRole as OrgRole;
-        }
-        if (orgRole) {
-          return "member" as OrgRole;
-        }
-        return null;
-      })(),
+      orgId: orgIdRaw,
+      orgRole,
       sessionId: session.sid ?? "",
     };
   } catch {
@@ -85,4 +87,88 @@ export async function requireAuth(token: string): Promise<AuthContext> {
     throw new Error("Unauthorized");
   }
   return ctx;
+}
+
+// ---------------------------------------------------------------------------
+// SSO Domain Verification
+// ---------------------------------------------------------------------------
+
+export interface DomainVerification {
+  domain: string;
+  method: "dns_txt" | "dns_cname" | "meta_tag";
+  token: string;
+  verified: boolean;
+  verifiedAt?: Date;
+}
+
+/**
+ * Generate a domain verification challenge. The org must prove ownership
+ * of the email domain before SSO can be enforced for that domain.
+ *
+ * Verification methods:
+ * - dns_txt: Add a TXT record `_prometheus-verify=<token>` to the domain
+ * - dns_cname: Add a CNAME `_prometheus-verify.<domain>` → `verify.prometheus.dev`
+ * - meta_tag: Add `<meta name="prometheus-verify" content="<token>">` to root page
+ */
+export function generateDomainChallenge(
+  domain: string,
+  method: DomainVerification["method"] = "dns_txt"
+): DomainVerification {
+  const token = randomBytes(16).toString("hex");
+
+  return {
+    domain,
+    method,
+    token,
+    verified: false,
+  };
+}
+
+/**
+ * Verify domain ownership by checking the DNS TXT record.
+ * Returns true if the expected token is found.
+ */
+export async function verifyDomainOwnership(
+  challenge: DomainVerification
+): Promise<boolean> {
+  if (challenge.method === "dns_txt") {
+    try {
+      const records = await dnsResolve(
+        `_prometheus-verify.${challenge.domain}`,
+        "TXT"
+      );
+      const flatRecords = records.map((r) =>
+        Array.isArray(r) ? r.join("") : String(r)
+      );
+      return flatRecords.some((r) => r.includes(challenge.token));
+    } catch {
+      return false;
+    }
+  }
+
+  if (challenge.method === "dns_cname") {
+    try {
+      const records = await dnsResolve(
+        `_prometheus-verify.${challenge.domain}`,
+        "CNAME"
+      );
+      return records.some((r) => String(r).includes("verify.prometheus.dev"));
+    } catch {
+      return false;
+    }
+  }
+
+  if (challenge.method === "meta_tag") {
+    try {
+      const response = await fetch(`https://${challenge.domain}`, {
+        signal: AbortSignal.timeout(10_000),
+      });
+      const html = await response.text();
+      return html.includes(`content="${challenge.token}"`);
+    } catch {
+      return false;
+    }
+  }
+
+  return false;
 }

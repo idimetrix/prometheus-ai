@@ -141,15 +141,30 @@ describe("renderTemplateWithAction", () => {
 // ---------- NovuClient ----------
 
 describe("NovuClient", () => {
+  const savedNovuApiKey = process.env.NOVU_API_KEY;
+  const savedNovuUrl = process.env.NOVU_URL;
+
   beforeEach(() => {
-    process.env.NOVU_API_KEY = undefined;
-    process.env.NOVU_URL = undefined;
+    // biome-ignore lint/performance/noDelete: need to fully remove env var, not set to "undefined"
+    delete process.env.NOVU_API_KEY;
+    // biome-ignore lint/performance/noDelete: need to fully remove env var, not set to "undefined"
+    delete process.env.NOVU_URL;
   });
 
   afterEach(() => {
     vi.restoreAllMocks();
-    process.env.NOVU_API_KEY = undefined;
-    process.env.NOVU_URL = undefined;
+    if (savedNovuApiKey === undefined) {
+      // biome-ignore lint/performance/noDelete: need to fully remove env var
+      delete process.env.NOVU_API_KEY;
+    } else {
+      process.env.NOVU_API_KEY = savedNovuApiKey;
+    }
+    if (savedNovuUrl === undefined) {
+      // biome-ignore lint/performance/noDelete: need to fully remove env var
+      delete process.env.NOVU_URL;
+    } else {
+      process.env.NOVU_URL = savedNovuUrl;
+    }
   });
 
   it("constructs without API key (skips sends)", async () => {
@@ -229,7 +244,8 @@ describe("NovuClient", () => {
 
 describe("SlackBot", () => {
   it("is not configured without a token", () => {
-    process.env.SLACK_BOT_TOKEN = undefined;
+    // biome-ignore lint/performance/noDelete: need to fully remove env var
+    delete process.env.SLACK_BOT_TOKEN;
     const bot = new SlackBot();
     expect(bot.isConfigured).toBe(false);
   });
