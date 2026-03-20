@@ -103,6 +103,37 @@ const SECRET_PATTERNS: Array<{
     pattern: /\bsk-ant-[A-Za-z0-9_-]{40,}\b/,
     description: "Anthropic API key",
   },
+  {
+    name: "GCP Service Account Key",
+    pattern: /"type"\s*:\s*"service_account"/,
+    description: "Google Cloud service account key file detected",
+  },
+  {
+    name: "SSH Private Key",
+    pattern: /-----BEGIN (?:OPENSSH |EC )?PRIVATE KEY-----/,
+    description: "SSH private key embedded in source code",
+  },
+  {
+    name: "Twilio Auth Token",
+    pattern: /\b[0-9a-f]{32}\b(?=.*twilio)/i,
+    description: "Possible Twilio auth token",
+  },
+  {
+    name: "Mailgun API Key",
+    pattern: /\bkey-[0-9a-zA-Z]{32}\b/,
+    description: "Mailgun API key detected",
+  },
+  {
+    name: "Heroku API Key",
+    pattern:
+      /(?:heroku[_-]?api[_-]?key|HEROKU_API_KEY)\s*[:=]\s*["'][a-f0-9-]{36}["']/i,
+    description: "Heroku API key detected",
+  },
+  {
+    name: "NPM Token",
+    pattern: /\bnpm_[a-zA-Z0-9]{36}\b/,
+    description: "NPM access token detected",
+  },
 ];
 
 /**
@@ -185,6 +216,42 @@ export class SecretsScanner {
     );
 
     return { blocked: true, matches, message };
+  }
+
+  /**
+   * Scan an entire directory of file contents for secrets. Accepts
+   * a map of filePath -> content for batch scanning.
+   */
+  scanDirectory(files: Record<string, string>): Record<string, ScanResult> {
+    const results: Record<string, ScanResult> = {};
+
+    for (const [filePath, content] of Object.entries(files)) {
+      results[filePath] = this.scan(filePath, content);
+    }
+
+    const blockedCount = Object.values(results).filter((r) => r.blocked).length;
+
+    if (blockedCount > 0) {
+      logger.warn(
+        {
+          totalFiles: Object.keys(files).length,
+          blockedFiles: blockedCount,
+        },
+        "Secrets detected during directory scan"
+      );
+    }
+
+    return results;
+  }
+
+  /**
+   * Get all secret types that this scanner can detect.
+   */
+  getSecretTypes(): Array<{ description: string; name: string }> {
+    return SECRET_PATTERNS.map((p) => ({
+      name: p.name,
+      description: p.description,
+    }));
   }
 
   private buildBlockMessage(filePath: string, matches: SecretMatch[]): string {

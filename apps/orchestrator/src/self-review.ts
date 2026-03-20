@@ -11,10 +11,32 @@ const WRITE_TOOLS = new Set(["file_write", "file_edit"]);
 /** Tools that read files (used for verification) */
 const READ_TOOLS = new Set(["file_read"]);
 
+/** Regex patterns for reflection analysis (top-level for performance) */
+const CODE_BLOCK_RE = /```[\s\S]+```/;
+const ERROR_KEYWORD_RE = /error|fail|bug/i;
+const TEST_KEYWORD_RE = /test|spec|assert/i;
+
 export interface SelfReviewDecision {
   filePath: string;
   reason: string;
   shouldReview: boolean;
+}
+
+export interface Reflection {
+  /** What key decisions were made */
+  decisions: string[];
+  /** Files that were modified */
+  filesChanged: string[];
+  /** Areas that could be improved */
+  improvements: string[];
+  /** Length of the agent output */
+  outputLength: number;
+  /** What went well */
+  strengths: string[];
+  /** Original task description */
+  taskDescription: string;
+  /** When this reflection was generated */
+  timestamp: string;
 }
 
 /**
@@ -25,6 +47,7 @@ export interface SelfReviewDecision {
 export class SelfReview {
   private readonly recentReads = new Set<string>();
   private readonly recentWrites = new Map<string, number>();
+  private readonly reflections: Reflection[] = [];
 
   /**
    * Record that a file was read by the agent (avoids re-reading
@@ -107,6 +130,96 @@ export class SelfReview {
    */
   isReadTool(toolName: string): boolean {
     return READ_TOOLS.has(toolName);
+  }
+
+  /**
+   * Generate a structured reflection on a completed task.
+   * Returns insights about what went well, what could improve, and key decisions.
+   */
+  generateReflection(
+    taskDescription: string,
+    output: string,
+    filesChanged: string[]
+  ): Reflection {
+    const strengths: string[] = [];
+    const improvements: string[] = [];
+    const decisions: string[] = [];
+
+    // Analyze output quality
+    if (output.length > 500) {
+      strengths.push("Produced detailed output");
+    } else if (output.length > 0) {
+      improvements.push("Output could be more detailed");
+    } else {
+      improvements.push("No output was produced");
+    }
+
+    // Analyze file changes
+    if (filesChanged.length > 0) {
+      strengths.push(`Modified ${filesChanged.length} file(s)`);
+      decisions.push(
+        `Chose to modify: ${filesChanged.slice(0, 5).join(", ")}${filesChanged.length > 5 ? ` and ${filesChanged.length - 5} more` : ""}`
+      );
+    } else {
+      improvements.push("No files were modified");
+    }
+
+    // Analyze code quality signals in output
+    if (CODE_BLOCK_RE.test(output)) {
+      strengths.push("Included code examples in output");
+    }
+    if (ERROR_KEYWORD_RE.test(output)) {
+      improvements.push(
+        "Output mentions errors or failures - verify resolution"
+      );
+    }
+    if (TEST_KEYWORD_RE.test(output)) {
+      strengths.push("Considered testing in the approach");
+    }
+
+    // Track write patterns
+    const writeCount = this.recentWrites.size;
+    if (writeCount > 5) {
+      improvements.push(
+        `Many files written (${writeCount}) - consider if all changes were necessary`
+      );
+    }
+
+    const reflection: Reflection = {
+      taskDescription,
+      timestamp: new Date().toISOString(),
+      strengths,
+      improvements,
+      decisions,
+      filesChanged,
+      outputLength: output.length,
+    };
+
+    // Store in reflections history
+    this.reflections.push(reflection);
+
+    // Trim to prevent unbounded growth
+    if (this.reflections.length > 100) {
+      this.reflections.splice(0, this.reflections.length - 100);
+    }
+
+    logger.info(
+      {
+        strengths: strengths.length,
+        improvements: improvements.length,
+        decisions: decisions.length,
+      },
+      "Generated task reflection"
+    );
+
+    return reflection;
+  }
+
+  /**
+   * Get all stored reflections (episodic memory).
+   */
+  getReflections(): Reflection[] {
+    return [...this.reflections];
   }
 
   /** Reset state for a new agent execution. */

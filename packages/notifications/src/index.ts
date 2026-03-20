@@ -1,4 +1,12 @@
 export { NovuClient } from "./novu-client";
+export type {
+  Alert,
+  AlertChannel,
+  AlertRule,
+  AlertSeverity,
+  MetricValues,
+} from "./quality-alerts";
+export { QualityAlertManager } from "./quality-alerts";
 export {
   CREDIT_LOW,
   DEPLOYMENT_READY,

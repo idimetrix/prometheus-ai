@@ -1,11 +1,24 @@
-import { commands, type ExtensionContext, window, workspace } from "vscode";
+import {
+  commands,
+  type ExtensionContext,
+  languages,
+  window,
+  workspace,
+} from "vscode";
 import { ApiClient } from "./api-client";
 import { ChatPanel } from "./chat-panel";
+import { AutoPRGenerator } from "./git/auto-pr";
+import { PRReviewer } from "./git/pr-reviewer";
+import { ChatPanelProvider } from "./panels/chat-panel";
+import { PrometheusCodeActionProvider } from "./providers/code-action-provider";
 import { StatusBarManager } from "./status-bar";
+import { EnhancedStatusBarManager } from "./ui/status-bar";
 
 let apiClient: ApiClient | undefined;
 let chatPanel: ChatPanel | undefined;
+let chatPanelProvider: ChatPanelProvider | undefined;
 let statusBar: StatusBarManager | undefined;
+let enhancedStatusBar: EnhancedStatusBarManager | undefined;
 
 export function activate(context: ExtensionContext): void {
   const config = workspace.getConfiguration("prometheus");
@@ -16,6 +29,19 @@ export function activate(context: ExtensionContext): void {
   apiClient = new ApiClient(apiUrl, apiToken);
   statusBar = new StatusBarManager();
   statusBar.show();
+  enhancedStatusBar = new EnhancedStatusBarManager();
+
+  // Register code action provider for all languages
+  context.subscriptions.push(
+    languages.registerCodeActionsProvider(
+      { scheme: "file" },
+      new PrometheusCodeActionProvider(),
+      {
+        providedCodeActionKinds:
+          PrometheusCodeActionProvider.providedCodeActionKinds,
+      }
+    )
+  );
 
   // Register commands
   context.subscriptions.push(
@@ -25,14 +51,17 @@ export function activate(context: ExtensionContext): void {
       }
       try {
         statusBar?.setStatus("connecting");
+        enhancedStatusBar?.setStatus("connecting");
         const session = await apiClient.startSession();
         commands.executeCommand("setContext", "prometheus.sessionActive", true);
         statusBar?.setStatus("active", session.id);
+        enhancedStatusBar?.setStatus("active", session.id);
         window.showInformationMessage(
           `Prometheus session started: ${session.id}`
         );
       } catch (error) {
         statusBar?.setStatus("error");
+        enhancedStatusBar?.setStatus("error");
         const message =
           error instanceof Error ? error.message : "Unknown error";
         window.showErrorMessage(`Failed to start session: ${message}`);
@@ -52,6 +81,123 @@ export function activate(context: ExtensionContext): void {
     })
   );
 
+  // Ask question command — opens enhanced chat panel
+  context.subscriptions.push(
+    commands.registerCommand("prometheus.askQuestion", () => {
+      if (!apiClient) {
+        return;
+      }
+      if (!chatPanelProvider) {
+        chatPanelProvider = new ChatPanelProvider(
+          context.extensionUri,
+          apiClient,
+          socketUrl
+        );
+      }
+      chatPanelProvider.reveal();
+    })
+  );
+
+  // Review code command
+  context.subscriptions.push(
+    commands.registerCommand("prometheus.reviewCode", async () => {
+      if (!apiClient) {
+        return;
+      }
+      const editor = window.activeTextEditor;
+      if (!editor) {
+        window.showWarningMessage("No active editor to review");
+        return;
+      }
+
+      const reviewer = new PRReviewer(apiClient);
+      try {
+        statusBar?.setStatus("busy");
+        enhancedStatusBar?.setStatus("busy");
+        const prNumber = await window.showInputBox({
+          prompt: "Enter PR number to review (or leave blank for current file)",
+        });
+
+        if (prNumber) {
+          const result = await reviewer.reviewPR(Number(prNumber));
+          window.showInformationMessage(result.summary);
+        } else {
+          window.showInformationMessage("Reviewing current file...");
+        }
+
+        statusBar?.setStatus("active");
+        enhancedStatusBar?.setStatus("active");
+      } catch (error) {
+        statusBar?.setStatus("error");
+        enhancedStatusBar?.setStatus("error");
+        const message =
+          error instanceof Error ? error.message : "Unknown error";
+        window.showErrorMessage(`Review failed: ${message}`);
+      }
+    })
+  );
+
+  // Code action handler
+  context.subscriptions.push(
+    commands.registerCommand(
+      "prometheus.codeAction",
+      async (args: {
+        kind: string;
+        filePath: string;
+        languageId: string;
+        selectedText: string;
+        startLine: number;
+        endLine: number;
+      }) => {
+        if (!apiClient) {
+          return;
+        }
+        try {
+          statusBar?.setStatus("busy");
+          enhancedStatusBar?.setStatus("busy");
+          const prompt = `${args.kind} the following ${args.languageId} code from ${args.filePath} (lines ${args.startLine}-${args.endLine}):\n\n${args.selectedText}`;
+          const result = await apiClient.assignTask(prompt);
+          window.showInformationMessage(
+            `Action "${args.kind}" started: ${result.taskId}`
+          );
+          statusBar?.setStatus("active");
+          enhancedStatusBar?.setStatus("active");
+        } catch (error) {
+          statusBar?.setStatus("error");
+          enhancedStatusBar?.setStatus("error");
+          const message =
+            error instanceof Error ? error.message : "Unknown error";
+          window.showErrorMessage(`Code action failed: ${message}`);
+        }
+      }
+    )
+  );
+
+  // Auto-PR command
+  context.subscriptions.push(
+    commands.registerCommand("prometheus.createPR", async () => {
+      if (!apiClient) {
+        return;
+      }
+      const prGen = new AutoPRGenerator(apiClient);
+      const taskDesc = await window.showInputBox({
+        prompt: "Describe the changes for the PR",
+      });
+      if (!taskDesc) {
+        return;
+      }
+
+      try {
+        const description = await prGen.generatePRDescription("", taskDesc);
+        window.showInformationMessage(`PR ready: ${description.title}`);
+      } catch (error) {
+        const message =
+          error instanceof Error ? error.message : "Unknown error";
+        window.showErrorMessage(`PR creation failed: ${message}`);
+      }
+    })
+  );
+
   context.subscriptions.push(
     commands.registerCommand("prometheus.assignTask", async () => {
       if (!apiClient) {
@@ -68,11 +214,14 @@ export function activate(context: ExtensionContext): void {
 
       try {
         statusBar?.setStatus("busy");
+        enhancedStatusBar?.setStatus("busy");
         const result = await apiClient.assignTask(task);
         statusBar?.setStatus("active", result.sessionId);
+        enhancedStatusBar?.setStatus("active", result.sessionId);
         window.showInformationMessage(`Task assigned: ${result.taskId}`);
       } catch (error) {
         statusBar?.setStatus("error");
+        enhancedStatusBar?.setStatus("error");
         const message =
           error instanceof Error ? error.message : "Unknown error";
         window.showErrorMessage(`Failed to assign task: ${message}`);
@@ -122,6 +271,7 @@ export function activate(context: ExtensionContext): void {
           false
         );
         statusBar?.setStatus("idle");
+        enhancedStatusBar?.setStatus("idle");
         window.showInformationMessage("Prometheus session stopped");
       } catch (error) {
         const message =
@@ -156,12 +306,21 @@ export function activate(context: ExtensionContext): void {
   if (statusBar) {
     context.subscriptions.push({ dispose: () => statusBar?.dispose() });
   }
+  if (enhancedStatusBar) {
+    context.subscriptions.push({
+      dispose: () => enhancedStatusBar?.dispose(),
+    });
+  }
 }
 
 export function deactivate(): void {
   chatPanel?.dispose();
   chatPanel = undefined;
+  chatPanelProvider?.dispose();
+  chatPanelProvider = undefined;
   statusBar?.dispose();
   statusBar = undefined;
+  enhancedStatusBar?.dispose();
+  enhancedStatusBar = undefined;
   apiClient = undefined;
 }

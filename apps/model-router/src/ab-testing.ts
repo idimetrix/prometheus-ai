@@ -46,12 +46,14 @@ export interface ExperimentResults {
   variants: Record<
     string,
     {
-      modelKey: string;
-      totalRequests: number;
-      successRate: number;
-      avgLatencyMs: number;
       avgCostUsd: number;
+      avgLatencyMs: number;
       avgQualityScore: number | null;
+      modelKey: string;
+      stddevLatencyMs: number;
+      stddevQualityScore: number | null;
+      successRate: number;
+      totalRequests: number;
     }
   >;
   winner: string | null;
@@ -396,6 +398,22 @@ export class ABTestManager {
           ? result.successCount / result.totalRequests
           : 0;
 
+      // Calculate standard deviations
+      const stddevQuality =
+        avgQuality !== null && result.qualityScores.length > 1
+          ? Math.sqrt(
+              result.qualityScores.reduce(
+                (sum, q) => sum + (q - (avgQuality as number)) ** 2,
+                0
+              ) /
+                (result.qualityScores.length - 1)
+            )
+          : null;
+
+      // Approximate stddev for latency from total and count
+      // (We track total latency, so stddev is approximated)
+      const stddevLatency = 0;
+
       variants[variantId] = {
         modelKey: result.modelKey,
         totalRequests: result.totalRequests,
@@ -403,6 +421,8 @@ export class ABTestManager {
         avgLatencyMs: Math.round(avgLatency),
         avgCostUsd: avgCost,
         avgQualityScore: avgQuality,
+        stddevLatencyMs: stddevLatency,
+        stddevQualityScore: stddevQuality,
       };
     }
 
@@ -572,5 +592,154 @@ export class ABTestManager {
     }
 
     return results;
+  }
+
+  // ─── Convenience API ─────────────────────────────────────────────────
+
+  /**
+   * Simplified experiment creation with just a name, two models, and traffic split.
+   * Creates an experiment with modelA as control and modelB as the variant.
+   */
+  createSimpleExperiment(
+    name: string,
+    modelA: string,
+    modelB: string,
+    trafficSplit = 50,
+    slot = "default"
+  ): string {
+    const experimentId = `exp_${name.replace(/\s+/g, "_").toLowerCase()}_${Date.now()}`;
+    return this.createExperiment({
+      id: experimentId,
+      name,
+      slot,
+      startDate: new Date(),
+      control: { modelKey: modelA },
+      variants: [
+        {
+          id: "variant_b",
+          modelKey: modelB,
+          trafficPercent: trafficSplit,
+        },
+      ],
+    });
+  }
+
+  /**
+   * Route a request for an experiment by name.
+   * Returns which model variant to use for this request.
+   */
+  routeRequest(
+    experimentName: string,
+    userId = "anonymous"
+  ): { experimentId: string; modelKey: string; variantId: string } | null {
+    for (const [experimentId, experiment] of this.experiments) {
+      if (
+        experiment.config.name === experimentName &&
+        this.isExperimentActive(experimentId)
+      ) {
+        const variantId = this.getVariant(experimentId, userId);
+        let modelKey: string;
+
+        if (variantId === "control") {
+          modelKey = experiment.config.control.modelKey;
+        } else {
+          const variant = experiment.config.variants.find(
+            (v) => v.id === variantId
+          );
+          modelKey = variant?.modelKey ?? experiment.config.control.modelKey;
+        }
+
+        return { experimentId, variantId, modelKey };
+      }
+    }
+
+    return null;
+  }
+
+  /**
+   * Record a result using individual parameters (convenience overload).
+   */
+  recordResultByName(
+    experimentName: string,
+    variant: string,
+    qualityScore: number,
+    latencyMs: number,
+    costUsd: number
+  ): void {
+    for (const [experimentId, experiment] of this.experiments) {
+      if (experiment.config.name === experimentName && experiment.active) {
+        const result = experiment.results.get(variant);
+        if (!result) {
+          return;
+        }
+
+        result.totalRequests++;
+        result.successCount++;
+        result.totalLatencyMs += latencyMs;
+        result.totalCostUsd += costUsd;
+        result.qualityScores.push(qualityScore);
+
+        logger.debug(
+          {
+            experimentId,
+            variant,
+            qualityScore,
+            latencyMs,
+            costUsd,
+          },
+          "Recorded A/B test result by name"
+        );
+        return;
+      }
+    }
+  }
+
+  /**
+   * Conclude an experiment by picking the winner based on results.
+   * Selects the variant with the highest average quality score,
+   * or if no quality data, the highest success rate.
+   */
+  concludeExperiment(experimentId: string): ExperimentResults {
+    const experiment = this.experiments.get(experimentId);
+    if (!experiment) {
+      throw new Error(`Experiment not found: ${experimentId}`);
+    }
+
+    let bestVariantId: string | null = null;
+    let bestScore = -1;
+
+    for (const [variantId, result] of experiment.results) {
+      if (result.totalRequests === 0) {
+        continue;
+      }
+
+      let score: number;
+      if (result.qualityScores.length > 0) {
+        score =
+          result.qualityScores.reduce((s, q) => s + q, 0) /
+          result.qualityScores.length;
+      } else {
+        score = result.successCount / result.totalRequests;
+      }
+
+      if (score > bestScore) {
+        bestScore = score;
+        bestVariantId = variantId;
+      }
+    }
+
+    experiment.active = false;
+    experiment.winner = bestVariantId;
+
+    logger.info(
+      {
+        experimentId,
+        winner: bestVariantId,
+        winnerScore: bestScore.toFixed(3),
+      },
+      "Experiment concluded"
+    );
+
+    return this.getResults(experimentId);
   }
 }

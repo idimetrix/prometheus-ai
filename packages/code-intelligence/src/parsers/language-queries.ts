@@ -3,8 +3,20 @@
  *
  * Each language defines queries for extracting functions, classes, interfaces/types,
  * imports, and exports. These patterns use Tree-sitter's query language to locate
- * structural code elements across 15 supported languages.
+ * structural code elements across 15+ supported languages.
  */
+
+/**
+ * A structured query pattern for locating specific code constructs.
+ */
+export interface QueryPattern {
+  /** Named captures within the pattern */
+  captures: string[];
+  /** Human-readable name describing what this pattern matches */
+  name: string;
+  /** Tree-sitter S-expression pattern */
+  pattern: string;
+}
 
 /**
  * Unified symbol kinds extracted from code.
@@ -613,4 +625,235 @@ export function mapToSymbolKind(
 ): SymbolKind {
   const langMap = NODE_TYPE_MAP[language] ?? NODE_TYPE_MAP.typescript;
   return langMap?.[nodeType] ?? SymbolKind.Variable;
+}
+
+// ─── Structured Query Patterns per Language ──────────────────────
+
+const TYPESCRIPT_QUERY_PATTERNS: QueryPattern[] = [
+  {
+    name: "function_definition",
+    pattern: "(function_declaration name: (identifier) @name)",
+    captures: ["name"],
+  },
+  {
+    name: "arrow_function",
+    pattern:
+      "(lexical_declaration (variable_declarator name: (identifier) @name value: (arrow_function)))",
+    captures: ["name"],
+  },
+  {
+    name: "class_definition",
+    pattern: "(class_declaration name: (type_identifier) @name)",
+    captures: ["name"],
+  },
+  {
+    name: "interface_definition",
+    pattern: "(interface_declaration name: (type_identifier) @name)",
+    captures: ["name"],
+  },
+  {
+    name: "type_definition",
+    pattern: "(type_alias_declaration name: (type_identifier) @name)",
+    captures: ["name"],
+  },
+  {
+    name: "import_statement",
+    pattern: "(import_statement source: (string) @source)",
+    captures: ["source"],
+  },
+  {
+    name: "export_statement",
+    pattern: "(export_statement declaration: (_) @decl)",
+    captures: ["decl"],
+  },
+  {
+    name: "test_function",
+    pattern:
+      '(call_expression function: (identifier) @fn_name (#match? @fn_name "^(it|test|describe)$") arguments: (arguments (string) @test_name))',
+    captures: ["fn_name", "test_name"],
+  },
+];
+
+const PYTHON_QUERY_PATTERNS: QueryPattern[] = [
+  {
+    name: "function_definition",
+    pattern: "(function_definition name: (identifier) @name)",
+    captures: ["name"],
+  },
+  {
+    name: "class_definition",
+    pattern: "(class_definition name: (identifier) @name)",
+    captures: ["name"],
+  },
+  {
+    name: "import_statement",
+    pattern: "(import_statement name: (dotted_name) @name)",
+    captures: ["name"],
+  },
+  {
+    name: "import_from",
+    pattern: "(import_from_statement module_name: (dotted_name) @module)",
+    captures: ["module"],
+  },
+  {
+    name: "type_definition",
+    pattern: "(assignment left: (identifier) @name type: (type) @type)",
+    captures: ["name", "type"],
+  },
+  {
+    name: "test_function",
+    pattern:
+      '(function_definition name: (identifier) @name (#match? @name "^test_"))',
+    captures: ["name"],
+  },
+];
+
+const RUST_QUERY_PATTERNS: QueryPattern[] = [
+  {
+    name: "function_definition",
+    pattern: "(function_item name: (identifier) @name)",
+    captures: ["name"],
+  },
+  {
+    name: "class_definition",
+    pattern: "(struct_item name: (type_identifier) @name)",
+    captures: ["name"],
+  },
+  {
+    name: "interface_definition",
+    pattern: "(trait_item name: (type_identifier) @name)",
+    captures: ["name"],
+  },
+  {
+    name: "type_definition",
+    pattern: "(type_item name: (type_identifier) @name)",
+    captures: ["name"],
+  },
+  {
+    name: "import_statement",
+    pattern: "(use_declaration argument: (_) @path)",
+    captures: ["path"],
+  },
+  {
+    name: "export_statement",
+    pattern:
+      "(function_item (visibility_modifier) @vis name: (identifier) @name)",
+    captures: ["vis", "name"],
+  },
+  {
+    name: "test_function",
+    pattern:
+      '(attribute_item (attribute (identifier) @attr (#eq? @attr "test")))',
+    captures: ["attr"],
+  },
+];
+
+const GO_QUERY_PATTERNS: QueryPattern[] = [
+  {
+    name: "function_definition",
+    pattern: "(function_declaration name: (identifier) @name)",
+    captures: ["name"],
+  },
+  {
+    name: "method_definition",
+    pattern: "(method_declaration name: (field_identifier) @name)",
+    captures: ["name"],
+  },
+  {
+    name: "class_definition",
+    pattern:
+      "(type_declaration (type_spec name: (type_identifier) @name type: (struct_type)))",
+    captures: ["name"],
+  },
+  {
+    name: "interface_definition",
+    pattern:
+      "(type_declaration (type_spec name: (type_identifier) @name type: (interface_type)))",
+    captures: ["name"],
+  },
+  {
+    name: "type_definition",
+    pattern: "(type_declaration (type_spec name: (type_identifier) @name))",
+    captures: ["name"],
+  },
+  {
+    name: "import_statement",
+    pattern: "(import_spec path: (interpreted_string_literal) @path)",
+    captures: ["path"],
+  },
+  {
+    name: "export_statement",
+    pattern:
+      '(function_declaration name: (identifier) @name (#match? @name "^[A-Z]"))',
+    captures: ["name"],
+  },
+  {
+    name: "test_function",
+    pattern:
+      '(function_declaration name: (identifier) @name (#match? @name "^Test"))',
+    captures: ["name"],
+  },
+];
+
+const JAVA_QUERY_PATTERNS: QueryPattern[] = [
+  {
+    name: "function_definition",
+    pattern: "(method_declaration name: (identifier) @name)",
+    captures: ["name"],
+  },
+  {
+    name: "class_definition",
+    pattern: "(class_declaration name: (identifier) @name)",
+    captures: ["name"],
+  },
+  {
+    name: "interface_definition",
+    pattern: "(interface_declaration name: (identifier) @name)",
+    captures: ["name"],
+  },
+  {
+    name: "type_definition",
+    pattern: "(enum_declaration name: (identifier) @name)",
+    captures: ["name"],
+  },
+  {
+    name: "import_statement",
+    pattern: "(import_declaration) @import",
+    captures: ["import"],
+  },
+  {
+    name: "export_statement",
+    pattern:
+      '(class_declaration (modifiers (modifier) @mod (#eq? @mod "public")) name: (identifier) @name)',
+    captures: ["mod", "name"],
+  },
+  {
+    name: "test_function",
+    pattern:
+      '(method_declaration (modifiers (marker_annotation name: (identifier) @ann (#eq? @ann "Test"))) name: (identifier) @name)',
+    captures: ["ann", "name"],
+  },
+];
+
+const QUERY_PATTERNS_MAP: Record<string, QueryPattern[]> = {
+  typescript: TYPESCRIPT_QUERY_PATTERNS,
+  tsx: TYPESCRIPT_QUERY_PATTERNS,
+  javascript: TYPESCRIPT_QUERY_PATTERNS,
+  python: PYTHON_QUERY_PATTERNS,
+  rust: RUST_QUERY_PATTERNS,
+  go: GO_QUERY_PATTERNS,
+  java: JAVA_QUERY_PATTERNS,
+};
+
+/**
+ * Get structured query patterns for a given language.
+ *
+ * Returns patterns covering function definitions, class definitions,
+ * import statements, export statements, type definitions, and test functions.
+ *
+ * @param languageId - The language identifier (e.g. "typescript", "python")
+ * @returns Array of QueryPattern objects, or empty array for unsupported languages
+ */
+export function getQueryPatterns(languageId: string): QueryPattern[] {
+  return QUERY_PATTERNS_MAP[languageId] ?? [];
 }

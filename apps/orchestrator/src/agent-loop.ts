@@ -14,6 +14,7 @@ import {
   type ExecutionOptions,
 } from "./engine";
 import { ExecutionTracker } from "./feedback/execution-tracker";
+import { LearningExtractor } from "./feedback/learning-extractor";
 
 export type AgentLoopStatus = "idle" | "running" | "paused" | "stopped";
 
@@ -49,6 +50,7 @@ export class AgentLoop {
   private readonly eventPublisher: EventPublisher;
   private readonly sessionMemory: SessionMemory;
   private readonly executionTracker: ExecutionTracker;
+  private readonly learningExtractor: LearningExtractor;
   private totalCreditsConsumed = 0;
   private lastConfidence: ConfidenceResult | null = null;
   private activeAgent: BaseAgent | null = null;
@@ -78,6 +80,7 @@ export class AgentLoop {
     this.eventPublisher = new EventPublisher();
     this.sessionMemory = new SessionMemory();
     this.executionTracker = new ExecutionTracker();
+    this.learningExtractor = new LearningExtractor();
   }
 
   getLastConfidence(): ConfidenceResult | null {
@@ -214,6 +217,16 @@ export class AgentLoop {
       documentation_specialist: "longContext",
     };
 
+    // Inject learned patterns from prior sessions into task context
+    const taskType = this.inferTaskType(taskDescription);
+    const learnedContext = await this.learningExtractor
+      .getLearnedContext(agentRole, taskType, this.projectId)
+      .catch(() => "");
+
+    const enrichedDescription = learnedContext
+      ? `${taskDescription}\n\n${learnedContext}`
+      : taskDescription;
+
     // Create execution context
     const ctx = createExecutionContext({
       sessionId: this.sessionId,
@@ -221,7 +234,7 @@ export class AgentLoop {
       orgId: this.orgId,
       userId: this.userId,
       agentRole: agentRole as AgentRole,
-      taskDescription,
+      taskDescription: enrichedDescription,
       blueprintContent: brainContext.blueprintContent,
       projectContext: brainContext.projectSummary,
       sprintState: brainContext.sprintState,
@@ -610,6 +623,32 @@ export class AgentLoop {
           "Event batch persist failed"
         );
       });
+  }
+
+  /**
+   * Infer a coarse task type from the description for memory lookup.
+   */
+  private inferTaskType(description: string): string {
+    const lower = description.toLowerCase();
+    if (lower.includes("bug") || lower.includes("fix")) {
+      return "bugfix";
+    }
+    if (lower.includes("test")) {
+      return "testing";
+    }
+    if (lower.includes("refactor")) {
+      return "refactoring";
+    }
+    if (lower.includes("deploy") || lower.includes("ci")) {
+      return "deployment";
+    }
+    if (lower.includes("security") || lower.includes("audit")) {
+      return "security";
+    }
+    if (lower.includes("document")) {
+      return "documentation";
+    }
+    return "feature";
   }
 
   private waitForResume(): Promise<void> {

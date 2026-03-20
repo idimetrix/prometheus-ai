@@ -189,6 +189,94 @@ export class SWEBenchRunner {
     }
   }
 
+  /**
+   * Load a single SWE-bench test case by ID from the dataset.
+   */
+  async loadTestCase(caseId: string): Promise<SWEBenchInstance | null> {
+    try {
+      const response = await fetch(
+        `${this.orchestratorUrl}/swe-bench/cases/${encodeURIComponent(caseId)}`,
+        {
+          headers: { "Content-Type": "application/json" },
+          signal: AbortSignal.timeout(10_000),
+        }
+      );
+      if (!response.ok) {
+        logger.warn({ caseId, status: response.status }, "Test case not found");
+        return null;
+      }
+      return (await response.json()) as SWEBenchInstance;
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      logger.warn({ error: msg, caseId }, "Failed to load test case");
+      return null;
+    }
+  }
+
+  /**
+   * Run a single test case through the Prometheus pipeline.
+   */
+  async runTestCase(caseId: string): Promise<EvaluationResult | null> {
+    const instance = await this.loadTestCase(caseId);
+    if (!instance) {
+      return null;
+    }
+    return this.evaluateInstance(instance);
+  }
+
+  /**
+   * Evaluate a result against expected outcomes.
+   */
+  evaluateResult(
+    _caseId: string,
+    result: EvaluationResult
+  ): { passed: boolean; reason: string } {
+    if (result.resolved && result.testsPassed) {
+      return { passed: true, reason: "Tests passed with valid patch" };
+    }
+    if (!result.patchApplied) {
+      return { passed: false, reason: "No patch was generated" };
+    }
+    if (!result.testsPassed) {
+      return { passed: false, reason: "Tests did not pass" };
+    }
+    return { passed: false, reason: result.error ?? "Unknown failure" };
+  }
+
+  /**
+   * Run a suite of test cases and return an aggregated report.
+   */
+  async runSuite(
+    caseIds: string[],
+    commitHash = "unknown"
+  ): Promise<BenchmarkReport> {
+    const instances: SWEBenchInstance[] = [];
+    for (const id of caseIds) {
+      const instance = await this.loadTestCase(id);
+      if (instance) {
+        instances.push(instance);
+      }
+    }
+    return this.runBenchmark(instances, commitHash);
+  }
+
+  /**
+   * Get a summary report object from a full benchmark report.
+   */
+  getReport(report: BenchmarkReport): {
+    passRate: number;
+    avgTime: number;
+    avgCost: number;
+    total: number;
+  } {
+    return {
+      passRate: report.passRate,
+      avgTime: report.averageLatencyMs,
+      avgCost: report.averageCostUsd,
+      total: report.totalInstances,
+    };
+  }
+
   generateMarkdownReport(report: BenchmarkReport): string {
     const lines: string[] = [
       "# SWE-bench Evaluation Report",

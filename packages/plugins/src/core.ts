@@ -1,5 +1,6 @@
 import { createLogger } from "@prometheus/logger";
 import { PluginLoader } from "./loader";
+import { PluginSandbox } from "./sandbox";
 import type {
   PluginEvent,
   PluginEventHandler,
@@ -284,6 +285,80 @@ export class PluginManager {
         );
       }
     }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Install & Validate (enhanced lifecycle)
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Install a plugin: validate manifest, register, and optionally activate.
+   * Full lifecycle: install -> validate -> register -> activate.
+   */
+  async install(
+    manifest: PluginManifest,
+    lifecycle: PluginLifecycle,
+    config?: Record<string, unknown>,
+    autoActivate = true
+  ): Promise<PluginInstance> {
+    // Validate
+    this.validateManifest(manifest);
+
+    // Register
+    const instance = this.register(manifest, lifecycle);
+
+    this.emitEvent({
+      type: "plugin:registered",
+      pluginId: manifest.id,
+      timestamp: new Date(),
+      data: { phase: "installed" },
+    });
+
+    // Optionally activate
+    if (autoActivate) {
+      await this.activate(manifest.id, config);
+    }
+
+    return this.getPlugin(manifest.id) ?? instance;
+  }
+
+  /**
+   * Validate a plugin manifest without registering it.
+   */
+  validateManifest(manifest: PluginManifest): {
+    valid: boolean;
+    errors: string[];
+  } {
+    const errors: string[] = [];
+
+    if (!manifest.id || typeof manifest.id !== "string") {
+      errors.push("Plugin manifest must have a valid 'id' string");
+    }
+    if (!manifest.name || typeof manifest.name !== "string") {
+      errors.push("Plugin manifest must have a valid 'name' string");
+    }
+    if (!manifest.version || typeof manifest.version !== "string") {
+      errors.push("Plugin manifest must have a valid 'version' string");
+    }
+    if (!manifest.category) {
+      errors.push("Plugin manifest must have a valid 'category'");
+    }
+
+    return { valid: errors.length === 0, errors };
+  }
+
+  /**
+   * Create a sandbox for a plugin with its declared permissions.
+   */
+  createSandbox(pluginId: string): PluginSandbox {
+    const instance = this.getPlugin(pluginId);
+    const permissions = instance?.manifest.permissions ?? [];
+    return new PluginSandbox(pluginId, {
+      permissions: permissions.map((p) => ({
+        scope: p,
+        actions: ["*"],
+      })),
+    });
   }
 
   // ---------------------------------------------------------------------------

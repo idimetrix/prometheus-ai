@@ -2,6 +2,17 @@
 // @prometheus/ai — Package Entry Point
 // =============================================================================
 
+// ---------------------------------------------------------------------------
+// AI SDK 6 Agent — Unified agent adapter with full role support
+// ---------------------------------------------------------------------------
+export type {
+  AgentExecutionResult as AiSdkAgentResult,
+  AgentStepInfo,
+  AgentStreamCallbacks,
+  AgentStreamEvent,
+  AiSdkAgentConfig,
+} from "./ai-sdk-agent";
+export { AiSdkAgent, createAiSdkAgent } from "./ai-sdk-agent";
 export type { LLMClientOptions } from "./client";
 // ---------------------------------------------------------------------------
 // Client
@@ -91,16 +102,20 @@ export { TokenOptimizer } from "./token-optimizer";
 // ---------------------------------------------------------------------------
 // Token Utilities
 // ---------------------------------------------------------------------------
+export type { CostOptimization } from "./tokens";
 export {
+  analyzeCostEfficiency,
   estimateMessageTokens,
   estimateTextCost,
   estimateTokens,
+  getContextWindowUtilization,
   getModelContextWindow,
+  optimizeContextWindow,
   remainingContextTokens,
   truncateToTokens,
 } from "./tokens";
 // ---------------------------------------------------------------------------
-// Tool Loop Agent (AI SDK 6)
+// Tool Loop Agent (AI SDK 6) — Legacy wrapper
 // ---------------------------------------------------------------------------
 export type {
   GenerateResult,

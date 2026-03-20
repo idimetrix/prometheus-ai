@@ -29,8 +29,8 @@ export interface AgentToolDefinition {
   permissionLevel: "read" | "write" | "execute" | "admin";
   /** Risk level for this tool. High-risk tools require checkpoint approval. */
   riskLevel?: "low" | "medium" | "high" | "critical";
-  /** Zod schema for runtime input validation. */
-  zodSchema: z.ZodType<Record<string, unknown>>;
+  /** Zod schema for runtime input validation. When present, AI SDK 6 adapter uses it directly via zodSchema() for better type inference. */
+  zodSchema?: z.ZodType<Record<string, unknown>>;
 }
 
 /**

@@ -15,6 +15,132 @@ const FILE_CHANGE_PREFIX_PATTERN =
 
 const logger = createLogger("orchestrator:context-compressor");
 
+// ---------------------------------------------------------------------------
+// Compression Tiers
+// ---------------------------------------------------------------------------
+
+export type CompressionTier = "full" | "summary" | "skeleton" | "references";
+
+interface TierDefinition {
+  description: string;
+  maxRatio: number;
+  tier: CompressionTier;
+}
+
+const TIER_DEFINITIONS: TierDefinition[] = [
+  { tier: "full", description: "Complete file content", maxRatio: 1.0 },
+  {
+    tier: "summary",
+    description: "Function signatures + docstrings + key logic",
+    maxRatio: 0.4,
+  },
+  {
+    tier: "skeleton",
+    description: "Just signatures and type definitions",
+    maxRatio: 0.15,
+  },
+  {
+    tier: "references",
+    description: "Just file path + export names",
+    maxRatio: 0.05,
+  },
+];
+
+const FUNCTION_SIG_RE =
+  /^[ \t]*(?:export\s+)?(?:async\s+)?(?:function\s+\w+|(?:const|let)\s+\w+\s*=\s*(?:async\s+)?\(|(?:\w+)\s*\([^)]*\)\s*(?::\s*[^{]+)?{)/gm;
+const TYPE_DEF_RE =
+  /^[ \t]*(?:export\s+)?(?:interface|type|enum|class)\s+\w+[^{]*/gm;
+const EXPORT_NAME_RE =
+  /export\s+(?:default\s+)?(?:const|function|class|type|interface|enum)\s+(\w+)/g;
+const DOCSTRING_RE = /\/\*\*[\s\S]*?\*\//g;
+
+/**
+ * Compress content to a specified compression tier.
+ */
+export function compressToTier(content: string, tier: CompressionTier): string {
+  switch (tier) {
+    case "full":
+      return content;
+
+    case "summary": {
+      const parts: string[] = [];
+      const docstrings = content.match(DOCSTRING_RE) ?? [];
+      for (const doc of docstrings) {
+        parts.push(doc);
+      }
+      const signatures = content.match(FUNCTION_SIG_RE) ?? [];
+      for (const sig of signatures) {
+        parts.push(sig.trim());
+      }
+      const types = content.match(TYPE_DEF_RE) ?? [];
+      for (const t of types) {
+        parts.push(t.trim());
+      }
+      return parts.length > 0
+        ? parts.join("\n\n")
+        : content.slice(0, Math.floor(content.length * 0.4));
+    }
+
+    case "skeleton": {
+      const parts: string[] = [];
+      const signatures = content.match(FUNCTION_SIG_RE) ?? [];
+      for (const sig of signatures) {
+        parts.push(sig.trim());
+      }
+      const types = content.match(TYPE_DEF_RE) ?? [];
+      for (const t of types) {
+        parts.push(t.trim());
+      }
+      return parts.length > 0
+        ? parts.join("\n\n")
+        : content.slice(0, Math.floor(content.length * 0.15));
+    }
+
+    case "references": {
+      const exports: string[] = [];
+      const regex = new RegExp(EXPORT_NAME_RE.source, "g");
+      let match = regex.exec(content);
+      while (match !== null) {
+        if (match[1]) {
+          exports.push(match[1]);
+        }
+        match = regex.exec(content);
+      }
+      return exports.length > 0
+        ? `Exports: ${exports.join(", ")}`
+        : "[no exports detected]";
+    }
+
+    default:
+      return content;
+  }
+}
+
+/**
+ * Automatically select the best compression tier based on content size
+ * and available token budget.
+ */
+export function autoSelectTier(
+  contentSize: number,
+  tokenBudget: number
+): CompressionTier {
+  const estimatedTokens = Math.ceil(contentSize / 4);
+
+  if (estimatedTokens <= tokenBudget) {
+    return "full";
+  }
+
+  const ratio = tokenBudget / estimatedTokens;
+
+  for (const def of TIER_DEFINITIONS) {
+    if (ratio >= def.maxRatio) {
+      return def.tier;
+    }
+  }
+
+  return "references";
+}
+
 export interface Message {
   content: string;
   role: string;

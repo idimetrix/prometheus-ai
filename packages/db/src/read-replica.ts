@@ -171,3 +171,51 @@ async function checkReplicationLag(): Promise<void> {
     currentLagSeconds = 0;
   }
 }
+
+// ─── ReadReplicaRouter ────────────────────────────────────────────────────────
+
+/** Replica health status */
+export interface ReplicaStatus {
+  available: boolean;
+  lagSeconds: number;
+  lastCheckedAt: Date;
+}
+
+/**
+ * ReadReplicaRouter provides explicit read/write routing for database queries.
+ *
+ * Read queries are sent to the replica when available and healthy.
+ * Write queries always go to the primary.
+ * Automatic fallback to primary when the replica is down or lagging.
+ */
+export class ReadReplicaRouter {
+  /**
+   * Route a query to the appropriate connection based on query type.
+   */
+  routeQuery(queryType: "read" | "write"): ReturnType<typeof drizzle> {
+    if (queryType === "write") {
+      return getWriteDb();
+    }
+
+    return getReadDb();
+  }
+
+  /**
+   * Get the health status of the read replica.
+   */
+  getReplicaStatus(): ReplicaStatus {
+    return {
+      available: isReadReplicaAvailable(),
+      lagSeconds: getReplicationLag(),
+      lastCheckedAt: new Date(lastLagCheckMs || Date.now()),
+    };
+  }
+
+  /**
+   * Force a replication lag check (non-blocking).
+   */
+  async refreshReplicaStatus(): Promise<ReplicaStatus> {
+    await checkReplicationLag();
+    return this.getReplicaStatus();
+  }
+}

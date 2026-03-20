@@ -233,6 +233,161 @@ export class RequestCoalescer {
   }
 }
 
+// ─── Prompt Normalization & Near-Identical Detection ─────────────────────────
+
+/**
+ * Normalize a prompt by stripping whitespace variations and trivial
+ * differences that don't affect semantic meaning.
+ */
+export function normalizePrompt(prompt: string): string {
+  return prompt
+    .replace(/\s+/g, " ") // collapse whitespace
+    .replace(/\n{2,}/g, "\n") // collapse multiple newlines
+    .replace(/[ \t]+$/gm, "") // trim trailing whitespace per line
+    .replace(/^[ \t]+/gm, "") // trim leading whitespace per line
+    .replace(/[""]/g, '"') // normalize smart quotes
+    .replace(/['']/g, "'") // normalize smart apostrophes
+    .replace(/\s*([,;:.])\s*/g, "$1 ") // normalize punctuation spacing
+    .trim();
+}
+
+/**
+ * Generate a hash for a normalized prompt using DJB2.
+ */
+function hashNormalizedPrompt(prompt: string): string {
+  const normalized = normalizePrompt(prompt);
+  let hash = 5381;
+  for (let i = 0; i < normalized.length; i++) {
+    // biome-ignore lint/suspicious/noBitwiseOperators: DJB2 hash requires bitwise ops
+    hash = ((hash << 5) + hash + normalized.charCodeAt(i)) | 0;
+  }
+  // biome-ignore lint/suspicious/noBitwiseOperators: DJB2 hash requires bitwise ops
+  return `nreq_${(hash >>> 0).toString(36)}`;
+}
+
+/** Stats for coalescing operations */
+export interface CoalescingStats {
+  nearIdenticalCoalesced: number;
+  requestsCoalesced: number;
+  tokensSaved: number;
+  totalRequests: number;
+}
+
+/**
+ * Enhanced request coalescer that detects near-identical requests
+ * using prompt normalization and hashing.
+ *
+ * Uses a configurable dedup window (default 5s) for similar requests.
+ */
+export class NearIdenticalCoalescer {
+  private readonly inner: RequestCoalescer;
+  private readonly dedupWindowMs: number;
+  private readonly normalizedPending = new Map<
+    string,
+    { createdAt: number; key: string }
+  >();
+  private readonly stats: CoalescingStats = {
+    totalRequests: 0,
+    requestsCoalesced: 0,
+    nearIdenticalCoalesced: 0,
+    tokensSaved: 0,
+  };
+
+  constructor(ttlMs = 30_000, dedupWindowMs = 5000) {
+    this.inner = new RequestCoalescer(ttlMs);
+    this.dedupWindowMs = dedupWindowMs;
+  }
+
+  /**
+   * Coalesce a request, detecting near-identical prompts within
+   * the dedup window. If a normalized version of the prompt is
+   * already in flight, reuse that result.
+   */
+  async coalesce<T>(
+    prompt: string,
+    fn: () => Promise<T>,
+    estimatedTokens = 0
+  ): Promise<T> {
+    this.stats.totalRequests++;
+
+    const normalizedHash = hashNormalizedPrompt(prompt);
+    const now = Date.now();
+
+    // Check if a near-identical request is already pending
+    const existing = this.normalizedPending.get(normalizedHash);
+    if (existing && now - existing.createdAt < this.dedupWindowMs) {
+      this.stats.requestsCoalesced++;
+      this.stats.nearIdenticalCoalesced++;
+      this.stats.tokensSaved += estimatedTokens;
+
+      logger.debug(
+        {
+          normalizedHash,
+          originalKey: existing.key,
+          dedupWindowMs: this.dedupWindowMs,
+        },
+        "Near-identical request detected, coalescing"
+      );
+
+      return this.inner.coalesce<T>(existing.key, fn);
+    }
+
+    // Register this normalized prompt
+    const requestKey = `${normalizedHash}_${now}`;
+    this.normalizedPending.set(normalizedHash, {
+      key: requestKey,
+      createdAt: now,
+    });
+
+    // Clean up old entries
+    this.cleanupExpired();
+
+    try {
+      const result = await this.inner.coalesce<T>(requestKey, fn);
+      return result;
+    } finally {
+      // Remove after the dedup window
+      setTimeout(() => {
+        const current = this.normalizedPending.get(normalizedHash);
+        if (current?.key === requestKey) {
+          this.normalizedPending.delete(normalizedHash);
+        }
+      }, this.dedupWindowMs);
+    }
+  }
+
+  /**
+   * Get coalescing statistics.
+   */
+  getStats(): CoalescingStats {
+    return { ...this.stats };
+  }
+
+  /**
+   * Get the number of currently tracked normalized prompts.
+   */
+  get pendingCount(): number {
+    return this.normalizedPending.size;
+  }
+
+  /**
+   * Clear all pending entries.
+   */
+  clear(): void {
+    this.normalizedPending.clear();
+    this.inner.clear();
+  }
+
+  private cleanupExpired(): void {
+    const now = Date.now();
+    for (const [key, entry] of this.normalizedPending) {
+      if (now - entry.createdAt > this.dedupWindowMs * 2) {
+        this.normalizedPending.delete(key);
+      }
+    }
+  }
+}
+
 // ─── Embedding Coalescer ─────────────────────────────────────────────────────
 
 interface EmbeddingRequest {

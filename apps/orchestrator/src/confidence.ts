@@ -95,6 +95,11 @@ const UNCERTAINTY_KEYWORDS = [
 export class ConfidenceScorer {
   private iterationHistory: IterationSignals[] = [];
   private runningScore = 0.5; // Start neutral
+  private readonly calibrationData: Array<{
+    predicted: number;
+    actual: boolean;
+  }> = [];
+  private calibrationOffset = 0;
 
   /**
    * Score a single iteration and return the updated confidence result.
@@ -183,8 +188,11 @@ export class ConfidenceScorer {
     const alpha = 0.6; // Weight of current iteration vs history
     this.runningScore = alpha * rawScore + (1 - alpha) * this.runningScore;
 
+    // Apply calibration offset if available
+    const calibrated = this.runningScore + this.calibrationOffset;
+
     // Clamp to [0, 1]
-    const score = Math.max(0, Math.min(1, this.runningScore));
+    const score = Math.max(0, Math.min(1, calibrated));
 
     // Determine action
     let action: ConfidenceAction;
@@ -295,6 +303,127 @@ export class ConfidenceScorer {
       return confidence.recommendedSlot;
     }
     return defaultSlot;
+  }
+
+  /**
+   * Calibrate the scorer using historical outcomes.
+   * Adjusts internal weights based on how well predicted confidence
+   * matched actual success/failure outcomes.
+   */
+  calibrate(
+    historicalOutcomes: Array<{ predicted: number; actual: boolean }>
+  ): void {
+    if (historicalOutcomes.length === 0) {
+      return;
+    }
+
+    this.calibrationData.push(...historicalOutcomes);
+
+    // Compute calibration adjustment: compare predicted confidence to actual outcomes
+    // Group predictions into buckets and measure actual success rate per bucket
+    const buckets = new Map<number, { total: number; successes: number }>();
+
+    for (const outcome of this.calibrationData) {
+      // Round to nearest 0.1 bucket
+      const bucket = Math.round(outcome.predicted * 10) / 10;
+      const existing = buckets.get(bucket) ?? { total: 0, successes: 0 };
+      existing.total++;
+      if (outcome.actual) {
+        existing.successes++;
+      }
+      buckets.set(bucket, existing);
+    }
+
+    // Compute calibration offset: average difference between predicted and actual
+    let totalDiff = 0;
+    let count = 0;
+
+    for (const [predictedBucket, stats] of buckets) {
+      if (stats.total >= 2) {
+        const actualRate = stats.successes / stats.total;
+        totalDiff += actualRate - predictedBucket;
+        count++;
+      }
+    }
+
+    this.calibrationOffset = count > 0 ? totalDiff / count : 0;
+
+    logger.info(
+      {
+        dataPoints: this.calibrationData.length,
+        calibrationOffset: this.calibrationOffset.toFixed(4),
+        bucketCount: count,
+      },
+      "Confidence scorer calibrated"
+    );
+  }
+
+  /**
+   * Get calibration statistics showing how well predictions match reality.
+   */
+  getCalibrationStats(): {
+    dataPoints: number;
+    calibrationOffset: number;
+    meanAbsoluteError: number;
+    brierScore: number;
+    bucketAccuracy: Array<{
+      bucket: number;
+      predicted: number;
+      actual: number;
+      count: number;
+    }>;
+  } {
+    if (this.calibrationData.length === 0) {
+      return {
+        dataPoints: 0,
+        calibrationOffset: this.calibrationOffset,
+        meanAbsoluteError: 0,
+        brierScore: 0,
+        bucketAccuracy: [],
+      };
+    }
+
+    // Mean absolute error
+    let totalAbsError = 0;
+    let totalSquaredError = 0;
+
+    for (const outcome of this.calibrationData) {
+      const actualValue = outcome.actual ? 1 : 0;
+      totalAbsError += Math.abs(outcome.predicted - actualValue);
+      totalSquaredError += (outcome.predicted - actualValue) ** 2;
+    }
+
+    const mae = totalAbsError / this.calibrationData.length;
+    const brierScore = totalSquaredError / this.calibrationData.length;
+
+    // Bucket accuracy
+    const buckets = new Map<number, { total: number; successes: number }>();
+    for (const outcome of this.calibrationData) {
+      const bucket = Math.round(outcome.predicted * 10) / 10;
+      const existing = buckets.get(bucket) ?? { total: 0, successes: 0 };
+      existing.total++;
+      if (outcome.actual) {
+        existing.successes++;
+      }
+      buckets.set(bucket, existing);
+    }
+
+    const bucketAccuracy = [...buckets.entries()]
+      .map(([bucket, stats]) => ({
+        bucket,
+        predicted: bucket,
+        actual: stats.successes / stats.total,
+        count: stats.total,
+      }))
+      .sort((a, b) => a.bucket - b.bucket);
+
+    return {
+      dataPoints: this.calibrationData.length,
+      calibrationOffset: this.calibrationOffset,
+      meanAbsoluteError: mae,
+      brierScore,
+      bucketAccuracy,
+    };
   }
 
   /**

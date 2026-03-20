@@ -441,8 +441,18 @@ export type {
   ExperimentResults,
 } from "./ab-testing";
 export { ABTestManager } from "./ab-testing";
+export type {
+  BenchmarkResult,
+  EndpointValidationResult,
+  RegisteredModel,
+} from "./byo-model";
 export { BYOModelManager } from "./byo-model";
+export type { QualityAssessment } from "./cascade";
 export { CascadeRouter } from "./cascade";
+export type { OptimalModelResult } from "./cost-monitor";
+export { CostMonitor } from "./cost-monitor";
 export { PromptCacheManager } from "./prompt-cache";
 export { RateLimitManager } from "./rate-limiter";
+export type { CoalescingStats } from "./request-coalescer";
+export { NearIdenticalCoalescer, normalizePrompt } from "./request-coalescer";
 export { ModelRouterService } from "./router";

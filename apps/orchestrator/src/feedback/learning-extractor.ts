@@ -91,8 +91,17 @@ export class LearningExtractor {
   // -----------------------------------------------------------------------
 
   /**
+   * Minimum number of session appearances before a learning pattern is
+   * promoted to procedural memory. Patterns below this threshold are
+   * accumulated locally but NOT persisted — preventing single-session
+   * flukes from polluting agent context.
+   */
+  static readonly PROMOTION_THRESHOLD = 3;
+
+  /**
    * Analyse a completed session and return extracted learning patterns.
-   * Patterns are also persisted as procedural memories in Project Brain.
+   * Only patterns that meet the promotion threshold (3+ occurrences)
+   * are persisted as procedural memories in Project Brain.
    */
   async extract(analysis: SessionAnalysis): Promise<LearningPattern[]> {
     logger.info(
@@ -107,23 +116,34 @@ export class LearningExtractor {
 
     this.recordSession(analysis);
 
-    const patterns: LearningPattern[] = [
+    const allPatterns: LearningPattern[] = [
       ...this.analyzeToolPatterns(analysis),
       ...this.analyzeErrorPatterns(analysis),
       ...this.analyzeQualityCorrelations(analysis),
       ...this.analyzeIterationInsights(analysis),
     ];
 
-    if (patterns.length > 0) {
-      await this.persistLearnings(patterns, analysis.projectId);
+    // Only promote patterns that have been observed across enough sessions
+    const promoted = allPatterns.filter(
+      (p) => p.occurrences >= LearningExtractor.PROMOTION_THRESHOLD
+    );
+    const deferred = allPatterns.length - promoted.length;
+
+    if (promoted.length > 0) {
+      await this.persistLearnings(promoted, analysis.projectId);
     }
 
     logger.debug(
-      { patterns: patterns.length, sessionId: analysis.sessionId },
+      {
+        total: allPatterns.length,
+        promoted: promoted.length,
+        deferred,
+        sessionId: analysis.sessionId,
+      },
       "Learning patterns extracted"
     );
 
-    return patterns;
+    return allPatterns;
   }
 
   /**

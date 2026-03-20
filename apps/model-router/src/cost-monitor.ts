@@ -20,12 +20,33 @@ interface CostRecord {
   costUsd: number;
   model: string;
   orgId: string;
+  qualityScore?: number;
   timestamp: number;
 }
 
 interface HourlyBaseline {
   avgCostUsd: number;
   count: number;
+}
+
+/** Tracks cost-per-quality-point for a specific model */
+interface ModelCostQuality {
+  avgCostPerQualityPoint: number;
+  avgQuality: number;
+  lastUpdated: number;
+  model: string;
+  sampleCount: number;
+  totalCostUsd: number;
+  totalQualityPoints: number;
+}
+
+/** Result from getOptimalModel */
+export interface OptimalModelResult {
+  costPerQualityPoint: number;
+  model: string;
+  predictedCostUsd: number;
+  predictedQuality: number;
+  sampleCount: number;
 }
 
 // ─── Cost Monitor ─────────────────────────────────────────────────────────────
@@ -40,6 +61,8 @@ export class CostMonitor {
   private readonly records: CostRecord[] = [];
   private readonly budgets = new Map<string, number>();
   private readonly hourlyBaselines = new Map<string, HourlyBaseline>();
+  private readonly modelCostQuality = new Map<string, ModelCostQuality>();
+  private readonly escalationThresholds = new Map<string, number>();
   private redis: IORedis | null = null;
   private redisAvailable = false;
 
@@ -253,10 +276,158 @@ export class CostMonitor {
   }
 
   /**
+   * Record a cost event along with the quality score achieved.
+   * Updates the per-model cost/quality tracking used by getOptimalModel.
+   */
+  recordCostAndQuality(
+    model: string,
+    costUsd: number,
+    qualityScore: number,
+    orgId = "global"
+  ): void {
+    this.recordCost(orgId, model, costUsd);
+
+    const existing = this.modelCostQuality.get(model);
+    if (existing) {
+      existing.sampleCount++;
+      existing.totalCostUsd += costUsd;
+      existing.totalQualityPoints += qualityScore;
+      existing.avgQuality = existing.totalQualityPoints / existing.sampleCount;
+      existing.avgCostPerQualityPoint =
+        existing.totalCostUsd / Math.max(existing.totalQualityPoints, 0.001);
+      existing.lastUpdated = Date.now();
+    } else {
+      this.modelCostQuality.set(model, {
+        model,
+        sampleCount: 1,
+        totalCostUsd: costUsd,
+        totalQualityPoints: qualityScore,
+        avgQuality: qualityScore,
+        avgCostPerQualityPoint: costUsd / Math.max(qualityScore, 0.001),
+        lastUpdated: Date.now(),
+      });
+    }
+
+    this.updateEscalationThreshold(model);
+
+    logger.debug(
+      {
+        model,
+        costUsd: costUsd.toFixed(6),
+        qualityScore: qualityScore.toFixed(3),
+        avgCostPerQP: (
+          this.modelCostQuality.get(model)?.avgCostPerQualityPoint ?? 0
+        ).toFixed(6),
+      },
+      "Recorded cost and quality"
+    );
+  }
+
+  /**
+   * Get the optimal model for a given quality requirement and cost budget.
+   * Returns the model with the best cost-per-quality-point ratio that
+   * meets the minimum quality threshold and stays within the cost budget.
+   */
+  getOptimalModel(
+    minQuality = 0.5,
+    maxCostUsd = Number.POSITIVE_INFINITY
+  ): OptimalModelResult | null {
+    const candidates: OptimalModelResult[] = [];
+
+    for (const entry of this.modelCostQuality.values()) {
+      if (entry.sampleCount < 3) {
+        continue;
+      }
+      if (entry.avgQuality < minQuality) {
+        continue;
+      }
+
+      const predictedCost = entry.totalCostUsd / entry.sampleCount;
+      if (predictedCost > maxCostUsd) {
+        continue;
+      }
+
+      candidates.push({
+        model: entry.model,
+        predictedQuality: entry.avgQuality,
+        predictedCostUsd: predictedCost,
+        costPerQualityPoint: entry.avgCostPerQualityPoint,
+        sampleCount: entry.sampleCount,
+      });
+    }
+
+    if (candidates.length === 0) {
+      return null;
+    }
+
+    candidates.sort((a, b) => a.costPerQualityPoint - b.costPerQualityPoint);
+    return candidates[0] ?? null;
+  }
+
+  /**
+   * Get the dynamically adjusted escalation threshold for a model.
+   */
+  getEscalationThreshold(model: string): number {
+    return this.escalationThresholds.get(model) ?? 0.5;
+  }
+
+  /**
+   * Get cost/quality stats for all tracked models.
+   */
+  getModelCostQualityStats(): Array<{
+    avgCostPerQualityPoint: number;
+    avgQuality: number;
+    model: string;
+    sampleCount: number;
+    totalCostUsd: number;
+  }> {
+    const results: Array<{
+      avgCostPerQualityPoint: number;
+      avgQuality: number;
+      model: string;
+      sampleCount: number;
+      totalCostUsd: number;
+    }> = [];
+
+    for (const entry of this.modelCostQuality.values()) {
+      results.push({
+        model: entry.model,
+        sampleCount: entry.sampleCount,
+        totalCostUsd: entry.totalCostUsd,
+        avgQuality: entry.avgQuality,
+        avgCostPerQualityPoint: entry.avgCostPerQualityPoint,
+      });
+    }
+
+    return results.sort(
+      (a, b) => a.avgCostPerQualityPoint - b.avgCostPerQualityPoint
+    );
+  }
+
+  /**
    * Check whether Redis persistence is currently active.
    */
   isRedisPersistent(): boolean {
     return this.redisAvailable;
+  }
+
+  /**
+   * Update the escalation threshold for a model based on its historical
+   * quality distribution.
+   */
+  private updateEscalationThreshold(model: string): void {
+    const entry = this.modelCostQuality.get(model);
+    if (!entry || entry.sampleCount < 5) {
+      return;
+    }
+
+    const qualityBaseline = 0.5;
+    const adjustment = (entry.avgQuality - qualityBaseline) * 0.2;
+    const threshold = Math.max(
+      0.2,
+      Math.min(0.8, qualityBaseline - adjustment)
+    );
+    this.escalationThresholds.set(model, threshold);
   }
 
   private detectAnomaly(orgId: string): boolean {
@@ -265,10 +436,9 @@ export class CostMonitor {
     const currentBaseline = this.hourlyBaselines.get(currentKey);
 
     if (!currentBaseline || currentBaseline.count < 5) {
-      return false; // Not enough data
+      return false;
     }
 
-    // Compare with previous hours
     const previousHours: number[] = [];
     for (let i = 1; i <= 6; i++) {
       const prevHour = currentHour - i;
@@ -280,7 +450,7 @@ export class CostMonitor {
     }
 
     if (previousHours.length < 2) {
-      return false; // Not enough history
+      return false;
     }
 
     const avgPrevHourly =

@@ -12,6 +12,14 @@ export interface UserModelConfig {
   apiKey: string;
   /** Optional custom base URL (e.g., for Azure OpenAI or self-hosted models) */
   baseUrl?: string;
+  /** Capability scores from validation/benchmarking */
+  capabilityScores?: {
+    instructionFollowing: number;
+    latencyMs: number;
+    qualityScore: number;
+    streaming: boolean;
+    toolCalling: boolean;
+  };
   createdAt: Date;
   orgId: string;
   /** Specific models the user wants to use with this key */
@@ -21,6 +29,39 @@ export interface UserModelConfig {
   /** Whether this key has been verified as working */
   verified: boolean;
   verifiedAt: Date | null;
+}
+
+/** Result of validateEndpoint check */
+export interface EndpointValidationResult {
+  capabilities: string[];
+  error?: string;
+  latencyMs: number;
+  reachable: boolean;
+  responseFormatValid: boolean;
+}
+
+/** Result of benchmarkModel run */
+export interface BenchmarkResult {
+  latencyP50Ms: number;
+  latencyP99Ms: number;
+  qualityScore: number;
+  testResults: Array<{
+    latencyMs: number;
+    prompt: string;
+    responseLength: number;
+    success: boolean;
+  }>;
+  tokensPerSecond: number;
+}
+
+/** Result from registerModel */
+export interface RegisteredModel {
+  capabilities: string[];
+  name: string;
+  orgId: string;
+  qualityScore: number;
+  registeredAt: Date;
+  url: string;
 }
 
 export interface ModelTestResult {
@@ -295,6 +336,286 @@ export class BYOModelManager {
         modelsAvailable: models,
       };
     });
+  }
+
+  // ---------------------------------------------------------------------------
+  // Endpoint Validation & Benchmarking
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Validate an endpoint by testing connectivity and response format.
+   * Verifies the endpoint is reachable, authenticates correctly, and
+   * returns responses in the expected format.
+   */
+  async validateEndpoint(
+    url: string,
+    apiKey: string,
+    provider: ModelProvider = "openai"
+  ): Promise<EndpointValidationResult> {
+    const startTime = Date.now();
+    const capabilities: string[] = [];
+
+    try {
+      const response = await fetch(`${url}/chat/completions`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify({
+          model: "test",
+          messages: [
+            {
+              role: "user",
+              content: "Respond with exactly: PROMETHEUS_VALIDATION_OK",
+            },
+          ],
+          max_tokens: 20,
+        }),
+        signal: AbortSignal.timeout(15_000),
+      });
+
+      const latencyMs = Date.now() - startTime;
+
+      if (!response.ok) {
+        const errorText = await response.text().catch(() => "Unknown error");
+        return {
+          reachable: true,
+          responseFormatValid: false,
+          latencyMs,
+          capabilities,
+          error: `HTTP ${response.status}: ${errorText.slice(0, 200)}`,
+        };
+      }
+
+      const body = (await response.json()) as {
+        choices?: Array<{ message?: { content?: string } }>;
+      };
+
+      // Check response format
+      const hasChoices = Array.isArray(body.choices) && body.choices.length > 0;
+      const hasContent = !!body.choices?.[0]?.message?.content;
+      const responseFormatValid = hasChoices && hasContent;
+
+      if (responseFormatValid) {
+        capabilities.push("chat-completion");
+      }
+
+      const content = body.choices?.[0]?.message?.content ?? "";
+      if (content.includes("PROMETHEUS_VALIDATION_OK")) {
+        capabilities.push("instruction-following");
+      }
+
+      logger.info(
+        {
+          url,
+          provider,
+          latencyMs,
+          responseFormatValid,
+          capabilities,
+        },
+        "Endpoint validation complete"
+      );
+
+      return {
+        reachable: true,
+        responseFormatValid,
+        latencyMs,
+        capabilities,
+      };
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      return {
+        reachable: false,
+        responseFormatValid: false,
+        latencyMs: Date.now() - startTime,
+        capabilities,
+        error: msg,
+      };
+    }
+  }
+
+  /**
+   * Benchmark a model endpoint with standard test prompts.
+   * Runs multiple prompts and measures latency, throughput, and quality.
+   */
+  async benchmarkModel(
+    url: string,
+    apiKey: string,
+    testPrompts?: string[]
+  ): Promise<BenchmarkResult> {
+    const prompts = testPrompts ?? [
+      "Write a TypeScript function that reverses a string.",
+      "Explain the difference between a stack and a queue in two sentences.",
+      "List three common HTTP status codes and what they mean.",
+      "Write a SQL query to find duplicate emails in a users table.",
+      "What is the time complexity of binary search?",
+    ];
+
+    const testResults: BenchmarkResult["testResults"] = [];
+    const latencies: number[] = [];
+
+    for (const prompt of prompts) {
+      const start = Date.now();
+      try {
+        const response = await fetch(`${url}/chat/completions`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${apiKey}`,
+          },
+          body: JSON.stringify({
+            model: "test",
+            messages: [{ role: "user", content: prompt }],
+            max_tokens: 256,
+          }),
+          signal: AbortSignal.timeout(30_000),
+        });
+
+        const latencyMs = Date.now() - start;
+        latencies.push(latencyMs);
+
+        if (response.ok) {
+          const body = (await response.json()) as {
+            choices?: Array<{ message?: { content?: string } }>;
+          };
+          const content = body.choices?.[0]?.message?.content ?? "";
+          testResults.push({
+            prompt: prompt.slice(0, 60),
+            success: true,
+            latencyMs,
+            responseLength: content.length,
+          });
+        } else {
+          testResults.push({
+            prompt: prompt.slice(0, 60),
+            success: false,
+            latencyMs,
+            responseLength: 0,
+          });
+        }
+      } catch {
+        const latencyMs = Date.now() - start;
+        latencies.push(latencyMs);
+        testResults.push({
+          prompt: prompt.slice(0, 60),
+          success: false,
+          latencyMs,
+          responseLength: 0,
+        });
+      }
+    }
+
+    const sorted = [...latencies].sort((a, b) => a - b);
+    const p50Idx = Math.max(0, Math.ceil(sorted.length * 0.5) - 1);
+    const p99Idx = Math.max(0, Math.ceil(sorted.length * 0.99) - 1);
+    const latencyP50Ms = sorted[p50Idx] ?? 0;
+    const latencyP99Ms = sorted[p99Idx] ?? 0;
+
+    const successCount = testResults.filter((r) => r.success).length;
+    const qualityScore = Math.round((successCount / prompts.length) * 100);
+
+    const totalChars = testResults.reduce(
+      (sum, r) => sum + r.responseLength,
+      0
+    );
+    const totalDurationSec =
+      latencies.reduce((sum, l) => sum + l, 0) / 1000 || 1;
+    const tokensPerSecond = Math.round(totalChars / 4 / totalDurationSec);
+
+    logger.info(
+      {
+        url,
+        latencyP50Ms,
+        latencyP99Ms,
+        qualityScore,
+        tokensPerSecond,
+      },
+      "Model benchmark complete"
+    );
+
+    return {
+      latencyP50Ms,
+      latencyP99Ms,
+      qualityScore,
+      tokensPerSecond,
+      testResults,
+    };
+  }
+
+  /**
+   * Register a validated custom model for an organization.
+   * Validates the endpoint first, then stores the model configuration
+   * with capability scores.
+   */
+  async registerModel(
+    orgId: string,
+    name: string,
+    url: string,
+    apiKey: string,
+    capabilities?: string[]
+  ): Promise<RegisteredModel> {
+    // Validate the endpoint first
+    const validation = await this.validateEndpoint(url, apiKey);
+    if (!validation.reachable) {
+      throw new Error(
+        `Endpoint unreachable: ${validation.error ?? "Unknown error"}`
+      );
+    }
+
+    if (!validation.responseFormatValid) {
+      throw new Error(
+        `Invalid response format: ${validation.error ?? "Response does not match expected schema"}`
+      );
+    }
+
+    // Store as a user key with custom capabilities
+    const key = `${orgId}:custom:${name}`;
+    const config: UserModelConfig = {
+      userId: "system",
+      orgId,
+      provider: "openai" as ModelProvider,
+      apiKey,
+      baseUrl: url,
+      preferredModels: [name],
+      verified: true,
+      verifiedAt: new Date(),
+      createdAt: new Date(),
+      capabilityScores: {
+        instructionFollowing: validation.capabilities.includes(
+          "instruction-following"
+        )
+          ? 1
+          : 0,
+        latencyMs: validation.latencyMs,
+        qualityScore: 0,
+        streaming: false,
+        toolCalling: false,
+      },
+    };
+
+    this.userKeys.set(key, config);
+
+    const registeredModel: RegisteredModel = {
+      orgId,
+      name,
+      url,
+      capabilities: capabilities ?? validation.capabilities,
+      qualityScore: 0,
+      registeredAt: new Date(),
+    };
+
+    logger.info(
+      {
+        orgId,
+        name,
+        url,
+        capabilities: registeredModel.capabilities,
+      },
+      "Custom model registered"
+    );
+
+    return registeredModel;
   }
 
   // ---------------------------------------------------------------------------

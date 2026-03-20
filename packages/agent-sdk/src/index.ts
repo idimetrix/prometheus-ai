@@ -19,9 +19,14 @@ export {
   unregisterCustomRole,
   validateAgentSpec,
 } from "./custom-roles";
-export type { AgentRoleConfig } from "./roles";
+export type { AgentRoleConfig, AiSdkAgentFullConfig } from "./roles";
 // Roles
-export { AGENT_ROLES, createAgent, getAgentConfig } from "./roles";
+export {
+  AGENT_ROLES,
+  createAgent,
+  createAiSdkAgentConfig,
+  getAgentConfig,
+} from "./roles";
 export { ArchitectAgent } from "./roles/architect";
 export { BackendCoderAgent } from "./roles/backend-coder";
 export { CiLoopAgent } from "./roles/ci-loop";

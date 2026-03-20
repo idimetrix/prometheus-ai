@@ -43,6 +43,27 @@ const INTEGRATION_RE =
   /\b(integrat|connect|wire|hook up|link|bind|api call|fetch data|real.?time)\b/;
 const LLM_ROUTE_ROLE_RE = /ROLE:\s*(\w+)/;
 
+// ---------------------------------------------------------------------------
+// Complexity keywords for adaptive orchestration
+// ---------------------------------------------------------------------------
+
+const SIMPLE_KEYWORDS_RE =
+  /\b(rename|typo|fix\s+import|update\s+version|change\s+color|bump|toggle)\b/i;
+const CRITICAL_KEYWORDS_RE =
+  /\b(security|production|migration|breaking|critical|rollback|incident)\b/i;
+const COMPLEX_KEYWORDS_RE =
+  /\b(full.?stack|multi.?service|architecture|redesign|platform|infrastructure|distributed)\b/i;
+const WHITESPACE_SPLIT_RE = /\s+/;
+
+type PipelineComplexity = "simple" | "medium" | "complex" | "critical";
+
+interface AdaptivePipeline {
+  complexity: PipelineComplexity;
+  extraReviewPasses: number;
+  phases: string[];
+  useMoA: boolean;
+}
+
 interface TaskRoutingResult {
   agentRole: string;
   confidence: number;
@@ -1284,6 +1305,112 @@ Respond with ONLY the role name (e.g., "backend_coder") and a one-line reason. F
         timestamp: new Date().toISOString(),
       });
     }
+  }
+
+  /**
+   * Adapt the pipeline based on task complexity.
+   *
+   * - Simple tasks: skip discovery/planning, go straight to coding
+   * - Medium tasks: abbreviated discovery -> code -> test
+   * - Complex tasks: full pipeline with all phases
+   * - Critical tasks: full pipeline + MoA + extra review passes
+   */
+  adaptPipeline(
+    taskDescription: string,
+    complexityEstimate?: PipelineComplexity
+  ): AdaptivePipeline {
+    const complexity =
+      complexityEstimate ?? this.estimateComplexity(taskDescription);
+
+    switch (complexity) {
+      case "simple":
+        return {
+          complexity: "simple",
+          phases: ["coding", "testing"],
+          useMoA: false,
+          extraReviewPasses: 0,
+        };
+
+      case "medium":
+        return {
+          complexity: "medium",
+          phases: ["discovery", "coding", "testing", "ci_loop"],
+          useMoA: false,
+          extraReviewPasses: 0,
+        };
+
+      case "complex":
+        return {
+          complexity: "complex",
+          phases: [
+            "discovery",
+            "architecture",
+            "planning",
+            "spec_first",
+            "coding",
+            "testing",
+            "ci_loop",
+            "security",
+            "deploy",
+          ],
+          useMoA: true,
+          extraReviewPasses: 0,
+        };
+
+      case "critical":
+        return {
+          complexity: "critical",
+          phases: [
+            "discovery",
+            "architecture",
+            "planning",
+            "spec_first",
+            "coding",
+            "visual_verify",
+            "testing",
+            "ci_loop",
+            "property_testing",
+            "security",
+            "deploy",
+          ],
+          useMoA: true,
+          extraReviewPasses: 2,
+        };
+      default:
+        return {
+          complexity: "medium",
+          phases: ["discovery", "coding", "testing", "ci_loop"],
+          useMoA: false,
+          extraReviewPasses: 0,
+        };
+    }
+  }
+
+  /**
+   * Estimate task complexity based on description keywords.
+   */
+  estimateComplexity(taskDescription: string): PipelineComplexity {
+    const desc = taskDescription.toLowerCase();
+
+    if (CRITICAL_KEYWORDS_RE.test(desc)) {
+      return "critical";
+    }
+    if (COMPLEX_KEYWORDS_RE.test(desc)) {
+      return "complex";
+    }
+    if (SIMPLE_KEYWORDS_RE.test(desc)) {
+      return "simple";
+    }
+
+    // Heuristic: longer descriptions tend to be more complex
+    const wordCount = desc.split(WHITESPACE_SPLIT_RE).length;
+    if (wordCount > 100) {
+      return "complex";
+    }
+    if (wordCount > 30) {
+      return "medium";
+    }
+    return "simple";
   }
 
   private matchesRequirements(desc: string): boolean {

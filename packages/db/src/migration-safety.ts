@@ -4,6 +4,11 @@ import type { Database } from "./client";
 
 const logger = createLogger("db:migration-safety");
 
+const DROP_TABLE_RE = /DROP\s+TABLE/i;
+const DROP_COLUMN_RE = /DROP\s+COLUMN/i;
+const TRUNCATE_RE = /TRUNCATE/i;
+const ALTER_COLUMN_TYPE_RE = /ALTER\s+COLUMN.*TYPE/i;
+
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 interface MigrationValidationResult {
@@ -574,4 +579,82 @@ export async function analyzeMigration(
     issues: [...validation.errors, ...indexIssues, ...compatibility.issues],
     duration,
   };
+}
+
+// ─── MigrationSafetyChecker ──────────────────────────────────────────────────
+
+/**
+ * MigrationSafetyChecker provides a class-based interface for validating
+ * migration SQL, checking for dangerous operations, and generating
+ * backup commands.
+ */
+export class MigrationSafetyChecker {
+  /**
+   * Check a migration SQL string for dangerous operations.
+   * Returns validation result with errors and warnings.
+   */
+  checkMigration(migrationSql: string): MigrationValidationResult {
+    return validateMigrationSQL(migrationSql);
+  }
+
+  /**
+   * Determine whether a migration requires manual approval.
+   * Returns true for destructive changes (DROP TABLE, DROP COLUMN, TRUNCATE).
+   */
+  requiresApproval(migrationSql: string): boolean {
+    const destructivePatterns = [
+      DROP_TABLE_RE,
+      DROP_COLUMN_RE,
+      TRUNCATE_RE,
+      ALTER_COLUMN_TYPE_RE,
+    ];
+
+    return destructivePatterns.some((pattern) => pattern.test(migrationSql));
+  }
+
+  /**
+   * Generate a backup SQL command for a table before applying a migration.
+   * Creates a timestamped backup table using CREATE TABLE AS SELECT.
+   */
+  generateBackupCommand(tableName: string): string {
+    const timestamp = new Date()
+      .toISOString()
+      .replace(/[-:T.Z]/g, "")
+      .slice(0, 14);
+    const backupName = `${tableName}_backup_${timestamp}`;
+
+    return [
+      `-- Backup ${tableName} before migration`,
+      `CREATE TABLE ${backupName} AS SELECT * FROM ${tableName};`,
+      "-- Verify backup:",
+      `-- SELECT COUNT(*) FROM ${backupName};`,
+      `-- To restore: INSERT INTO ${tableName} SELECT * FROM ${backupName};`,
+      `-- To cleanup: DROP TABLE ${backupName};`,
+    ].join("\n");
+  }
+
+  /**
+   * Get a comprehensive safety analysis combining all checks.
+   */
+  analyze(
+    _db: Database,
+    migrationSql: string
+  ): {
+    validation: MigrationValidationResult;
+    requiresApproval: boolean;
+    indexIssues: string[];
+    compatibility: { compatible: boolean; issues: string[] };
+  } {
+    const validation = this.checkMigration(migrationSql);
+    const approval = this.requiresApproval(migrationSql);
+    const indexIssues = detectNonConcurrentIndexCreation(migrationSql);
+    const compatibility = verifyForwardBackwardCompatibility(migrationSql);
+
+    return {
+      validation,
+      requiresApproval: approval,
+      indexIssues,
+      compatibility,
+    };
+  }
 }

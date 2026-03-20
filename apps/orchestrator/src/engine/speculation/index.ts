@@ -4,6 +4,12 @@ export type {
   SpeculationResult,
 } from "./approach-speculator";
 export { ApproachSpeculator } from "./approach-speculator";
+export type {
+  BranchExecutionResult,
+  BranchStrategy,
+  MultiBranchResult,
+} from "./branch-executor";
+export { BranchExecutor } from "./branch-executor";
 export type { SpeculationMetricsSummary } from "./metrics";
 export { SpeculationMetrics } from "./metrics";
 export type {

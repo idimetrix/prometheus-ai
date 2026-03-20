@@ -1159,15 +1159,16 @@ export const ExecutionEngine = {
   },
 
   /**
-   * AI SDK 6 streaming path using ToolLoopAgent with maxSteps.
+   * AI SDK 6 streaming path using AiSdkAgent with full role prompts.
    *
-   * Replaces the manual SSE parsing with AI SDK 6's unified streaming
-   * and tool-calling interface. Integrates:
+   * Uses the agent role system (BaseAgent subclasses) for proper system prompts,
+   * reasoning protocols, and tool filtering. Integrates:
+   * - Full role-specific system prompts via BaseAgent.getSystemPrompt()
+   * - Structured reasoning protocol injection
    * - Automatic provider selection via createModelForSlot()
-   * - AI SDK tool format via convertRegistryToAISDK()
-   * - Human-in-the-loop via HumanApprovalBridge
-   * - Safety checks (secrets scanner, blueprint enforcer, RBAC) via onStepFinish
-   * - Confidence scoring, context compression, quality gates
+   * - AI SDK 6 tool format via convertToolsToAISDK() with RBAC filtering
+   * - Safety checks (secrets scanner, blueprint enforcer) via onStepFinish
+   * - Confidence scoring and credit tracking
    *
    * Enable with PROMETHEUS_USE_AI_SDK=true
    */
@@ -1189,12 +1190,37 @@ export const ExecutionEngine = {
       }) as T;
 
     try {
-      const { createModelForSlot, ToolLoopAgent } = await import(
-        "@prometheus/ai"
-      );
-      const { convertRegistryToAISDK } = await import("@prometheus/agent-sdk");
+      const { AiSdkAgent, createModelForSlot } = await import("@prometheus/ai");
+      const { convertToolsToAISDK } = await import("@prometheus/agent-sdk");
 
-      // Resolve the model for the current slot
+      // Initialize the role-specific agent to get proper system prompt
+      const roleConfig = AGENT_ROLES[ctx.agentRole];
+      if (!roleConfig) {
+        yield makeEvent<ErrorEvent>({
+          type: "error",
+          error: `Unknown agent role: ${ctx.agentRole}`,
+          recoverable: false,
+        });
+        return;
+      }
+
+      const baseAgent = roleConfig.create();
+      const agentContext: AgentContext = {
+        sessionId: ctx.sessionId,
+        projectId: ctx.projectId,
+        orgId: ctx.orgId,
+        userId: ctx.userId,
+        agentRole: ctx.agentRole as AgentRole,
+        blueprintContent: ctx.blueprintContent,
+        projectContext: ctx.projectContext,
+        workDir: ctx.workDir,
+      };
+      baseAgent.initialize(agentContext);
+
+      // Build full system prompt: reasoning protocol + role-specific prompt
+      const systemPrompt = `${baseAgent.getReasoningProtocol()}\n\n${baseAgent.getSystemPrompt(agentContext)}`;
+
+      // Resolve model for the current slot
       const slot =
         ctx.options.slot === "default"
           ? (SLOT_MAP[ctx.agentRole] ?? "default")
@@ -1202,44 +1228,45 @@ export const ExecutionEngine = {
 
       const { model } = createModelForSlot(slot);
 
-      // Convert all agent tools to AI SDK 6 format
-      const aiSdkTools = convertRegistryToAISDK({
-        sessionId: ctx.sessionId,
-        projectId: ctx.projectId,
-        sandboxId: ctx.sessionId,
-        workDir: ctx.workDir,
-        orgId: ctx.orgId,
-        userId: ctx.userId,
-      });
+      // Convert only the agent's allowed tools to AI SDK 6 format (RBAC)
+      const allowedToolNames = new Set(baseAgent.getAllowedTools());
+      const filteredRegistry: Record<string, unknown> = {};
+      for (const [name, toolDef] of Object.entries(TOOL_REGISTRY)) {
+        if (allowedToolNames.has(name)) {
+          filteredRegistry[name] = toolDef;
+        }
+      }
+
+      const aiSdkTools = convertToolsToAISDK(
+        filteredRegistry as Record<
+          string,
+          import("@prometheus/agent-sdk").AgentToolDefinition
+        >,
+        {
+          sessionId: ctx.sessionId,
+          projectId: ctx.projectId,
+          sandboxId: ctx.sessionId,
+          workDir: ctx.workDir,
+          orgId: ctx.orgId,
+          userId: ctx.userId,
+        }
+      );
 
       // Initialize safety integrations
       const blueprintEnforcer = new BlueprintEnforcer();
       const secretsScanner = new SecretsScanner();
+      const confidenceScorer = new ConfidenceScorer();
       await blueprintEnforcer
         .loadForProject(ctx.projectId)
         .catch(() => undefined);
 
-      let totalToolCalls = 0;
-      const filesChanged = new Set<string>();
       let totalCreditsConsumed = 0;
-
-      // Buffer for events emitted inside onStepFinish (can't yield from callback)
       const pendingEvents: ExecutionEvent[] = [];
 
-      // Build role-specific system prompt
-      const roleConfig = AGENT_ROLES[ctx.agentRole];
-      const systemPrompt = roleConfig
-        ? `You are a ${ctx.agentRole} agent for the Prometheus AI engineering platform.`
-        : `You are a ${ctx.agentRole} agent.`;
-
+      // Build enriched task description with sprint context
       const enrichedTask = [
         ctx.taskDescription,
-        ctx.blueprintContent
-          ? `\n\n--- Blueprint ---\n${ctx.blueprintContent}`
-          : "",
-        ctx.projectContext
-          ? `\n\n--- Project Context ---\n${ctx.projectContext}`
-          : "",
+        ctx.sprintState ? `\n\n--- Sprint State ---\n${ctx.sprintState}` : "",
       ].join("");
 
       logger.info(
@@ -1247,67 +1274,51 @@ export const ExecutionEngine = {
           slot,
           agentRole: ctx.agentRole,
           toolCount: Object.keys(aiSdkTools).length,
+          systemPromptLength: systemPrompt.length,
         },
-        "Starting AI SDK 6 ToolLoopAgent execution"
+        "Starting AiSdkAgent execution with full role prompt"
       );
 
-      // Create ToolLoopAgent with onStepFinish middleware
-      const agent = new ToolLoopAgent(model, aiSdkTools, {
+      // Create AiSdkAgent with full role system prompt
+      const agent = new AiSdkAgent({
+        model,
+        tools: aiSdkTools,
+        systemPrompt,
+        role: ctx.agentRole,
         maxSteps: ctx.options.maxIterations,
         temperature: ctx.options.temperature,
         maxTokens: ctx.options.maxTokens,
-        system: systemPrompt,
-        onStepFinish: (step) => {
-          // Track tool calls
-          const stepToolCalls = step.toolCalls?.length ?? 0;
-          totalToolCalls += stepToolCalls;
+      });
 
-          // Track file changes from tool results
-          if (step.toolCalls) {
-            for (const tc of step.toolCalls) {
-              if (tc.toolName === "file_write" || tc.toolName === "file_edit") {
-                const toolInput = tc.input as Record<string, unknown>;
-                const filePath = (toolInput.path ?? toolInput.filePath) as
-                  | string
-                  | undefined;
-                if (filePath) {
-                  filesChanged.add(filePath);
-                  pendingEvents.push(
-                    makeEvent<FileChangeEvent>({
-                      type: "file_change",
-                      tool: tc.toolName,
-                      filePath,
-                    })
-                  );
-                }
-              }
-            }
-          }
+      // Stream the agent execution with safety callbacks
+      let fullText = "";
+      for await (const event of agent.stream(enrichedTask, {
+        onFileChange: (filePath, toolName) => {
+          pendingEvents.push(
+            makeEvent<FileChangeEvent>({
+              type: "file_change",
+              tool: toolName,
+              filePath,
+            })
+          );
+        },
+        onStepFinish: (stepInfo) => {
+          // Track credits
+          const credits = Math.ceil(stepInfo.usage.totalTokens / 1000);
+          totalCreditsConsumed += credits;
+          pendingEvents.push(
+            makeEvent<CreditUpdateEvent>({
+              type: "credit_update",
+              creditsConsumed: credits,
+              totalCreditsConsumed,
+            })
+          );
 
-          // Track usage and credits
-          if (step.usage) {
-            const credits = Math.ceil(
-              ((step.usage.inputTokens ?? 0) + (step.usage.outputTokens ?? 0)) /
-                1000
-            );
-            totalCreditsConsumed += credits;
-            pendingEvents.push(
-              makeEvent<CreditUpdateEvent>({
-                type: "credit_update",
-                creditsConsumed: credits,
-                totalCreditsConsumed,
-              })
-            );
-          }
-
-          // Secrets scanning on tool results
-          if (step.toolCalls) {
-            for (const tc of step.toolCalls) {
-              if (
-                (tc.toolName === "file_write" || tc.toolName === "file_edit") &&
-                (tc.input as Record<string, unknown>).content
-              ) {
-                const args = tc.input as Record<string, unknown>;
+          // Secrets scanning on file writes
+          for (const tc of stepInfo.toolCalls) {
+            if (tc.toolName === "file_write" || tc.toolName === "file_edit") {
+              const args = tc.input as Record<string, unknown>;
+              if (args.content) {
                 const filePath =
                   (args.path as string) ?? (args.filePath as string) ?? "";
                 const scanResult = secretsScanner.scan(
@@ -1323,15 +1334,38 @@ export const ExecutionEngine = {
               }
             }
           }
-        },
-      });
 
-      // Stream the agent execution
-      let fullText = "";
-      for await (const event of agent.stream([
-        { role: "user", content: enrichedTask },
-      ])) {
-        // Drain any events buffered by onStepFinish
+          // Confidence scoring
+          const confidenceResult = confidenceScorer.scoreIteration({
+            toolCallCount: stepInfo.toolCalls.length,
+            toolSuccessCount: stepInfo.toolCalls.length,
+            toolErrorCount: 0,
+            hasOutput: stepInfo.text.length > 0,
+            outputLength: stepInfo.text.length,
+            hasStructuredOutput: stepInfo.text.includes("```"),
+            filesChanged: stepInfo.toolCalls.filter(
+              (tc) =>
+                tc.toolName === "file_write" || tc.toolName === "file_edit"
+            ).length,
+            expressedUncertainty: false,
+            requestedHelp: false,
+            staleIterations: 0,
+          });
+          pendingEvents.push(
+            makeEvent<ConfidenceEvent>({
+              type: "confidence",
+              score: confidenceResult.score,
+              factors: confidenceResult.factors.map((f) => ({
+                name: f.name,
+                value: f.value,
+              })),
+              action: confidenceResult.action,
+              iteration: stepInfo.stepIndex,
+            })
+          );
+        },
+      })) {
+        // Drain buffered events from callbacks
         while (pendingEvents.length > 0) {
           const buffered = pendingEvents.shift();
           if (buffered) {
@@ -1351,7 +1385,7 @@ export const ExecutionEngine = {
           case "tool-call": {
             yield makeEvent<ToolCallEvent>({
               type: "tool_call",
-              toolCallId: `tc_${totalToolCalls}`,
+              toolCallId: event.toolCallId,
               toolName: event.toolName,
               args: event.args as Record<string, unknown>,
             });
@@ -1360,11 +1394,19 @@ export const ExecutionEngine = {
           case "tool-result": {
             yield makeEvent<ToolResultEvent>({
               type: "tool_result",
-              toolCallId: `tc_${totalToolCalls}`,
+              toolCallId: event.toolCallId,
               toolName: event.toolName,
               success: true,
               output: String(event.result).slice(0, 2000),
             });
+            break;
+          }
+          case "step-finish": {
+            // Step completion is already handled by onStepFinish callback
+            break;
+          }
+          case "step-start": {
+            // Step start events for observability
             break;
           }
           case "finish": {
@@ -1372,13 +1414,13 @@ export const ExecutionEngine = {
               type: "complete",
               success: true,
               output: fullText,
-              filesChanged: Array.from(filesChanged),
+              filesChanged: event.filesChanged,
               tokensUsed: {
                 input: event.usage.inputTokens,
                 output: event.usage.outputTokens,
               },
-              toolCalls: totalToolCalls,
-              steps: ctx.options.maxIterations,
+              toolCalls: event.totalToolCalls,
+              steps: event.totalToolCalls,
               creditsConsumed: totalCreditsConsumed,
             });
             break;

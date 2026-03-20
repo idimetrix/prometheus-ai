@@ -3,18 +3,26 @@ import { createLogger } from "@prometheus/logger";
 const logger = createLogger("orchestrator:moa");
 
 const JSON_OBJECT_RE = /\{[\s\S]*\}/;
+const HEURISTIC_CODE_BLOCK_RE = /```[\s\S]+```/;
+const HEURISTIC_HEADER_RE = /^#{1,3}\s/m;
 
 export interface MoAResult {
+  /** Reasoning for why a branch was selected or synthesis was used */
+  branchSelectionReasoning: string;
   responses: Array<{
     model: string;
     output: string;
     confidence: number;
     tokensUsed: number;
     duration: number;
+    qualityScore?: number;
   }>;
   selectedModel: string;
   synthesized: string;
 }
+
+/** Threshold above which a single response is used instead of synthesis */
+const SINGLE_RESPONSE_QUALITY_THRESHOLD = 0.85;
 
 export class MixtureOfAgents {
   private readonly models = [
@@ -84,20 +92,64 @@ export class MixtureOfAgents {
         responses,
         synthesized: "",
         selectedModel: this.models[0] ?? "",
+        branchSelectionReasoning: "No valid responses received",
       };
     }
 
-    // Round 2: Synthesize the best solution
+    // Evaluate each response independently for quality
+    const scoredResponses = await Promise.all(
+      validResponses.map(async (r) => {
+        const qualityScore = await this.evaluateResponse(r.output, prompt);
+        return { ...r, qualityScore };
+      })
+    );
+
+    // Update quality scores in the responses array
+    const responsesWithScores = responses.map((r) => {
+      const scored = scoredResponses.find((s) => s.model === r.model);
+      return { ...r, qualityScore: scored?.qualityScore ?? 0 };
+    });
+
+    // Sort by quality score descending
+    const ranked = [...scoredResponses].sort(
+      (a, b) => b.qualityScore - a.qualityScore
+    );
+
     let synthesized: string;
     let selectedModel: string;
+    let branchSelectionReasoning: string;
+
+    const bestResponse = ranked[0];
 
     if (validResponses.length === 1) {
       synthesized = validResponses[0]?.output ?? "";
       selectedModel = validResponses[0]?.model ?? "";
+      branchSelectionReasoning = "Only one valid response available";
+    } else if (
+      bestResponse &&
+      bestResponse.qualityScore >= SINGLE_RESPONSE_QUALITY_THRESHOLD
+    ) {
+      // Best individual response is good enough - no need to synthesize
+      synthesized = bestResponse.output;
+      selectedModel = bestResponse.model;
+      branchSelectionReasoning = `Selected ${bestResponse.model} directly (quality: ${bestResponse.qualityScore.toFixed(2)}) - above ${SINGLE_RESPONSE_QUALITY_THRESHOLD} threshold, no synthesis needed`;
+      logger.info(
+        {
+          selectedModel,
+          qualityScore: bestResponse.qualityScore.toFixed(2),
+          allScores: ranked.map((r) => ({
+            model: r.model,
+            score: r.qualityScore.toFixed(2),
+          })),
+        },
+        "Selected best individual response (above quality threshold)"
+      );
     } else {
+      // No single response is good enough - synthesize
       const result = await this.synthesize(prompt, validResponses);
       synthesized = result.synthesized;
       selectedModel = result.selectedModel;
+      branchSelectionReasoning = `Synthesized from ${validResponses.length} responses - best individual score was ${bestResponse?.qualityScore.toFixed(2) ?? "N/A"} (below ${SINGLE_RESPONSE_QUALITY_THRESHOLD} threshold)`;
     }
 
     // Optional refinement rounds
@@ -109,7 +161,83 @@ export class MixtureOfAgents {
       synthesized = refined.improved;
     }
 
-    return { responses, synthesized, selectedModel };
+    return {
+      responses: responsesWithScores,
+      synthesized,
+      selectedModel,
+      branchSelectionReasoning,
+    };
+  }
+
+  /**
+   * Evaluate a single response against the original criteria/prompt.
+   * Returns a quality score between 0 and 1.
+   */
+  async evaluateResponse(response: string, criteria: string): Promise<number> {
+    try {
+      const res = await fetch(`${this.modelRouterUrl}/route`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          slot: "review",
+          messages: [
+            {
+              role: "system",
+              content:
+                'You are a response quality evaluator. Score the response quality from 0 to 1 based on correctness, completeness, and relevance to the task. Respond with ONLY a JSON object: { "score": 0.85, "reasoning": "..." }',
+            },
+            {
+              role: "user",
+              content: `## Task\n${criteria}\n\n## Response to Evaluate\n${response}`,
+            },
+          ],
+        }),
+        signal: AbortSignal.timeout(30_000),
+      });
+
+      if (res.ok) {
+        const data = (await res.json()) as { content: string };
+        const content = data.content ?? "";
+        const jsonMatch = content.match(JSON_OBJECT_RE);
+        if (jsonMatch) {
+          const parsed = JSON.parse(jsonMatch[0]);
+          const score = Number(parsed.score);
+          if (!Number.isNaN(score) && score >= 0 && score <= 1) {
+            return score;
+          }
+        }
+      }
+    } catch (err) {
+      logger.warn(
+        { error: err },
+        "Response evaluation failed, using heuristic"
+      );
+    }
+
+    // Fallback heuristic scoring
+    return this.heuristicScore(response);
+  }
+
+  private heuristicScore(response: string): number {
+    let score = 0.5;
+
+    // Length-based scoring
+    if (response.length > 200) {
+      score += 0.1;
+    }
+    if (response.length > 500) {
+      score += 0.1;
+    }
+
+    // Structure bonus
+    if (HEURISTIC_CODE_BLOCK_RE.test(response)) {
+      score += 0.1;
+    }
+    if (HEURISTIC_HEADER_RE.test(response)) {
+      score += 0.05;
+    }
+
+    return Math.min(score, 1);
   }
 
   private async synthesize(

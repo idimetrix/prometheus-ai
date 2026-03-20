@@ -13,6 +13,85 @@ const ABRUPT_ENDING_PATTERN = /[.!?`)\]}]$/;
 const CONTRADICTION_PATTERN =
   /\b(however|but actually|wait|correction|I was wrong)\b/i;
 
+// ─── Quality Assessment Types ───────────────────────────────────────────────
+
+/**
+ * Multi-signal quality assessment result.
+ * Each signal is scored independently and combined into a final score.
+ */
+export interface QualityAssessment {
+  /** Whether the response follows project conventions (naming, structure) */
+  conventionCompliant: boolean;
+  /** Whether the response includes test coverage */
+  hasTests: boolean;
+  /** Overall quality score (0-1) combining all signals */
+  overallScore: number;
+  /** Whether the response appears free of obvious security issues */
+  securityClean: boolean;
+  /** Individual signal scores for debugging/metrics */
+  signals: {
+    completeness: number;
+    confidence: number;
+    consistency: number;
+    content: number;
+    structural: number;
+  };
+  /** Whether the response contains valid syntax (matched brackets, etc.) */
+  syntaxValid: boolean;
+  /** Whether code in the response looks type-safe (no any, has type annotations) */
+  typeCheckable: boolean;
+}
+
+// ─── Language-Aware Quality Patterns ────────────────────────────────────────
+
+const SECURITY_PATTERNS = [
+  /eval\s*\(/i,
+  /document\.write\s*\(/i,
+  /innerHTML\s*=/i,
+  /exec\s*\(\s*['"`]/i,
+  /child_process/i,
+  /\bsudo\b/i,
+  /password\s*=\s*['"][^'"]+['"]/i,
+  /api[_-]?key\s*=\s*['"][^'"]+['"]/i,
+];
+
+const TEST_INDICATORS = [
+  /\b(describe|it|test|expect|assert|should)\s*\(/,
+  /\b(beforeEach|afterEach|beforeAll|afterAll)\s*\(/,
+  /\b(jest|vitest|mocha|chai)\b/,
+  /\.test\.|\.spec\./,
+  /\bTestCase\b/,
+];
+
+const TYPE_ANNOTATION_PATTERNS: Record<string, RegExp[]> = {
+  typescript: [
+    /:\s*(string|number|boolean|void|Promise|Record|Array|Map|Set)\b/,
+    /interface\s+\w+/,
+    /type\s+\w+=>/,
+    /<[A-Z]\w*>/,
+  ],
+  python: [
+    /def\s+\w+\([^)]*:\s*\w+/,
+    /\)\s*->\s*\w+/,
+    /:\s*(int|str|float|bool|list|dict|Optional)\b/,
+  ],
+  go: [/func\s+\w+\([^)]*\w+\s+\w+/, /\)\s+\w+\s*\{/],
+};
+
+const SYNTAX_BRACKET_PAIRS: Record<string, string> = {
+  "(": ")",
+  "[": "]",
+  "{": "}",
+};
+
+const CODE_BLOCK_REGEX = /```[\s\S]*?```/g;
+const CODE_BLOCK_OPEN_STRIP = /^```\w*\n?/;
+const CODE_BLOCK_CLOSE_STRIP = /\n?```$/;
+const PYTHON_FUNC_REGEX = /def\s+(\w+)/g;
+const JS_FUNC_REGEX = /(?:function|const|let|var)\s+(\w+)/g;
+const SNAKE_CASE_REGEX = /^[a-z][a-z0-9_]*$/;
+const CAMEL_CASE_REGEX = /^[a-z][a-zA-Z0-9]*$/;
+
 interface CascadeConfig {
   confidenceThreshold: number;
   maxEscalations: number;
@@ -34,6 +113,7 @@ const SLOT_ESCALATION_CHAIN: Record<string, string[]> = {
 interface CascadeMetrics {
   costSavedUsd: number;
   escalations: number;
+  qualityAssessments: number;
   requestsHandledCheap: number;
   totalRequests: number;
 }
@@ -46,6 +126,7 @@ export class CascadeRouter {
     requestsHandledCheap: 0,
     escalations: 0,
     costSavedUsd: 0,
+    qualityAssessments: 0,
   };
 
   constructor(inner: ModelRouterService, config?: Partial<CascadeConfig>) {
@@ -60,6 +141,9 @@ export class CascadeRouter {
       request.slot,
     ];
 
+    // Detect language hint from the request messages for quality assessment
+    const languageHint = detectLanguageFromMessages(request.messages);
+
     for (let i = 0; i < escalationChain.length; i++) {
       const slot = escalationChain[i] as string;
       const escalatedRequest: RouteRequest = { ...request, slot };
@@ -67,7 +151,11 @@ export class CascadeRouter {
       try {
         const response = await this.inner.route(escalatedRequest);
 
-        const quality = this.assessResponseQuality(response);
+        const assessment = this.assessQuality(
+          response.choices[0]?.message?.content ?? "",
+          languageHint
+        );
+        const quality = assessment.overallScore;
 
         if (
           quality >= this.config.confidenceThreshold ||
@@ -87,6 +175,10 @@ export class CascadeRouter {
               usedSlot: slot,
               escalationLevel: i,
               quality: quality.toFixed(3),
+              syntaxValid: assessment.syntaxValid,
+              typeCheckable: assessment.typeCheckable,
+              hasTests: assessment.hasTests,
+              securityClean: assessment.securityClean,
               costUsd: response.usage.cost_usd.toFixed(6),
             },
             "Cascade route completed"
@@ -108,6 +200,7 @@ export class CascadeRouter {
             quality: quality.toFixed(3),
             threshold: this.config.confidenceThreshold,
             nextSlot: escalationChain[i + 1],
+            signals: assessment.signals,
           },
           "Quality below threshold, escalating"
         );
@@ -124,16 +217,37 @@ export class CascadeRouter {
   }
 
   /**
-   * Multi-signal quality assessment of LLM responses.
-   * Evaluates: structural completeness, content quality, hedging/refusal
-   * detection, format compliance, and consistency checks.
+   * Multi-signal quality assessment of LLM response content.
+   * Evaluates syntax validity, type-safety signals, test coverage,
+   * security cleanliness, and convention compliance alongside the
+   * original structural/confidence/completeness/consistency checks.
+   *
+   * @param response - The response text to assess
+   * @param language - Optional language hint (e.g., "typescript", "python")
    */
-  private assessResponseQuality(response: RouteResponse): number {
-    const content = response.choices[0]?.message?.content ?? "";
-    const toolCalls = response.choices[0]?.message?.tool_calls;
-    const finishReason = response.choices[0]?.finish_reason;
+  assessQuality(response: string, language?: string): QualityAssessment {
+    this.metrics.qualityAssessments++;
 
-    // Signal 1: Structural completeness (0.25 weight)
+    const content = response;
+    if (!content || content.length === 0) {
+      return {
+        overallScore: 0,
+        syntaxValid: false,
+        typeCheckable: false,
+        hasTests: false,
+        securityClean: true,
+        conventionCompliant: false,
+        signals: {
+          structural: 0,
+          content: 0,
+          confidence: 0,
+          completeness: 0,
+          consistency: 0,
+        },
+      };
+    }
+
+    // Signal 1: Structural completeness
     let structuralScore = 0;
     if (content.length > 50) {
       structuralScore += 0.3;
@@ -141,32 +255,31 @@ export class CascadeRouter {
     if (content.length > 200) {
       structuralScore += 0.3;
     }
-    if (finishReason === "stop") {
+    const codeBlocks = (content.match(/```/g) ?? []).length / 2;
+    if (codeBlocks >= 1) {
       structuralScore += 0.2;
-    }
-    if (toolCalls && Array.isArray(toolCalls) && toolCalls.length > 0) {
-      structuralScore += 0.2;
-    }
-
-    // Signal 2: Content quality — symbol density as proxy for code/technical content (0.20 weight)
-    let qualityScore = 0.5;
-    const codeBlockCount = (content.match(/```/g) ?? []).length / 2;
-    if (codeBlockCount >= 1) {
-      qualityScore += 0.2;
     }
     const hasStructuredOutput =
       content.includes("##") ||
       content.includes("- ") ||
       content.includes("1.");
     if (hasStructuredOutput) {
-      qualityScore += 0.15;
-    }
-    // Penalize very short non-tool responses
-    if (!toolCalls && content.length < 20) {
-      qualityScore -= 0.3;
+      structuralScore += 0.2;
     }
 
-    // Signal 3: Hedging/refusal detection (0.25 weight)
+    // Signal 2: Content quality
+    let contentScore = 0.5;
+    if (codeBlocks >= 1) {
+      contentScore += 0.2;
+    }
+    if (hasStructuredOutput) {
+      contentScore += 0.15;
+    }
+    if (content.length < 20) {
+      contentScore -= 0.3;
+    }
+
+    // Signal 3: Hedging/refusal detection
     let confidenceScore = 1.0;
     if (HEDGING_PATTERNS.test(content)) {
       confidenceScore -= 0.3;
@@ -174,37 +287,86 @@ export class CascadeRouter {
     if (REFUSAL_PATTERNS.test(content)) {
       confidenceScore -= 0.5;
     }
-    // Detect placeholder/incomplete patterns
     if (PLACEHOLDER_PATTERN.test(content)) {
       confidenceScore -= 0.2;
     }
 
-    // Signal 4: Completeness — check for truncation or contradictions (0.15 weight)
+    // Signal 4: Completeness
     let completenessScore = 1.0;
-    if (finishReason === "length") {
-      completenessScore -= 0.5;
-    }
-    // Detect abrupt endings (last sentence without punctuation)
     const lastLine = content.trim().split("\n").pop() ?? "";
     if (lastLine.length > 20 && !ABRUPT_ENDING_PATTERN.test(lastLine)) {
       completenessScore -= 0.2;
     }
 
-    // Signal 5: Consistency — no internal contradictions (0.15 weight)
+    // Signal 5: Consistency
     let consistencyScore = 1.0;
     if (CONTRADICTION_PATTERN.test(content)) {
       consistencyScore -= 0.15;
     }
 
-    // Weighted combination
-    const finalScore =
-      structuralScore * 0.25 +
-      Math.min(1, Math.max(0, qualityScore)) * 0.2 +
-      Math.max(0, confidenceScore) * 0.25 +
-      Math.max(0, completenessScore) * 0.15 +
-      Math.max(0, consistencyScore) * 0.15;
+    // ─── Multi-Signal Quality Checks ──────────────────────────────
 
-    return Math.max(0, Math.min(1, finalScore));
+    const syntaxValid = checkSyntaxValidity(content);
+    const typeCheckable = checkTypeAnnotations(content, language);
+    const hasTests = TEST_INDICATORS.some((pattern) => pattern.test(content));
+    const securityClean = !SECURITY_PATTERNS.some((pattern) =>
+      pattern.test(content)
+    );
+    const conventionCompliant = checkConventionCompliance(content, language);
+
+    // Bonus/penalties from multi-signal checks
+    if (syntaxValid) {
+      contentScore += 0.05;
+    } else {
+      contentScore -= 0.1;
+    }
+
+    if (typeCheckable) {
+      contentScore += 0.05;
+    }
+
+    if (hasTests) {
+      contentScore += 0.05;
+    }
+
+    if (!securityClean) {
+      confidenceScore -= 0.15;
+    }
+
+    if (conventionCompliant) {
+      contentScore += 0.05;
+    }
+
+    // Weighted combination
+    const signals = {
+      structural: Math.max(0, Math.min(1, structuralScore)),
+      content: Math.max(0, Math.min(1, contentScore)),
+      confidence: Math.max(0, confidenceScore),
+      completeness: Math.max(0, completenessScore),
+      consistency: Math.max(0, consistencyScore),
+    };
+
+    const overallScore = Math.max(
+      0,
+      Math.min(
+        1,
+        signals.structural * 0.25 +
+          signals.content * 0.2 +
+          signals.confidence * 0.25 +
+          signals.completeness * 0.15 +
+          signals.consistency * 0.15
+      )
+    );
+
+    return {
+      overallScore,
+      syntaxValid,
+      typeCheckable,
+      hasTests,
+      securityClean,
+      conventionCompliant,
+      signals,
+    };
   }
 
   private estimatePremiumCost(request: RouteRequest): number {
@@ -232,4 +394,161 @@ export class CascadeRouter {
         : 0;
     return { ...this.metrics, savingsPercentage };
   }
+}
+
+// ─── Helper Functions ─────────────────────────────────────────────────────────
+
+/**
+ * Detect programming language from message content.
+ */
+function detectLanguageFromMessages(
+  messages: Array<{ role: string; content: string }>
+): string | undefined {
+  const combined = messages
+    .map((m) => m.content)
+    .join(" ")
+    .toLowerCase();
+
+  if (
+    combined.includes("typescript") ||
+    combined.includes(".ts") ||
+    combined.includes("interface ") ||
+    combined.includes("type ")
+  ) {
+    return "typescript";
+  }
+  if (
+    combined.includes("python") ||
+    combined.includes(".py") ||
+    combined.includes("def ")
+  ) {
+    return "python";
+  }
+  if (
+    combined.includes("golang") ||
+    combined.includes(".go") ||
+    combined.includes("func ")
+  ) {
+    return "go";
+  }
+  return undefined;
+}
+
+/**
+ * Check bracket matching in code blocks within the response.
+ */
+function checkSyntaxValidity(content: string): boolean {
+  const codeBlocks = content.match(CODE_BLOCK_REGEX);
+  if (!codeBlocks || codeBlocks.length === 0) {
+    return true;
+  }
+
+  for (const block of codeBlocks) {
+    const code = block
+      .replace(CODE_BLOCK_OPEN_STRIP, "")
+      .replace(CODE_BLOCK_CLOSE_STRIP, "");
+    const stack: string[] = [];
+    let inString = false;
+    let stringChar = "";
+
+    for (let i = 0; i < code.length; i++) {
+      const char = code[i] as string;
+
+      if (
+        (char === '"' || char === "'" || char === "`") &&
+        (i === 0 || code[i - 1] !== "\\")
+      ) {
+        if (inString && char === stringChar) {
+          inString = false;
+        } else if (!inString) {
+          inString = true;
+          stringChar = char;
+        }
+        continue;
+      }
+
+      if (inString) {
+        continue;
+      }
+
+      const closing = SYNTAX_BRACKET_PAIRS[char];
+      if (closing) {
+        stack.push(closing);
+      } else if (
+        (char === ")" || char === "]" || char === "}") &&
+        (stack.length === 0 || stack.pop() !== char)
+      ) {
+        return false;
+      }
+    }
+
+    if (stack.length > 0) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+/**
+ * Check for type annotations in the response content.
+ */
+function checkTypeAnnotations(content: string, language?: string): boolean {
+  if (!language) {
+    for (const patterns of Object.values(TYPE_ANNOTATION_PATTERNS)) {
+      if (patterns.some((p) => p.test(content))) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  const patterns = TYPE_ANNOTATION_PATTERNS[language];
+  if (!patterns) {
+    return false;
+  }
+  return patterns.some((p) => p.test(content));
+}
+
+/**
+ * Check for convention compliance (camelCase for JS/TS, snake_case for Python).
+ */
+function checkConventionCompliance(
+  content: string,
+  language?: string
+): boolean {
+  const codeBlocks = content.match(CODE_BLOCK_REGEX);
+  if (!codeBlocks || codeBlocks.length === 0) {
+    return true;
+  }
+
+  const code = codeBlocks
+    .map((b) =>
+      b.replace(CODE_BLOCK_OPEN_STRIP, "").replace(CODE_BLOCK_CLOSE_STRIP, "")
+    )
+    .join("\n");
+
+  if (language === "python") {
+    const funcNames = [...code.matchAll(PYTHON_FUNC_REGEX)].map(
+      (m) => m[1] as string
+    );
+    if (funcNames.length === 0) {
+      return true;
+    }
+    const snakeCaseCount = funcNames.filter((n) =>
+      SNAKE_CASE_REGEX.test(n)
+    ).length;
+    return snakeCaseCount >= funcNames.length / 2;
+  }
+
+  const funcNames = [...code.matchAll(JS_FUNC_REGEX)].map(
+    (m) => m[1] as string
+  );
+  if (funcNames.length === 0) {
+    return true;
+  }
+  const camelCaseCount = funcNames.filter((n) =>
+    CAMEL_CASE_REGEX.test(n)
+  ).length;
+  return camelCaseCount >= funcNames.length / 2;
 }

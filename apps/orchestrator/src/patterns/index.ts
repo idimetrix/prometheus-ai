@@ -9,3 +9,12 @@ export {
   type GeneratorEvaluatorConfig,
 } from "./generator-evaluator";
 export { SpecFirst, type SpecOutput } from "./spec-first";
+export {
+  type GeneratedTest,
+  type TDDImplementation,
+  type TDDPhase,
+  type TDDRequirement,
+  type TDDResult,
+  type TDDState,
+  TDDWorkflow,
+} from "./tdd-workflow";

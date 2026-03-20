@@ -1,4 +1,5 @@
-import { jsonSchema } from "ai";
+import type { Tool } from "ai";
+import { jsonSchema, zodSchema } from "ai";
 import { TOOL_REGISTRY } from "./registry";
 import type {
   AgentToolDefinition,
@@ -19,30 +20,41 @@ function serializeToolResult(result: ToolResult): string {
 }
 
 /**
- * Shape matching AI SDK 6 Tool type for tool definitions with execute.
+ * AI SDK 6 tool definition with execute that returns a string.
  */
-interface AISDKToolDef {
-  description: string;
-  execute: (input: Record<string, unknown>) => Promise<string>;
-  inputSchema: ReturnType<typeof jsonSchema>;
-}
+type AISDKToolDef = Tool<Record<string, unknown>, string>;
 
 /**
  * Convert a single AgentToolDefinition into an AI SDK 6 tool object.
+ *
+ * When a tool definition has a `zodSchema` property, it is used directly
+ * via AI SDK 6's `zodSchema()` wrapper for better type inference and
+ * validation. Falls back to `jsonSchema()` for tools without Zod schemas.
  */
 export function convertSingleTool(
   toolDef: AgentToolDefinition,
   executionContext: ToolExecutionContext
 ): AISDKToolDef {
+  const execute = async (input: Record<string, unknown>) => {
+    const result = await toolDef.execute(input, executionContext);
+    return serializeToolResult(result);
+  };
+
+  // Prefer native Zod schema when available for better AI SDK 6 integration
+  if (toolDef.zodSchema) {
+    return {
+      description: toolDef.description,
+      inputSchema: zodSchema(toolDef.zodSchema),
+      execute,
+    };
+  }
+
   return {
     description: toolDef.description,
     inputSchema: jsonSchema<Record<string, unknown>>(
       toolDef.inputSchema as Parameters<typeof jsonSchema>[0]
     ),
-    execute: async (input: Record<string, unknown>) => {
-      const result = await toolDef.execute(input, executionContext);
-      return serializeToolResult(result);
-    },
+    execute,
   };
 }
 

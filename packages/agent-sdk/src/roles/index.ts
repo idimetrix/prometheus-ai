@@ -1,5 +1,7 @@
 import type { AgentRole } from "@prometheus/types";
-import type { BaseAgent } from "../base-agent";
+import type { AgentContext, BaseAgent } from "../base-agent";
+import { TOOL_REGISTRY } from "../tools/registry";
+import type { AgentToolDefinition } from "../tools/types";
 import { ArchitectAgent } from "./architect";
 import { BackendCoderAgent } from "./backend-coder";
 import { CiLoopAgent } from "./ci-loop";
@@ -236,4 +238,77 @@ export function createAgent(role: string): BaseAgent {
     );
   }
   return config.create();
+}
+
+/**
+ * Configuration object compatible with AiSdkAgent from @prometheus/ai.
+ * Contains the fully-resolved system prompt, filtered tools, model identifier,
+ * and role metadata needed to construct an AiSdkAgent instance.
+ */
+export interface AiSdkAgentFullConfig {
+  /** The maximum number of tool-use steps. */
+  maxSteps: number;
+  /** The preferred model identifier for this role. */
+  model: string;
+  /** The agent role identifier. */
+  role: string;
+  /** The full system prompt (reasoning protocol + role-specific prompt). */
+  systemPrompt: string;
+  /** Filtered tool definitions allowed for this role (from TOOL_REGISTRY). */
+  tools: Record<string, AgentToolDefinition>;
+}
+
+/**
+ * Create the full configuration needed for an AiSdkAgent from a role config
+ * and agent context. Resolves the system prompt (including reasoning protocol),
+ * filters the tool registry to only the role's allowed tools, and bundles
+ * the preferred model identifier.
+ *
+ * Usage:
+ * ```ts
+ * const config = createAiSdkAgentConfig("backend_coder", agentContext);
+ * const { model } = createModelForSlot(slotMap[config.role]);
+ * const agent = new AiSdkAgent({
+ *   model,
+ *   tools: convertToolsToAISDK(config.tools, executionContext),
+ *   systemPrompt: config.systemPrompt,
+ *   role: config.role,
+ *   maxSteps: config.maxSteps,
+ * });
+ * ```
+ */
+export function createAiSdkAgentConfig(
+  role: string,
+  context: AgentContext,
+  options?: { maxSteps?: number }
+): AiSdkAgentFullConfig {
+  const roleConfig = AGENT_ROLES[role];
+  if (!roleConfig) {
+    throw new Error(
+      `Unknown agent role: ${role}. Available: ${Object.keys(AGENT_ROLES).join(", ")}`
+    );
+  }
+
+  // Create the BaseAgent instance to access system prompt and reasoning protocol
+  const agent = roleConfig.create();
+  agent.initialize(context);
+
+  const systemPrompt = `${agent.getReasoningProtocol()}\n\n${agent.getSystemPrompt(context)}`;
+
+  // Filter TOOL_REGISTRY to only include tools allowed for this role
+  const allowedToolNames = new Set(roleConfig.tools);
+  const filteredTools: Record<string, AgentToolDefinition> = {};
+  for (const [name, toolDef] of Object.entries(TOOL_REGISTRY)) {
+    if (allowedToolNames.has(name)) {
+      filteredTools[name] = toolDef;
+    }
+  }
+
+  return {
+    role: roleConfig.role,
+    model: roleConfig.preferredModel,
+    systemPrompt,
+    tools: filteredTools,
+    maxSteps: options?.maxSteps ?? 50,
+  };
 }

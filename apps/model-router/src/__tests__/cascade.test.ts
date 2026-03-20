@@ -84,7 +84,7 @@ describe("CascadeRouter", () => {
         if (callCount === 1) {
           return Promise.resolve(
             createMockResponse({
-              content: "I'm not sure about this. TODO",
+              content: "I can't help",
               finishReason: "length",
               costUsd: 0.0001,
             })

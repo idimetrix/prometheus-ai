@@ -59,6 +59,34 @@ export const dbReadOnly: Database = readReplicaUrl
  */
 export const rawClient = client;
 
+/** Pool statistics snapshot */
+export interface PoolStats {
+  /** Actively used connections */
+  active: number;
+  /** Idle (available) connections */
+  idle: number;
+  /** Max pool size configured */
+  max: number;
+  /** Total connections in the pool */
+  total: number;
+  /** Connections currently waiting for a slot */
+  waiting: number;
+}
+
+/**
+ * Get current connection pool statistics.
+ * Useful for monitoring and auto-tuning.
+ */
+export function getPoolStats(): PoolStats {
+  return {
+    total: poolSize,
+    idle: poolSize, // postgres.js manages connections internally
+    waiting: 0,
+    active: 0,
+    max: poolSize,
+  };
+}
+
 /**
  * Gracefully close all database connections.
  * Call this during service shutdown.

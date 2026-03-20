@@ -285,6 +285,79 @@ export class PromptCacheManager {
   }
 
   /**
+   * Perform an embedding-based similarity lookup on cached prompts.
+   * Returns a cached response/entry if a semantically similar prompt
+   * was previously cached above the given similarity threshold.
+   *
+   * Uses trigram fingerprinting as a lightweight embedding approximation.
+   * For production, this could be replaced with actual vector embeddings.
+   */
+  semanticLookup(
+    prompt: string,
+    similarityThreshold = 0.85
+  ): { entry: CacheEntry; similarity: number } | null {
+    const fingerprint = createTrigramFingerprint(prompt);
+    let bestMatch: CacheEntry | null = null;
+    let bestSimilarity = 0;
+
+    for (const entry of this.entries.values()) {
+      const similarity = jaccardSimilarity(fingerprint, entry.fingerprint);
+      if (similarity >= similarityThreshold && similarity > bestSimilarity) {
+        bestSimilarity = similarity;
+        bestMatch = entry;
+      }
+    }
+
+    if (bestMatch) {
+      // Track the semantic cache hit
+      const stats = this.getOrInitStats(bestMatch.provider);
+      stats.cacheHits++;
+
+      const estimatedTokens = Math.ceil(prompt.length / CHARS_PER_TOKEN);
+      stats.savingsUsd += estimatedTokens * CACHE_COST_SAVINGS_PER_TOKEN;
+
+      logger.info(
+        {
+          similarity: bestSimilarity.toFixed(4),
+          matchedHash: bestMatch.promptHash,
+          provider: bestMatch.provider,
+        },
+        "Semantic cache hit via fingerprint similarity"
+      );
+
+      return { entry: bestMatch, similarity: bestSimilarity };
+    }
+
+    return null;
+  }
+
+  /**
+   * Get comprehensive cache metrics including semantic hit rates.
+   */
+  getMetrics(): {
+    entryCount: number;
+    hitRates: CacheStats[];
+    totalHits: number;
+    totalRequests: number;
+  } {
+    const hitRates = this.getCacheHitRates();
+    let totalHits = 0;
+    let totalRequests = 0;
+
+    for (const rate of hitRates) {
+      totalHits += rate.cacheHits;
+      totalRequests += rate.totalRequests;
+    }
+
+    return {
+      entryCount: this.entries.size,
+      hitRates,
+      totalHits,
+      totalRequests,
+    };
+  }
+
+  /**
    * Reset all tracking data.
    */
   reset(): void {
