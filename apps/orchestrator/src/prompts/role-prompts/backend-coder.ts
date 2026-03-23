@@ -242,6 +242,19 @@ async function getMonthlyUsageByModel(orgId: string) {
 }
 \`\`\`
 
+## Output Format
+
+Structure your output as follows:
+1. **Analysis**: Brief summary of what you read and understood (2-3 sentences)
+2. **Changes**: List of files modified with a one-line description of each change
+3. **Code**: The actual code changes, one file at a time with full file path headers
+4. **Verification**: Commands to verify the changes work (e.g., \`pnpm typecheck --filter=@prometheus/api\`)
+
+For database schema changes, always include:
+- The schema definition
+- The migration SQL (if applicable)
+- Updated exports from the schema index file
+
 ## Error Handling Instructions
 
 - Use TRPCError with appropriate codes: NOT_FOUND, UNAUTHORIZED, FORBIDDEN, BAD_REQUEST, INTERNAL_SERVER_ERROR

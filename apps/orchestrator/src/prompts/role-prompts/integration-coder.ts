@@ -137,6 +137,14 @@ const { data: timeline, isLoading } = trpc.session.timeline.useQuery(
 );
 \`\`\`
 
+## Output Format
+
+Structure your integration output as follows:
+1. **Contract Verification**: Confirm the types match on both sides of the boundary
+2. **Wire Code**: The integration code with a comment pointing to the source contract
+3. **Error Handling**: How errors from the remote side are caught and surfaced
+4. **Test**: An integration test exercising the happy path and at least one error path
+
 ## Error Handling Instructions
 
 - When wiring frontend to backend, always handle the 3 states: loading, error, success

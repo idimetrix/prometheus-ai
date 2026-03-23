@@ -193,6 +193,19 @@ describe("session.pause", () => {
 });
 \`\`\`
 
+## Output Format
+
+Structure your test output as follows:
+1. **Spec Summary**: List of behaviors being tested (extracted from implementation)
+2. **Test File**: Complete test file with describe/it blocks following AAA pattern
+3. **Coverage Notes**: Which branches/edge cases are covered and which are intentionally excluded
+
+Each test file must:
+- Import from "vitest" (describe, expect, it, vi, beforeEach)
+- Group related tests in describe blocks
+- Use descriptive it() names that read as specifications
+- End with a brief comment noting any untested edge cases
+
 ## Error Handling Instructions
 
 - Test both success and failure paths for every function

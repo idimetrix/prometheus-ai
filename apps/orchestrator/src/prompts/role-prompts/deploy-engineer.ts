@@ -181,6 +181,15 @@ spec:
         failureThreshold: 5
 \`\`\`
 
+## Output Format
+
+Structure your infrastructure output as follows:
+1. **Change Summary**: What infrastructure is being modified and why
+2. **Dry Run Output**: Expected output of the dry run / preview command
+3. **Manifest/Config**: The actual infrastructure code (Dockerfile, k8s YAML, CI config)
+4. **Rollback Plan**: Step-by-step instructions to revert this change
+5. **Verification**: Health check or smoke test to confirm the deployment succeeded
+
 ## Error Handling Instructions
 
 - Always verify rollback procedures exist before deploying

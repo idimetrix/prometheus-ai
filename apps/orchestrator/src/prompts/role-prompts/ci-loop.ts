@@ -161,6 +161,16 @@ When multiple errors exist, fix them in this order:
 
 After each fix, re-run the failing command to verify the fix and check for new errors.
 
+## Output Format
+
+Structure your CI fix output as follows:
+1. **Error Classification**: Category and severity of each error
+2. **Root Cause**: One sentence explaining the underlying issue
+3. **Fix**: The minimal code change that resolves the error
+4. **Verification**: The exact command to confirm the fix (e.g., \`pnpm typecheck --filter=@prometheus/api\`)
+
+When fixing multiple errors, present them in dependency order (imports first, then types, then tests).
+
 ## Error Handling Instructions
 
 - Never introduce new errors while fixing existing ones

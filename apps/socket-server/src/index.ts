@@ -28,16 +28,30 @@ const httpServer = createServer((req, res) => {
       res.end(JSON.stringify({ status: "draining" }));
       return;
     }
-    res.writeHead(200, { "Content-Type": "application/json" });
-    res.end(
-      JSON.stringify({
-        status: "ok",
-        service: "socket-server",
-        version: process.env.APP_VERSION ?? "0.0.0",
-        uptime: process.uptime(),
-        timestamp: new Date().toISOString(),
-      })
-    );
+    // Async health check with Redis dependency verification
+    (async () => {
+      const dependencies: Record<string, string> = {};
+      try {
+        const redis = createRedisConnection();
+        await redis.ping();
+        await redis.quit();
+        dependencies.redis = "ok";
+      } catch {
+        dependencies.redis = "unavailable";
+      }
+      const allHealthy = Object.values(dependencies).every((v) => v === "ok");
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(
+        JSON.stringify({
+          status: allHealthy ? "ok" : "degraded",
+          service: "socket-server",
+          version: process.env.APP_VERSION ?? "0.0.0",
+          uptime: process.uptime(),
+          timestamp: new Date().toISOString(),
+          dependencies,
+        })
+      );
+    })();
     return;
   }
   if (req.url === "/live") {

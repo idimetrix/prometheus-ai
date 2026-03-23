@@ -21,6 +21,7 @@
   "devDependencies": {
     "@prometheus/config-typescript": "workspace:*",
     "@types/eventsource": "^3.0.0",
+    "@types/node": "^25.5.0",
     "tsup": "^8.5.1",
     "tsx": "^4.21.0",
     "typescript": "^5.9.3"
