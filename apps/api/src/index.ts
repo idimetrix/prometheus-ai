@@ -124,7 +124,8 @@ app.get("/health", async (c) => {
     const { sql } = await import("drizzle-orm");
     await db.execute(sql`SELECT 1`);
     checks.db = true;
-  } catch {
+  } catch (err) {
+    console.error("[health] DB check failed:", (err as Error).message);
     checks.db = false;
   }
 

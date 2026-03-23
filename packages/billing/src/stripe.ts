@@ -37,10 +37,13 @@ function getStripe(): Stripe {
 // ---------------------------------------------------------------------------
 
 export class StripeService {
-  private readonly stripe: Stripe;
+  private _stripe: Stripe | null = null;
 
-  constructor() {
-    this.stripe = getStripe();
+  private get stripe(): Stripe {
+    if (!this._stripe) {
+      this._stripe = getStripe();
+    }
+    return this._stripe;
   }
 
   // -----------------------------------------------------------------------

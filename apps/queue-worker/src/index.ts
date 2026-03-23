@@ -49,10 +49,10 @@ const concurrency = {
 };
 
 // ========== Dead Letter Queues ==========
-const agentTaskDLQ = new Queue("agent-tasks:dlq", {
+const agentTaskDLQ = new Queue("agent-tasks-dlq", {
   connection: createRedisConnection(),
 });
-const billingDLQ = new Queue("credit-grant:dlq", {
+const billingDLQ = new Queue("credit-grant-dlq", {
   connection: createRedisConnection(),
 });
 

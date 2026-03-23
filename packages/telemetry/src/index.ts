@@ -122,7 +122,7 @@ export async function initTelemetry(config: TelemetryConfig): Promise<void> {
     resource,
     traceExporter,
     metricReader,
-    sampler: createSampler(sampleRate),
+    sampler: await createSampler(sampleRate),
   };
 
   // Auto-instrument HTTP, database (pg), Redis, etc.
@@ -158,11 +158,12 @@ export async function initTelemetry(config: TelemetryConfig): Promise<void> {
 /**
  * Create a simple ratio-based sampler.
  */
-function createSampler(ratio: number) {
-  const { TraceIdRatioBasedSampler } =
-    require("@opentelemetry/sdk-trace-base") as {
-      TraceIdRatioBasedSampler: new (ratio: number) => unknown;
-    };
+async function createSampler(ratio: number) {
+  const { TraceIdRatioBasedSampler } = (await import(
+    "@opentelemetry/sdk-trace-base"
+  )) as {
+    TraceIdRatioBasedSampler: new (ratio: number) => unknown;
+  };
   return new TraceIdRatioBasedSampler(ratio);
 }
 
