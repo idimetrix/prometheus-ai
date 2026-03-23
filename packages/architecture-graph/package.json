@@ -10,7 +10,7 @@
   },
   "devDependencies": {
     "@prometheus/config-typescript": "workspace:*",
-    "typescript": "^5.9.3"
+    "typescript": "^6.0.2"
   },
   "scripts": {
     "typecheck": "tsc --noEmit"
