@@ -1,7 +1,7 @@
 import { agents, db, sessions } from "@prometheus/db";
 import { createLogger } from "@prometheus/logger";
 import { EventPublisher, QueueEvents } from "@prometheus/queue";
-import type { Session, SessionStatus } from "@prometheus/types";
+import type { Session, SessionStatus, TaskPhase } from "@prometheus/types";
 import { generateId } from "@prometheus/utils";
 import { and, eq } from "drizzle-orm";
 import { AgentLoop } from "./agent-loop";
@@ -336,6 +336,25 @@ export class SessionManager {
       loopStatus: active.agentLoop.getStatus(),
       creditsConsumed: active.agentLoop.getCreditsConsumed(),
     };
+  }
+
+  async emitTaskProgress(
+    sessionId: string,
+    taskId: string,
+    phase: TaskPhase,
+    progress: number,
+    message: string,
+    agentRole?: string
+  ): Promise<void> {
+    await this.eventPublisher.publishSessionEvent(sessionId, {
+      type: "task_progress",
+      data: { taskId, phase, progress, message, agentRole },
+      timestamp: new Date().toISOString(),
+    });
+    this.logger.debug(
+      { sessionId, taskId, phase, progress },
+      "Task progress emitted"
+    );
   }
 
   getActiveSessions(): ActiveSession[] {

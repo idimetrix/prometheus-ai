@@ -137,6 +137,17 @@ export interface PRCreatedEvent {
   type: "pr_created";
 }
 
+export interface TaskProgressSessionEvent {
+  data: {
+    taskId: string;
+    phase: string;
+    progress: number;
+    message: string;
+    agentRole?: string;
+  };
+  type: "task_progress";
+}
+
 export type TypedSessionEvent =
   | AgentOutputEvent
   | FileChangeEvent
@@ -149,7 +160,8 @@ export type TypedSessionEvent =
   | ReasoningEvent
   | TerminalOutputEvent
   | BrowserScreenshotEvent
-  | PRCreatedEvent;
+  | PRCreatedEvent
+  | TaskProgressSessionEvent;
 
 // Keep backward-compatible generic type
 export interface SessionEvent {

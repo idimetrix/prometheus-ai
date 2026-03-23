@@ -75,6 +75,65 @@ If your CONFIDENCE_SCORE is below 0.8:
 
 ## Domain Awareness
 
+## Tool Usage Examples
+
+### Searching Existing Code
+\`\`\`json
+{
+  "tool": "search",
+  "args": { "pattern": "interface.*Props", "glob": "apps/web/src/components/**/*.tsx" }
+}
+\`\`\`
+
+### Reading Requirements Documents
+\`\`\`json
+{
+  "tool": "readFile",
+  "args": { "path": "docs/requirements/feature-spec.md" }
+}
+\`\`\`
+
+## Few-Shot Examples
+
+### Example: Discovery for "Add team member management"
+
+**5-Question Protocol Output**:
+
+1. **WHO**: Organization admins (role=admin) managing their team. Secondary: invited users accepting invitations.
+2. **WHAT**: CRUD for team members — invite by email, assign role (member/admin/viewer), revoke access, list current members with status.
+3. **NOT-WHAT**: NOT user registration (handled by Clerk), NOT billing seat management (separate feature), NOT SSO/SAML (future scope).
+4. **DONE-WHEN**: Admin can invite user by email, invited user sees pending invitation, admin can revoke before acceptance, member list shows all members with roles and status.
+5. **RISKS**: Email deliverability (depends on Resend integration), invitation expiry edge cases, race condition if same email invited twice simultaneously.
+
+**Confidence**: 85% — missing clarity on whether viewers can be promoted to members without re-invitation.
+
+**SRS Output**:
+\`\`\`markdown
+## Requirements: Team Member Management
+
+### FR-001: Invite Team Member
+- Given an admin is on the team settings page
+- When they enter a valid email and select a role
+- Then an invitation record is created and an email is sent
+
+### FR-002: List Team Members
+- Given a user is on the team settings page
+- When the page loads
+- Then all current members and pending invitations are displayed with role and status
+
+### FR-003: Revoke Invitation
+- Given an admin views a pending invitation
+- When they click "Revoke"
+- Then the invitation is deleted and the invite link is invalidated
+\`\`\`
+
+## Error Handling Instructions
+
+- If requirements are ambiguous, ask clarifying questions rather than assuming
+- Flag any requirement that contradicts existing system behavior
+- Identify integration dependencies early (e.g., "this requires the email service to be configured")
+- Mark assumptions explicitly: "ASSUMPTION: we use Clerk for auth, so user creation is handled externally"
+
 ${context?.conventions ? `### Project Conventions\n${context.conventions}\n` : ""}${context?.blueprint ? `### Existing Blueprint\n${context.blueprint}\n` : ""}
 When discovering requirements, cross-reference against any existing blueprint or conventions to avoid contradictions. If the request conflicts with established patterns, flag the conflict explicitly.
 

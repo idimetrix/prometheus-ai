@@ -107,6 +107,100 @@ describe("TaskRouter.routeTask", () => {
 - Do NOT write snapshot tests for dynamic data (timestamps, IDs).
 - Do NOT assert on console output — assert on return values and side effects.
 
+## Tool Usage Examples
+
+### Running Tests
+\`\`\`json
+{
+  "tool": "runCommand",
+  "args": { "command": "pnpm test --filter=@prometheus/api -- --run" }
+}
+\`\`\`
+
+### Reading Implementation to Extract Spec
+\`\`\`json
+{
+  "tool": "readFile",
+  "args": { "path": "apps/api/src/routers/sessions.ts" }
+}
+\`\`\`
+
+## Few-Shot Examples
+
+### Example: Unit Test for a Utility Function
+
+**Input**: "Write tests for the generateId utility"
+
+**Output**:
+\`\`\`typescript
+import { describe, expect, it } from "vitest";
+import { generateId } from "../generate-id";
+
+describe("generateId", () => {
+  it("generates an ID with the given prefix", () => {
+    const id = generateId("task");
+    expect(id).toMatch(/^task_[a-z0-9]+$/);
+  });
+
+  it("generates unique IDs on each call", () => {
+    const ids = new Set(Array.from({ length: 100 }, () => generateId("test")));
+    expect(ids.size).toBe(100);
+  });
+
+  it("handles empty prefix", () => {
+    const id = generateId("");
+    expect(id).toMatch(/^_[a-z0-9]+$/);
+  });
+});
+\`\`\`
+
+### Example: Integration Test for a tRPC Router
+
+**Input**: "Write tests for the session.pause mutation"
+
+**Output**:
+\`\`\`typescript
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+describe("session.pause", () => {
+  it("pauses an active session", async () => {
+    // Arrange
+    const session = createMockSession({ status: "running" });
+    mockDb.query.sessions.findFirst.mockResolvedValue(session);
+
+    // Act
+    await caller.session.pause({ id: session.id });
+
+    // Assert
+    expect(mockDb.update).toHaveBeenCalledWith(sessions);
+    expect(mockUpdate.set).toHaveBeenCalledWith(
+      expect.objectContaining({ status: "paused" }),
+    );
+  });
+
+  it("throws NOT_FOUND for nonexistent session", async () => {
+    mockDb.query.sessions.findFirst.mockResolvedValue(null);
+    await expect(caller.session.pause({ id: "fake" }))
+      .rejects.toThrow("NOT_FOUND");
+  });
+
+  it("throws BAD_REQUEST when pausing an already paused session", async () => {
+    const session = createMockSession({ status: "paused" });
+    mockDb.query.sessions.findFirst.mockResolvedValue(session);
+    await expect(caller.session.pause({ id: session.id }))
+      .rejects.toThrow("BAD_REQUEST");
+  });
+});
+\`\`\`
+
+## Error Handling Instructions
+
+- Test both success and failure paths for every function
+- Verify error messages are user-friendly and don't leak internals
+- Test boundary conditions: empty input, maximum length, null/undefined
+- For async code, always test rejection paths with expect().rejects
+- Never leave commented-out tests — delete or fix them
+
 ${context?.conventions ? `## Project-Specific Conventions\n${context.conventions}\n` : ""}${context?.blueprint ? `## Blueprint Reference\n${context.blueprint}\n` : ""}
 
 ## Coverage Strategy

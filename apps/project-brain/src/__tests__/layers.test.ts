@@ -1,22 +1,22 @@
 import { describe, expect, it, vi } from "vitest";
 
 vi.mock("@prometheus/db", () => {
-  const selectChain: any = {};
+  const selectChain: Record<string, ReturnType<typeof vi.fn>> = {};
   selectChain.from = vi.fn().mockReturnValue(selectChain);
   selectChain.where = vi.fn().mockReturnValue(selectChain);
   selectChain.orderBy = vi.fn().mockReturnValue(selectChain);
   selectChain.limit = vi.fn().mockResolvedValue([]);
   selectChain.groupBy = vi.fn().mockReturnValue(selectChain);
 
-  const insertChain: any = {};
+  const insertChain: Record<string, ReturnType<typeof vi.fn>> = {};
   insertChain.values = vi.fn().mockReturnValue({
     returning: vi.fn().mockResolvedValue([{ id: "mem_1" }]),
   });
 
-  const deleteChain: any = {};
+  const deleteChain: Record<string, ReturnType<typeof vi.fn>> = {};
   deleteChain.where = vi.fn().mockResolvedValue(undefined);
 
-  const updateChain: any = {};
+  const updateChain: Record<string, ReturnType<typeof vi.fn>> = {};
   updateChain.set = vi
     .fn()
     .mockReturnValue({ where: vi.fn().mockResolvedValue(undefined) });

@@ -11,13 +11,13 @@
     "clean": "rm -rf dist .turbo"
   },
   "dependencies": {
-    "@ai-sdk/anthropic": "^3.0.58",
-    "@ai-sdk/google": "^3.0.43",
-    "@ai-sdk/groq": "^3.0.29",
-    "@ai-sdk/mistral": "^3.0.24",
-    "@ai-sdk/openai": "^3.0.41",
+    "@ai-sdk/anthropic": "^3.0.63",
+    "@ai-sdk/google": "^3.0.53",
+    "@ai-sdk/groq": "^3.0.31",
+    "@ai-sdk/mistral": "^3.0.27",
+    "@ai-sdk/openai": "^3.0.48",
     "@prometheus/logger": "workspace:*",
-    "ai": "^6.0.116",
+    "ai": "^6.0.136",
     "openai": "^6.32.0",
     "zod": "^4.3.6"
   },
@@ -25,6 +25,6 @@
     "@prometheus/config-typescript": "workspace:*",
     "@prometheus/types": "workspace:*",
     "typescript": "^5.9.3",
-    "vitest": "^4.1.0"
+    "vitest": "^4.1.1"
   }
 }

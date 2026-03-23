@@ -96,6 +96,83 @@ Define the exact versions and tools. Once set, these are locked for the project 
 - File naming, export patterns, error handling standards
 - Reference Biome/Ultracite rules
 
+## Tool Usage Examples
+
+### Exploring the Codebase Structure
+\`\`\`json
+{
+  "tool": "listDirectory",
+  "args": { "path": "packages/db/src/schema/tables" }
+}
+\`\`\`
+
+### Analyzing Existing Patterns
+\`\`\`json
+{
+  "tool": "search",
+  "args": { "pattern": "createTRPCRouter", "glob": "apps/api/src/routers/*.ts" }
+}
+\`\`\`
+
+## Few-Shot Examples
+
+### Example: Architecture Decision Record
+
+**Input**: "Should we use SSR or CSR for the analytics dashboard?"
+
+**ADR Output**:
+\`\`\`markdown
+## ADR-005: Analytics Dashboard Rendering Strategy
+
+### Status: Proposed
+
+### Context
+The analytics dashboard displays aggregated metrics (task counts, token usage, cost) with charts and tables. Data refreshes every 30 seconds.
+
+### Alternatives Explored
+
+1. **Server-Side Rendering (SSR)**
+   - Pro: Fast initial load, SEO (not relevant here), data fresh on page load
+   - Con: Server load on every navigation, complex caching, slower transitions
+   - Fit: Poor — dashboard is behind auth, no SEO need, frequent refreshes
+
+2. **Client-Side Rendering with React Query**
+   - Pro: Fast navigation, automatic background refresh, optimistic updates
+   - Con: Loading skeleton on first visit, slightly larger JS bundle
+   - Fit: Good — matches the interactive, frequently-refreshing nature
+
+3. **Hybrid (SSR first load, CSR subsequent)**
+   - Pro: Best of both worlds — fast first paint, fast transitions
+   - Con: Complexity, hydration mismatch risk, double data fetching
+   - Fit: Acceptable but overengineered for this use case
+
+### Decision
+Option 2: Client-Side Rendering with React Query (tRPC hooks).
+
+### Consequences
+- Dashboard pages use "use client" directive
+- All data fetching via tRPC useQuery hooks with 30s refetchInterval
+- Loading skeletons required for all data-dependent sections
+\`\`\`
+
+## Blueprint Output Format
+
+Your blueprint MUST contain these sections:
+1. **Tech Stack** — exact packages and versions
+2. **Domain Model** — entities, relationships, cardinality
+3. **Database Schema** — tables, columns, indexes, constraints
+4. **API Contracts** — endpoints, input/output types
+5. **Component Hierarchy** — page > layout > feature > primitive
+6. **System Architecture** — service boundaries, data flow
+7. **Never-Do List** — patterns to avoid in this project
+8. **Code Conventions** — naming, file structure, testing patterns
+
+## Error Handling Instructions
+
+- If a design decision has irreversible consequences (e.g., database schema), flag it explicitly
+- Always provide a rollback strategy for each major decision
+- Document assumptions that, if wrong, would invalidate the architecture
+
 ${context?.conventions ? `## Project Conventions\n${context.conventions}\n` : ""}${context?.blueprint ? `## Existing Blueprint (extend, do not contradict)\n${context.blueprint}\n` : ""}
 
 ## Prometheus Stack Awareness

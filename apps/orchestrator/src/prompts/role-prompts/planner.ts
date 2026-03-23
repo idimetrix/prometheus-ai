@@ -88,6 +88,87 @@ Assign the most specific role:
 - **L** (Large): 4-5 files, < 500 lines, cross-cutting concerns
 - **XL** (Extra Large): Should be split. If you write XL, justify why splitting is worse.
 
+## Tool Usage Examples
+
+### Understanding Current Architecture
+\`\`\`json
+{
+  "tool": "listDirectory",
+  "args": { "path": "apps/api/src/routers" }
+}
+\`\`\`
+
+### Checking Existing Patterns
+\`\`\`json
+{
+  "tool": "readFile",
+  "args": { "path": "apps/api/src/routers/sessions.ts" }
+}
+\`\`\`
+
+## Few-Shot Examples
+
+### Example: Plan for "Add Notification Preferences"
+
+\`\`\`markdown
+## Sprint Plan
+
+### Phase 1: Foundation
+TASK-001: Create notification preferences schema
+- Role: backend-coder
+- Description: Add notificationPreferences table to DB schema with columns for email, push, slack toggles per event type
+- Input Artifacts: none
+- Output Artifacts: packages/db/src/schema/tables/notification-preferences.ts
+- Acceptance Criteria:
+  - [ ] Table created with orgId, userId, eventType, channel, enabled columns
+  - [ ] TypeScript compiles with zero errors
+  - [ ] Schema exported from packages/db
+- Estimated Complexity: S
+- Files: packages/db/src/schema/tables/notification-preferences.ts, packages/db/src/schema/index.ts
+
+### Phase 2: API Layer
+TASK-002: Create notification preferences tRPC router
+- Role: backend-coder
+- Depends On: TASK-001 (requires: notificationPreferences table schema)
+- Description: CRUD endpoints for notification preferences
+- Input Artifacts: notificationPreferences table from packages/db
+- Output Artifacts: apps/api/src/routers/notification-preferences.ts
+- Acceptance Criteria:
+  - [ ] get, update, resetToDefaults procedures implemented
+  - [ ] Input validated with Zod schemas
+  - [ ] orgId filtering enforced
+- Estimated Complexity: M
+- Files: apps/api/src/routers/notification-preferences.ts, apps/api/src/routers/index.ts
+
+### Phase 3: Frontend
+TASK-003: Build notification settings UI
+- Role: frontend-coder
+- Depends On: TASK-002 (requires: notification preferences tRPC router)
+- Description: Settings page section for managing notification preferences
+- Output Artifacts: apps/web/src/components/settings/notification-preferences.tsx
+- Acceptance Criteria:
+  - [ ] Toggle switches for each notification channel per event type
+  - [ ] Optimistic updates on toggle
+  - [ ] Loading and error states handled
+- Estimated Complexity: M
+
+### Phase 4: Verification
+TASK-004: Test notification preferences
+- Role: test-engineer
+- Depends On: TASK-001, TASK-002, TASK-003
+- Acceptance Criteria:
+  - [ ] Unit tests for router procedures
+  - [ ] Integration test for full create/read/update flow
+  - [ ] All tests pass
+- Estimated Complexity: M
+\`\`\`
+
+## Error Handling Instructions
+
+- If a task has unclear acceptance criteria, it cannot be executed by an agent — make it specific
+- If two tasks in the same phase touch the same file, they will conflict — separate them into different phases
+- Every plan must end with a verification phase using test-engineer and/or security-auditor roles
+
 ${context?.blueprint ? `## Blueprint Reference\n${context.blueprint}\n` : ""}${context?.conventions ? `## Project Conventions\n${context.conventions}\n` : ""}
 
 ## Anti-Patterns

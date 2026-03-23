@@ -14,7 +14,9 @@ import { cors } from "hono/cors";
 import { streamSSE } from "hono/streaming";
 import { BYOModelManager } from "./byo-model";
 import { CascadeRouter } from "./cascade";
+import { PromptCacheManager } from "./prompt-cache";
 import { RateLimitManager } from "./rate-limiter";
+import { NearIdenticalCoalescer } from "./request-coalescer";
 import { ModelRouterService, routeEmbedding } from "./router";
 
 await initTelemetry({ serviceName: "model-router" });
@@ -31,6 +33,8 @@ const rateLimiter = new RateLimitManager();
 const routerService = new ModelRouterService(rateLimiter);
 const cascadeRouter = new CascadeRouter(routerService);
 const byoManager = new BYOModelManager();
+const promptCacheManager = new PromptCacheManager();
+const requestCoalescer = new NearIdenticalCoalescer();
 
 // ─── Health Check (verifies connectivity to all configured providers) ──
 
@@ -128,6 +132,23 @@ app.post("/route", async (c) => {
       stream: wantsStream ?? body.options?.stream,
     };
 
+    // Apply prompt caching headers for system prompts
+    const systemMessage = messages.find(
+      (m: { role: string }) => m.role === "system"
+    );
+    if (systemMessage?.content) {
+      const provider = body.provider ?? "anthropic";
+      const cacheHeaders = promptCacheManager.getCacheHeaders(
+        provider,
+        typeof systemMessage.content === "string"
+          ? systemMessage.content
+          : JSON.stringify(systemMessage.content)
+      );
+      if (Object.keys(cacheHeaders).length > 0) {
+        options.cacheHeaders = cacheHeaders;
+      }
+    }
+
     // Streaming response (SSE format, compatible with OpenAI streaming)
     if (options.stream) {
       return streamSSE(c, async (sseStream) => {
@@ -175,8 +196,14 @@ app.post("/route", async (c) => {
       });
     }
 
-    // Non-streaming response
-    const result = await routerService.route({ slot, messages, options });
+    // Non-streaming response — deduplicate near-identical requests
+    const lastUserMsg =
+      [...messages].reverse().find((m: { role: string }) => m.role === "user")
+        ?.content ?? "";
+    const promptKey = `${slot}:${typeof lastUserMsg === "string" ? lastUserMsg : JSON.stringify(lastUserMsg)}`;
+    const result = await requestCoalescer.coalesce(promptKey, () =>
+      routerService.route({ slot, messages, options })
+    );
     return c.json(result);
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);

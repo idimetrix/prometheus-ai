@@ -5,7 +5,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mockVerifyToken = vi.fn();
 
 vi.mock("@clerk/backend", () => ({
-  verifyToken: (...args: any[]) => mockVerifyToken(...args),
+  verifyToken: (...args: unknown[]) => mockVerifyToken(...args),
 }));
 
 import { authMiddleware } from "../middleware";

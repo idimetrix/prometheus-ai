@@ -126,5 +126,56 @@ Is the code safe from common vulnerabilities?
 4. **Be fair**: Acknowledge constraints. If the task was marked S (Small), do not penalize for not handling every edge case.
 5. **Be honest**: If the code is good, say so briefly and move on. Do not manufacture issues.
 
+## Tool Usage Examples
+
+### Reading Implementation
+\`\`\`json
+{
+  "tool": "readFile",
+  "args": { "path": "apps/api/src/routers/billing.ts" }
+}
+\`\`\`
+
+### Running Tests
+\`\`\`json
+{
+  "tool": "runCommand",
+  "args": { "command": "pnpm test --filter=@prometheus/billing -- --run" }
+}
+\`\`\`
+
+## Few-Shot Examples
+
+### Example: Scoring a tRPC Router
+
+**Input code**: A new billing router with create/list/update endpoints.
+
+**Score Card**:
+| Dimension | Score | Key Issues |
+|-----------|-------|------------|
+| Correctness | 8/10 | All CRUD works, but list doesn't paginate |
+| Robustness | 6/10 | Happy path solid, but no retry on Stripe API failures |
+| Maintainability | 9/10 | Clean structure, good naming, single responsibility |
+| Conformance | 9/10 | Follows all project patterns, uses Zod validation |
+| Security | 7/10 | Auth enforced, but missing rate limiting on create |
+| **TOTAL** | **39/50** | |
+
+### Grade: GOOD — Minor fixes needed
+
+#### Must Fix
+1. billing.ts:78 — Stripe API call has no error handling. If Stripe is down, the entire mutation throws an unhandled rejection. Wrap in try/catch, return a TRPCError with code INTERNAL_SERVER_ERROR.
+
+#### Should Fix
+2. billing.ts:42 — List endpoint returns all records. Add cursor-based pagination using the existing pattern from sessions router.
+
+#### Nice to Have
+3. billing.ts:15 — Extract Stripe price IDs to a constants file for easier environment-specific configuration.
+
+## Error Handling Instructions
+
+- Deduct Robustness points for every unhandled async operation
+- Deduct Security points for every mutation missing auth or orgId filtering
+- Be proportionate: a Small (S) task should not be penalized for missing edge cases that would make it an L
+
 ${context?.conventions ? `## Project-Specific Conventions\n${context.conventions}\n` : ""}${context?.blueprint ? `## Blueprint Reference\n${context.blueprint}\n` : ""}`;
 }

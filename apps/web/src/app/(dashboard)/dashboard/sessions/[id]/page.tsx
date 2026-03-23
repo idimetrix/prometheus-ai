@@ -1,6 +1,7 @@
 "use client";
 
 import { use, useEffect, useRef, useState } from "react";
+import { SessionControls } from "@/components/session/session-controls";
 import { useSessionStream } from "@/hooks/use-session-stream";
 import { trpc } from "@/lib/trpc";
 import { useSessionStore } from "@/stores/session.store";
@@ -397,23 +398,7 @@ export default function SessionPage({
   const session = sessionQuery.data;
   const status = session?.status ?? sessionStatus ?? "loading";
 
-  const [approvalRequired, setApprovalRequired] = useState(false);
-
-  async function handlePause() {
-    await pauseMutation.mutateAsync({ sessionId });
-    sessionQuery.refetch();
-  }
-
-  async function handleResume() {
-    await resumeMutation.mutateAsync({ sessionId });
-    sessionQuery.refetch();
-  }
-
   const [showCancelConfirm, setShowCancelConfirm] = useState(false);
-
-  function handleCancel() {
-    setShowCancelConfirm(true);
-  }
 
   return (
     <div className="flex h-[calc(100vh-theme(spacing.14)-theme(spacing.12))] flex-col gap-3">
@@ -475,60 +460,21 @@ export default function SessionPage({
           </span>
         </div>
 
-        <div className="flex items-center gap-2">
-          {approvalRequired && (
-            <button
-              className="rounded-lg bg-green-600 px-4 py-1.5 font-medium text-white text-xs transition-colors hover:bg-green-700"
-              onClick={() => setApprovalRequired(false)}
-              type="button"
-            >
-              Approve
-            </button>
-          )}
-
-          {status === "active" && (
-            <button
-              className="rounded-lg border border-zinc-700 bg-zinc-800 px-4 py-1.5 font-medium text-xs text-zinc-300 transition-colors hover:bg-zinc-700 disabled:opacity-50"
-              disabled={pauseMutation.isPending}
-              onClick={handlePause}
-              type="button"
-            >
-              Pause
-            </button>
-          )}
-
-          {status === "paused" && (
-            <button
-              className="rounded-lg bg-violet-600 px-4 py-1.5 font-medium text-white text-xs transition-colors hover:bg-violet-700 disabled:opacity-50"
-              disabled={resumeMutation.isPending}
-              onClick={handleResume}
-              type="button"
-            >
-              Resume
-            </button>
-          )}
-
-          <button
-            className="rounded-lg border border-red-800/50 bg-red-950/50 px-4 py-1.5 font-medium text-red-400 text-xs transition-colors hover:bg-red-900/50 disabled:opacity-30"
-            disabled={
-              cancelMutation.isPending ||
-              status === "completed" ||
-              status === "cancelled" ||
-              status === "failed"
-            }
-            onClick={handleCancel}
-            type="button"
-          >
-            Cancel
-          </button>
-
-          <button
-            className="rounded-lg border border-zinc-700 bg-zinc-800 px-4 py-1.5 font-medium text-xs text-zinc-300 transition-colors hover:bg-zinc-700"
-            type="button"
-          >
-            Take Control
-          </button>
-        </div>
+        <SessionControls
+          onCancel={async () => {
+            setShowCancelConfirm(true);
+          }}
+          onPause={async () => {
+            await pauseMutation.mutateAsync({ sessionId });
+            sessionQuery.refetch();
+          }}
+          onResume={async () => {
+            await resumeMutation.mutateAsync({ sessionId });
+            sessionQuery.refetch();
+          }}
+          sessionId={sessionId}
+          status={status}
+        />
       </div>
 
       {/* Cancel confirmation dialog */}

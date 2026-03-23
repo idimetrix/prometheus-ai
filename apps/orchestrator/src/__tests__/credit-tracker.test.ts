@@ -13,7 +13,8 @@ const mockPublishSessionEvent = vi.fn().mockResolvedValue(undefined);
 
 vi.mock("@prometheus/queue", () => ({
   EventPublisher: class {
-    publishSessionEvent = (...args: any[]) => mockPublishSessionEvent(...args);
+    publishSessionEvent = (...args: unknown[]) =>
+      mockPublishSessionEvent(...args);
   },
   QueueEvents: {
     CREDIT_UPDATE: "credit:update",
@@ -36,7 +37,7 @@ const dbMocks = {
 vi.mock("@prometheus/db", () => {
   return {
     db: {
-      transaction: vi.fn(async (fn: any) => {
+      transaction: vi.fn(async (fn: (tx: unknown) => Promise<unknown>) => {
         if (dbMocks.transactionError) {
           throw dbMocks.transactionError;
         }

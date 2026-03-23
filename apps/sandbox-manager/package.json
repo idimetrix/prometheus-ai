@@ -12,9 +12,9 @@
     "clean": "rm -rf dist .turbo"
   },
   "dependencies": {
-    "hono": "^4.12.8",
+    "hono": "^4.12.9",
     "@hono/node-server": "^1.19.11",
-    "dockerode": "^4.0.9",
+    "dockerode": "^4.0.10",
     "@prometheus/logger": "workspace:*",
     "@prometheus/telemetry": "workspace:*",
     "@prometheus/types": "workspace:*",

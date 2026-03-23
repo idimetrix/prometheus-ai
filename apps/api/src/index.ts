@@ -143,10 +143,14 @@ app.get("/health", async (c) => {
   return c.json(
     {
       status,
-      checks,
+      service: "api",
+      version: process.env.APP_VERSION ?? "0.1.0",
       uptime: Math.floor(startTime),
-      version: "0.1.0",
       timestamp: new Date().toISOString(),
+      dependencies: {
+        db: checks.db ? "ok" : "unavailable",
+        redis: checks.redis ? "ok" : "unavailable",
+      },
     },
     allHealthy ? 200 : 503
   );

@@ -85,6 +85,7 @@ export const SessionEventType = {
   FILE_CHANGE: "file_change",
   PLAN_UPDATE: "plan_update",
   TASK_STATUS: "task_status",
+  TASK_PROGRESS: "task_progress",
   QUEUE_POSITION: "queue_position",
   CREDIT_UPDATE: "credit_update",
   CHECKPOINT: "checkpoint",

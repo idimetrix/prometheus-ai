@@ -29,7 +29,15 @@ const httpServer = createServer((req, res) => {
       return;
     }
     res.writeHead(200, { "Content-Type": "application/json" });
-    res.end(JSON.stringify({ status: "ok", service: "socket-server" }));
+    res.end(
+      JSON.stringify({
+        status: "ok",
+        service: "socket-server",
+        version: process.env.APP_VERSION ?? "0.0.0",
+        uptime: process.uptime(),
+        timestamp: new Date().toISOString(),
+      })
+    );
     return;
   }
   if (req.url === "/live") {

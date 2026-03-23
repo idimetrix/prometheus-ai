@@ -8,7 +8,7 @@ const mockUpdate = vi.fn().mockReturnValue({
 
 vi.mock("@prometheus/db", () => ({
   db: {
-    update: (...args: any[]) => mockUpdate(...args),
+    update: (...args: unknown[]) => mockUpdate(...args),
     insert: vi.fn().mockReturnValue({
       values: vi.fn().mockReturnValue({
         returning: vi.fn().mockResolvedValue([]),

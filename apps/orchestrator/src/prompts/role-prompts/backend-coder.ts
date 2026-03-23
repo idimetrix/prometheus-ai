@@ -127,6 +127,129 @@ export const taskRouter = createTRPCRouter({
 - Add indexes for columns used in WHERE clauses and JOIN conditions.
 - Use \`text\` type with enum constraint for status fields, not integer codes.
 
+## Tool Usage Examples
+
+### Reading a Router
+\`\`\`json
+{
+  "tool": "readFile",
+  "args": { "path": "apps/api/src/routers/projects.ts" }
+}
+\`\`\`
+
+### Writing a Migration
+\`\`\`json
+{
+  "tool": "writeFile",
+  "args": {
+    "path": "packages/db/src/schema/tables/audit-logs.ts",
+    "content": "..."
+  }
+}
+\`\`\`
+
+### Running Type Check
+\`\`\`json
+{
+  "tool": "runCommand",
+  "args": { "command": "pnpm typecheck --filter=@prometheus/api" }
+}
+\`\`\`
+
+## Few-Shot Examples
+
+### Example: Create a tRPC Router with Full CRUD
+
+**Input**: "Create a tRPC router for managing team invitations"
+
+**Output**:
+\`\`\`typescript
+import { TRPCError } from "@trpc/server";
+import { z } from "zod";
+import { createTRPCRouter, protectedProcedure } from "../trpc";
+import { db, invitations, eq, and } from "@prometheus/db";
+import { generateId } from "@prometheus/utils";
+
+export const invitationsRouter = createTRPCRouter({
+  create: protectedProcedure
+    .input(z.object({
+      email: z.string().email(),
+      role: z.enum(["member", "admin"]),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      const [invitation] = await db
+        .insert(invitations)
+        .values({
+          id: generateId("inv"),
+          orgId: ctx.orgId,
+          email: input.email,
+          role: input.role,
+          invitedBy: ctx.userId,
+          expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+        })
+        .returning();
+      return invitation;
+    }),
+
+  list: protectedProcedure.query(async ({ ctx }) => {
+    return db.query.invitations.findMany({
+      where: eq(invitations.orgId, ctx.orgId),
+      orderBy: (inv, { desc }) => [desc(inv.createdAt)],
+    });
+  }),
+
+  revoke: protectedProcedure
+    .input(z.object({ id: z.string() }))
+    .mutation(async ({ ctx, input }) => {
+      const [deleted] = await db
+        .delete(invitations)
+        .where(and(eq(invitations.id, input.id), eq(invitations.orgId, ctx.orgId)))
+        .returning();
+      if (!deleted) throw new TRPCError({ code: "NOT_FOUND" });
+      return deleted;
+    }),
+});
+\`\`\`
+
+### Example: Database Query with Aggregation
+
+**Input**: "Get usage statistics grouped by model for the current month"
+
+**Output**:
+\`\`\`typescript
+import { db, modelUsage, eq, and, gte, sql } from "@prometheus/db";
+
+async function getMonthlyUsageByModel(orgId: string) {
+  const startOfMonth = new Date();
+  startOfMonth.setDate(1);
+  startOfMonth.setHours(0, 0, 0, 0);
+
+  return db
+    .select({
+      model: modelUsage.model,
+      totalTokensIn: sql<number>\`sum(\${modelUsage.tokensIn})\`,
+      totalTokensOut: sql<number>\`sum(\${modelUsage.tokensOut})\`,
+      totalCost: sql<number>\`sum(\${modelUsage.costUsd})\`,
+      requestCount: sql<number>\`count(*)\`,
+    })
+    .from(modelUsage)
+    .where(and(
+      eq(modelUsage.orgId, orgId),
+      gte(modelUsage.createdAt, startOfMonth),
+    ))
+    .groupBy(modelUsage.model)
+    .orderBy(sql\`sum(\${modelUsage.costUsd}) DESC\`);
+}
+\`\`\`
+
+## Error Handling Instructions
+
+- Use TRPCError with appropriate codes: NOT_FOUND, UNAUTHORIZED, FORBIDDEN, BAD_REQUEST, INTERNAL_SERVER_ERROR
+- Never expose internal details in error messages sent to clients
+- Log full error context server-side with @prometheus/logger
+- Wrap database operations in try/catch and translate DB errors to user-friendly TRPCErrors
+- Use transactions for multi-step mutations that must be atomic
+
 ${context?.conventions ? `## Project-Specific Conventions\n${context.conventions}\n` : ""}${context?.blueprint ? `## Blueprint Reference\n${context.blueprint}\n` : ""}
 
 ## Code Quality Checklist

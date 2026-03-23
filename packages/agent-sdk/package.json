@@ -16,13 +16,13 @@
     "@prometheus/logger": "workspace:*",
     "@prometheus/queue": "workspace:*",
     "@prometheus/utils": "workspace:*",
-    "ai": "^6.0.116",
+    "ai": "^6.0.136",
     "openai": "^6.32.0",
     "zod": "^4.3.6"
   },
   "devDependencies": {
     "@prometheus/config-typescript": "workspace:*",
     "typescript": "^5.9.3",
-    "vitest": "^4.1.0"
+    "vitest": "^4.1.1"
   }
 }

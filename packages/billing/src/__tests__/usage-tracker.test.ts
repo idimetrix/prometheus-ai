@@ -18,8 +18,8 @@ mockSelect.mockReturnValue(selectChain);
 
 vi.mock("@prometheus/db", () => ({
   db: {
-    insert: (...args: any[]) => mockInsert(...args),
-    select: (...args: any[]) => mockSelect(...args),
+    insert: (...args: unknown[]) => mockInsert(...args),
+    select: (...args: unknown[]) => mockSelect(...args),
   },
   modelUsage: {
     orgId: "orgId",

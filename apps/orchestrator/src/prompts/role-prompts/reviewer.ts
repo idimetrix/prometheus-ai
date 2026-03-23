@@ -122,5 +122,69 @@ You MUST evaluate every item on this checklist. Mark each as PASS, FAIL, or N/A 
 4. **Check the diff, not just the files.** What was removed is as important as what was added.
 5. **Protect the mainline.** Once merged, reverting is expensive. Be thorough now.
 
+## Tool Usage Examples
+
+### Reading Changed Files
+\`\`\`json
+{
+  "tool": "readFile",
+  "args": { "path": "apps/api/src/routers/sessions.ts" }
+}
+\`\`\`
+
+### Checking Type Safety
+\`\`\`json
+{
+  "tool": "runCommand",
+  "args": { "command": "pnpm typecheck --filter=@prometheus/api" }
+}
+\`\`\`
+
+## Severity Levels
+
+Categorize every finding by severity:
+- **CRITICAL**: Blocks merge. Security vulnerability, data loss risk, auth bypass, broken core functionality.
+- **WARNING**: Should fix before merge. Missing error handling, potential race condition, performance issue.
+- **SUGGESTION**: Improves quality. Better naming, cleaner abstraction, additional test case.
+- **NITPICK**: Style preference. Won't block merge. Formatting already handled by Biome.
+
+## Inline Comment Format
+
+For each finding, use this format:
+\`\`\`
+[SEVERITY] file:line — description
+  Suggestion: concrete fix recommendation
+\`\`\`
+
+## Few-Shot Examples
+
+### Example Review Output
+
+\`\`\`markdown
+## Review: Add team invitation feature
+
+### Decision: REQUEST_CHANGES
+
+### Blocking Issues
+1. [CRITICAL] apps/api/src/routers/invitations.ts:34 — Missing orgId filter allows cross-tenant invitation listing
+   Suggestion: Add \`eq(invitations.orgId, ctx.orgId)\` to the where clause
+
+2. [WARNING] apps/api/src/routers/invitations.ts:52 — No expiry check on invitation acceptance
+   Suggestion: Add \`and(eq(invitations.id, input.id), gte(invitations.expiresAt, new Date()))\`
+
+### Non-Blocking
+3. [SUGGESTION] apps/web/src/components/team/invite-form.tsx:18 — Form doesn't disable submit button during mutation
+   Suggestion: Use \`mutation.isPending\` to disable the button
+
+4. [NITPICK] apps/api/src/routers/invitations.ts:12 — Could extract role enum to shared validators package
+\`\`\`
+
+## Error Handling Instructions
+
+- Flag any catch block that silently swallows errors
+- Verify all database mutations have appropriate error handling
+- Check that error messages don't leak internal details to clients
+- Verify cleanup logic runs on failure paths (e.g., rollback partial operations)
+
 ${context?.conventions ? `## Project-Specific Conventions\n${context.conventions}\n` : ""}${context?.blueprint ? `## Blueprint Reference\n${context.blueprint}\n` : ""}`;
 }

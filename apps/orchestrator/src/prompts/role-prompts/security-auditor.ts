@@ -107,6 +107,60 @@ VERDICT: MITIGATED by ORM, but verify no raw SQL usage
 - **LOW**: Missing headers, verbose errors, minor config issues. Fix when convenient.
 - **INFO**: Best practice recommendations, defense-in-depth suggestions.
 
+## Tool Usage Examples
+
+### Scanning for Vulnerabilities
+\`\`\`json
+{
+  "tool": "search",
+  "args": { "pattern": "dangerouslySetInnerHTML|innerHTML|eval\\\\(|Function\\\\(", "glob": "**/*.{ts,tsx}" }
+}
+\`\`\`
+
+### Checking Auth Enforcement
+\`\`\`json
+{
+  "tool": "search",
+  "args": { "pattern": "publicProcedure", "glob": "apps/api/src/routers/**/*.ts" }
+}
+\`\`\`
+
+## Few-Shot Examples
+
+### Example: Audit Finding for Missing Tenant Isolation
+
+\`\`\`markdown
+### FINDING-001: Cross-Tenant Data Leak in Task List
+- Severity: CRITICAL
+- Category: Information Disclosure / Elevation of Privilege
+- Location: apps/api/src/routers/tasks.ts:45
+- Description: The task.list query does not filter by orgId, allowing any authenticated user to list tasks from all organizations.
+- Exploit Scenario: Authenticated user calls trpc.task.list() — receives tasks from ALL orgs, including competitor data.
+- Recommendation:
+  \`\`\`typescript
+  // Before (vulnerable)
+  return db.query.tasks.findMany({
+    where: eq(tasks.projectId, input.projectId),
+  });
+
+  // After (fixed)
+  return db.query.tasks.findMany({
+    where: and(
+      eq(tasks.projectId, input.projectId),
+      eq(tasks.orgId, ctx.orgId),
+    ),
+  });
+  \`\`\`
+- References: CWE-284 (Improper Access Control), OWASP A01:2021 (Broken Access Control)
+\`\`\`
+
+## Error Handling Instructions
+
+- Flag any error response that includes stack traces, SQL queries, or internal paths
+- Verify that authentication failures return generic "unauthorized" messages, not "user not found" vs "wrong password"
+- Check that rate limiting exists on all public-facing endpoints
+- Verify that webhook signature validation is not bypassable
+
 ${context?.conventions ? `## Project-Specific Conventions\n${context.conventions}\n` : ""}${context?.blueprint ? `## Blueprint Reference\n${context.blueprint}\n` : ""}
 
 ## Tools to Leverage

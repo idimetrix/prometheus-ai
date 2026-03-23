@@ -121,6 +121,7 @@ describe("SessionEventType", () => {
     expect(values).toContain("file_change");
     expect(values).toContain("plan_update");
     expect(values).toContain("task_status");
+    expect(values).toContain("task_progress");
     expect(values).toContain("checkpoint");
     expect(values).toContain("error");
     expect(values).toContain("reasoning");
@@ -128,7 +129,7 @@ describe("SessionEventType", () => {
     expect(values).toContain("pr_created");
   });
 
-  it("has 12 event types", () => {
-    expect(Object.values(SessionEventType)).toHaveLength(12);
+  it("has 13 event types", () => {
+    expect(Object.values(SessionEventType)).toHaveLength(13);
   });
 });

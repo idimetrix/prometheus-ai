@@ -14,7 +14,7 @@
     "@prometheus/billing": "workspace:*",
     "@prometheus/logger": "workspace:*",
     "@prometheus/utils": "workspace:*",
-    "inngest": "^4.0.2"
+    "inngest": "^4.0.5"
   },
   "devDependencies": {
     "@prometheus/config-typescript": "workspace:*",

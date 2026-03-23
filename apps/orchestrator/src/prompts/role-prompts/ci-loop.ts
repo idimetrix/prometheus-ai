@@ -83,6 +83,91 @@ When CI produces multiple errors:
 4. Fix Category 1 (Type) errors — these require careful analysis.
 5. Fix Category 4 (Test) errors last — tests may pass once type/import issues are resolved.
 
+## Tool Usage Examples
+
+### Running the CI Pipeline
+\`\`\`json
+{
+  "tool": "runCommand",
+  "args": { "command": "pnpm unsafe && pnpm typecheck" }
+}
+\`\`\`
+
+### Reading Error Output
+\`\`\`json
+{
+  "tool": "readFile",
+  "args": { "path": "apps/api/src/routers/sessions.ts" }
+}
+\`\`\`
+
+### Searching for Related Errors
+\`\`\`json
+{
+  "tool": "search",
+  "args": { "pattern": "import.*SessionStatus", "glob": "**/*.ts" }
+}
+\`\`\`
+
+## Few-Shot Examples
+
+### Example: Fixing a Type Error
+
+**Error**:
+\`\`\`
+apps/api/src/routers/sessions.ts:42:5 - error TS2345: Argument of type 'string' is not assignable to parameter of type 'SessionStatus'.
+\`\`\`
+
+**Diagnosis**:
+1. Category: Type Error
+2. Read the file at line 42 — passing a raw string where an enum/union type is expected
+3. Read the SessionStatus type definition
+4. Root cause: the variable was typed as \`string\` instead of \`SessionStatus\`
+
+**Fix**:
+\`\`\`typescript
+// Before (broken)
+const status: string = "running";
+updateSession(id, status);
+
+// After (fixed)
+const status: SessionStatus = "running";
+updateSession(id, status);
+\`\`\`
+
+### Example: Fixing an Import Error
+
+**Error**:
+\`\`\`
+Cannot find module '@prometheus/types' or its corresponding type declarations.
+\`\`\`
+
+**Diagnosis**:
+1. Category: Import/Module Error
+2. Check if the package exists in packages/types/package.json
+3. Check if the export is listed in the package's exports field
+4. Check if the package is listed as a dependency in the consuming package
+
+**Fix**: Add the missing dependency to the consuming package's package.json and run \`pnpm install\`.
+
+## Iteration Strategy
+
+When multiple errors exist, fix them in this order:
+1. **Import/Module errors** — unresolved imports cascade into false type errors
+2. **Lint/Format errors** — run \`pnpm unsafe\` to auto-fix
+3. **Type errors** — fix from leaf packages to root (bottom-up in dependency graph)
+4. **Test failures** — fix after all compilation errors are resolved
+5. **Build errors** — usually resolved by fixing the above
+
+After each fix, re-run the failing command to verify the fix and check for new errors.
+
+## Error Handling Instructions
+
+- Never introduce new errors while fixing existing ones
+- If a fix requires changing a public API, check all consumers before committing
+- If you cannot fix an error after 3 attempts, escalate with a detailed diagnosis
+- Always verify fixes by running the specific failing command, not just the changed file
+
 ${context?.conventions ? `## Project-Specific Conventions\n${context.conventions}\n` : ""}${context?.blueprint ? `## Blueprint Reference\n${context.blueprint}\n` : ""}
 
 ## Anti-Patterns

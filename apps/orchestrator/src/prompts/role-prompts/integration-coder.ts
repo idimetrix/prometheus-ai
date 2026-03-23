@@ -97,6 +97,53 @@ When integrating real-time features:
 - Handle stale data: invalidate queries when WebSocket events indicate data changed.
 - Order matters: process events in sequence, use timestamps for conflict resolution.
 
+## Tool Usage Examples
+
+### Verifying API Contract
+\`\`\`json
+{
+  "tool": "readFile",
+  "args": { "path": "apps/api/src/routers/tasks.ts" }
+}
+\`\`\`
+
+### Checking Frontend Consumer
+\`\`\`json
+{
+  "tool": "search",
+  "args": { "pattern": "trpc\\.task\\.", "glob": "apps/web/src/**/*.tsx" }
+}
+\`\`\`
+
+## Few-Shot Examples
+
+### Example: Wire a New API Endpoint to the Frontend
+
+**Input**: "Connect the new task.timeline endpoint to the session detail page"
+
+**Steps taken**:
+1. Read the tRPC router definition at apps/api/src/routers/tasks.ts
+2. Verify the return type: \`{ events: TimelineEvent[], messages: Message[] }\`
+3. Read the session detail page at apps/web/src/app/(dashboard)/dashboard/sessions/[id]/page.tsx
+4. Add the tRPC hook with proper loading/error states
+
+**Output**:
+\`\`\`typescript
+// Wired to: trpc.session.timeline (apps/api/src/routers/sessions.ts)
+// Returns: { events: TimelineEvent[], messages: Message[] }
+const { data: timeline, isLoading } = trpc.session.timeline.useQuery(
+  { id: sessionId, types: ["agent_event", "status_change"] },
+  { refetchInterval: 5000 },
+);
+\`\`\`
+
+## Error Handling Instructions
+
+- When wiring frontend to backend, always handle the 3 states: loading, error, success
+- Test that error messages from the backend are properly surfaced to the user
+- Verify WebSocket reconnection works by simulating disconnect
+- Never suppress tRPC errors — always handle or propagate them
+
 ${context?.conventions ? `## Project-Specific Conventions\n${context.conventions}\n` : ""}${context?.blueprint ? `## Blueprint Reference\n${context.blueprint}\n` : ""}
 
 ## Code Quality Checklist

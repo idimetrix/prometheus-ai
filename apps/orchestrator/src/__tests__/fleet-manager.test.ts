@@ -57,7 +57,7 @@ vi.mock("../parallel/scheduler", () => ({
   ParallelScheduler: class {
     schedule = vi.fn().mockImplementation((tasks) => ({
       waves: [tasks], // Single wave with all tasks
-      criticalPath: tasks.map((t: any) => t.id),
+      criticalPath: tasks.map((t: { id: string }) => t.id),
       estimatedDuration: "5m",
     }));
   },

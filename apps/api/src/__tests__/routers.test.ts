@@ -8,8 +8,23 @@ const PK_LIVE_HEX_RE = /^pk_live_[0-9a-f]{64}$/;
 
 // ── shared mock factories ────────────────────────────────────────────────────
 
-function mockChain(rows: unknown[] = []) {
-  const chain: Record<string, any> = {};
+// biome-ignore lint/suspicious/noExplicitAny: test mock chains require flexible return types for chaining
+type ChainMock = ReturnType<typeof vi.fn> & ((...args: any[]) => any);
+
+interface MockChain {
+  from: ChainMock;
+  groupBy: ChainMock;
+  limit: ChainMock;
+  orderBy: ChainMock;
+  returning: ChainMock;
+  set: ChainMock;
+  values: ChainMock;
+  where: ChainMock;
+  [key: string]: ChainMock;
+}
+
+function mockChain(rows: unknown[] = []): MockChain {
+  const chain = {} as MockChain;
   chain.returning = vi.fn().mockResolvedValue(rows);
   chain.where = vi.fn().mockReturnValue(chain);
   chain.set = vi.fn().mockReturnValue(chain);
@@ -202,10 +217,10 @@ vi.mock("@prometheus/validators", async (importOriginal) => {
   const actual = (await importOriginal()) as Record<string, unknown>;
   return {
     ...actual,
-    createProjectSchema: { parse: (v: any) => v },
-    updateProjectSchema: { parse: (v: any) => v },
-    createSessionSchema: { parse: (v: any) => v },
-    submitTaskSchema: { parse: (v: any) => v },
+    createProjectSchema: { parse: (v: unknown) => v },
+    updateProjectSchema: { parse: (v: unknown) => v },
+    createSessionSchema: { parse: (v: unknown) => v },
+    submitTaskSchema: { parse: (v: unknown) => v },
   };
 });
 
@@ -921,15 +936,15 @@ describe("analyticsRouter", () => {
         avgSteps: 4,
       },
     ];
-    const byRole: Record<string, any> = {};
+    const byRole: Record<string, Record<string, number>> = {};
     for (const r of results) {
       byRole[r.role] = {
         tasksCompleted: Number(r.total),
         tokensUsed: Number(r.avgTokensIn) + Number(r.avgTokensOut),
       };
     }
-    expect(byRole.backend_coder.tasksCompleted).toBe(10);
-    expect(byRole.backend_coder.tokensUsed).toBe(700);
+    expect(byRole.backend_coder?.tasksCompleted).toBe(10);
+    expect(byRole.backend_coder?.tokensUsed).toBe(700);
   });
 
   it("modelUsage: returns usage grouped by model", () => {
@@ -1035,7 +1050,9 @@ describe("settingsRouter", () => {
     modelConfigsMock.findMany.mockResolvedValueOnce(configs);
 
     const result = await mockDb.query.modelConfigs.findMany({ where: "orgId" });
-    const defaultConfig = result.find((c: any) => c.isDefault);
+    const defaultConfig = result.find(
+      (c: { isDefault?: boolean }) => c.isDefault
+    );
     expect(defaultConfig?.modelId).toBe("qwen3");
     expect(result[1].apiKeyEncrypted).toBeTruthy();
   });
@@ -1133,7 +1150,8 @@ describe("queueRouter", () => {
     expect(state).toBe("waiting");
 
     const waitingJobs = await agentTaskQueue.getWaiting(0, 100);
-    const position = waitingJobs.findIndex((j: any) => j.id === "task_1") + 1;
+    const position =
+      waitingJobs.findIndex((j: { id?: string }) => j.id === "task_1") + 1;
     expect(position).toBe(2);
     expect(position * 60).toBe(120); // estimated wait seconds
   });
@@ -1264,7 +1282,7 @@ describe("brainRouter", () => {
     ];
     selectChain.orderBy.mockReturnValueOnce(files);
     const result = selectChain.orderBy("filePath");
-    const nodes = result.map((f: any) => ({
+    const nodes = result.map((f: { filePath: string; chunkCount: number }) => ({
       id: f.filePath,
       label: f.filePath.split("/").pop(),
       chunks: Number(f.chunkCount),
@@ -1614,13 +1632,21 @@ describe("apiKeysRouter", () => {
     const keys =
       apiKeysMock.findMany.mock.results[0]?.value ??
       (await apiKeysMock.findMany());
-    const mapped = (await keys).map((k: any) => ({
-      id: k.id,
-      name: k.name,
-      maskedKey: `pk_live_********...${k.keyHash.slice(-4)}`,
-      lastUsed: k.lastUsed?.toISOString() ?? null,
-      createdAt: k.createdAt.toISOString(),
-    }));
+    const mapped = (await keys).map(
+      (k: {
+        id: string;
+        name: string;
+        keyHash: string;
+        lastUsed?: Date | null;
+        createdAt: Date;
+      }) => ({
+        id: k.id,
+        name: k.name,
+        maskedKey: `pk_live_********...${k.keyHash.slice(-4)}`,
+        lastUsed: k.lastUsed?.toISOString() ?? null,
+        createdAt: k.createdAt.toISOString(),
+      })
+    );
 
     expect(mapped).toHaveLength(2);
     expect(mapped[0].maskedKey).toMatch(PK_LIVE_MASKED_RE);

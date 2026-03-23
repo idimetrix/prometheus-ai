@@ -21,11 +21,11 @@ const { mockUpdate, mockInsert, mockFindMany, mockFindFirst } = vi.hoisted(
 
 vi.mock("@prometheus/db", () => ({
   db: {
-    update: (...args: any[]) => mockUpdate(...args),
-    insert: (...args: any[]) => mockInsert(...args),
+    update: (...args: unknown[]) => mockUpdate(...args),
+    insert: (...args: unknown[]) => mockInsert(...args),
     query: {
       tasks: {
-        findMany: (...args: any[]) => mockFindMany(...args),
+        findMany: (...args: unknown[]) => mockFindMany(...args),
         findFirst: mockFindFirst,
       },
       creditBalances: { findFirst: vi.fn().mockResolvedValue({ balance: 50 }) },

@@ -83,6 +83,116 @@ If you skip this protocol, you WILL introduce inconsistencies, duplicate code, a
 - Write Playwright E2E tests for critical user flows.
 - Test accessibility with @testing-library's accessibility matchers.
 
+## Tool Usage Examples
+
+### Reading a Component
+\`\`\`json
+{
+  "tool": "readFile",
+  "args": { "path": "apps/web/src/components/session/session-card.tsx" }
+}
+\`\`\`
+
+### Writing a Component
+\`\`\`json
+{
+  "tool": "writeFile",
+  "args": {
+    "path": "apps/web/src/components/project/project-list.tsx",
+    "content": "..."
+  }
+}
+\`\`\`
+
+### Searching for Existing Patterns
+\`\`\`json
+{
+  "tool": "search",
+  "args": { "pattern": "useQuery.*trpc", "glob": "apps/web/src/**/*.tsx" }
+}
+\`\`\`
+
+## Few-Shot Examples
+
+### Example: Create a Data Table Component
+
+**Input**: "Create a project list table with sorting and pagination"
+
+**Output**:
+\`\`\`typescript
+interface ProjectListProps {
+  orgId: string;
+}
+
+export function ProjectList({ orgId }: ProjectListProps) {
+  const [sorting, setSorting] = useState<SortingState>([]);
+  const { data, isLoading, error } = trpc.project.list.useQuery({
+    orgId,
+    sortBy: sorting[0]?.id,
+    sortOrder: sorting[0]?.desc ? "desc" : "asc",
+  });
+
+  if (isLoading) return <Skeleton className="h-64 w-full" />;
+  if (error) return <ErrorCard message={error.message} />;
+  if (!data?.items.length) return <EmptyState icon={Folder} message="No projects yet" />;
+
+  return (
+    <DataTable
+      columns={projectColumns}
+      data={data.items}
+      sorting={sorting}
+      onSortingChange={setSorting}
+    />
+  );
+}
+\`\`\`
+
+### Example: Error State Handling
+
+**Input**: "Add error handling to the session detail page"
+
+**Output**:
+\`\`\`typescript
+export function SessionDetail({ sessionId }: { sessionId: string }) {
+  const { data, isLoading, error } = trpc.session.get.useQuery({ id: sessionId });
+
+  if (isLoading) {
+    return (
+      <div className="space-y-4">
+        <Skeleton className="h-8 w-48" />
+        <Skeleton className="h-64 w-full" />
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <Card className="border-destructive/50">
+        <CardContent className="p-6 text-center">
+          <AlertTriangle className="mx-auto h-8 w-8 text-destructive" />
+          <p className="mt-2 text-sm text-muted-foreground">{error.message}</p>
+          <Button onClick={() => window.location.reload()} className="mt-4">
+            Retry
+          </Button>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  if (!data) return notFound();
+
+  return <SessionView session={data} />;
+}
+\`\`\`
+
+## Error Handling Instructions
+
+- Always wrap async operations in try/catch or use React Query's error state
+- Never let errors propagate to the user as raw stack traces
+- Use toast notifications for transient errors (failed mutations)
+- Use inline error cards for persistent errors (failed queries)
+- Log all errors to telemetry before displaying user-friendly messages
+
 ${context?.conventions ? `## Project-Specific Conventions\n${context.conventions}\n` : ""}${context?.blueprint ? `## Blueprint Reference\n${context.blueprint}\n` : ""}
 
 ## Code Quality Checklist

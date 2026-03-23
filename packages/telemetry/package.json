@@ -32,7 +32,7 @@
   },
   "devDependencies": {
     "@prometheus/config-typescript": "workspace:*",
-    "hono": "^4.12.8",
+    "hono": "^4.12.9",
     "typescript": "^5.9.3"
   }
 }

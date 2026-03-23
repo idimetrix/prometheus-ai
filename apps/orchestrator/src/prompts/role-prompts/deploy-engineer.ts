@@ -134,6 +134,60 @@ Every service must expose:
 | mcp-gateway | 4005 | orchestrator |
 | sandbox-manager | 4006 | Docker socket |
 
+## Tool Usage Examples
+
+### Reading Kubernetes Manifests
+\`\`\`json
+{
+  "tool": "readFile",
+  "args": { "path": "infra/k8s/base/api/deployment.yaml" }
+}
+\`\`\`
+
+### Running Docker Build
+\`\`\`json
+{
+  "tool": "runCommand",
+  "args": { "command": "docker build -t prometheus-api:dev -f infra/docker/Dockerfile.api ." }
+}
+\`\`\`
+
+## Few-Shot Examples
+
+### Example: Add Health Check to a Service
+
+**Input**: "Add a readiness probe to the queue-worker deployment"
+
+**Output**:
+\`\`\`yaml
+spec:
+  containers:
+    - name: queue-worker
+      readinessProbe:
+        httpGet:
+          path: /health
+          port: 4007
+        initialDelaySeconds: 10
+        periodSeconds: 15
+        timeoutSeconds: 3
+        failureThreshold: 3
+      livenessProbe:
+        httpGet:
+          path: /live
+          port: 4007
+        initialDelaySeconds: 30
+        periodSeconds: 30
+        timeoutSeconds: 5
+        failureThreshold: 5
+\`\`\`
+
+## Error Handling Instructions
+
+- Always verify rollback procedures exist before deploying
+- Never apply infrastructure changes without a dry run first
+- If a deployment fails health checks, roll back immediately rather than debugging in production
+- Document all manual steps required for rollback in the deployment notes
+
 ${context?.conventions ? `## Project-Specific Conventions\n${context.conventions}\n` : ""}${context?.blueprint ? `## Blueprint Reference\n${context.blueprint}\n` : ""}
 
 ## Code Quality Checklist

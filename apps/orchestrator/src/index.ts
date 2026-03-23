@@ -13,6 +13,8 @@ import {
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { CheckpointManager } from "./checkpoint";
+import { GovernanceEngine } from "./governance/governance-engine";
+import { TrustScorer } from "./governance/trust-scorer";
 import { SessionManager } from "./session-manager";
 import { TakeoverManager } from "./takeover";
 import { TaskRouter } from "./task-router";
@@ -27,6 +29,8 @@ const sessionManager = new SessionManager();
 const taskRouter = new TaskRouter(sessionManager);
 const checkpointManager = new CheckpointManager();
 const takeoverManager = new TakeoverManager();
+const trustScorer = new TrustScorer();
+const _governanceEngine = new GovernanceEngine(trustScorer);
 
 const app = new Hono();
 
@@ -35,15 +39,42 @@ app.use("/*", traceMiddleware("orchestrator"));
 
 // ─── Health Check ────────────────────────────────────────────────
 
-app.get("/health", (c) => {
+app.get("/health", async (c) => {
   if (isProcessShuttingDown()) {
     return c.json({ status: "draining" }, 503);
   }
+
+  const dependencies: Record<string, string> = {};
+
+  try {
+    const { db } = await import("@prometheus/db");
+    const { sql } = await import("drizzle-orm");
+    await db.execute(sql`SELECT 1`);
+    dependencies.db = "ok";
+  } catch {
+    dependencies.db = "unavailable";
+  }
+
+  try {
+    const { createRedisConnection } = await import("@prometheus/queue");
+    const redis = createRedisConnection();
+    await redis.ping();
+    await redis.quit();
+    dependencies.redis = "ok";
+  } catch {
+    dependencies.redis = "unavailable";
+  }
+
+  const allHealthy = Object.values(dependencies).every((v) => v === "ok");
+
   return c.json({
-    status: "ok",
+    status: allHealthy ? "ok" : "degraded",
     service: "orchestrator",
+    version: process.env.APP_VERSION ?? "0.0.0",
+    uptime: process.uptime(),
     activeSessions: sessionManager.getActiveSessionCount(),
     timestamp: new Date().toISOString(),
+    dependencies,
   });
 });
 
@@ -357,6 +388,8 @@ export {
   type ExecutionOptions,
 } from "./engine";
 export { FleetManager } from "./fleet-manager";
+export { GovernanceEngine } from "./governance/governance-engine";
+export { TrustScorer } from "./governance/trust-scorer";
 // Phase 7: Guardian
 export { BusinessLogicGuardian } from "./guardian/business-logic-guardian";
 export { MixtureOfAgents } from "./moa/parallel-generator";

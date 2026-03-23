@@ -318,6 +318,9 @@ const healthServer = createServer((req, res) => {
       JSON.stringify({
         status: "ok",
         service: "queue-worker",
+        version: process.env.APP_VERSION ?? "0.0.0",
+        uptime: Math.floor(process.uptime()),
+        timestamp: new Date().toISOString(),
         workers: Object.keys(workers),
       })
     );
