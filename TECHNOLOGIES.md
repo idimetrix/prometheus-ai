@@ -2,7 +2,7 @@
 
 > Every open source technology we **MUST USE**, **SHOULD USE**, and **CAN USE** to build the 10x Devin Killer.
 >
-> Last updated: March 2026
+> Last updated: 2026-03-23
 
 ---
 
@@ -86,12 +86,12 @@
 - **Why**: Foundation of our entire frontend. React 19's streaming + Suspense powers the real-time agent session UI
 - **Status**: `IN USE`
 
-### TypeScript 5.9 — `MUST USE` — `IN USE`
-- **Version**: 5.9.3
+### TypeScript 5.9 / 6.0 — `MUST USE` — `IN USE`
+- **Version**: ^6.0.2 (root/packages), ^5.9.3 (apps/web)
 - **License**: Apache-2.0
 - **GitHub**: 105K+ stars
 - **What**: Typed superset of JavaScript
-- **Why**: Type safety across the entire monorepo. Required for tRPC end-to-end type safety, Drizzle ORM, and Zod schemas
+- **Why**: Type safety across the entire monorepo. Required for tRPC end-to-end type safety, Drizzle ORM, and Zod schemas. Root uses TS 6.0.2 for latest features; web app pins 5.9.3 for Next.js compatibility
 - **Status**: `IN USE` — strict mode enabled
 
 ### Hono — `MUST USE` — `IN USE`
@@ -141,6 +141,13 @@
 - **Key components used**: `<Terminal />`, `<FileTree />`, `<Plan />`, `<PlanAction />`, `<Message />`, `<MessageContent />`, `<Reasoning />`, `<ReasoningContent />`, `<CodeBlock />`, `<Queue />`, `<QueueItem />`, `<Task />`, `<TaskContent />`, `<Checkpoint />`, `<PromptInput />`, `<Sources />`, `<Suggestion />`
 - **Status**: `IN USE` — `packages/ai`, `packages/agent-sdk`, `apps/orchestrator`
 
+### @ai-sdk/mcp — `SHOULD USE` — `IN USE`
+- **Version**: ^1.0.25
+- **License**: MIT
+- **What**: MCP (Model Context Protocol) integration via the Vercel AI SDK. Bridges AI SDK tool calling with MCP servers
+- **Why**: Powers the MCP Gateway service — connects agents to external tools (GitHub, Slack, Linear, Jira, etc.) via the standardized Model Context Protocol. Enables agents to use any MCP-compatible tool without custom integration code
+- **Status**: `IN USE` — `apps/mcp-gateway`
+
 ### Tailwind CSS v4 — `MUST USE` — `IN USE`
 - **Version**: 4.2.2
 - **License**: MIT
@@ -156,24 +163,31 @@
 - **What**: Production-ready animation library for React
 - **Why**: Smooth UI animations for agent status transitions, panel resizing, and micro-interactions. Makes the UI feel premium
 - **Alternatives**: React Spring, CSS animations
-- **Status**: `PLANNED`
+- **Status**: `IN USE` — `apps/web`
 
 ### cmdk — `SHOULD USE` — `IN USE`
-- **Version**: ^1.0.0
+- **Version**: ^1.1.1
 - **License**: MIT
 - **GitHub**: 10K+ stars
 - **What**: Fast, composable command palette component (Cmd+K)
 - **Why**: Power user navigation. Quick access to repos, agents, tasks, settings. Essential for developer-focused UX
-- **Status**: `PLANNED`
+- **Status**: `IN USE` — `apps/web`
 
-### CodeMirror 6 — `SHOULD USE` — `IN USE`
-- **Version**: ^6.0.0
+### CodeMirror 6 — `MUST USE` — `IN USE`
+- **Version**: ^6.40.0 (view), ^6.12.1 (merge), 15+ @codemirror/* packages
 - **License**: MIT
 - **GitHub**: 5K+ stars
 - **What**: Modular, extensible code editor with @codemirror/merge for diff/merge views
-- **Why**: Lightweight code diff viewer in the agent session UI. Smaller bundle than Monaco. Merge extension for before/after diffs
+- **Why**: Lightweight code diff viewer in the agent session UI. Smaller bundle than Monaco. Merge extension for before/after diffs. Includes autocomplete, linting, search, multi-language support (JS, TS, Python, CSS, HTML, JSON, Markdown)
 - **Alternatives**: Monaco Editor (heavier, more features)
-- **Status**: `PLANNED` — Sprint 2
+- **Status**: `IN USE` — `apps/web` (15+ CodeMirror packages installed)
+
+### @replit/codemirror-vim — `SHOULD USE` — `IN USE`
+- **Version**: ^6.3.0
+- **License**: MIT
+- **What**: Vim keybindings for CodeMirror 6
+- **Why**: Power user vim keybindings for the web-based code editor. Developers who use vim keybindings expect them everywhere — this makes the APEX code editor feel native to vim users
+- **Status**: `IN USE` — `apps/web`
 
 ### Monaco Editor — `CAN USE` — `OPTIONAL`
 - **Version**: Latest
@@ -184,12 +198,12 @@
 - **Status**: `OPTIONAL`
 
 ### D3.js — `SHOULD USE` — `IN USE`
-- **Version**: ^7.9.0
+- **Version**: ^7.9.0 + d3-force ^3.0.0
 - **License**: ISC
 - **GitHub**: 110K+ stars
 - **What**: Data visualization library for custom, interactive graphics
 - **Why**: Powers the Project Brain codebase dependency graph visualization (Screen 4). No other library provides this level of graph customization
-- **Status**: `PLANNED` — Sprint 3
+- **Status**: `IN USE` — `apps/web`
 
 ### Recharts — `SHOULD USE` — `IN USE`
 - **Version**: ^3.8.0
@@ -197,7 +211,7 @@
 - **GitHub**: 24K+ stars
 - **What**: Composable charting library built on D3 + React
 - **Why**: Analytics dashboard charts (Screen 6). Used inside shadcn's Chart component. Tasks completed, PR success rate, credit consumption charts
-- **Status**: `PLANNED` — Sprint 5
+- **Status**: `IN USE` — `apps/web`
 
 ### diff2html — `CAN USE` — `OPTIONAL`
 - **Version**: Latest
@@ -208,13 +222,13 @@
 - **Status**: `OPTIONAL`
 
 ### react-markdown — `MUST USE` — `IN USE`
-- **Version**: ^9.0.0
+- **Version**: ^10.1.0
 - **License**: MIT
 - **GitHub**: 13K+ stars
 - **What**: React component for rendering Markdown with remark/rehype plugin ecosystem
 - **Why**: Renders all LLM markdown output in the agent session UI — chat messages, explanations, task summaries. Supports GFM (tables, checkboxes), syntax highlighting via rehype-highlight, and custom component overrides for shadcn integration
 - **Alternatives**: @mdx-js/react (heavier, for interactive content)
-- **Status**: `PLANNED` — Sprint 2
+- **Status**: `IN USE` — `apps/web`
 
 ### MDX — `SHOULD USE` — `PLANNED`
 - **Version**: ^3.0.0
@@ -235,13 +249,13 @@
 - **Status**: `PLANNED`
 
 ### xterm.js — `MUST USE` — `IN USE`
-- **Version**: @xterm/xterm ^6.0.0 (package renamed)
+- **Version**: @xterm/xterm ^6.0.0 + addons (fit, search, web-links, webgl)
 - **License**: MIT
 - **GitHub**: 18K+ stars
 - **What**: Full-featured terminal emulator for the browser. Used by VS Code, Hyper, and Theia
 - **Why**: Powers the web terminal in agent session UI. Renders real-time shell output from sandbox containers with full ANSI color support, cursor positioning, and scroll-back. Essential for the live terminal experience
 - **Alternatives**: None at this quality level
-- **Status**: `PLANNED` — Sprint 2
+- **Status**: `IN USE` — `apps/web` (4 addon packages installed)
 
 ### Sonner — `MUST USE` — `IN USE`
 - **Version**: ^2.0.7
@@ -250,7 +264,7 @@
 - **What**: Opinionated toast notification component for React
 - **Why**: Toast notifications throughout APEX — task complete, PR created, credit low, errors. Part of the shadcn/ui ecosystem (shadcn ships a Sonner wrapper). Beautiful defaults, stacking, swipe-to-dismiss
 - **Alternatives**: react-hot-toast
-- **Status**: `PLANNED` — Sprint 1
+- **Status**: `IN USE` — `apps/web`
 
 ### react-hook-form — `SHOULD USE` — `IN USE`
 - **Version**: ^7.71.2
@@ -259,16 +273,16 @@
 - **What**: Performant, flexible form library with minimal re-renders
 - **Why**: All forms in APEX — settings, project creation, API key management, team invites. Native Zod integration via @hookform/resolvers for type-safe validation. Works with shadcn form components
 - **Alternatives**: Formik (heavier), TanStack Form
-- **Status**: `PLANNED`
+- **Status**: `IN USE` — `apps/web`
 
 ### date-fns — `SHOULD USE` — `IN USE`
-- **Version**: ^4.0.0
+- **Version**: ^4.1.0
 - **License**: MIT
 - **GitHub**: 35K+ stars
 - **What**: Modern JavaScript date utility library. Tree-shakeable, immutable
 - **Why**: Date formatting throughout APEX — "2 hours ago", session durations, billing periods, sprint dates. Tree-shakeable so only used functions are bundled. Smaller than Moment.js or Day.js in practice
 - **Alternatives**: Day.js, Temporal API (future)
-- **Status**: `PLANNED`
+- **Status**: `IN USE` — `apps/web`
 
 ### SVGR — `SHOULD USE` — `PLANNED`
 - **Version**: ^8.1.0
@@ -295,23 +309,23 @@
 - **Why**: Alternative to TanStack Virtual with built-in support for chat-style reverse scrolling (newest at bottom). Useful for agent chat UI if variable-height messages cause issues with TanStack Virtual
 - **Status**: `OPTIONAL`
 
-### react-complex-tree — `SHOULD USE` — `PLANNED`
-- **Version**: ^2.4.0
+### react-complex-tree — `SHOULD USE` — `IN USE`
+- **Version**: ^2.6.1
 - **License**: MIT
 - **GitHub**: 1K+ stars
 - **What**: Accessible tree view with drag-and-drop, keyboard navigation, rename, multi-select, and search
 - **Why**: File explorer tree in the agent session UI. Shows sandbox filesystem, allows navigation, supports drag-and-drop for file organization. More full-featured than building custom tree with Radix
 - **Alternatives**: Custom implementation with Radix Accordion
-- **Status**: `PLANNED`
+- **Status**: `IN USE` — `apps/web`
 
 ### dnd-kit — `SHOULD USE` — `IN USE`
-- **Version**: ^6.1.0
+- **Version**: ^6.3.1 (core), @dnd-kit/sortable ^10.0.0
 - **License**: MIT
 - **GitHub**: 13K+ stars
 - **What**: Modern drag-and-drop toolkit for React. Modular, accessible, performant
 - **Why**: Drag-and-drop for task boards, agent queue reordering, dashboard panel arrangement. Built for accessibility (keyboard + screen reader support). Modular architecture keeps bundle small
 - **Alternatives**: pragmatic-drag-and-drop (Atlassian)
-- **Status**: `PLANNED`
+- **Status**: `IN USE` — `apps/web`
 
 ### pragmatic-drag-and-drop — `CAN USE` — `OPTIONAL`
 - **Version**: ^1.0.0
@@ -605,12 +619,12 @@
 
 ## 7. Caching & Message Broker
 
-### Redis / Valkey 8 — `MUST USE` — `IN USE`
-- **Version**: valkey/valkey:8-alpine (Redis-compatible)
-- **License**: BSD-3 (Valkey)
+### Redis-Compatible Cache (Dragonfly) — `MUST USE` — `IN USE`
+- **Version**: Dragonfly latest (Redis/Valkey API-compatible)
+- **License**: BSL 1.1 (Dragonfly)
 - **What**: In-memory data store for caching, pub/sub, session state, and as BullMQ backend
-- **Why**: Multi-purpose: session state storage, rate limiting, BullMQ job queue backend, Redis Pub/Sub for SSE agent event streaming, agent session cache. Valkey is the open source Redis fork
-- **Status**: `IN USE` — `docker-compose.yml`
+- **Why**: Multi-purpose: session state storage, rate limiting, BullMQ job queue backend, Redis Pub/Sub for SSE agent event streaming, agent session cache. Docker-compose runs Dragonfly (multi-threaded, 25x faster than Redis) on port 6379, fully compatible with Redis clients
+- **Status**: `IN USE` — `docker-compose.yml` (Dragonfly as `redis` service, 512mb maxmemory)
 
 ### ioredis — `MUST USE` — `IN USE`
 - **Version**: 5.9.3
@@ -627,13 +641,13 @@
 - **Why**: Production Redis replacement. ~$30/month at usage tier. Includes Upstash Ratelimit for API rate limiting. No server management
 - **Status**: `PLANNED` — production deployment
 
-### Dragonfly — `CAN USE` — `OPTIONAL`
-- **Version**: Latest
+### Dragonfly — `MUST USE` — `IN USE`
+- **Version**: Latest (docker.dragonflydb.io/dragonflydb/dragonfly)
 - **License**: BSL 1.1
 - **GitHub**: 26K+ stars
 - **What**: Modern in-memory data store, fully compatible with Redis/Memcached APIs. Multi-threaded, 25x throughput
-- **Why**: Drop-in Redis replacement with dramatically better performance — 25x throughput on same hardware. Multi-threaded (Redis is single-threaded). Evaluate if Redis/Valkey becomes a bottleneck at scale (10K+ concurrent agent sessions)
-- **Status**: `OPTIONAL` — performance optimization path
+- **Why**: Drop-in Redis replacement with dramatically better performance — 25x throughput on same hardware. Multi-threaded (Redis is single-threaded). Used as the primary Redis-compatible cache in docker-compose (labeled `redis` service, port 6379, 512mb maxmemory, cache_mode enabled)
+- **Status**: `IN USE` — `docker-compose.yml` (the `redis` service runs Dragonfly, not Redis/Valkey)
 
 ### NATS — `CAN USE` — `OPTIONAL`
 - **Version**: Latest
@@ -672,12 +686,12 @@
 - **Why**: Simpler alternative to Temporal for TypeScript-only teams. Never-timeout workflows. Good for tasks that don't need Temporal's full complexity
 - **Status**: `OPTIONAL`
 
-### Inngest — `MUST USE` — `IN USE`
+### Inngest — `SHOULD USE` — `IN USE`
 - **Version**: Latest
 - **License**: Proprietary (free tier)
 - **What**: Reliable serverless functions with step-based execution and automatic retries
 - **Why**: Event-driven workflows. Good for webhook → task creation flows. Simpler model than Temporal
-- **Status**: `OPTIONAL`
+- **Status**: `IN USE` — `packages/workflow`
 
 ---
 
@@ -793,12 +807,12 @@
 ## 10. LLM Model Serving & Local AI
 
 ### Ollama — `MUST USE` — `IN USE`
-- **Version**: Latest
+- **Version**: Latest (ollama/ollama:latest)
 - **License**: MIT
 - **GitHub**: 115K+ stars
 - **What**: Local LLM serving with automatic hardware detection, model management, and OpenAI-compatible API
 - **Why**: Essential for local model fallback (background/indexing slot), enterprise air-gapped deployments, and development. 5KB footprint. Runs qwen2.5-coder, deepseek-coder, nomic-embed-text locally. FREE (electricity only)
-- **Status**: `PLANNED` — background model slot
+- **Status**: `IN USE` — `docker-compose.yml` (port 11434, OLLAMA_NUM_PARALLEL + OLLAMA_MAX_LOADED_MODELS configured)
 
 ### vLLM — `SHOULD USE` — `PLANNED`
 - **Version**: Latest
@@ -1774,11 +1788,11 @@
 - **Why**: `premium` route slot for power users who want the best model. 2× credits charged. Used when users explicitly select premium quality
 - **Status**: `PLANNED` — premium route
 
-### Gemini 2.0 Flash — `MUST USE` — `PLANNED`
-- **Version**: Latest
+### Gemini 2.5 Flash — `MUST USE` — `PLANNED`
+- **Version**: gemini-2.5-flash
 - **License**: Proprietary API (generous free tier)
-- **Cost**: FREE (up to quota)
-- **What**: Google's fast model with massive context window
+- **Cost**: FREE (up to quota), 1M token context window
+- **What**: Google's fast model with massive 1M context window and vision
 - **Why**: Powers `longContext` (>40K tokens — reading large codebases) and `webSearch` (documentation lookup, error research) route slots. FREE tier makes these operations cost nothing
 - **Status**: `PLANNED` — longContext + webSearch routes
 
@@ -1821,14 +1835,14 @@
 
 ## 32. Testing
 
-### Vitest — `SHOULD USE` — `PLANNED`
-- **Version**: Latest
+### Vitest — `MUST USE` — `IN USE`
+- **Version**: ^4.1.1
 - **License**: MIT
 - **GitHub**: 14K+ stars
 - **What**: Vite-native test framework. Jest-compatible API, ESM-first, TypeScript native
-- **Why**: Unit and integration testing across the monorepo. Fastest test runner for Vite/TypeScript projects. Works with React Testing Library for component tests
+- **Why**: Unit and integration testing across the monorepo. 377 test files. Fastest test runner for Vite/TypeScript projects. Works with React Testing Library for component tests
 - **Alternatives**: Jest (slower, CJS-first)
-- **Status**: `PLANNED`
+- **Status**: `IN USE` — 377 test files across all packages and apps
 
 ### Playwright Test — `SHOULD USE` — `PLANNED`
 - **Version**: Latest
@@ -2170,14 +2184,14 @@
 
 ## 42. Analytics & Tracking
 
-### PostHog — `SHOULD USE` — `PLANNED`
-- **Version**: Latest
+### PostHog — `SHOULD USE` — `IN USE`
+- **Version**: posthog-js ^1.363.1
 - **License**: MIT
 - **GitHub**: 25K+ stars
 - **What**: All-in-one product analytics — event tracking, funnels, feature flags, session replay, A/B testing. Self-hostable
 - **Why**: Understand how users use APEX — which features are popular, where users drop off, what task types are most common. Funnels: sign up → first task → first PR → paid plan. Session replay for UX debugging. Self-hosted for data privacy. Replaces 3-4 separate tools
 - **Alternatives**: Mixpanel (proprietary), Amplitude (proprietary)
-- **Status**: `PLANNED`
+- **Status**: `IN USE` — `apps/web`
 
 ### Umami — `CAN USE` — `OPTIONAL`
 - **Version**: Latest
@@ -2528,5 +2542,101 @@
 
 ---
 
-> **This document is the single source of truth for all technology decisions in the Prometheus/APEX project.**
+---
+
+## 45. Technologies We Must Add for 100x Vision
+
+These technologies are NOT yet in the codebase but are critical for achieving the 100x goal.
+
+### Hocuspocus — `SHOULD USE` — `PLANNED`
+- **License**: MIT
+- **What**: Production-ready Yjs WebSocket backend for real-time collaboration
+- **Why**: Our CRDT collaboration package uses Yjs but needs a proper server backend for production. Hocuspocus handles connection management, authentication, persistence, and scaling
+- **Use case**: Real-time pair programming between human and AI agent
+
+### Percy / Chromatic — `SHOULD USE` — `PLANNED`
+- **License**: Commercial
+- **What**: Visual regression testing CI service
+- **Why**: Agent-generated UI needs automated visual verification. Percy/Chromatic compares screenshots against baselines and flags visual regressions
+- **Use case**: Verify agent's frontend changes don't break existing UI
+
+### Turborepo Remote Cache — `SHOULD USE` — `PLANNED`
+- **What**: Remote build cache for Turborepo
+- **Why**: CI builds are slow without caching. Remote cache shares build artifacts across CI runs and developers
+- **Status**: Turbo is `IN USE` but remote caching not configured
+
+### ClickHouse / TimescaleDB — `CAN USE` — `PLANNED`
+- **License**: Apache-2.0 / Apache-2.0 + Timescale
+- **What**: Columnar (ClickHouse) or time-series (TimescaleDB) analytics database
+- **Why**: PostgreSQL handles OLTP well but analytics queries (cost per task, usage trends, model performance) will become slow at scale. A dedicated analytics store enables real-time dashboards at 1000+ users
+- **Use case**: Team velocity analytics, cost prediction, model routing optimization
+
+### Temporal — `CAN USE` — `EVALUATE`
+- **License**: MIT
+- **What**: Durable execution / workflow orchestration engine
+- **Why**: Currently using Inngest for workflows. Temporal is more battle-tested for long-running (hours/days) agent workflows with checkpointing, retry, and state persistence. Critical for 24/7 autonomous operation
+- **Alternative to**: Inngest (`packages/workflow/`)
+- **Use case**: Multi-hour agent sessions that survive service restarts
+
+### WebContainers — `CAN USE` — `EVALUATE`
+- **License**: StackBlitz proprietary
+- **What**: Browser-based Node.js runtime (no server-side containers)
+- **Why**: Bolt.new uses WebContainers for instant code execution. Could enable browser-only mode for simple tasks without Docker overhead
+- **Use case**: Instant preview for generated web apps, zero server cost for simple tasks
+
+### Stagehand (Browserbase) — `SHOULD USE` — `PLANNED`
+- **License**: MIT
+- **What**: AI-native browser automation framework (alternative to raw Playwright)
+- **Why**: Higher-level API for AI agents to interact with web pages. Handles dynamic content, popups, auth flows better than raw Playwright selectors
+- **Use case**: Agent verifying generated web apps, interacting with third-party services
+
+### OpenTelemetry Collector — `SHOULD USE` — `PLANNED`
+- **License**: Apache-2.0
+- **What**: Vendor-agnostic telemetry data pipeline
+- **Why**: We have OpenTelemetry instrumentation but no collector for routing traces/metrics/logs to backends (Jaeger, Grafana, Datadog). Collector enables flexible backend switching
+- **Status**: Instrumentation `IN USE` in `packages/telemetry/`, collector not deployed
+
+### Grafana Loki — `SHOULD USE` — `PLANNED`
+- **License**: AGPL-3.0
+- **What**: Log aggregation system (like Elasticsearch but lighter)
+- **Why**: 9 services produce logs that need centralized search. Loki + Grafana enables log correlation with traces and metrics
+- **Status**: Config exists in `infra/monitoring/`, not deployed
+
+### k6 — `SHOULD USE` — `IN USE`
+- **What**: Load testing tool
+- **Why**: Scripts exist in `infra/` for load testing but haven't been run against production. Critical for validating SLO targets (< 200ms API p95, < 2s sandbox startup)
+- **Status**: Scripts `IN USE`, execution `PLANNED`
+
+---
+
+## 46. Model Registry Overview (50+ Models)
+
+### Tiered Model System
+
+| Tier | Cost | Purpose | Models |
+|------|------|---------|--------|
+| **Tier 0** | Free (local) | Development, air-gapped | Qwen3 Coder Next 80B, DeepSeek-R1 32B, Qwen2.5 Coder 14B |
+| **Tier 1** | $0.001-0.01/1K | Fast/cheap tasks | Cerebras Qwen3 235B, Groq Llama 3.3 70B, Qwen3.5 27B |
+| **Tier 2** | $0.01-0.10/1K | Balanced quality/cost | Gemini 2.5 Flash, DeepSeek-V3, Mistral Large |
+| **Tier 3** | $0.10-1.00/1K | Premium quality | Claude Sonnet 4.6, GPT-4 Turbo |
+| **Tier 4** | $1.00+/1K | Maximum capability | Claude Opus 4.6 |
+
+### 10 Routing Slots
+
+| Slot | Purpose | Default Cascade |
+|------|---------|-----------------|
+| `default` | General coding | Qwen3 Coder → Qwen3 235B → Groq Llama |
+| `think` | Deep reasoning | DeepSeek-R1 → Qwen3.5 → Claude Sonnet |
+| `longContext` | Large files | Gemini 2.5 → Claude Sonnet → Qwen3 |
+| `background` | Indexing | Qwen2.5 Coder → Qwen3 |
+| `vision` | Image analysis | Claude Sonnet → Gemini 2.5 |
+| `review` | Code review | Claude Sonnet → DeepSeek-R1 → Qwen3.5 |
+| `fastLoop` | CI iterations | Cerebras Qwen3 → Groq Llama → Qwen3 |
+| `premium` | Complex tasks | Claude Opus → Claude Sonnet → DeepSeek-R1 |
+| `speculate` | Pre-execution | Cerebras Qwen3 → Groq Llama |
+| `embeddings` | Semantic search | Voyage Code 3 → Ollama Nomic |
+
+---
+
+> **This document is the single source of truth for all technology decisions in the Prometheus project.**
 > Update it as technologies are evaluated, adopted, or replaced.

@@ -1,47 +1,40 @@
-# PROMETHEUS — Gap Analysis & Missing Features
+# PROMETHEUS — Gap Analysis & Roadmap to 100x
 
-> Super-detailed analysis of ALL gaps between current state and 100x vision
-> Last updated: 2026-03-20
-> **Status: ALL 50 GAPS IMPLEMENTED** (as of 2026-03-20)
-> Total gaps: 50 (16 P0 / 14 P1 / 12 P2 / 8 P3) — ALL ADDRESSED
+> **Goal:** Build a professional AI engineering service like Devin that works 24/7, creates full projects from scratch to production, and is 100x better than Claude Code, Codex 5+, GPT 5+, Cursor, and Devin — combined.
+>
+> **Last updated:** 2026-03-23
+> **Total gaps:** 110 (25 P0 / 25 P1 / 30 P2 / 30 P3)
 
 ---
 
-## Implementation Status
-
-All 50 gaps have been addressed with 103 files changed (71 new, 32 modified):
-- **144 new tests** (125 integration + 7 chaos + 12 accessibility)
-- **Lint**: 0 errors across 1401 files
-- **TypeScript**: 35/35 packages pass
-- **Unit tests**: 41/41 packages pass
-
 ## Executive Summary
 
-~~Prometheus is a well-architected prototype that has not yet crossed the chasm into a shippable product.~~
+Prometheus has **extensive code** across 10 services, 29 packages, and 94 database tables (56 enums). The architecture is ambitious and unique — 12 specialist agents, 8-layer memory, multi-provider model routing, CRDT collaboration, MCP gateway.
 
-**UPDATE**: As of 2026-03-20, all 50 identified gaps have been implemented. Prometheus now has:
-- **144 integration/chaos/a11y tests** (up from 2) covering all 8 service boundaries
-- **E2E project creation pipeline** wired from UI to agent execution
-- **Error recovery** with circuit breaker, health watchdog, and checkpoint resume
-- **Inbound webhooks** (GitHub, Jira, Slack, custom) for autonomous operation
-- **Slack bot** with task creation, slash commands, and progress streaming
-- **24/7 autonomous operation** with cron scheduling, dependency chains, and daily summaries
-- **Prompt versioning** with 60 eval test cases and eval runner
-- **8 documentation pages** covering agents, tools, deployment, API, CLI, billing
-- **Mobile-responsive UI** with hamburger menu and bottom tabs
-- **Plugin marketplace UI** with 10 first-party plugins
-- **Template gallery** with 10 project templates
-- **i18n infrastructure** for English, Spanish, and Japanese
-- **Accessibility** test suite and skip-nav component
-- **OWASP vulnerability checker** covering all Top 10 categories
-- **Team analytics** with velocity, cost, ROI, and quality metrics
-- **Approval workflows** for destructive actions
-- **Transfer learning** between agents
-- **Visual workflow builder** for no-code mode
-- **GPU detector** for local inference optimization
-- And much more — see individual gap sections below for details.
+**However, the honest truth:** Most features are **code that has never been run in production**. The previous gap analysis claimed "all 50 gaps implemented" — but writing code and shipping a working product are fundamentally different. No user has ever typed a prompt into Prometheus and received a working deployed application.
 
-The next priority is **production deployment and real-world validation** of these implementations.
+### Where We Actually Are
+
+| Metric | Status |
+|--------|--------|
+| Services running together | Never validated |
+| End-to-end task completion | Never demonstrated |
+| Production deployment | Does not exist |
+| Real LLM calls processed | Zero at scale |
+| SWE-bench scores | Not published |
+| Paying customers | Zero |
+| Public demo | Does not exist |
+| Video proof | None |
+
+### What Competitors Have That We Don't
+
+| Competitor | Key Advantage We Lack |
+|------------|----------------------|
+| **Devin** | Proven 24/7 autonomous operation, Slack integration, real task completion |
+| **Claude Code** | Battle-tested CLI, instant developer adoption, plan mode, hooks system |
+| **Codex (OpenAI)** | Cloud sandboxes, parallel tasks, GitHub deep integration |
+| **Cursor** | IDE-native experience, inline editing, instant autocomplete |
+| **GPT 5+** | Massive context window, multimodal, reasoning chains |
 
 ---
 
@@ -49,1352 +42,1668 @@ The next priority is **production deployment and real-world validation** of thes
 
 | Priority | Meaning | Timeline |
 |----------|---------|----------|
-| **P0** | CRITICAL — Must have for launch. Cannot compete with Devin without these. | Immediate |
-| **P1** | HIGH — Required within 30 days to match and exceed competitors. | 30 days |
-| **P2** | MEDIUM — Differentiators for 10x advantage over competitors. | 60 days |
-| **P3** | LOW — Nice-to-haves for the full 100x vision. | 90+ days |
+| **P0** | SHIP BLOCKER — Cannot launch without this | 0-30 days |
+| **P1** | DEVIN PARITY — Must have to compete with Devin | 30-60 days |
+| **P2** | 10x ADVANTAGE — Unique capabilities that differentiate | 60-120 days |
+| **P3** | 100x MOONSHOT — Features that make us unbeatable | 120-365 days |
 
 ## Effort Scale
 
 | Label | Duration | Example |
 |-------|----------|---------|
-| **S** | 1–3 days | Config change, small UI fix |
-| **M** | 1–2 weeks | Feature module, integration |
-| **L** | 2–4 weeks | Major subsystem, extensive testing |
-| **XL** | 1–3 months | Architecture-level change, new service |
+| **S** | 1-3 days | Config change, UI fix, small integration |
+| **M** | 1-2 weeks | Feature module, service integration |
+| **L** | 2-4 weeks | Major subsystem, extensive testing |
+| **XL** | 1-3 months | Architecture-level change, new service |
 
 ---
 
 ## Dependency Graph
 
 ```
-GAP-002 (Production Deploy)
-  |
-  +---> GAP-003 (Integration Tests) ---> GAP-030 (Chaos Testing)
-  |       |
-  |       +---> GAP-007 (Streaming Reliability)
-  |       +---> GAP-008 (Sandbox Stability)
-  |       +---> GAP-021 (Load Testing)
-  |
-  +---> GAP-010 (Auth Hardening) ---> GAP-040 (SSO/SCIM Testing)
-  |       |
-  |       +---> GAP-039 (Approval Workflows)
-  |
-  +---> GAP-022 (Grafana Dashboards) ---> GAP-023 (Alert Config)
-  |
-  +---> GAP-024 (Migration Safety)
+P0 Ship Blockers:
+  GAP-081 (TS Compile) ──→ GAP-001 (Services Boot) ──→ GAP-002 (E2E Pipeline) ──→ GAP-003 (Demo Instance)
+                                    │
+  GAP-004 (DB Migrations) ────────→│
+  GAP-005 (Auth Flow) ────────────→│
+  GAP-006 (LLM Integration) ──────→│
+  GAP-007 (Sandbox Running) ──────→│
+  GAP-008 (Streaming) ────────────→│
+  GAP-083 (Docker Full Boot) ─────→│
+  GAP-084 (.env Complete) ────────→│
+  GAP-085 (Health Checks) ────────→│
+                                    │
+  GAP-009 (Prompt Eng) ──→ GAP-010 (Agent Loop) ──→ GAP-002
+  GAP-011 (Error Recovery) ──→ GAP-002
+  GAP-012 (Git Integration) ──→ GAP-002
 
-GAP-001 (E2E Project Creation Pipeline)
-  |
-  +---> GAP-005 (Error Recovery) ---> GAP-017 (24/7 Autonomous)
-  |       |                             |
-  |       +---> GAP-030 (Chaos)         +---> GAP-046 (AI PM)
-  |
-  +---> GAP-012 (Prompt Quality) ---> GAP-033 (Multi-Language)
-  |                                     |
-  |                                     +---> GAP-043 (Transfer Learning)
-  |
-  +---> GAP-004 (SWE-bench) ---> GAP-028 (Benchmark Dashboard)
-  |
-  +---> GAP-019 (Template Gallery)
-  |
-  +---> GAP-015 (Webhook Triggers) ---> GAP-017 (24/7 Autonomous)
+P1 Devin Parity:
+  GAP-002 ──→ GAP-021 (SWE-bench)
+  GAP-002 ──→ GAP-022 (Slack Bot)
+  GAP-002 ──→ GAP-023 (GitHub App)
+  GAP-002 ──→ GAP-024 (Preview Deploy)
+  GAP-002 ──→ GAP-025 (Project Scaffold)
+  GAP-013 ──→ GAP-086 (Error Boundaries)
+  GAP-001 ──→ GAP-087 (Rate Limiting)
+  GAP-023 ──→ GAP-088 (Webhooks)
+  GAP-036 ──→ GAP-089 (Search Working)
+  GAP-008 ──→ GAP-090 (Session Resume)
 
-GAP-006 (Onboarding) ---> GAP-011 (User Docs)
+P2 10x Advantage:
+  GAP-010 ──→ GAP-041 (Multi-Agent Proven)
+  GAP-010 ──→ GAP-042 (Memory System Proven)
+  GAP-006 ──→ GAP-043 (Cost Optimization)
+  GAP-036 ──→ GAP-091 (Fusion Search)
+  GAP-049 ──→ GAP-092 (Digital Twin)
+  GAP-042 ──→ GAP-093 (Meta-Learning)
+  GAP-043 ──→ GAP-095 (Prompt Caching)
+  GAP-006 ──→ GAP-100 (Langfuse)
 
-GAP-009 (Billing E2E) ---> GAP-016 (Rate Limiting)
-
-GAP-013 (Mobile UI) ---> GAP-032 (Native Mobile/PWA)
-
-GAP-014 (Slack Bot) ---> GAP-017 (24/7 Autonomous)
-
-GAP-025 (API Versioning)
-  |
-  +---> GAP-026 (VS Code Extension Polish)
-  +---> GAP-027 (CLI Polish)
-  +---> GAP-031 (JetBrains Plugin)
-
-GAP-020 (Plugin Marketplace) ---> GAP-048 (Community Forum)
-
-GAP-034 (Figma Design-to-Code) [standalone]
-GAP-035 (OWASP Code Review) [standalone]
-GAP-036 (Team Analytics) ---> GAP-046 (AI PM)
-GAP-037 (White-Label) [standalone]
-GAP-038 (Knowledge Base Import) [standalone]
-GAP-041 (i18n) [standalone]
-GAP-042 (Accessibility Audit) [standalone]
-GAP-044 (Model Fine-Tuning) [standalone]
-GAP-045 (Visual Programming) [standalone]
-GAP-047 (SOC2/ISO27001) ---> requires GAP-010
-GAP-049 (Collaborative Coding) [standalone]
-GAP-050 (GPU Inference) [standalone]
+P3 100x Moonshot:
+  GAP-025 + GAP-024 ──→ GAP-061 (Full Project Gen)
+  GAP-041 ──→ GAP-062 (Self-Improving Agents)
+  GAP-076 ──→ GAP-101 (Cloud MCP Adapters)
+  GAP-045 ──→ GAP-105 (Fine-Tuning Pipeline)
+  GAP-003 ──→ GAP-107 (Load Testing)
+  GAP-003 ──→ GAP-109 (Multi-Region)
 ```
 
 ---
 
-## P0 — CRITICAL (Must Have for Launch)
+## P0 — SHIP BLOCKERS (20 Gaps)
 
-### GAP-001: End-to-End Project Creation Pipeline Not Wired
-
-- **What exists:** The orchestrator service has planning logic, 12 specialist agents, a tool registry, and sandbox execution. The web app has a `create/page.tsx` for project creation. Individual agent capabilities (code generation, testing, deployment) are implemented in isolation. The queue worker processes jobs. The workflow engine defines pipelines.
-- **What is missing:** No single tested flow from user prompt to running deployed project. The pipeline fragments — orchestrator planning, agent dispatch, code generation, test execution, deployment — have never been verified as a connected chain. There is no smoke test, no E2E test, and no recorded evidence that typing a prompt produces a working application.
-- **Why it matters:** This is Devin's entire value proposition: give it a task, it does everything. Without this flow working end-to-end, Prometheus is a collection of parts, not a product. Every demo, every sales call, every benchmark depends on this pipeline functioning reliably.
-- **Effort:** XL (1–3 months)
-- **Dependencies:** All 9 services running (GAP-002), sandbox operational (GAP-008), deploy pipeline functional, model routing working, agent prompts tuned (GAP-012)
-- **Affected services:** orchestrator, queue-worker, sandbox-manager, model-router, project-brain, socket-server, web
-- **Affected packages:** agent-sdk, ai, workflow, queue, validators
-- **Success criteria:**
-  1. User types "Build a Next.js SaaS with auth, billing, and dashboard" in the web UI
-  2. Orchestrator decomposes into subtasks, assigns to agents
-  3. Agents generate code, tests, configuration in sandboxed environments
-  4. Tests pass within the sandbox
-  5. Application is deployed to a preview URL
-  6. User receives a working, deployed application within 60 minutes
-  7. This flow succeeds 8 out of 10 times on varied prompts
-- **Risks:** This is the hardest gap to close because it touches every service. Incremental approach recommended: start with a single template (Next.js app), hardcode the happy path, then generalize.
+These must be resolved before ANY user can use the platform.
 
 ---
 
-### GAP-002: Production Deployment of Prometheus Itself
+### GAP-001: All 9 Services Boot and Communicate
 
-- **What exists:** Docker compose for local development with PostgreSQL, Redis, and MinIO. Kubernetes manifests in `infra/k8s/`. Helm charts or raw manifests for each service. Deployment scripts in `infra/scripts/`. Terraform configuration for infrastructure provisioning.
-- **What is missing:** No evidence that all 9 services (web, api, orchestrator, queue-worker, socket-server, mcp-gateway, model-router, project-brain, sandbox-manager) plus the docs app have ever been deployed together and operated as a system. No production environment exists. No health check validation across services. No secrets management verification. No DNS/TLS setup. No runbooks for operational procedures.
-- **Why it matters:** You cannot sell what you cannot run. Every competitor — Devin, Cursor, Copilot — has a running production service. Until Prometheus runs in production, it is a development project, not a product. This gap blocks nearly every other gap because testing at scale requires a real environment.
-- **Effort:** XL (1–3 months)
-- **Dependencies:** K8s cluster (EKS/GKE), secrets management (Vault/AWS Secrets Manager), DNS configuration, TLS certificates, monitoring stack (GAP-022), CI/CD pipeline
-- **Affected services:** All 9 services + docs app
-- **Affected infra:** `infra/k8s/`, `infra/docker/`, `infra/scripts/`, `infra/terraform/`
-- **Success criteria:**
-  1. All 9 services running on Kubernetes with passing health checks
-  2. PostgreSQL, Redis, MinIO provisioned with backups enabled
-  3. TLS termination on all public endpoints
-  4. Secrets injected via Vault or cloud-native secrets manager (not env files)
-  5. Monitoring active with Prometheus metrics + Grafana dashboards
-  6. 99.9% uptime over 7 consecutive days under synthetic load
-  7. Deployment runbook documented and tested by a second engineer
-- **Risks:** Firecracker-based sandboxes may require bare-metal or nested virtualization, limiting cloud provider options. Budget for infrastructure costs must be allocated.
-
----
-
-### GAP-003: Integration Testing Between Services
-
-- **What exists:** Only 2 integration test files across the entire codebase. ~28K lines of test code, but almost entirely unit tests. Test utilities package exists with mock factories and helpers.
-- **What is missing:** For 9 services communicating over HTTP (tRPC), WebSocket (socket-server), Redis pub/sub, and BullMQ job queues, there are essentially zero tests verifying inter-service communication. No contract tests. No service-to-service API tests. No WebSocket connection lifecycle tests. No queue producer/consumer tests. No test environment that runs multiple services together.
-- **Why it matters:** Without integration tests, any code change to any service can silently break communication with other services. The current 14.5% test-to-code ratio is misleading — it is almost entirely unit tests that verify internal logic, not system behavior. A single broken tRPC route between API and orchestrator would be invisible until manual testing.
-- **Effort:** L (2–4 weeks)
-- **Dependencies:** Docker compose test environment, test-utils package enhancements
-- **Affected services:** All inter-service boundaries
-- **Affected packages:** test-utils, queue, types, validators
-- **Success criteria:**
-  1. Integration test suite covering all service-to-service communication paths:
-     - Web -> API (tRPC calls)
-     - API -> Orchestrator (task dispatch)
-     - Orchestrator -> Queue Worker (BullMQ jobs)
-     - Orchestrator -> Sandbox Manager (sandbox lifecycle)
-     - Orchestrator -> Model Router (LLM calls)
-     - Socket Server -> Web (WebSocket events)
-     - API -> Project Brain (knowledge queries)
-     - MCP Gateway -> external tool providers
-  2. Tests run in CI on every PR via Docker compose
-  3. Test environment spins up in under 2 minutes
-  4. All integration tests pass consistently (no flaky tests)
-  5. Coverage of error paths (service down, timeout, malformed response)
-- **Risks:** Integration tests are inherently slower and flakier than unit tests. Invest in deterministic test fixtures and avoid time-dependent assertions.
+- **Current State:** Each service has an `index.ts` entry point. Docker compose defines PostgreSQL, pgBouncer, Dragonfly, LiteLLM, Ollama, MinIO, Qdrant, Zoekt. Individual services may start, but they have never been validated running together.
+- **Files:** `apps/*/src/index.ts`, `docker-compose.yml`
+- **What's Missing:**
+  - Verified startup sequence for all 9 services
+  - Service discovery / health check validation
+  - Environment variable completeness check
+  - Inter-service HTTP connectivity test
+  - Redis pub/sub connectivity across services
+  - BullMQ producer/consumer wiring verification
+- **Effort:** M (1-2 weeks)
+- **Dependencies:** Docker compose running, .env configured
+- **Acceptance Criteria:**
+  1. `docker compose up -d && pnpm dev` starts all 9 services without errors
+  2. Health check endpoint returns 200 on all services
+  3. API can call orchestrator, model-router, project-brain, mcp-gateway
+  4. Queue worker processes a test job from API
+  5. Socket server accepts WebSocket connection from web app
+- **Competitor Reference:** Every competitor has this — it's table stakes
 
 ---
 
-### GAP-004: Agent Quality Benchmarking (SWE-bench)
+### GAP-002: End-to-End Task Execution Pipeline
 
-- **What exists:** SWE-bench runner code in the codebase. Competitive benchmark configuration files. Agent SDK with tool execution framework. Model router with multi-provider support.
-- **What is missing:** Zero recorded SWE-bench results. No benchmark CI pipeline. No historical tracking of agent performance. No comparison against published competitor numbers. The benchmark runner exists but has never produced auditable results.
-- **Why it matters:** Every serious AI coding tool publishes benchmark results: Devin publishes SWE-bench scores, Cursor shows completion rates, Copilot shows acceptance rates. Without published numbers, Prometheus has no credibility in the market. Claims of being "100x better" are unsubstantiated without evidence. Investors, enterprise buyers, and developers all look for benchmarks.
-- **Effort:** L (2–4 weeks)
-- **Dependencies:** Working sandbox (GAP-008), model routing operational, agent prompts tuned (GAP-012)
-- **Affected services:** orchestrator, sandbox-manager, model-router
-- **Affected packages:** agent-sdk, ai
-- **Success criteria:**
+- **Current State:** Orchestrator has `agent-loop.ts` (21KB), `task-router.ts` (47KB), `session-manager.ts`. Queue worker has `processor.ts`. API has tRPC routers. All exist as separate pieces.
+- **Files:** `apps/orchestrator/src/agent-loop.ts`, `apps/orchestrator/src/task-router.ts`, `apps/queue-worker/src/processor.ts`, `apps/api/src/routers/tasks.ts`, `apps/api/src/routers/sessions.ts`
+- **What's Missing:**
+  - Verified flow: User prompt → API → Queue → Orchestrator → Agent Loop → Tool Execution → Result → User
+  - Real LLM call producing real code output
+  - File write to sandbox that persists
+  - Result streamed back to web UI in real-time
+  - Session state correctly tracked through entire lifecycle
+- **Effort:** XL (1-3 months)
+- **Dependencies:** GAP-001, GAP-006, GAP-007, GAP-009, GAP-010
+- **Acceptance Criteria:**
+  1. User types "Create a hello world Express server" in web UI
+  2. Task appears in session with planning phase visible
+  3. Agent generates code, writes files to sandbox
+  4. Code runs successfully in sandbox
+  5. Result with file tree and output shown to user
+  6. Total time under 2 minutes for simple tasks
+  7. Works reliably 9/10 times
+- **Competitor Reference:** Devin (proven), Codex (cloud sandbox), Bolt.new (instant)
+
+---
+
+### GAP-003: Live Demo Instance
+
+- **Current State:** No production or staging deployment exists. K8s manifests in `infra/k8s/`, Terraform in `infra/terraform/`, deployment scripts in `infra/scripts/`.
+- **Files:** `infra/k8s/`, `infra/terraform/`, `infra/scripts/`, `infra/docker/`
+- **What's Missing:**
+  - Deployed instance accessible via HTTPS
+  - DNS configuration
+  - TLS certificates
+  - Monitoring and alerting
+  - Cost-effective infrastructure (not burning $1000/day on idle GPUs)
+  - Demo account with sample projects
+- **Effort:** L (2-4 weeks)
+- **Dependencies:** GAP-001, GAP-002
+- **Acceptance Criteria:**
+  1. `https://app.prometheus.dev` serves the web UI
+  2. User can sign up, create project, submit task
+  3. Agent executes task and returns result
+  4. 99.9% uptime over 7 days
+  5. Infrastructure cost under $500/month for demo tier
+- **Competitor Reference:** Devin (devin.ai), Bolt.new (bolt.new), v0 (v0.dev)
+
+---
+
+### GAP-004: Database Migration Path
+
+- **Current State:** Schema defined across 75+ table files in `packages/db/src/schema/tables/`. `pnpm db:push` exists for development. Migration files may or may not exist.
+- **Files:** `packages/db/src/schema/`, `packages/db/src/migrate.ts`, `packages/db/drizzle/`
+- **What's Missing:**
+  - Verified migration from empty database to full schema
+  - Migration ordering (foreign keys, dependencies)
+  - Seed data for demo/testing
+  - Migration rollback strategy
+  - pgvector extension installation automation
+  - Schema integrity validation
+- **Effort:** M (1-2 weeks)
+- **Dependencies:** PostgreSQL + pgvector running
+- **Acceptance Criteria:**
+  1. `pnpm db:migrate` on empty DB creates all tables without errors
+  2. `pnpm db:seed` populates demo data (org, user, project, sample sessions)
+  3. `pnpm db:check` validates schema integrity
+  4. Migration is idempotent (running twice doesn't break)
+- **Competitor Reference:** Internal infrastructure — all competitors have this solved
+
+---
+
+### GAP-005: Authentication Flow End-to-End
+
+- **Current State:** Clerk integration in `packages/auth/`. Webhook handlers in `apps/api/src/routes/webhooks/clerk.ts`. Middleware in API. Next.js auth provider in web app.
+- **Files:** `packages/auth/src/`, `apps/api/src/routes/webhooks/clerk.ts`, `apps/api/src/middleware/`, `apps/web/src/providers/`
+- **What's Missing:**
+  - Verified sign-up → onboarding → create org → create project → start session flow
+  - Clerk webhook processing for user creation
+  - API key creation and usage
+  - Role-based access control enforcement across all routers
+  - Session token refresh and expiry handling
+- **Effort:** M (1-2 weeks)
+- **Dependencies:** Clerk account configured, API running
+- **Acceptance Criteria:**
+  1. New user signs up via Clerk, appears in DB
+  2. User creates organization, invites team member
+  3. RBAC prevents viewer from creating tasks
+  4. API key auth works for CLI/SDK access
+  5. Session persists across page refreshes
+- **Competitor Reference:** All competitors — table stakes
+
+---
+
+### GAP-006: Production LLM Integration
+
+- **Current State:** Model router at `apps/model-router/src/` with 10 provider files, cascade logic, cost optimizer. AI package at `packages/ai/src/` with model registry of 50+ models.
+- **Files:** `apps/model-router/src/index.ts`, `apps/model-router/src/cascade.ts`, `packages/ai/src/models/registry.ts`, `packages/ai/src/providers/`
+- **What's Missing:**
+  - Verified LLM API calls that return actual completions
+  - Token counting and cost tracking in production
+  - Rate limit handling across providers
+  - Fallback chain actually working (Ollama → Groq → Anthropic)
+  - Streaming response forwarding to orchestrator
+  - Error handling for provider outages
+  - API key rotation and management
+- **Effort:** L (2-4 weeks)
+- **Dependencies:** At least one LLM API key configured
+- **Acceptance Criteria:**
+  1. Model router receives request, routes to appropriate provider
+  2. Response streams back token by token
+  3. Cost tracked in model_usage table per request
+  4. Fallback triggers when primary provider returns error
+  5. Works with Ollama (free local), Groq (fast), Anthropic (quality)
+  6. p95 latency under 500ms for routing decision
+- **Competitor Reference:** All competitors — table stakes (but our multi-provider routing is unique)
+
+---
+
+### GAP-007: Sandbox Actually Running Code
+
+- **Current State:** Sandbox manager at `apps/sandbox-manager/src/` with Docker, Firecracker, gVisor, E2B providers. Pool management, snapshot logic, network isolation code.
+- **Files:** `apps/sandbox-manager/src/providers/docker.ts`, `apps/sandbox-manager/src/pool-manager.ts`, `apps/sandbox-manager/src/index.ts`
+- **What's Missing:**
+  - Verified Docker container creation and code execution
+  - File system mount working (agent writes code, sandbox runs it)
+  - Process timeout enforcement
+  - Container cleanup after task completion
+  - Warm pool actually pre-warming containers
+  - Network isolation verified (no sandbox-to-sandbox access)
+- **Effort:** M (1-2 weeks)
+- **Dependencies:** Docker engine running
+- **Acceptance Criteria:**
+  1. `POST /sandbox/create` creates Docker container in under 2 seconds
+  2. Agent writes `index.js` to sandbox, runs `node index.js`, gets output
+  3. Container killed after 5-minute timeout
+  4. Warm pool maintains 2 pre-warmed containers
+  5. Sandbox cannot access host filesystem or other sandboxes
+- **Competitor Reference:** Devin (proven), Codex (microVMs), Bolt.new (WebContainers)
+
+---
+
+### GAP-008: Real-Time Streaming to UI
+
+- **Current State:** Socket server at `apps/socket-server/src/` with Socket.io, Redis adapter. SSE endpoint in API. Web app has socket provider and hooks.
+- **Files:** `apps/socket-server/src/index.ts`, `apps/web/src/providers/`, `apps/web/src/hooks/`
+- **What's Missing:**
+  - Verified WebSocket connection from browser to socket server
+  - Agent output tokens streaming to UI in real-time
+  - Session events (started, thinking, coding, testing, done) reflected in UI
+  - File change events showing diffs in real-time
+  - Terminal output streaming from sandbox to browser
+  - Reconnection handling on network interruption
+- **Effort:** M (1-2 weeks)
+- **Dependencies:** GAP-001, socket server running
+- **Acceptance Criteria:**
+  1. Browser connects to socket server, joins session room
+  2. Agent output appears token-by-token in chat UI
+  3. File tree updates as agent creates/modifies files
+  4. Terminal output streams in real-time
+  5. Connection survives 30-second network interruption
+- **Competitor Reference:** Devin (real-time), Claude Code (streaming), Cursor (instant)
+
+---
+
+### GAP-009: Production-Tuned System Prompts
+
+- **Current State:** Agent SDK at `packages/agent-sdk/src/` defines 13 roles. Role definitions likely have basic system prompts. No evidence of prompt optimization or evaluation.
+- **Files:** `packages/agent-sdk/src/roles/`, `packages/agent-sdk/src/prompts/`
+- **What's Missing:**
+  - Optimized system prompts for each of 12 agent roles
+  - Role-specific tool selection guidance
+  - Output format specifications (structured vs freeform)
+  - Few-shot examples for complex tasks
+  - Prompt versioning system
+  - A/B testing of prompt variants
+  - Evaluation metrics per prompt version
+- **Effort:** L (2-4 weeks)
+- **Dependencies:** GAP-006 (working LLM calls)
+- **Acceptance Criteria:**
+  1. Each agent role has a tuned system prompt (>500 words each)
+  2. Prompts include tool usage examples
+  3. Output follows consistent format (structured JSON for tool calls)
+  4. Prompt versions tracked in DB or config
+  5. Eval suite with 50+ test cases per role
+  6. Backend agent produces working Express/Hono server from prompt
+  7. Frontend agent produces working React components from prompt
+- **Competitor Reference:** Devin (heavily optimized), Claude Code (battle-tested)
+
+---
+
+### GAP-010: Agent Loop Actually Working
+
+- **Current State:** `apps/orchestrator/src/agent-loop.ts` (21KB) implements the core loop. Tool execution, decision making, context management code exists.
+- **Files:** `apps/orchestrator/src/agent-loop.ts`, `apps/orchestrator/src/engine/`, `apps/orchestrator/src/context/`
+- **What's Missing:**
+  - Verified think → plan → act → observe cycle
+  - Tool call parsing from LLM output
+  - Tool execution with real sandbox/git/terminal
+  - Observation feeding back into next iteration
+  - Loop termination conditions (task complete, max iterations, error)
+  - Token budget management within loop
+  - Context window management (what to keep, what to summarize)
+- **Effort:** L (2-4 weeks)
+- **Dependencies:** GAP-006, GAP-007, GAP-009
+- **Acceptance Criteria:**
+  1. Agent receives task "Create a REST API with /users endpoint"
+  2. Agent plans approach (visible in session)
+  3. Agent calls terminal tool to `npm init`, `npm install express`
+  4. Agent calls file-write tool to create `server.js`
+  5. Agent calls terminal tool to run and test the server
+  6. Agent reports task complete with summary
+  7. Loop completes in under 5 minutes for simple tasks
+  8. Works across frontend, backend, and integration agent roles
+- **Competitor Reference:** Devin (proven loop), Claude Code (CLI loop), Codex (sandbox loop)
+
+---
+
+### GAP-011: Error Recovery Under Real Conditions
+
+- **Current State:** `apps/orchestrator/src/engine/recovery-strategy.ts`, `health-watchdog.ts`, checkpoint persistence. BullMQ retry config.
+- **Files:** `apps/orchestrator/src/engine/recovery-strategy.ts`, `apps/orchestrator/src/engine/health-watchdog.ts`, `apps/orchestrator/src/checkpoint.ts`
+- **What's Missing:**
+  - Tested recovery from LLM API timeout/500/429
+  - Tested recovery from sandbox crash mid-task
+  - Tested recovery from Redis disconnect
+  - Tested recovery from WebSocket drop
+  - Checkpoint save/restore actually working
+  - Graceful degradation (partial results instead of total failure)
+- **Effort:** L (2-4 weeks)
+- **Dependencies:** GAP-002 (working pipeline to break)
+- **Acceptance Criteria:**
+  1. LLM returns 429 → agent retries with backoff, switches provider
+  2. Sandbox crashes → checkpoint saved, new sandbox created, resume
+  3. Redis drops → reconnect within 5s, no data loss
+  4. Agent retries failing test up to 3 times with different approaches
+  5. Recovery happens without user intervention
+- **Competitor Reference:** Devin (self-healing), Codex (retry logic)
+
+---
+
+### GAP-012: Git Integration Working End-to-End
+
+- **Current State:** Git tool in agent-sdk. GitHub adapter in MCP gateway. Webhook handlers for GitHub events.
+- **Files:** `packages/agent-sdk/src/tools/git.ts`, `apps/mcp-gateway/src/adapters/github/`, `apps/api/src/routes/webhooks/github-app.ts`
+- **What's Missing:**
+  - Agent can clone a repo into sandbox
+  - Agent creates branch, makes changes, commits
+  - Agent pushes to remote and creates PR
+  - PR has meaningful title, description, and linked issue
+  - Diff is clean (no accidental files, proper .gitignore)
+  - Conflict detection and resolution
+- **Effort:** M (1-2 weeks)
+- **Dependencies:** GAP-007 (sandbox), GAP-010 (agent loop)
+- **Acceptance Criteria:**
+  1. Agent clones repo, creates feature branch
+  2. Agent makes code changes, commits with conventional message
+  3. Agent pushes and creates PR with summary
+  4. PR passes CI checks
+  5. Works with GitHub and GitLab
+- **Competitor Reference:** Devin (PR creation), Claude Code (git workflow), Codex (PR automation)
+
+---
+
+### GAP-013: Web UI Actually Functional
+
+- **Current State:** Next.js app at `apps/web/src/` with 22+ pages, 30+ component groups. Zustand stores, tRPC client, socket hooks.
+- **Files:** `apps/web/src/app/`, `apps/web/src/components/`, `apps/web/src/stores/`, `apps/web/src/hooks/`
+- **What's Missing:**
+  - All pages rendering without errors
+  - tRPC queries connecting to real API
+  - Session page showing real-time agent activity
+  - Project dashboard with real data
+  - Settings pages saving to database
+  - Navigation flow smooth and complete
+  - Loading states and error boundaries
+- **Effort:** L (2-4 weeks)
+- **Dependencies:** GAP-001, GAP-005
+- **Acceptance Criteria:**
+  1. All routes render without console errors
+  2. Dashboard shows real projects and sessions
+  3. Session page shows live agent activity
+  4. Create project flow works end-to-end
+  5. Settings save and persist
+  6. Mobile responsive (tablet minimum)
+- **Competitor Reference:** Devin (clean UI), Bolt.new (instant), v0 (polished)
+
+---
+
+### GAP-014: Billing Flow Working
+
+- **Current State:** `packages/billing/src/` with Stripe integration, credit system, 6 tier definitions. tRPC billing router in API.
+- **Files:** `packages/billing/src/stripe.ts`, `packages/billing/src/credits.ts`, `packages/billing/src/products.ts`, `apps/api/src/routers/billing.ts`
+- **What's Missing:**
+  - Stripe checkout session creation and completion
+  - Credit deduction on task execution
+  - Credit balance display in UI
+  - Subscription upgrade/downgrade
+  - Usage-based billing calculation
+  - Invoice generation
+  - Free tier rate limiting
+- **Effort:** M (1-2 weeks)
+- **Dependencies:** GAP-005 (auth), Stripe account
+- **Acceptance Criteria:**
+  1. User subscribes to Pro plan via Stripe checkout
+  2. Credits added to balance after payment
+  3. Task execution deducts credits
+  4. Balance displayed in dashboard
+  5. Free tier limited to X tasks/day
+- **Competitor Reference:** All competitors — table stakes
+
+---
+
+### GAP-015: Queue Worker Processing Real Jobs
+
+- **Current State:** `apps/queue-worker/src/` with processor, scheduler, job definitions for 11 queue types.
+- **Files:** `apps/queue-worker/src/index.ts`, `apps/queue-worker/src/processor.ts`, `apps/queue-worker/src/jobs/`
+- **What's Missing:**
+  - Queue worker actually consuming and processing agent tasks
+  - Job retry and DLQ working
+  - Scheduled job execution
+  - Job progress tracking and reporting
+  - Concurrency limits enforced per tier
+  - Priority queue ordering
+- **Effort:** M (1-2 weeks)
+- **Dependencies:** GAP-001, Redis running
+- **Acceptance Criteria:**
+  1. API enqueues task, worker picks it up within 5 seconds
+  2. Worker forwards task to orchestrator
+  3. Failed job retried 3 times with backoff
+  4. Dead letter queue captures permanently failed jobs
+  5. Concurrent tasks limited per tier (free: 1, pro: 3, enterprise: 10)
+- **Competitor Reference:** Internal infrastructure
+
+---
+
+### GAP-016: Monitoring and Observability
+
+- **Current State:** `packages/telemetry/src/` with OpenTelemetry, Sentry, Prometheus client. Grafana dashboards in `infra/monitoring/`.
+- **Files:** `packages/telemetry/src/`, `infra/monitoring/`, `infra/k8s/monitoring/`
+- **What's Missing:**
+  - Actual metrics being collected from running services
+  - Grafana dashboards showing real data
+  - Alert rules triggering on real conditions
+  - Error tracking in Sentry with real stack traces
+  - Request tracing across service boundaries
+  - Log aggregation searchable
+- **Effort:** M (1-2 weeks)
+- **Dependencies:** GAP-001, GAP-003
+- **Acceptance Criteria:**
+  1. Prometheus scrapes metrics from all 9 services
+  2. Grafana shows request rate, latency, error rate
+  3. Alerts fire on >5% error rate
+  4. Sentry captures unhandled exceptions
+  5. Request trace spans across API → Queue → Orchestrator → Model Router
+- **Competitor Reference:** Internal infrastructure — all mature products have this
+
+---
+
+### GAP-017: Integration Tests for Critical Paths
+
+- **Current State:** ~338 test files, mostly unit tests. Test-utils package with helpers and mocks.
+- **Files:** `packages/test-utils/src/`, `apps/*/src/**/*.test.ts`
+- **What's Missing:**
+  - Integration tests that start real services and test cross-service communication
+  - API → Orchestrator task dispatch test
+  - Queue → Worker → Orchestrator flow test
+  - Socket server connection and event broadcast test
+  - Full task lifecycle test (create → execute → complete)
+  - Docker compose test environment
+- **Effort:** L (2-4 weeks)
+- **Dependencies:** GAP-001
+- **Acceptance Criteria:**
+  1. `pnpm test:integration` starts required services, runs tests, stops services
+  2. Tests cover all service-to-service communication paths
+  3. Tests complete in under 5 minutes
+  4. Run in CI on every PR
+  5. Zero flaky tests
+- **Competitor Reference:** Internal engineering — all shipping products have this
+
+---
+
+### GAP-018: Documentation for Self-Hosting
+
+- **Current State:** ARCHITECTURE.md, TECHNOLOGIES.md exist. Docker compose for local dev. K8s manifests.
+- **Files:** `docker-compose.yml`, `infra/`, `.env.example`
+- **What's Missing:**
+  - Step-by-step self-hosting guide (from bare server to running Prometheus)
+  - Hardware requirements (CPU, RAM, disk per service)
+  - Network topology diagram
+  - SSL/TLS setup guide
+  - Backup and restore procedures
+  - Upgrade procedures
+  - Troubleshooting guide
+- **Effort:** M (1-2 weeks)
+- **Dependencies:** GAP-003 (validated deployment to document)
+- **Acceptance Criteria:**
+  1. New engineer can deploy Prometheus from docs alone
+  2. Guide covers: single-server Docker, multi-server Docker, Kubernetes
+  3. Estimated infrastructure costs per deployment size
+  4. Backup/restore tested and documented
+- **Competitor Reference:** Prometheus is unique here — no competitor offers self-hosting
+
+---
+
+### GAP-019: CLI Tool Working
+
+- **Current State:** `packages/cli/src/` with Commander.js commands: task, chat, plan, fleet, review, search, init.
+- **Files:** `packages/cli/src/commands/`, `packages/cli/src/index.ts`
+- **What's Missing:**
+  - CLI connecting to running API instance
+  - `prometheus init` creating project config
+  - `prometheus task "fix this bug"` submitting and streaming result
+  - `prometheus chat` opening interactive session
+  - Authentication (API key from env or config file)
+  - Output formatting (colored, structured)
+- **Effort:** M (1-2 weeks)
+- **Dependencies:** GAP-001, GAP-002
+- **Acceptance Criteria:**
+  1. `npm install -g @prometheus/cli` installs globally
+  2. `prometheus auth` authenticates with API key
+  3. `prometheus task "Create a login page"` submits task and streams output
+  4. `prometheus status` shows active sessions
+  5. Output is colorized and readable in terminal
+- **Competitor Reference:** Claude Code (excellent CLI), Codex (CLI-first)
+
+---
+
+### GAP-020: VS Code Extension Working
+
+- **Current State:** `packages/vscode-extension/src/` with extension.ts, chat panel, git integration, status bar.
+- **Files:** `packages/vscode-extension/src/extension.ts`, `packages/vscode-extension/src/chat/`, `packages/vscode-extension/src/views/`
+- **What's Missing:**
+  - Extension builds and installs in VS Code
+  - Chat panel connects to API
+  - Task submission from editor context
+  - Code actions (fix, explain, refactor) working
+  - Status bar showing session state
+  - File decoration for agent-modified files
+- **Effort:** M (1-2 weeks)
+- **Dependencies:** GAP-001, GAP-002
+- **Acceptance Criteria:**
+  1. Extension installs from VSIX or marketplace
+  2. Chat panel opens and connects to Prometheus API
+  3. Right-click → "Ask Prometheus" sends selected code
+  4. Agent response appears in chat with code blocks
+  5. "Apply" button applies suggested changes to file
+- **Competitor Reference:** Copilot (gold standard), Cursor (IDE-native), Windsurf (IDE-native)
+
+---
+
+### GAP-081: TypeScript Compilation Across All Packages
+
+- **Current State:** Root uses TypeScript ^6.0.2, web app uses ^5.9.3. Mixed versions may cause type incompatibilities across packages.
+- **Files:** `package.json` (root), `apps/web/package.json`, all `packages/*/tsconfig.json`
+- **What's Missing:** Verified `pnpm typecheck` passes across all 10 apps and 29 packages simultaneously, with consistent type resolution between TS 5.9 and 6.0
+- **Effort:** S (1-3 days)
+- **Dependencies:** None
+- **Acceptance Criteria:** `pnpm typecheck` exits 0 across entire monorepo
+
+---
+
+### GAP-082: Docs App Builds and Serves
+
+- **Current State:** `apps/docs/` exists with Next.js config and content directory. Never verified to build or serve.
+- **Files:** `apps/docs/package.json`, `apps/docs/next.config.ts`, `apps/docs/content/`
+- **What's Missing:** Docs app builds successfully, serves documentation content, has navigation and search
+- **Effort:** M (1-2 weeks)
+- **Dependencies:** None
+- **Acceptance Criteria:** `pnpm --filter docs build` succeeds; docs accessible at configured port
+
+---
+
+### GAP-083: Docker Compose Full Stack Boot
+
+- **Current State:** Docker compose defines 8 services (postgres, pgbouncer, dragonfly, litellm, ollama, minio, mem0/qdrant, zoekt) with 3 profiles (core, ai, full). Never validated all 8 + all 10 app services running together.
+- **Files:** `docker-compose.yml`, `.env.example`
+- **What's Missing:** All 8 infra services + all 10 app services boot together without port conflicts, memory issues, or missing env vars
+- **Effort:** M (1-2 weeks)
+- **Dependencies:** GAP-001
+- **Acceptance Criteria:** `docker compose --profile full up -d && pnpm dev` starts entire platform
+
+---
+
+### GAP-084: .env.example Completeness
+
+- **Current State:** `.env.example` exists but may not cover all required vars for all 10 services (API keys, database URLs, ports, feature flags).
+- **Files:** `.env.example`, all `apps/*/src/index.ts` (env var usage)
+- **What's Missing:** Every env var referenced in code has a corresponding entry in .env.example with documentation
+- **Effort:** S (1-3 days)
+- **Dependencies:** None
+- **Acceptance Criteria:** Copy `.env.example` to `.env`, fill in API keys, all services start without "missing env var" errors
+
+---
+
+### GAP-085: Health Check Endpoints on All Services
+
+- **Current State:** Some services have `/health` endpoints. Not verified across all 9 HTTP services.
+- **Files:** `apps/*/src/index.ts`
+- **What's Missing:** All 9 HTTP services expose `/health` returning 200 with service metadata (version, uptime, dependencies)
+- **Effort:** S (1-3 days)
+- **Dependencies:** GAP-001
+- **Acceptance Criteria:** `curl localhost:{port}/health` returns 200 for all 9 services
+
+---
+
+## P1 — DEVIN PARITY (25 Gaps)
+
+These are required to match Devin's core feature set and compete in the market.
+
+---
+
+### GAP-021: SWE-bench Benchmark Results
+
+- **Current State:** SWE-bench runner code exists in codebase. Competitive benchmark configuration files present. Agent SDK with tool execution framework. No results ever recorded.
+- **Files:** `apps/orchestrator/src/evaluation/`, `packages/agent-sdk/src/tools/`
+- **What's Missing:**
+  - Run SWE-bench Lite (300 instances) end-to-end with our agent
+  - Record results in structured format (JSON/CSV)
+  - Set up weekly CI job to track scores over time
+  - Create regression detection (alert if score drops >5%)
+  - Run HumanEval benchmark as secondary metric
+  - Publish results on website/README
+- **Effort:** L (2-4 weeks)
+- **Dependencies:** GAP-002 (working pipeline), GAP-007 (sandbox), GAP-009 (tuned prompts)
+- **Acceptance Criteria:**
   1. SWE-bench Lite run completed with recorded results
-  2. Results show competitive performance (within 10% of published Devin scores as initial target)
-  3. HumanEval benchmark run and recorded
-  4. Benchmark suite runs weekly in CI with results tracked over time
-  5. Public-facing results page or data export (feeds into GAP-028)
-  6. Regression detection: alert if scores drop >5% between runs
-- **Risks:** Initial benchmark scores may be embarrassingly low. This is valuable information — it directs prompt engineering and agent architecture improvements. Do not delay benchmarking because of fear of low scores.
+  2. Results competitive (target: within 10% of Devin's published score)
+  3. HumanEval run completed
+  4. Weekly CI runs with historical tracking
+  5. Regression alert triggers on >5% drop
+- **Competitor Reference:** Devin ~14%, Claude Code ~49%, Codex ~69% (SWE-bench Verified)
 
 ---
 
-### GAP-005: Error Recovery and Self-Healing
+### GAP-022: Slack Bot Integration
 
-- **What exists:** `recovery-strategy.ts` in the orchestrator. `checkpoint-persistence.ts` for saving agent state. Health check endpoints on services. BullMQ retry configuration in queue worker.
-- **What is missing:** Verified ability to recover from mid-task failures without user intervention. Specific untested scenarios: model API returning 500/429, sandbox process crash mid-execution, Redis connection drop during pub/sub, PostgreSQL connection pool exhaustion, WebSocket disconnect during streaming, BullMQ job stuck in active state, out-of-memory in sandbox, network partition between services.
-- **Why it matters:** For 24/7 autonomous operation (the core product promise), self-healing is non-negotiable. Devin handles errors gracefully — retries API calls, restarts sandboxes, resumes from checkpoints. If Prometheus crashes on the first transient error, it is unusable for overnight tasks. Production systems experience failures constantly; the question is not whether failures happen but whether recovery is automatic.
-- **Effort:** L (2–4 weeks)
-- **Dependencies:** Checkpoint system verified, health watchdog operational, integration tests (GAP-003)
-- **Affected services:** orchestrator, queue-worker, sandbox-manager, model-router, socket-server
-- **Affected packages:** queue, agent-sdk, ai
-- **Success criteria:**
-  1. Agent recovers from model API 500 error (retry with exponential backoff, fallback to alternate model)
-  2. Agent recovers from sandbox timeout (checkpoint, restart sandbox, resume from checkpoint)
-  3. Agent recovers from Redis disconnect (reconnect, replay missed messages)
-  4. Agent recovers from DB connection drop (connection pool recovery, retry query)
-  5. Agent recovers from WebSocket disconnect (client reconnect, state sync)
-  6. Agent recovers from BullMQ stalled job (stall detection, re-queue)
-  7. All recovery scenarios tested in integration test suite
-  8. Recovery happens without user intervention within 30 seconds
-- **Risks:** Recovery logic is notoriously hard to test because it requires simulating failures. Use chaos testing patterns (GAP-030) and fault injection libraries.
-
----
-
-### GAP-006: User Onboarding Flow
-
-- **What exists:** `onboarding/page.tsx` in the web app. Clerk authentication integration. GitHub OAuth configuration. Project creation UI. Dashboard layout.
-- **What is missing:** Tested, polished first-run experience. Specific gaps: no guided walkthrough after sign-up, no GitHub repository connection wizard, no "first task" tutorial, no sample project to explore, no progress indicators during initial setup, no error handling for OAuth failures, no fallback for users without GitHub accounts.
-- **Why it matters:** First impression determines user retention. Devin has a polished onboarding that takes users from sign-up to their first completed task in minutes. If a new user signs up for Prometheus, hits a blank dashboard, and doesn't know what to do next, they churn immediately. The onboarding funnel is the highest-leverage UX investment.
-- **Effort:** M (1–2 weeks)
-- **Dependencies:** Auth working (Clerk), GitHub OAuth configured, project creation pipeline (GAP-001 minimal version)
-- **Affected services:** web, api
-- **Affected packages:** auth, ui
-- **Success criteria:**
-  1. New user completes sign-up via Clerk in under 60 seconds
-  2. Guided wizard: connect GitHub -> select/create project -> run first task
-  3. First task completes successfully (use a simple, reliable task like "add a README")
-  4. Total time from sign-up to first completed task: under 5 minutes
-  5. Error states handled gracefully (OAuth denied, GitHub down, API error)
-  6. Skip option for users who want to explore freely
-  7. Onboarding completion rate tracked in analytics
-- **Risks:** Onboarding depends on the E2E pipeline (GAP-001) working for at least one simple task. A minimal "hello world" task should be hardened as the onboarding demo.
+- **Current State:** Slack adapter in `apps/mcp-gateway/src/adapters/slack/`. Webhook handler in `apps/api/src/routes/webhooks/slack.ts`. Bot command stubs exist.
+- **Files:** `apps/mcp-gateway/src/adapters/slack/`, `apps/api/src/routes/webhooks/slack.ts`
+- **What's Missing:**
+  - Deployed Slack app (manifest, OAuth, bot token)
+  - `/prometheus <task>` slash command that creates a task
+  - Progress updates posted to thread as agent works
+  - File attachments (diffs, screenshots) in thread
+  - "Approve" / "Reject" buttons for destructive actions
+  - PR link posted when agent completes
+  - Error messages with retry button
+- **Effort:** M (1-2 weeks)
+- **Dependencies:** GAP-002, Slack app credentials, GAP-039 (notifications)
+- **Acceptance Criteria:**
+  1. `/prometheus build a landing page` in Slack creates task
+  2. Thread updates every 30s with agent progress
+  3. Screenshot of generated page posted to thread
+  4. PR link posted when complete
+  5. Error posted with "Retry" button if task fails
+- **Competitor Reference:** Devin (production Slack bot with rich interactions, thread updates, approve/reject)
 
 ---
 
-### GAP-007: Real-Time Streaming Reliability Under Load
+### GAP-023: GitHub App Integration
 
-- **What exists:** Socket server with WebSocket support. Backpressure handling. Rate limiting on connections. Redis pub/sub for cross-instance messaging. Event types defined in the types package.
-- **What is missing:** Load testing under realistic concurrent usage. No verification that 50+ simultaneous users watching agent streams receive reliable, ordered updates. No testing of reconnection behavior under load. No measurement of message latency at scale. No testing of backpressure behavior when clients are slow.
-- **Why it matters:** Users watching agents work in real-time is a core UX differentiator. The terminal output, file changes, and progress updates streaming live create the "wow" factor. Dropped connections, stale updates, out-of-order messages, or multi-second latency destroy trust and make the product feel broken.
-- **Effort:** M (1–2 weeks)
-- **Dependencies:** Load testing framework (k6 with WebSocket support), staging environment (GAP-002)
-- **Affected services:** socket-server, web
-- **Affected packages:** types
-- **Success criteria:**
-  1. 100 concurrent WebSocket connections maintained for 30 minutes
-  2. Zero dropped messages verified via sequence numbers
-  3. Message latency p50 < 100ms, p99 < 500ms
-  4. Graceful degradation under 500+ connections (backpressure, not crash)
-  5. Client reconnection within 3 seconds after network interruption
-  6. State sync after reconnection (client receives missed events)
-  7. Memory usage stable (no leaks) over 1-hour sustained load test
-- **Risks:** WebSocket load testing is more complex than HTTP load testing. k6 supports WebSocket but test scenarios need careful design. Redis pub/sub may become a bottleneck at scale.
-
----
-
-### GAP-008: Sandbox Stability Under Load
-
-- **What exists:** Sandbox manager service with pool manager. Firecracker VM provider. Docker fallback provider. Resource limits configuration. Cleanup lifecycle.
-- **What is missing:** Validation of concurrent sandbox provisioning and cleanup under real workloads. No testing of: 20+ sandboxes running simultaneously, sandbox pool exhaustion and queuing, resource leak detection over hours of operation, cleanup after agent crash, Firecracker VM boot time under load, filesystem isolation verification, network isolation verification.
-- **Why it matters:** Code execution is the fundamental capability of an AI coding agent. Every agent task requires a sandbox. If sandbox provisioning fails, is slow, or leaks resources under concurrent load, agents cannot work. This is the infrastructure foundation that everything else depends on.
-- **Effort:** L (2–4 weeks)
-- **Dependencies:** Infrastructure (Firecracker or Docker runtime), load testing framework
-- **Affected services:** sandbox-manager
-- **Affected packages:** agent-sdk (sandbox client)
-- **Success criteria:**
-  1. 20 concurrent sandboxes running for 30 minutes with zero crashes
-  2. Sandbox provisioning time < 5 seconds (Firecracker) or < 10 seconds (Docker)
-  3. Zero resource leaks (memory, disk, network) after 100 create/destroy cycles
-  4. Pool exhaustion handled gracefully (queue with timeout, not crash)
-  5. Cleanup succeeds even after agent process crash (orphan detection)
-  6. Filesystem isolation verified (sandbox A cannot read sandbox B files)
-  7. Network isolation verified (sandbox cannot access host network unless explicitly allowed)
-  8. Resource limits enforced (CPU, memory, disk caps)
-- **Risks:** Firecracker requires specific kernel support (KVM). In cloud environments, nested virtualization may not be available, requiring fallback to Docker with gVisor. Test both providers.
+- **Current State:** GitHub webhook handlers in `apps/api/src/routes/webhooks/github-app.ts`. GitHub MCP adapter in `apps/mcp-gateway/src/adapters/github/`. Git tool in `packages/agent-sdk/src/tools/git.ts`.
+- **Files:** `apps/api/src/routes/webhooks/github-app.ts`, `apps/mcp-gateway/src/adapters/github/`
+- **What's Missing:**
+  - Published GitHub App (manifest.yml, permissions, events)
+  - Issue-to-task automation: label issue with "prometheus" → agent picks it up
+  - PR creation with meaningful description, linked issue
+  - PR review bot: comment inline on PRs with suggestions
+  - Status checks: report agent progress as GitHub check
+  - Auto-assign agent to issues matching criteria
+- **Effort:** M (1-2 weeks)
+- **Dependencies:** GAP-002, GAP-012 (git integration)
+- **Acceptance Criteria:**
+  1. GitHub App installable from marketplace
+  2. Issue labeled "prometheus" → agent starts working → PR created
+  3. PR has description linking back to issue
+  4. Agent posts inline review comments on other PRs
+  5. GitHub check shows "Prometheus: Task Complete"
+- **Competitor Reference:** Devin (GitHub deep integration), Copilot (native GitHub, status checks)
 
 ---
 
-### GAP-009: Credit/Billing System E2E
+### GAP-024: Preview Deployments
 
-- **What exists:** Stripe integration in the billing package. Credit system with allocation and consumption tracking. Usage tracking middleware. Plan definitions (free, pro, team, enterprise). Subscription management. Webhook handlers for Stripe events.
-- **What is missing:** End-to-end testing of the complete billing lifecycle. Untested flows: sign up with free tier -> use credits -> credits exhausted -> upgrade prompt -> payment -> plan upgrade -> increased credits -> usage tracking accurate -> invoice generated -> downgrade -> credit adjustment. Also untested: failed payment handling, subscription cancellation, prorated billing, credit refunds, usage metering accuracy.
-- **Why it matters:** Billing is the revenue-critical path. Billing bugs have three catastrophic outcomes: (1) users get free access (lost revenue), (2) users are overcharged (angry customers, chargebacks), (3) usage tracking is inaccurate (loss of trust). Every SaaS that handles real money needs bulletproof billing.
-- **Effort:** M (1–2 weeks)
-- **Dependencies:** Stripe test mode API keys, billing UI components, auth (user/org context)
-- **Affected services:** api, web
-- **Affected packages:** billing, auth, db
-- **Success criteria:**
-  1. Complete billing lifecycle tested E2E in Stripe test mode
-  2. Credit consumption accurately reflects actual LLM token usage
-  3. Plan upgrade/downgrade transitions work without data loss
-  4. Failed payment triggers grace period, then access restriction
-  5. Webhook handlers process all Stripe event types correctly
-  6. Invoice generation matches actual usage
-  7. Credit balance never goes negative without explicit overdraft policy
-  8. Billing dashboard shows accurate real-time usage
-- **Risks:** Stripe test mode behaves slightly differently from production. Use Stripe's test clocks for subscription lifecycle testing. Ensure webhook signing is verified in production.
-
----
-
-### GAP-010: Auth/Authorization Hardening
-
-- **What exists:** Clerk integration for authentication. RBAC (role-based access control) with admin/member/viewer roles. FGA (fine-grained authorization) configuration. Row-level security (RLS) via org_id on database queries. API key management.
-- **What is missing:** Comprehensive security review of the full authorization matrix. Untested scenarios: cross-org data isolation (can org A access org B's data?), API key scope enforcement (can a read-only key write?), RBAC enforcement on every tRPC route, RLS bypass vulnerabilities, session hijacking protection, token refresh edge cases, permission escalation attacks, rate limiting per API key.
-- **Why it matters:** Prometheus is a multi-tenant SaaS with code execution capabilities. The security stakes are extraordinarily high: a single authorization bypass could expose one customer's proprietary code to another, or allow an attacker to execute arbitrary code. Enterprise customers will perform security audits before procurement. A single critical finding kills the deal.
-- **Effort:** M (1–2 weeks)
-- **Dependencies:** Clerk configuration verified, RLS queries audited, RBAC middleware on all routes
-- **Affected services:** api, web, orchestrator (task authorization)
-- **Affected packages:** auth, db (RLS patterns)
-- **Success criteria:**
-  1. Cross-org data leak test: org A cannot access org B's projects, tasks, files, or analytics
-  2. RBAC enforcement verified on every tRPC route (automated test)
-  3. API key scoping enforced (read key cannot write, org key cannot access other org)
-  4. RLS verified on all tenant-scoped database queries (no raw SQL bypasses)
-  5. Session management: expired sessions rejected, concurrent session limits enforced
-  6. Security audit by external firm or experienced security engineer passes with zero critical findings
-  7. Penetration test on auth endpoints passes
-- **Risks:** Security hardening is never "done" — it is a continuous process. Start with automated RBAC tests that run in CI to prevent regressions. Consider a bug bounty program post-launch.
+- **Current State:** Vercel adapter in `apps/mcp-gateway/src/adapters/vercel/`. Netlify adapter exists. Deploy engineer agent role. Preview deployment queue in `packages/queue/`.
+- **Files:** `apps/mcp-gateway/src/adapters/vercel/`, `apps/mcp-gateway/src/adapters/netlify/`, `apps/orchestrator/src/deployment/`
+- **What's Missing:**
+  - Agent pushes code to repo, triggers Vercel/Netlify deployment
+  - Deployment URL captured and shared with user
+  - Smoke test against deployed URL (health check, screenshot)
+  - Deployment status tracked in database
+  - Rollback if smoke test fails
+  - Support for at least Vercel, Netlify, and Docker
+- **Effort:** M (1-2 weeks)
+- **Dependencies:** GAP-002, GAP-012, Vercel/Netlify account with API tokens
+- **Acceptance Criteria:**
+  1. Agent generates Next.js app → pushes to GitHub → Vercel deploys
+  2. Deployment URL (e.g., `my-app-abc.vercel.app`) returned to user
+  3. Agent visits URL, takes screenshot, verifies it loads
+  4. Deployment record created in database
+  5. If 500 error on deployed URL → agent auto-investigates
+- **Competitor Reference:** Bolt.new (instant), v0 (Vercel native), Lovable (instant), Replit (instant)
 
 ---
 
-### GAP-011: User Documentation
+### GAP-025: Project Scaffolding from Scratch
 
-- **What exists:** 3 pages in `apps/docs/content/`: getting-started, architecture, and index. The docs app itself (likely Fumadocs or similar) is set up and deployable.
-- **What is missing:** Comprehensive documentation covering: API reference (tRPC routes), agent guide (what each agent does, how to configure), tool reference (available tools, parameters), deployment guide (self-hosted, cloud), CLI reference (all commands, flags, examples), VS Code extension guide, webhook configuration, billing/pricing explanation, troubleshooting guide, FAQ, architecture deep-dive, plugin development guide, security model explanation.
-- **Why it matters:** No documentation = no adoption. Developers expect to find answers in docs before reaching out to support. Enterprise evaluators check documentation quality as a proxy for product maturity. Competitors have extensive documentation: Cursor has a full docs site, Copilot has GitHub Docs integration, Devin has guides and tutorials.
-- **Effort:** L (2–4 weeks)
-- **Dependencies:** Stable APIs (so docs don't immediately become outdated), OpenAPI/tRPC route introspection
-- **Affected services:** docs app
-- **Affected packages:** All (each package needs its public API documented)
-- **Success criteria:**
-  1. Minimum 15 documentation pages covering all major features
-  2. Getting started guide updated and tested by a new user
-  3. API reference auto-generated from tRPC router types
-  4. Each of the 12 agents has a dedicated documentation page
-  5. CLI commands documented with examples and expected output
-  6. Deployment guide for Docker Compose (dev) and Kubernetes (prod)
-  7. Troubleshooting section with common errors and solutions
-  8. Search functionality in docs site
-  9. Docs kept in sync via CI check (detect stale references)
-- **Risks:** Documentation is only valuable if maintained. Tie docs to the code: auto-generate API references, use doc-tests where possible, and include doc freshness checks in CI.
-
----
-
-### GAP-012: Prompt Engineering Quality
-
-- **What exists:** Agent system prompts in role definition files for all 12 agents. Orchestrator has a coordination prompt. Model router handles multi-model dispatch. Self-play trainer for iterative prompt improvement.
-- **What is missing:** Systematic prompt evaluation framework. The orchestrator prompt is approximately 50 lines — thin for a system coordinating 12 specialist agents across complex tasks. No prompt versioning system. No A/B testing infrastructure. No eval datasets per agent. No prompt regression testing. No structured prompt templates with variable injection. No few-shot example libraries per task type.
-- **Why it matters:** Prompt quality is the single largest lever on output quality. The difference between a mediocre and excellent prompt can be 2-5x on task completion rates. This is the difference between "impressive demo" and "reliable tool." Competitors invest heavily in prompt engineering: Devin has extensive task-specific prompts, Cursor has finely-tuned completion prompts. Without systematic prompt work, Prometheus agents produce generic output.
-- **Effort:** L (2–4 weeks, ongoing)
-- **Dependencies:** Benchmark framework (GAP-004) for measuring improvement, prompt versioning system
-- **Affected services:** orchestrator, model-router
-- **Affected packages:** agent-sdk, ai
-- **Success criteria:**
-  1. Each agent role has versioned prompts (v1, v2, ...) with changelog
-  2. Eval dataset per agent: 20+ test cases with expected outputs
-  3. A/B testing: new prompt versions tested against baseline on eval set
-  4. Orchestrator prompt expanded to 200+ lines with: task decomposition examples, agent selection criteria, error handling instructions, quality verification steps
-  5. Few-shot example libraries: 5+ examples per common task type
-  6. Prompt regression test in CI: new changes cannot reduce eval scores
-  7. Measurable improvement: 20%+ task completion rate increase over baseline
-- **Risks:** Prompt engineering is empirical — improvements require experimentation cycles. Allocate ongoing time, not a one-time sprint. Track prompt versions in version control alongside code.
+- **Current State:** Blueprint system in orchestrator. Config-stacks package (`packages/config-stacks/`) with templates for ecommerce, mobile, saas, data-pipeline. Template gallery UI component.
+- **Files:** `packages/config-stacks/src/templates/`, `apps/orchestrator/src/planning/`, `apps/web/src/components/templates/`
+- **What's Missing:**
+  - Agent creates complete project from natural language description
+  - Correct dependency installation (npm/pnpm/yarn)
+  - Build tool configuration (tsconfig, eslint/biome, tailwind)
+  - Directory structure following conventions
+  - README generation with setup instructions
+  - .env.example with required variables
+  - Docker Compose for local development
+- **Effort:** L (2-4 weeks)
+- **Dependencies:** GAP-010 (agent loop), GAP-007 (sandbox), GAP-009 (prompts)
+- **Acceptance Criteria:**
+  1. "Build a SaaS dashboard with auth and Stripe" → complete Next.js project
+  2. `npm install && npm run dev` works first try
+  3. Project has proper structure (src/, components/, lib/, etc.)
+  4. Dependencies are correct versions (no conflicts)
+  5. At least 5 different project types scaffold correctly
+- **Competitor Reference:** Bolt.new (instant scaffold), Lovable (instant), Replit (instant)
 
 ---
 
-### GAP-013: Mobile/Responsive UI
+### GAP-026: Autonomous Debugging
 
-- **What exists:** `mobile-nav.tsx` and `touch-gestures.tsx` in the UI package. The web app uses Tailwind CSS (responsive-capable). shadcn/ui components (responsive by default).
-- **What is missing:** Systematic responsive design across all dashboard pages. Only 2 mobile-specific components exist in a web app with dozens of pages and components. No responsive testing. No mobile-specific layouts for: task list, agent activity stream, terminal output, file explorer, settings, billing, project creation. The code editor / terminal view likely requires significant mobile adaptation.
-- **Why it matters:** Devin users check progress on phones while commuting, in meetings, or at dinner. For a 24/7 autonomous service, mobile access is table stakes — users need to monitor agent progress, approve actions, and read results from any device. A broken mobile experience says "this product isn't ready."
-- **Effort:** M (1–2 weeks)
-- **Dependencies:** UI component library, responsive design system
-- **Affected services:** web
-- **Affected packages:** ui
-- **Success criteria:**
-  1. All dashboard pages usable on 375px-width mobile viewport (iPhone SE)
-  2. Navigation: hamburger menu, bottom tab bar, or equivalent mobile pattern
-  3. Agent activity stream: readable, scrollable, auto-updating on mobile
-  4. Terminal output: horizontally scrollable with readable font size
-  5. Task creation: full flow completable on mobile
-  6. Notifications: visible and actionable on mobile
-  7. No horizontal overflow on any page at any breakpoint
-  8. Touch targets minimum 44x44px (Apple HIG)
-  9. Tested on iOS Safari, Chrome Android, and Firefox Android
-- **Risks:** Terminal/code output on mobile is inherently challenging. Consider a simplified "summary view" for mobile that shows key outputs without full terminal rendering.
-
----
-
-### GAP-014: Slack Bot for Async Interaction
-
-- **What exists:** `slack-bot.ts` in the notifications package. Notification system with multiple channel support. MCP gateway for external tool integration.
-- **What is missing:** Full Slack integration as a first-class interaction mode. Untested capabilities: receiving task requests via Slack DM or channel mention, streaming agent progress to Slack threads, interactive buttons for approvals/choices, file sharing (code snippets, screenshots), error notifications with retry buttons, slash commands for common actions, thread-based conversation context.
-- **Why it matters:** Devin's Slack integration is a core differentiator and a major reason for enterprise adoption. Teams message Devin in Slack: "Hey Devin, fix the login bug from issue #234" — and it works. This is how teams actually interact with autonomous agents: asynchronously, in their existing communication tool. A web-only UI requires users to context-switch. Slack integration makes Prometheus part of the team's workflow.
-- **Effort:** M (1–2 weeks)
-- **Dependencies:** MCP Slack adapter, background agent capability, auth (user mapping between Slack and Prometheus)
-- **Affected services:** api, orchestrator, queue-worker
-- **Affected packages:** notifications, queue
-- **Success criteria:**
-  1. User DMs Slack bot with task description -> agent creates and starts task
-  2. Agent progress streams to Slack thread (truncated, with "View full output" link)
-  3. Agent completion notification with summary and links to PR/deployment
-  4. Interactive approval buttons (approve deploy, choose between options)
-  5. Slash commands: `/prometheus status`, `/prometheus create`, `/prometheus stop`
-  6. Thread context: replying in thread adds context to the running task
-  7. Multi-org support: Slack workspace mapped to Prometheus org
-  8. Rate limiting: prevent Slack message flooding
-- **Risks:** Slack API has rate limits and message size limits. Design for truncated output with links to full details in the web UI. Slack app review process can take weeks — start the submission early.
+- **Current State:** Agent loop has error observation capability. Test engineer agent role exists. CI/loop engineer role does write-test-fail-analyze-fix cycles.
+- **Files:** `packages/agent-sdk/src/roles/index.ts` (ci_loop role), `apps/orchestrator/src/agent-loop.ts`
+- **What's Missing:**
+  - Agent reads error message, identifies root cause, generates fix
+  - Multi-attempt debugging: try fix → test → if fail → try different fix
+  - Stack trace analysis (extract file, line, error type)
+  - Dependency error diagnosis (wrong version, missing package)
+  - Build error diagnosis (TypeScript, webpack, etc.)
+  - Runtime error diagnosis (null reference, type error, etc.)
+- **Effort:** L (2-4 weeks)
+- **Dependencies:** GAP-010 (agent loop working), GAP-009 (prompts tuned)
+- **Acceptance Criteria:**
+  1. Agent fixes TypeScript type error (given failing `tsc` output)
+  2. Agent fixes runtime null reference (given stack trace)
+  3. Agent fixes missing dependency (given `MODULE_NOT_FOUND`)
+  4. Agent iterates up to 5 times if first fix doesn't work
+  5. Success rate >70% on common error categories
+- **Competitor Reference:** Devin (autonomous debugging proven), Claude Code (error loop), Cursor (inline fix)
 
 ---
 
-### GAP-015: Webhook-Triggered Autonomous Tasks
+### GAP-027: Multi-File Coordinated Coding
 
-- **What exists:** Outbound webhook system for sending notifications. Event routing infrastructure. Queue worker for processing background jobs.
-- **What is missing:** Inbound webhook handlers that trigger autonomous agent tasks. Key missing integrations: GitHub push/PR event -> automated code review, GitHub issue creation -> agent starts implementation, Jira ticket transition -> agent picks up task, Slack message -> task creation (related to GAP-014), custom webhook endpoint for CI/CD triggers, scheduled/cron-triggered tasks.
-- **Why it matters:** This is how Devin operates in production: events trigger autonomous work. Without inbound webhooks, Prometheus requires a human to manually create every task via the web UI or CLI. That is fundamentally not a 24/7 autonomous system — it is a human-initiated tool. Webhook triggers are what transform Prometheus from "AI assistant you talk to" into "AI teammate that works alongside you."
-- **Effort:** M (1–2 weeks)
-- **Dependencies:** Queue worker (reliable job processing), event routing, auth (webhook signing/verification)
-- **Affected services:** api (webhook endpoints), orchestrator, queue-worker
-- **Affected packages:** queue, validators (webhook payload schemas)
-- **Success criteria:**
-  1. GitHub PR webhook triggers automated code review agent
-  2. GitHub issue labeled "prometheus" triggers agent task creation
-  3. Jira ticket creation with specific label triggers implementation task
-  4. Custom webhook endpoint accepts JSON payload with task description
-  5. All webhooks verified via signature (GitHub HMAC, Jira JWT, custom HMAC)
-  6. Webhook delivery status tracked and retryable
-  7. Duplicate event detection (idempotency)
-  8. Configurable per-org webhook endpoints and event types
-- **Risks:** Webhook reliability is critical — missed events mean missed work. Implement idempotency, delivery tracking, and manual retry capability. GitHub webhook delivery has a 10-second timeout — process asynchronously.
-
----
-
-### GAP-016: Rate Limiting and Abuse Prevention
-
-- **What exists:** Rate limiters at the model-router level (per-model rate limits). WebSocket connection rate limiting. Redis-based rate limit storage.
-- **What is missing:** Comprehensive API-level rate limiting on all tRPC routes. Credit abuse prevention (bulk task creation to exhaust free tier). DDoS protection at the edge. Per-org and per-user rate limits. Cost caps (alert and hard-stop when org exceeds budget). Sandbox abuse prevention (crypto mining, network scanning). API key rate limiting (separate from user rate limits).
-- **Why it matters:** Prometheus is a public SaaS that makes expensive LLM API calls and provisions compute resources (sandboxes) on behalf of users. Without rate limiting and abuse prevention: (1) a single abusive user can exhaust LLM API budgets, (2) free-tier users can consume unlimited resources, (3) DDoS attacks can take down the service, (4) sandboxes can be used for crypto mining or attacks. The cost of abuse scales linearly with user count.
-- **Effort:** M (1–2 weeks)
-- **Dependencies:** Redis (rate limit storage), API middleware, billing integration (credit-based limits)
-- **Affected services:** api, model-router, sandbox-manager
-- **Affected packages:** auth (middleware), billing (credit enforcement)
-- **Success criteria:**
-  1. Per-route rate limits on all tRPC endpoints (configurable per plan)
-  2. Per-org cost cap with email alert at 80% and hard stop at 100%
-  3. Free-tier hard limits: X tasks/day, Y sandbox-minutes/day, Z LLM tokens/day
-  4. Sandbox abuse detection: CPU usage monitoring, network traffic monitoring
-  5. API key rate limits separate from session rate limits
-  6. DDoS protection via Cloudflare or equivalent edge service
-  7. Rate limit headers in API responses (X-RateLimit-Remaining, etc.)
-  8. Rate limit bypass for internal service-to-service calls
-  9. Abuse attempt logging and alerting
-- **Risks:** Rate limits that are too aggressive hurt legitimate users. Start with generous limits based on expected usage patterns and tighten based on observed abuse. Implement rate limit monitoring before enforcement.
+- **Current State:** Agent tools support file read/write/search. No proven multi-file coordination.
+- **Files:** `packages/agent-sdk/src/tools/file.ts`, `packages/agent-sdk/src/tools/terminal.ts`
+- **What's Missing:**
+  - Agent creates/modifies multiple related files in one task
+  - Cross-file consistency (imports match exports, types align)
+  - Architecture-aware: knows where to put new files
+  - Handles 5+ file changes in a single coherent task
+- **Effort:** L (2-4 weeks)
+- **Dependencies:** GAP-010, GAP-009
+- **Acceptance Criteria:**
+  1. "Add a user profile feature" → creates: model, API route, UI component, test, migration (5 files)
+  2. All imports resolve correctly
+  3. Types are consistent across files
+  4. Tests reference correct module paths
+  5. Works for features spanning frontend + backend + database
+- **Competitor Reference:** Devin (proven), Claude Code (proven), Cursor (proven), Windsurf (proven)
 
 ---
 
-## P1 — HIGH (30-Day Horizon)
+### GAP-028: Test Generation and Execution
 
-### GAP-017: True 24/7 Autonomous Operation
-
-- **What exists:** Background agent support for limited task types. Queue worker for asynchronous job processing. BullMQ for job scheduling. Checkpoint persistence for state saving.
-- **What is missing:** Full 24/7 autonomous operation mode. Specific gaps: scheduled task execution (cron-style), progress notifications to offline users (email, Slack, push), approval gates for destructive actions (deploy, delete, force push), automatic retry with exponential backoff on transient failures, task dependency chains (finish A then start B), overnight task queuing with priority ordering, SLA tracking (task started within X minutes of creation), stale task detection and escalation.
-- **Why it matters:** "Leave it overnight and come back to finished work" is Devin's key selling point and the fundamental promise of autonomous AI engineering. If Prometheus cannot reliably execute tasks unattended for 8+ hours, it is not an autonomous agent — it is an interactive assistant. The entire value proposition of a 24/7 service depends on this capability.
-- **Effort:** XL (1–3 months)
-- **Dependencies:** GAP-005 (error recovery — essential for unattended operation), GAP-015 (webhook triggers), GAP-014 (Slack notifications)
-- **Affected services:** orchestrator, queue-worker, api
-- **Affected packages:** queue, notifications, agent-sdk
-- **Success criteria:**
-  1. User queues 10 tasks at 6pm, all completed by 8am with Slack/email notifications
-  2. Destructive actions (deploy to prod, delete branch) require explicit approval via Slack/email
-  3. Transient failures retried automatically with exponential backoff (up to 3 retries)
-  4. Task dependency chains: "after PR is merged, deploy to staging"
-  5. Priority ordering: urgent tasks preempt queued tasks
-  6. Stale task detection: alert if task not started within 15 minutes
-  7. Daily summary email/Slack message: tasks completed, tasks failed, tasks pending
-  8. Zero human intervention required for successful task chains running overnight
-- **Risks:** Unattended operation amplifies the impact of bugs. A misdirected deploy or a bad code generation loop running for hours can cause significant damage. Approval gates and cost caps are essential safety mechanisms.
-
----
-
-### GAP-018: Multi-Repository Support
-
-- **What exists:** `multi-repo.ts` in the composition module. Git operations support. Sandbox with filesystem access.
-- **What is missing:** Tested multi-repository workflows. Specific untested capabilities: cloning and modifying multiple repos in a single task, cross-repo dependency awareness (changing an API in repo A requires updating the client in repo B), multi-repo PR creation (linked PRs across repos), monorepo subdirectory support, git submodule handling, private repository access management.
-- **Why it matters:** Enterprise projects span multiple repositories — microservices architectures, shared libraries, frontend/backend splits. A tool that only works within a single repository is limited to simple tasks. Devin handles multi-repo tasks. This is a prerequisite for enterprise adoption.
-- **Effort:** L (2–4 weeks)
-- **Dependencies:** Git operations, sandbox (multi-repo cloning), GitHub API (multi-repo PR creation)
-- **Affected services:** orchestrator, sandbox-manager
-- **Affected packages:** agent-sdk
-- **Success criteria:**
-  1. Agent modifies 3 related repos in a single task
-  2. PRs created in each repo with cross-references ("See also: repo-b#123")
-  3. Cross-repo dependency detection: changing a shared type triggers updates in consumers
-  4. Private repository access via org-level GitHub token
-  5. Monorepo subdirectory support (agent works on `packages/foo` within a monorepo)
-  6. Git submodule handling (checkout, update, commit)
-  7. Conflict detection: warn if target branches have diverged
-- **Risks:** Multi-repo operations increase complexity and failure modes significantly. Start with the simple case (2 repos, one API change) and expand.
+- **Current State:** Test engineer agent role defined. Test generator and E2E generator tools in `packages/agent-sdk/src/tools/`.
+- **Files:** `packages/agent-sdk/src/tools/test-generator.ts`, `packages/agent-sdk/src/tools/e2e-test-generator.ts`
+- **What's Missing:**
+  - Agent generates meaningful unit tests (not trivial/redundant)
+  - Tests actually run in sandbox and pass
+  - Agent iterates if tests fail (fix test or fix code)
+  - Coverage measurement (target >80%)
+  - E2E tests with Playwright for UI features
+  - Test framework auto-detection (Jest, Vitest, pytest)
+- **Effort:** M (1-2 weeks)
+- **Dependencies:** GAP-010, GAP-007
+- **Acceptance Criteria:**
+  1. Agent generates 10+ tests for a given module
+  2. Tests run in sandbox (`npm test`) and pass
+  3. Coverage exceeds 80% for the module
+  4. Tests cover edge cases (null, empty, error)
+  5. E2E test opens browser and verifies UI
+- **Competitor Reference:** Codex (test generation), Claude Code (test writing)
 
 ---
 
-### GAP-019: Template Gallery for Project Bootstrapping
+### GAP-029: Dependency Management
 
-- **What exists:** Template definition files: `saas.ts`, `ecommerce.ts`, `mobile.ts`, `data-pipeline.ts`. Project creation pipeline.
-- **What is missing:** High-quality, tested templates that produce working projects. Current templates are definitions/schemas but not verified to produce functional applications. No template preview UI. No template customization (e.g., "SaaS with Stripe billing but not auth0"). No community-contributed templates. No template versioning. No template testing in CI.
-- **Why it matters:** Fast project creation is the most impressive demo. "Watch Prometheus build a complete SaaS app in 10 minutes" is a compelling video. Templates reduce time-to-first-result and increase user confidence. Without templates, every project starts from an empty directory, which is slower and less reliable.
-- **Effort:** L (2–4 weeks)
-- **Dependencies:** Sandbox (for template execution), project creation pipeline (GAP-001)
-- **Affected services:** orchestrator, web
-- **Affected packages:** workflow
-- **Success criteria:**
-  1. 10+ tested templates: Next.js SaaS, React dashboard, Express API, CLI tool, Chrome extension, React Native app, FastAPI backend, Django app, E-commerce storefront, Data pipeline
-  2. Each template produces a working, deployable project (verified in CI)
-  3. Template gallery UI with preview screenshots and descriptions
-  4. Template customization: user selects options (auth provider, DB, styling)
-  5. Templates versioned and updated with framework releases
-  6. Template generation time < 5 minutes for simple templates
-  7. Generated projects pass linting, type checking, and included tests
-- **Risks:** Templates become outdated as frameworks evolve. Automate template testing in CI with latest framework versions. Consider generating templates dynamically from specifications rather than maintaining static templates.
+- **Current State:** Terminal tool can run npm/pnpm commands in sandbox. No specialized dependency logic.
+- **What's Missing:** Agent installs correct packages, resolves version conflicts, updates lock files, handles peer dependencies
+- **Effort:** S (1-3 days)
+- **Dependencies:** GAP-010, GAP-007
+- **Acceptance Criteria:** Agent adds React Query to existing project without breaking build, lock file updated correctly
+- **Competitor Reference:** All coding agents handle this — table stakes
 
 ---
 
-### GAP-020: Plugin Marketplace UI
+### GAP-030: Task Progress and Status Tracking
 
-- **What exists:** `marketplace-client.ts` for marketplace API interaction. Plugin SDK for creating plugins. Plugin loading infrastructure.
-- **What is missing:** Actual marketplace UI in the web app. No plugin discovery page. No install/uninstall flow. No plugin ratings or reviews. No community plugin submissions. No plugin review/approval process. No plugin sandboxing (security). No plugin versioning. No plugin update notifications.
-- **Why it matters:** An extensibility ecosystem creates network effects and competitive moat. VS Code's marketplace is why it dominates. Cursor's extension compatibility is a key feature. A plugin marketplace transforms Prometheus from a closed product into a platform — third-party developers extend capabilities, creating value that compounds.
-- **Effort:** XL (1–3 months)
-- **Dependencies:** Plugin SDK (stable API), UI components, API endpoints
-- **Affected services:** web, api, mcp-gateway
-- **Affected packages:** plugins, ui
-- **Success criteria:**
-  1. Marketplace page in web app with search, categories, and featured plugins
-  2. Install/uninstall flow with one-click install
-  3. 10+ first-party plugins (GitHub, Slack, Jira, Confluence, Linear, Figma, etc.)
-  4. Plugin rating and review system
-  5. Community plugin submission flow with review process
-  6. Plugin sandboxing: plugins cannot access other org data or execute arbitrary code
-  7. Plugin versioning with automatic update notifications
-  8. Plugin analytics: installs, active users, ratings
-- **Risks:** Marketplace quality depends on plugin quality. Invest in excellent first-party plugins as examples and references. Plugin security review is essential — malicious plugins could access user data.
-
----
-
-### GAP-021: Load Testing + Performance Baselines
-
-- **What exists:** Single k6 load test file. Performance monitoring via telemetry package.
-- **What is missing:** Comprehensive load test suite covering all critical paths. No performance baselines documented. No regression detection. No capacity planning data. Untested scenarios: concurrent task creation, parallel agent execution, database query performance under load, Redis throughput limits, WebSocket connection scaling, model router queuing behavior, sandbox provisioning throughput.
-- **Why it matters:** Without performance baselines, it is impossible to: guarantee SLAs to customers, detect performance regressions in CI, plan infrastructure capacity, or predict costs at scale. "Works for 1 user in dev" does not mean "works for 100 users in production." Performance problems discovered in production are 10x more expensive to fix than those caught in testing.
-- **Effort:** L (2–4 weeks)
-- **Dependencies:** Staging environment (GAP-002), k6 or equivalent load testing framework
-- **Affected services:** All 9 services
-- **Affected packages:** telemetry
-- **Success criteria:**
-  1. k6 test suite covering: API endpoint response times, WebSocket connection scaling, task creation throughput, sandbox provisioning latency, model router queue depth
-  2. Performance baselines documented: p50, p95, p99 latency per endpoint
-  3. Load test runs weekly in CI with regression detection (alert if p95 increases >20%)
-  4. Capacity planning document: "X users require Y instances of each service"
-  5. Bottleneck identification: which service/resource saturates first
-  6. Cost estimation: "100 concurrent users costs $X/month in infrastructure"
-  7. Soak test: 8-hour sustained load with zero memory leaks or performance degradation
-- **Risks:** Load test environments must match production topology. Load testing against development databases with small datasets produces misleading results. Use production-representative data volumes.
+- **Current State:** Session events table in DB. Socket server with session namespace. Event publishing in orchestrator.
+- **Files:** `packages/db/src/schema/tables/sessions.ts`, `apps/socket-server/src/`, `apps/orchestrator/src/session-manager.ts`
+- **What's Missing:**
+  - Clear phase indicators in UI (planning → coding → testing → deploying → done)
+  - Progress percentage estimation
+  - Step-by-step execution log visible in session
+  - Estimated time remaining
+  - File tree showing created/modified files in real-time
+  - Terminal output from sandbox commands
+- **Effort:** M (1-2 weeks)
+- **Dependencies:** GAP-008 (streaming), GAP-013 (UI)
+- **Acceptance Criteria:**
+  1. UI shows: "Planning (2/5 steps)" → "Coding (creating 4 files)" → "Testing (3/3 pass)" → "Complete"
+  2. File tree updates in real-time as files are created
+  3. Terminal output scrolls as commands execute
+  4. Time elapsed and estimated remaining shown
+- **Competitor Reference:** Devin (step-by-step execution view), Bolt.new (live preview)
 
 ---
 
-### GAP-022: Grafana Dashboard Verification
+### GAP-031: Session Pause, Resume, and Cancel
 
-- **What exists:** 10 Grafana dashboard JSON files in the monitoring configuration. Prometheus metrics collection (via telemetry package). Dashboard definitions for: services, agents, queues, sandboxes, and more.
-- **What is missing:** Verification that dashboards connect to real metrics and display meaningful data. Dashboards may reference metrics that services do not actually emit. Panel queries may have syntax errors. Thresholds may be misconfigured. No evidence any dashboard has been loaded in a running Grafana instance.
-- **Why it matters:** Dashboards that do not work are worse than no dashboards — they create false confidence. An operator looking at a dashboard with stale or missing data will miss real problems. Functional monitoring is a prerequisite for production operation and on-call.
-- **Effort:** M (1–2 weeks)
-- **Dependencies:** Running Prometheus (metrics) + Grafana instance, services emitting metrics
-- **Affected services:** All (metrics emission), monitoring infrastructure
-- **Affected packages:** telemetry
-- **Success criteria:**
-  1. All 10 dashboards imported into Grafana and rendering real data
-  2. Every panel in every dashboard shows data (no "No data" panels)
-  3. Metric names in dashboard queries match actual emitted metric names
-  4. Alert thresholds are realistic (based on observed baseline values)
-  5. Dashboard documentation: what each dashboard shows, when to look at it
-  6. Dashboard screenshots in operational runbook
-  7. Dashboard performance: all panels load within 5 seconds
-- **Risks:** Metric names and labels change as code evolves. Implement a CI check that verifies dashboard queries reference valid metrics. Use Grafana's provisioning API to automate dashboard deployment.
+- **Current State:** Session manager has pause/resume/cancel methods. Checkpoint persistence exists.
+- **What's Missing:** User can pause mid-task, resume later, cancel with cleanup
+- **Effort:** M (1-2 weeks)
+- **Dependencies:** GAP-002
+- **Acceptance Criteria:** Pause → agent saves state → resume → agent continues from checkpoint → same result as uninterrupted
+- **Competitor Reference:** Devin (session persistence), Codex (task management)
 
 ---
 
-### GAP-023: Alert Configuration and On-Call
+### GAP-032: Human-in-the-Loop Approval
 
-- **What exists:** `alertmanager.yml` and `alert_rules.yml` in the monitoring configuration. Alert rule definitions for common failure modes.
-- **What is missing:** Verification that alerts fire correctly. No tested notification routing (Slack, PagerDuty, email). No on-call rotation configuration. No runbooks linked to alerts. No alert severity classification. No alert silencing/snoozing capability. No escalation policies. No post-incident review process.
-- **Why it matters:** Without working alerts, outages go undetected until users report them. For a 24/7 service, this is unacceptable. Alert fatigue (too many false alerts) is equally dangerous — operators ignore alerts. Proper alerting with runbooks is the difference between "we detected and fixed the issue in 5 minutes" and "users reported the outage after 2 hours."
-- **Effort:** M (1–2 weeks)
-- **Dependencies:** Monitoring stack operational (GAP-022), notification channels configured
-- **Affected services:** Monitoring infrastructure
-- **Affected packages:** telemetry
-- **Success criteria:**
-  1. Test alerts fire correctly for: service down, high error rate, high latency, disk full, DB connection exhaustion, Redis connection failure
-  2. Slack notification received within 60 seconds of alert firing
-  3. PagerDuty integration for P0 alerts (service down, data loss risk)
-  4. On-call rotation configured with primary and secondary
-  5. Runbook for each alert: what it means, how to investigate, how to resolve
-  6. Alert severity levels: P0 (page), P1 (Slack urgent), P2 (Slack normal), P3 (email)
-  7. Alert silencing for planned maintenance
-  8. Escalation: unacknowledged P0 alert escalates to secondary after 15 minutes
-- **Risks:** Alert configuration is iterative. Initial thresholds will produce false positives. Plan for a 2-week tuning period after initial deployment where thresholds are adjusted based on observed behavior.
+- **Current State:** Approval engine in orchestrator. Destructive action detection.
+- **What's Missing:** Agent pauses for user approval before destructive actions (delete, force push, deploy to prod), user approves/denies in UI
+- **Effort:** M (1-2 weeks)
+- **Dependencies:** GAP-008 (streaming), GAP-013 (UI)
+- **Acceptance Criteria:** Agent wants to `rm -rf` → pauses → user sees approval prompt → approves → agent continues
+- **Competitor Reference:** Devin (approval flow), Claude Code (permission system)
 
 ---
 
-### GAP-024: Database Migration Safety
+### GAP-033: Multi-Language Support (Python, Go, Rust)
 
-- **What exists:** Migration validator in the db package. Drizzle ORM with migration generation (`pnpm db:generate`). Migration commands: push, migrate, pull, reset, drop. Schema definitions with `...timestamps` helper.
-- **What is missing:** Tested rollback procedures. Zero-downtime migration strategy. Migration testing against production-size data. Data backup verification before migration. Migration dry-run capability. Column rename/drop safety checks. Large table migration strategy (online DDL). Migration ordering in multi-service deployment.
-- **Why it matters:** A bad database migration in production can cause: data loss (irreversible), downtime (while fixing), or data corruption (subtle, discovered late). For a SaaS with customer data, this is catastrophic risk. Every migration must be reversible, and the rollback must be tested. Zero-downtime migrations are required for a service with uptime SLAs.
-- **Effort:** M (1–2 weeks)
-- **Dependencies:** Staging environment with production-representative data
-- **Affected services:** api, orchestrator (any service that accesses DB)
-- **Affected packages:** db
-- **Success criteria:**
-  1. Every migration has a corresponding rollback migration
-  2. Rollback tested on staging with production-size data
-  3. Zero-downtime migration strategy documented (expand-contract pattern)
-  4. Automated backup before migration execution
-  5. Migration dry-run that reports changes without executing
-  6. Large table migration uses online DDL (pt-online-schema-change or equivalent)
-  7. Migration CI check: new migrations must include rollback
-  8. Migration execution time measured and alerted if > 60 seconds
-- **Risks:** Drizzle's push command is convenient for development but dangerous for production (it applies changes directly without migration files). Ensure production uses only the migrate command with reviewed migration files.
+- **Current State:** System focused on TypeScript/JavaScript. Sandbox images can support any language.
+- **What's Missing:** Prompts tuned for Python/Go/Rust, correct tooling per language, test framework knowledge per language
+- **Effort:** L (2-4 weeks)
+- **Dependencies:** GAP-009, GAP-010
+- **Acceptance Criteria:** Agent successfully completes tasks in Python, Go, and Rust (not just TypeScript)
+- **Competitor Reference:** Devin (multi-language), Claude Code (any language), Cursor (any language)
 
 ---
 
-### GAP-025: API Versioning and Stability
+### GAP-034: Browser Automation for Verification
 
-- **What exists:** tRPC routers defining API surface. Type-safe API contracts via tRPC + Zod. Validators package with shared schemas.
-- **What is missing:** API versioning strategy. No version prefix on routes. No deprecation policy. No backward compatibility testing. No API changelog. Breaking change detection in CI. The CLI, VS Code extension, and any future third-party integrations all depend on API stability — currently, any router change can break all clients.
-- **Why it matters:** API stability is essential for: CLI users (who may not update immediately), VS Code extension (marketplace review takes days), third-party integrations (plugins, webhooks), and enterprise customers (who update on their own schedule). A single breaking API change that is not communicated breaks all downstream consumers.
-- **Effort:** M (1–2 weeks)
-- **Dependencies:** Stable API surface (APIs should be somewhat settled before versioning)
-- **Affected services:** api
-- **Affected packages:** types, validators, cli, vscode-extension
-- **Success criteria:**
-  1. API versioning strategy documented (URL prefix, header, or tRPC namespace)
-  2. Backward compatibility tests: old client requests still work after API changes
-  3. Breaking change detection in CI (compare router types against baseline)
-  4. API changelog generated from router changes
-  5. Deprecation policy: deprecated routes work for 90 days with warning header
-  6. Client SDKs (CLI, VS Code) pin to specific API version
-  7. Migration guide published for each breaking change
-- **Risks:** tRPC's type-safe nature makes versioning more complex than REST. Consider router namespacing (`v1Router`, `v2Router`) or a compatibility layer that translates old request shapes.
+- **Current State:** Browser tool with Playwright integration. Screenshot tool.
+- **What's Missing:** Agent opens generated web app in browser, takes screenshot, verifies visual correctness, interacts with UI
+- **Effort:** M (1-2 weeks)
+- **Dependencies:** GAP-007 (sandbox with browser), GAP-010
+- **Acceptance Criteria:** Agent builds UI → opens in Playwright → takes screenshot → verifies layout is correct → fixes issues
+- **Competitor Reference:** Devin (browser automation), Bolt.new (live preview)
 
 ---
 
-### GAP-026: VS Code Extension Polish
+### GAP-035: Code Review Quality
 
-- **What exists:** VS Code extension code in `packages/vscode-extension/`. Extension activation, commands, and integration with the API.
-- **What is missing:** Marketplace-ready polish. Specific gaps: no extension icon, no marketplace README with screenshots, no activation event optimization (extension loads slowly), no keybinding configuration, no settings UI, no status bar integration, no inline code actions, no CodeLens integration, no test suite for extension, no CI pipeline for extension builds.
-- **Why it matters:** VS Code is where developers spend their day. A polished VS Code extension means daily active usage and organic discovery via the marketplace. Cursor IS a VS Code fork — that is how important the IDE integration is. A rough, buggy extension that appears in search results damages the brand.
-- **Effort:** M (1–2 weeks)
-- **Dependencies:** Stable API (GAP-025)
-- **Affected packages:** vscode-extension
-- **Success criteria:**
-  1. Extension published to VS Code Marketplace
-  2. Professional icon and README with screenshots and GIFs
-  3. Activation time < 500ms
-  4. Key features: inline chat, code actions (refactor, explain, test), agent task creation, status bar showing agent status
-  5. Settings UI for: API endpoint, API key, model preferences
-  6. Keybindings for common actions (Ctrl+Shift+P commands)
-  7. Extension test suite with 80%+ coverage
-  8. CI pipeline: build, test, publish on release tag
-  9. User rating potential: 4+ stars based on feature parity with competitors
-- **Risks:** VS Code Marketplace review can reject extensions for quality or policy reasons. Review the marketplace guidelines early. Consider a pre-release/insider channel for early adopters.
+- **Current State:** Code reviewer agent role. Code review table in DB.
+- **What's Missing:** Agent reviews PR with meaningful inline comments, severity levels, suggested fixes, respects codebase conventions
+- **Effort:** M (1-2 weeks)
+- **Dependencies:** GAP-012 (git), GAP-009 (prompts)
+- **Acceptance Criteria:** Agent reviews PR → leaves 5+ meaningful comments → catches real issues → suggestions are correct
+- **Competitor Reference:** Copilot (PR reviews), Codex (code review)
 
 ---
 
-### GAP-027: CLI Tool Polish
+### GAP-036: Project Brain Context Quality
 
-- **What exists:** CLI package with commands, session management, configuration. Built with a CLI framework (likely Commander or similar).
-- **What is missing:** Pleasant developer UX. Specific gaps: no progress indicators during long operations, no offline mode (show helpful error), no auto-update mechanism, no shell completions (bash, zsh, fish), no interactive mode, no output formatting options (JSON, table, plain), no `--quiet` and `--verbose` flags consistently, no color theming, no CI mode (non-interactive), no man page or help improvements.
-- **Why it matters:** The CLI is how developers interact with Prometheus from the terminal — the natural environment for engineering tasks. A polished CLI with great UX (spinners, colors, tables, completions) creates delight and habitual usage. A rough CLI with confusing output and no feedback creates frustration. Compare: `gh` (GitHub CLI) is a gold standard for developer CLI UX.
-- **Effort:** M (1–2 weeks)
-- **Dependencies:** Stable API (GAP-025)
-- **Affected packages:** cli
-- **Success criteria:**
-  1. Progress spinners for all operations > 1 second
-  2. Shell completions generated for bash, zsh, and fish
-  3. Output formatting: `--json`, `--table`, `--plain` flags
-  4. `--verbose` and `--quiet` flags on all commands
-  5. Auto-update notification ("New version available, run `prometheus update`")
-  6. Offline detection with helpful error ("Cannot reach API at X, check your connection")
-  7. CI mode: `--ci` flag disables interactive prompts and color
-  8. Man page / `--help` output comprehensive and consistent
-  9. CLI usability test: 5 developers complete 3 tasks each, NPS > 8
-- **Risks:** CLI UX is subjective. Conduct user testing early to identify pain points. Consider recording terminal sessions (asciinema) for documentation.
+- **Current State:** Project brain with 8 memory layers, embeddings, knowledge graph, semantic search.
+- **What's Missing:** Verified context retrieval improving agent quality, knowledge graph actually populated, semantic search returning relevant results
+- **Effort:** L (2-4 weeks)
+- **Dependencies:** GAP-006 (embeddings), GAP-004 (DB)
+- **Acceptance Criteria:** Agent working on file X receives relevant context from files Y, Z automatically, improving code quality
+- **Competitor Reference:** Cursor (codebase-aware), Windsurf (flows)
 
 ---
 
-### GAP-028: Competitive Benchmark Dashboard
+### GAP-037: Onboarding Experience
 
-- **What exists:** `competitive-benchmark.ts` with benchmark configuration. SWE-bench runner (GAP-004).
-- **What is missing:** Public-facing benchmark results dashboard. No historical tracking of performance over time. No comparison visualization against published competitor numbers. No automated benchmark execution and result publishing. No methodology documentation (how benchmarks are run, what models are used).
-- **Why it matters:** Credibility in the AI tooling market requires public benchmarks. Devin publishes SWE-bench results. Cursor shows completion metrics. GitHub Copilot publishes acceptance rates. Without a public benchmark dashboard, Prometheus has no way to substantiate claims of superiority. "We're 100x better" without evidence is marketing — with benchmarks, it is a fact.
-- **Effort:** L (2–4 weeks)
-- **Dependencies:** GAP-004 (SWE-bench results), stable benchmark execution
-- **Affected services:** web (dashboard page), api (benchmark data)
-- **Affected packages:** None directly
-- **Success criteria:**
-  1. Public page on prometheus.dev/benchmarks showing results
-  2. Benchmarks included: SWE-bench Lite, SWE-bench Full, HumanEval, MBPP
-  3. Comparison against published results: Devin, Cursor, Copilot, Codex
-  4. Historical chart showing Prometheus improvement over time
-  5. Methodology documentation: models used, temperature, number of attempts, sandbox config
-  6. Results updated weekly via automated CI pipeline
-  7. Raw results downloadable for independent verification
-- **Risks:** Publishing benchmark results that are lower than competitors is embarrassing but honest. Consider initially publishing on a blog with analysis ("Here's where we are, here's our improvement plan") rather than a dashboard that invites direct comparison before results are competitive.
+- **Current State:** Onboarding page exists in web app. Create project flow exists.
+- **What's Missing:** Guided first-run experience, connect GitHub, first task wizard, success celebration
+- **Effort:** M (1-2 weeks)
+- **Dependencies:** GAP-005, GAP-013
+- **Acceptance Criteria:** New user signs up → guided through GitHub connection → first task → sees result → "wow" moment in under 5 minutes
+- **Competitor Reference:** Devin (smooth onboarding), Bolt.new (instant start)
 
 ---
 
-### GAP-029: Data Export and Portability
+### GAP-038: Pricing Page and Checkout
 
-- **What exists:** `memory-export.ts` in the project-brain service. GDPR-related code.
-- **What is missing:** Comprehensive data export covering all user data. Untested: session history export, project configuration export, generated code archive, analytics data export, billing history export, agent conversation history, custom prompt export, plugin configuration export. No import capability (for migrating between instances). No data deletion verification (GDPR right to erasure).
-- **Why it matters:** Data portability is both a legal requirement (GDPR, CCPA) and an enterprise procurement requirement. Companies will not adopt a tool that locks in their data. "Can we export everything and move to a competitor?" is a standard procurement question. Additionally, self-hosted customers need import/export for backup and disaster recovery.
-- **Effort:** M (1–2 weeks)
-- **Dependencies:** GDPR module, all data schemas identified
-- **Affected services:** api, project-brain
-- **Affected packages:** db, types
-- **Success criteria:**
-  1. Full data export in standard format (JSON + ZIP for files)
-  2. Export includes: projects, tasks, sessions, conversations, generated code, settings, billing history
-  3. Export completable via API and CLI (`prometheus export --org my-org`)
-  4. Import capability for self-hosted instances
-  5. Data deletion: `prometheus delete-account` removes all data with verification
-  6. GDPR Article 20 compliance: data in machine-readable format
-  7. Export size reasonable (not including sandbox filesystem snapshots unless requested)
-  8. Export encrypted at rest during generation
-- **Risks:** Data export is surprisingly complex when data spans multiple services and storage systems (PostgreSQL, Redis, MinIO). Create a data catalog first, then implement export per storage system.
+- **Current State:** Pricing page component exists. Stripe integration. Product tiers defined.
+- **What's Missing:** Live pricing page with plan comparison, checkout flow, plan upgrade/downgrade, invoice history
+- **Effort:** M (1-2 weeks)
+- **Dependencies:** GAP-014 (billing)
+- **Acceptance Criteria:** User visits /pricing → selects plan → pays → credits available immediately
+- **Competitor Reference:** All competitors — table stakes
 
 ---
 
-### GAP-030: Chaos Testing
+### GAP-039: Notification System
 
-- **What exists:** No chaos engineering infrastructure. Error recovery code exists (GAP-005) but is untested under realistic failure conditions.
-- **What is missing:** Chaos testing framework and test scenarios. Untested failure modes: Redis restart during active tasks, random service kill (orchestrator, queue-worker), PostgreSQL failover, model API sustained outage (30+ minutes), network partition between services, disk full on sandbox host, certificate expiry, DNS resolution failure, slow network (high latency simulation).
-- **Why it matters:** Production systems experience failures constantly. "Works in dev" is not evidence of production reliability. Chaos testing proves that the system survives real-world failures — and exposes weaknesses before customers discover them. Netflix pioneered this approach with Chaos Monkey; it is now standard practice for services with uptime SLAs.
-- **Effort:** L (2–4 weeks)
-- **Dependencies:** GAP-005 (error recovery — the recovery code must exist before testing it), staging environment (GAP-002)
-- **Affected services:** All 9 services
-- **Affected packages:** test-utils
-- **Success criteria:**
-  1. Chaos test suite covering: Redis restart, service kill, DB failover, API outage, network partition
-  2. System survives each failure scenario: in-progress tasks resume, no data loss, no user-visible errors beyond brief degradation
-  3. Recovery time measured for each scenario: < 30 seconds for transient, < 5 minutes for infrastructure
-  4. Tests run monthly on staging (not production initially)
-  5. Results documented: which failures the system handles, which it does not
-  6. Regression: new chaos tests added for each production incident
-  7. Chaos test environment isolated from production
-- **Risks:** Chaos testing in non-production environments may not surface all production failure modes (different scale, different network topology). Start with staging and graduate to production chaos testing once confidence is established.
+- **Current State:** `packages/notifications/` with email (Resend), Slack, push notification code.
+- **What's Missing:** Working email notifications for task completion, Slack DM on completion, in-app notification bell, notification preferences
+- **Effort:** M (1-2 weeks)
+- **Dependencies:** GAP-002
+- **Acceptance Criteria:** Task completes → user gets email + Slack DM + in-app notification
+- **Competitor Reference:** Devin (Slack notifications), Codex (email notifications)
 
 ---
 
-## P2 — MEDIUM (60-Day Horizon)
+### GAP-040: Analytics Dashboard
 
-### GAP-031: JetBrains IDE Plugin
-
-- **What exists:** No JetBrains plugin. Only VS Code extension exists.
-- **What is missing:** Complete IntelliJ/WebStorm plugin. Feature parity with VS Code extension: inline chat, code actions, agent task creation, status bar, settings. JetBrains plugin architecture is fundamentally different from VS Code (Kotlin/Java vs TypeScript).
-- **Why it matters:** Approximately 30% of professional developers use JetBrains IDEs (IntelliJ IDEA, WebStorm, PyCharm, GoLand). Cursor and Copilot support JetBrains. Missing this market segment is leaving significant revenue on the table, especially in enterprise (Java/Kotlin shops strongly prefer IntelliJ).
-- **Effort:** XL (1–3 months)
-- **Dependencies:** Stable API (GAP-025), documented API for IDE integrations
-- **Affected packages:** New package (jetbrains-plugin)
-- **Success criteria:**
-  1. Plugin published to JetBrains Marketplace
-  2. Feature parity with VS Code extension: chat, code actions, agent tasks
-  3. Support for: IntelliJ IDEA, WebStorm, PyCharm, GoLand (via platform plugin)
-  4. Native Kotlin/Java implementation (not a web view hack)
-  5. Settings sync with web app
-  6. Plugin test suite
-  7. CI pipeline for build and publish
-- **Risks:** JetBrains plugin development requires Kotlin/Java expertise — different from the TypeScript-heavy team. Consider hiring a JetBrains specialist or contracting this work. The JetBrains platform API is complex and under-documented.
+- **Current State:** Analytics tRPC routers (analytics, analytics-enhanced, cost-analytics, cost-prediction).
+- **What's Missing:** Dashboard showing real data: tasks completed, time saved, cost per task, agent performance
+- **Effort:** M (1-2 weeks)
+- **Dependencies:** GAP-013, GAP-002 (real data)
+- **Acceptance Criteria:** Dashboard shows last 30 days: tasks completed, avg time, cost, success rate, comparison to manual coding
+- **Competitor Reference:** Devin (usage analytics)
 
 ---
 
-### GAP-032: Native Mobile App / PWA
+### GAP-086: Error Boundary UX in Web App
 
-- **What exists:** 2 mobile-specific components (`mobile-nav.tsx`, `touch-gestures.tsx`). Web app using Next.js.
-- **What is missing:** Progressive Web App (PWA) configuration: manifest.json, service worker, offline support, push notifications, install prompt. Or alternatively, a native mobile app (React Native). Push notifications for task completion, error alerts, approval requests. Offline capability: view completed tasks, read generated code, queue new tasks.
-- **Why it matters:** Monitoring autonomous agents on mobile is essential for a 24/7 service. Users need to check task progress during commute, approve deployments from dinner, and get notified of completions. PWA is the minimum viable approach — a native app is the premium experience.
-- **Effort:** XL (1–3 months)
-- **Dependencies:** Responsive UI (GAP-013), push notification infrastructure
-- **Affected services:** web
-- **Affected packages:** ui
-- **Success criteria:**
-  1. PWA installable on iOS and Android (Add to Home Screen)
-  2. Push notifications for: task complete, task failed, approval needed
-  3. Offline mode: view recent tasks, queue new tasks (sync when online)
-  4. App-like navigation: bottom tabs, swipe gestures, pull-to-refresh
-  5. Performance: Lighthouse PWA score > 90
-  6. Background sync: queued actions execute when connectivity returns
-  7. Biometric auth support (FaceID, fingerprint) via Web Authentication API
-- **Risks:** iOS PWA support has limitations (no background push notifications in some versions). Consider a React Native wrapper for iOS-specific features if PWA limitations are blocking.
+- **Current State:** Next.js web app may lack proper `error.tsx` and `not-found.tsx` at key route segments.
+- **Files:** `apps/web/src/app/error.tsx`, `apps/web/src/app/not-found.tsx`, route segment error boundaries
+- **What's Missing:** Graceful error recovery in all major routes, user-friendly error messages, retry buttons, fallback UI
+- **Effort:** S (1-3 days)
+- **Dependencies:** GAP-013
+- **Acceptance Criteria:** Unhandled errors show friendly error page with retry option, not white screen
 
 ---
 
-### GAP-033: Multi-Language Agent Specialization
+### GAP-087: API Rate Limiting Per Org Enforced
 
-- **What exists:** Language-agnostic agents that generate code in any language. Agent SDK with tool abstraction.
-- **What is missing:** Language-specific expertise in agent prompts and tool configurations. Agents do not currently understand: Rust ownership semantics and borrow checker rules, Python type hints and mypy strict mode, Go concurrency patterns (goroutines, channels, mutexes), Java/Kotlin null safety and generics, Swift value types vs reference types, C++ RAII and smart pointer usage. No language-specific linter integration. No idiomatic code patterns per language.
-- **Why it matters:** Generic agents produce generic code that "works" but is not idiomatic. A Rust expert would never use `.unwrap()` everywhere; a Go expert would never ignore errors. Language-specific expertise is what separates "AI-generated code" from "code a senior developer would write." This is a quality differentiator.
-- **Effort:** L (2–4 weeks)
-- **Dependencies:** Agent SDK, prompt engineering framework (GAP-012)
-- **Affected services:** orchestrator (agent selection)
-- **Affected packages:** agent-sdk, ai
-- **Success criteria:**
-  1. Language-specific prompts for top 10 languages: TypeScript, Python, Rust, Go, Java, Kotlin, Swift, C++, Ruby, PHP
-  2. Language-specific linter integration: agent runs linter and fixes issues before submission
-  3. Idiomatic code verification: generated code passes language-community style checks
-  4. Benchmark per language: task completion rate on language-specific benchmarks (RustBench, PyBench, etc.)
-  5. Language routing: orchestrator selects language-specialized agent variant based on project language
-  6. Agents produce idiomatic error handling per language (Result in Rust, try/except in Python, error returns in Go)
-- **Risks:** Maintaining 10 language specializations is an ongoing effort. Prioritize by user demand: start with TypeScript, Python, and Go (most common in AI/startup context), then expand based on usage data.
+- **Current State:** Rate limit middleware exists (`apps/api/src/middleware/rate-limit.ts`, `rate-limit-enhanced.ts`). Not verified with real traffic.
+- **Files:** `apps/api/src/middleware/rate-limit.ts`, `apps/api/src/middleware/rate-limit-enhanced.ts`
+- **What's Missing:** Per-org rate limits enforced and tested (free: 5 tasks/day, pro: 200/day), 429 responses with retry-after headers
+- **Effort:** M (1-2 weeks)
+- **Dependencies:** GAP-001, Dragonfly running
+- **Acceptance Criteria:** Free tier user hits rate limit after 5 tasks, receives 429 with retry-after header
 
 ---
 
-### GAP-034: Design-to-Code Pipeline (Figma)
+### GAP-088: Webhook Inbound Processing Verified
 
-- **What exists:** `design-to-code.ts` in the codebase. Frontend agent with code generation capabilities. MCP gateway for external tool integration.
-- **What is missing:** Working Figma-to-code pipeline. Specific gaps: Figma MCP adapter (read designs via Figma API), design token extraction (colors, typography, spacing), component hierarchy mapping (Figma frames to React components), responsive layout generation, asset export (SVG, PNG optimization), pixel-perfect comparison tooling, design system awareness (use existing components when possible).
-- **Why it matters:** The designer-to-developer handoff is one of the most painful bottlenecks in software development. Automating Figma-to-code would be a massive differentiator — no competitor does this well. Vercel's v0 generates UI from text prompts, but Figma-to-code from actual designs is more valuable because it preserves design intent.
-- **Effort:** XL (1–3 months)
-- **Dependencies:** Figma MCP adapter, frontend agent, sandbox for preview rendering
-- **Affected services:** mcp-gateway, orchestrator
-- **Affected packages:** agent-sdk
-- **Success criteria:**
-  1. Figma design URL as input -> production React component as output
-  2. Visual diff < 5% between Figma design and rendered component (measured by pixel comparison)
-  3. Generated code uses project's existing design system components when available
-  4. Design tokens extracted and mapped to Tailwind/CSS variables
-  5. Responsive layouts generated from Figma auto-layout properties
-  6. Assets exported and optimized (SVG optimized, images in WebP)
-  7. Interactive elements (buttons, inputs, links) have correct event handlers
-  8. Accessibility: generated components include ARIA attributes
-- **Risks:** Figma designs vary wildly in quality and structure. Well-organized Figma files with auto-layout convert well; messy files with absolute positioning do not. Communicate limitations clearly and provide Figma best-practices guide.
+- **Current State:** Webhook handlers exist for GitHub (`apps/api/src/routes/webhooks/github-app.ts`), Slack, Clerk.
+- **Files:** `apps/api/src/routes/webhooks/`
+- **What's Missing:** Verified webhook signature validation, event processing, and task creation from GitHub/Slack events
+- **Effort:** M (1-2 weeks)
+- **Dependencies:** GAP-001, GAP-023
+- **Acceptance Criteria:** GitHub push event → webhook received → task created; Slack mention → task created
 
 ---
 
-### GAP-035: Advanced Code Review (OWASP-Aware)
+### GAP-089: Search Infrastructure Working
 
-- **What exists:** `diff-reviewer.ts` for code review. Security auditor agent. Agent SDK with tool framework.
-- **What is missing:** Specialized code review capabilities. Untested: OWASP Top 10 vulnerability detection (SQL injection, XSS, CSRF, etc.), open-source license compliance checking (GPL contamination), performance regression detection (O(n^2) algorithms, N+1 queries), accessibility audit (WCAG violations in React components), dependency vulnerability scanning (CVEs in dependencies), secrets detection (API keys, passwords in code).
-- **Why it matters:** Enterprise code review requirements extend far beyond "does it work" and "is it clean." Compliance, security, licensing, and performance are all review criteria. Automated OWASP-aware review would replace expensive security consultants and catch vulnerabilities before they reach production.
-- **Effort:** L (2–4 weeks)
-- **Dependencies:** Security auditor agent, code-intelligence package
-- **Affected services:** orchestrator
-- **Affected packages:** agent-sdk, code-intelligence
-- **Success criteria:**
-  1. Code review catches OWASP Top 10 vulnerabilities with < 5% false positive rate
-  2. License compliance: detect GPL/AGPL dependencies in MIT/Apache projects
-  3. Performance: flag O(n^2) loops, N+1 queries, missing indexes
-  4. Accessibility: flag missing alt text, improper heading hierarchy, missing labels
-  5. Secrets: detect API keys, passwords, tokens in code changes
-  6. Dependency CVEs: flag known vulnerabilities in added dependencies
-  7. Review output structured: severity (critical/high/medium/low), category, line reference, fix suggestion
-  8. Integration with GitHub PR review (post comments on specific lines)
-- **Risks:** False positives in security scanning destroy trust and create alert fatigue. Tune detection rules aggressively for precision over recall. A missed real vulnerability is better than 50 false alarms per review.
+- **Current State:** Zoekt in docker-compose (port 6070). Code search tool in agent-sdk. Semantic search in project-brain.
+- **Files:** `docker-compose.yml` (zoekt service), `apps/project-brain/src/layers/semantic.ts`
+- **What's Missing:** Zoekt indexing a real repo and returning search results, semantic search returning relevant code snippets
+- **Effort:** M (1-2 weeks)
+- **Dependencies:** GAP-001, GAP-036
+- **Acceptance Criteria:** Agent searches "authentication middleware" → returns relevant files from indexed codebase
 
 ---
 
-### GAP-036: Team Analytics and Insights
+### GAP-090: Session Resume Across Browser Refreshes
 
-- **What exists:** `team-intelligence.ts` in the analytics module. Usage tracking. Telemetry package for metrics collection.
-- **What is missing:** Team-facing analytics dashboard. Specific missing metrics: velocity (tasks completed per week per engineer), agent usage patterns (which agents used most, by whom), cost-per-feature (LLM tokens + sandbox time per task), time saved (estimated manual time vs agent time), ROI dashboard (cost of Prometheus vs estimated developer time saved), quality metrics (how often agent output is accepted without modification).
-- **Why it matters:** Enterprise buyers need ROI justification for procurement. "It's cool" is not a budget line item. A dashboard showing "Prometheus saved your team 120 developer-hours this month, valued at $18,000, for a subscription cost of $2,000" makes the business case. Individual developers adopt tools because they are useful; teams adopt tools because leadership can justify the cost.
-- **Effort:** M (1–2 weeks)
-- **Dependencies:** Usage tracking operational, analytics pipeline
-- **Affected services:** web, api
-- **Affected packages:** telemetry, ui
-- **Success criteria:**
-  1. Team analytics dashboard in web app
-  2. Metrics displayed: tasks/week, tasks/engineer, cost/task, time saved/task
-  3. ROI calculator: cost vs estimated time saved (configurable hourly rate)
-  4. Agent usage breakdown: which agents, which tools, frequency
-  5. Quality metrics: acceptance rate (output used without modification)
-  6. Trend charts: weekly/monthly improvement
-  7. Export to CSV/PDF for management reporting
-  8. Org admin access only (not visible to individual contributors)
-- **Risks:** "Time saved" estimates are inherently approximate and can be challenged. Be transparent about methodology and allow orgs to configure their own estimates.
+- **Current State:** Session persistence module exists in project-brain. Checkpoint system in orchestrator.
+- **Files:** `apps/project-brain/src/resume/session-resume.ts`, `apps/orchestrator/src/checkpoint.ts`
+- **What's Missing:** User refreshes browser during active session → reconnects to same session → sees full history and live updates
+- **Effort:** M (1-2 weeks)
+- **Dependencies:** GAP-008, GAP-013
+- **Acceptance Criteria:** Refresh browser during active task → session state preserved → real-time updates resume
 
 ---
 
-### GAP-037: White-Label / Embeddable Mode
+## P2 — 10x ADVANTAGE (30 Gaps)
 
-- **What exists:** Multi-tenant architecture with org isolation. Theming capabilities via Tailwind. No white-label infrastructure.
-- **What is missing:** White-label deployment mode: custom domain, custom branding (logo, colors, fonts), custom email templates, embedded mode (iframe/SDK), removal of Prometheus branding, custom terms of service, isolated data (dedicated database option for enterprise).
-- **Why it matters:** White-label multiplies deal size 5-10x. Consulting firms embed AI tools in their client portals. Enterprises want internal branding. SaaS companies want to offer AI coding as a feature of their platform. This is the difference between selling seats and selling a platform.
-- **Effort:** XL (1–3 months)
-- **Dependencies:** Theming system, multi-tenant (existing), auth customization
-- **Affected services:** web, api, all services (branding removal)
-- **Affected packages:** ui, auth, config-tailwind
-- **Success criteria:**
-  1. Custom domain support (customer.prometheusai.dev or their own domain)
-  2. Custom branding: logo, primary/secondary colors, fonts uploadable via admin UI
-  3. Embeddable: SDK/iframe that customers embed in their apps
-  4. Email templates customizable per org
-  5. Prometheus branding fully removable
-  6. Dedicated database option for enterprise isolation
-  7. Custom authentication: support customer's SSO directly (not just Clerk)
-  8. API-first: all white-label configuration manageable via API
-- **Risks:** White-label support adds significant complexity to deployment, testing, and maintenance. Every feature must be tested with and without custom branding. Start with a "powered by Prometheus" light-label before full white-label.
+These are unique capabilities that differentiate Prometheus from every competitor.
 
 ---
 
-### GAP-038: Knowledge Base Import (Confluence/Notion)
+### GAP-041: Multi-Agent Orchestration Proven
 
-- **What exists:** Project Brain service for knowledge management. MCP gateway for external integrations.
-- **What is missing:** Import pipelines from existing team knowledge bases. No Confluence adapter. No Notion adapter. No Google Docs import. No markdown file bulk import. No knowledge base sync (keep imported content up to date). No deduplication. No conflict resolution.
-- **Why it matters:** Teams have years of accumulated knowledge in Confluence, Notion, and Google Docs: architecture decisions, API documentation, runbooks, coding standards. Without this context, agents start from zero on every task. Importing existing knowledge dramatically improves agent output quality on the first day.
-- **Effort:** M (1–2 weeks)
-- **Dependencies:** MCP adapters (Confluence, Notion), Project Brain storage, embedding pipeline
-- **Affected services:** project-brain, mcp-gateway
-- **Affected packages:** None directly
-- **Success criteria:**
-  1. Import from Confluence: pages, attachments, hierarchy preserved
-  2. Import from Notion: pages, databases, relations preserved
-  3. Bulk markdown import (drag-and-drop folder)
-  4. Knowledge indexed and searchable within 5 minutes of import
-  5. Agents reference imported knowledge in task execution (verified via prompt inspection)
-  6. Sync mode: changes in source (Confluence/Notion) reflected within 1 hour
-  7. Import 100+ pages without timeout or failure
-  8. Deduplication: re-importing doesn't create duplicate entries
-- **Risks:** Confluence and Notion APIs have rate limits and pagination quirks. Large imports (1000+ pages) need to be chunked and queued. Content formatting conversion (Confluence storage format to markdown) is lossy — handle gracefully.
+- **Current State:** 12 agent roles defined, task router (47KB), fleet coordination, swarm patterns, MoA voting.
+- **What's Missing:** Proven that multiple agents working together produce better results than single agent
+- **Effort:** XL (1-3 months)
+- **Dependencies:** GAP-010 (single agent working first)
+- **Acceptance Criteria:** Complex task → architect + frontend + backend + test agents collaborate → result is better than single agent (measured by benchmark)
+- **Competitor Reference:** No competitor has this — unique to Prometheus
 
 ---
 
-### GAP-039: Approval Workflows for Enterprise
+### GAP-042: 8-Layer Memory System Proven
 
-- **What exists:** `human-approval-bridge.ts` and `tool-approval.ts` in the orchestrator. Basic approval gate concept.
-- **What is missing:** Configurable approval chains. Specific gaps: multi-level approval (engineer approves code, manager approves deploy), approval routing (deploy to staging = auto-approve, deploy to prod = require VP), timeout escalation (unapproved request escalates after 4 hours), audit trail (who approved what, when), approval via Slack (interactive buttons), approval via email (one-click approve link), bulk approval (approve all pending items), approval delegation (out-of-office auto-forward).
-- **Why it matters:** Enterprise organizations cannot give autonomous AI agents unrestricted access to production systems. Approval workflows provide the control and auditability that enterprise security and compliance teams require. Without approval gates, Prometheus is limited to low-risk tasks — which limits its value.
-- **Effort:** L (2–4 weeks)
-- **Dependencies:** Auth/RBAC (GAP-010), notifications (Slack, email)
-- **Affected services:** orchestrator, api, web
-- **Affected packages:** auth, notifications
-- **Success criteria:**
-  1. Configurable approval chains per action type (deploy, delete, force push, etc.)
-  2. Multi-level approval: sequential (A then B) and parallel (A and B)
-  3. Approval via: web UI, Slack interactive buttons, email one-click link
-  4. Timeout escalation: configurable per approval level
-  5. Audit trail: immutable log of all approval decisions with timestamps
-  6. Delegation: approve-on-behalf-of for vacations
-  7. Bulk approval UI for clearing backlogs
-  8. Policy engine: rules like "any deploy to prod requires 2 approvals from senior engineers"
-- **Risks:** Over-engineering approval workflows slows down development velocity. Default to minimal approvals and let organizations increase strictness as needed. Every approval gate adds latency to task completion.
+- **Current State:** Project brain with semantic, knowledge graph, episodic, procedural, working, conversational, session, domain layers.
+- **What's Missing:** Proven that memory improves agent quality over time, cross-session learning actually works
+- **Effort:** L (2-4 weeks)
+- **Dependencies:** GAP-036 (brain context), real usage data
+- **Acceptance Criteria:** Agent on 10th task in a project performs measurably better than 1st task (uses learned conventions, knows codebase)
+- **Competitor Reference:** Devin (session memory), Cursor (memory)
 
 ---
 
-### GAP-040: SSO/SCIM Production Testing
+### GAP-043: Intelligent Cost Optimization Proven
 
-- **What exists:** SAML provider, OIDC provider, SCIM provider in the auth package. Clerk supports SSO out of the box.
-- **What is missing:** Testing with real enterprise Identity Providers. Untested: Okta SAML login flow, Azure AD OIDC login flow, Google Workspace SAML, SCIM user provisioning (create user in Okta -> user appears in Prometheus), SCIM group sync (Okta group -> Prometheus org role), SCIM deprovisioning (disable user in Okta -> access revoked in Prometheus), Just-In-Time provisioning, IdP-initiated SSO, SP-initiated SSO.
-- **Why it matters:** Enterprise procurement requires SSO. "We support SSO" is not sufficient — enterprises ask "Does it work with our IdP?" and expect a tested answer. Okta, Azure AD, and Google Workspace cover >90% of enterprise IdPs. Untested SSO means blocked deals during security review when SSO integration fails.
-- **Effort:** M (1–2 weeks)
-- **Dependencies:** Auth package, Clerk Enterprise plan (for SSO features)
-- **Affected packages:** auth
-- **Success criteria:**
-  1. SAML SSO tested and working with Okta
-  2. OIDC SSO tested and working with Azure AD
-  3. SAML SSO tested and working with Google Workspace
-  4. SCIM provisioning: user created in IdP -> user exists in Prometheus within 5 minutes
-  5. SCIM deprovisioning: user disabled in IdP -> access revoked in Prometheus
-  6. Group sync: IdP group membership maps to Prometheus org roles
-  7. SSO configuration guide per IdP (with screenshots)
-  8. SSO bypass for break-glass access (admin can login with email/password if IdP is down)
-- **Risks:** Clerk handles most SSO complexity, but SCIM provisioning requires additional integration work. Each IdP has quirks in their SAML/OIDC implementation. Budget time for IdP-specific debugging.
+- **Current State:** Model cascade, cost optimizer, A/B testing, request coalescing, speculative execution.
+- **What's Missing:** Proven that routing saves money vs always using the best model, quality/cost tradeoff measured
+- **Effort:** L (2-4 weeks)
+- **Dependencies:** GAP-006 (LLM working)
+- **Acceptance Criteria:** Same task quality at 60% lower cost vs always using Claude Opus, with data to prove it
+- **Competitor Reference:** No competitor offers transparent cost optimization — unique to Prometheus
 
 ---
 
-### GAP-041: Internationalization (i18n)
+### GAP-044: Convention Learning and Enforcement
 
-- **What exists:** No i18n infrastructure. All UI strings are hardcoded in English.
-- **What is missing:** Complete i18n framework. Specific needs: string extraction tooling, translation file format (JSON, ICU), locale detection (browser, user preference), RTL (right-to-left) support for Arabic/Hebrew, number/date/currency formatting per locale, pluralization rules per language, translation management workflow (who translates, how are updates managed), i18n testing.
-- **Why it matters:** Global market requires multilingual support. English-only excludes: Japan (#3 developer market), Germany (#4 in EU), Brazil (#5 globally), France, Spain, China. Enterprise deals in non-English markets require localized UI. Even English-speaking markets have non-native English speakers who prefer their language.
-- **Effort:** L (2–4 weeks)
-- **Dependencies:** UI framework (string extraction)
-- **Affected services:** web, docs
-- **Affected packages:** ui
-- **Success criteria:**
-  1. i18n framework integrated (next-intl, react-i18next, or similar)
-  2. All UI strings extracted to translation files (zero hardcoded strings)
-  3. Full translations for 2+ languages beyond English (Japanese and Spanish recommended for market coverage)
-  4. Locale detection: browser preference -> user setting -> default English
-  5. RTL layout support (tested with Arabic or Hebrew)
-  6. Date/number/currency formatting per locale
-  7. Pluralization working correctly per language rules
-  8. Translation management process documented
-- **Risks:** Retrofitting i18n onto an existing codebase is tedious — every string literal needs extraction. Use automated extraction tools (i18next-scanner, FormatJS CLI) to minimize manual work. Plan for ongoing translation costs.
+- **Current State:** Convention learner, convention enforcer in project brain. Conventions table in DB.
+- **What's Missing:** Agent automatically detects project conventions (naming, architecture, patterns) and follows them
+- **Effort:** L (2-4 weeks)
+- **Dependencies:** GAP-036, GAP-042
+- **Acceptance Criteria:** Agent indexes codebase → detects "we use camelCase, Zustand for state, Hono for API" → follows these conventions in generated code
+- **Competitor Reference:** Cursor (codebase context), but Prometheus's approach is deeper
 
 ---
 
-### GAP-042: Accessibility Audit (WCAG 2.1 AA)
+### GAP-045: Self-Play Training Loop
 
-- **What exists:** Accessibility components directory in the UI package. shadcn/ui components (generally accessible). Semantic HTML usage.
-- **What is missing:** Formal WCAG 2.1 AA compliance audit. Untested: keyboard navigation through all flows, screen reader compatibility (NVDA, VoiceOver), focus management during dynamic content updates (agent streaming), color contrast ratios, form validation announcements, skip navigation links, heading hierarchy, ARIA live regions for real-time updates.
-- **Why it matters:** Accessibility compliance is increasingly a procurement requirement in enterprise and government sectors. In the US, ADA lawsuits against non-accessible web apps are increasing. In the EU, the European Accessibility Act becomes enforceable in 2025. Beyond compliance, ~15% of the world's population has some form of disability.
-- **Effort:** M (1–2 weeks)
-- **Dependencies:** UI components
-- **Affected services:** web
-- **Affected packages:** ui
-- **Success criteria:**
-  1. Automated a11y audit (axe-core) passes with zero critical violations
-  2. Keyboard navigation: all interactive elements reachable and operable via keyboard
-  3. Screen reader testing: NVDA (Windows) and VoiceOver (Mac) complete all major flows
-  4. Color contrast: all text meets WCAG AA ratio (4.5:1 for normal, 3:1 for large)
-  5. Focus management: focus moves logically during dynamic updates
-  6. ARIA live regions for real-time agent output streaming
-  7. Form validation errors announced to screen readers
-  8. Skip navigation link on every page
-  9. VPAT (Voluntary Product Accessibility Template) document created for enterprise sales
-- **Risks:** Real accessibility requires testing with actual assistive technology users, not just automated tools. axe-core catches ~30% of WCAG violations; manual testing catches the rest. Consider engaging an accessibility consultant for the audit.
+- **Current State:** `self-play-trainer.ts`, `pattern-miner.ts`, `learning-extractor.ts` in orchestrator.
+- **What's Missing:** Agents training themselves by generating and solving tasks, extracting patterns, improving prompts
+- **Effort:** XL (1-3 months)
+- **Dependencies:** GAP-010, GAP-021 (benchmarks for measurement)
+- **Acceptance Criteria:** Run self-play for 1 week → SWE-bench score improves by 5%+
+- **Competitor Reference:** No competitor has this — unique to Prometheus
 
 ---
 
-## P3 — LOW (90+ Day Vision)
+### GAP-046: MoA Voting System Working
 
-### GAP-043: Agent-to-Agent Transfer Learning
-
-- **What exists:** Self-play trainer for per-agent improvement. Agent SDK with capability definitions. Agent evaluation framework.
-- **What is missing:** Cross-agent knowledge transfer. Specific vision: security auditor findings automatically improve backend coder's security awareness, performance agent insights inform frontend agent's optimization choices, testing agent's common failure patterns inform code generation agent's defensive coding. No shared learning store. No cross-agent eval framework. No incremental prompt improvement pipeline.
-- **Why it matters:** This would be a true 100x differentiator — no competitor has cross-agent learning. The system gets smarter over time as agents learn from each other. A security vulnerability found once is never generated again. A performance antipattern detected once is avoided in all future code. This is emergent intelligence from agent composition.
-- **Effort:** XL (1–3 months)
-- **Dependencies:** Self-play training working per agent, agent SDK (knowledge sharing API), evaluation framework
-- **Affected services:** orchestrator, project-brain
-- **Affected packages:** agent-sdk, ai
-- **Success criteria:**
-  1. Shared learning store where agent insights are persisted
-  2. Security auditor findings integrated into backend coder's prompt context
-  3. Measurable improvement: code generated post-learning has 30% fewer security issues
-  4. Performance agent insights reduce performance antipatterns in generated code
-  5. Testing agent failure patterns reduce test failure rate in newly generated code
-  6. Learning is incremental (new insights added without degrading existing knowledge)
-  7. Learning is safe (adversarial examples cannot poison the knowledge base)
-- **Risks:** Transfer learning between LLM-based agents is an open research problem. Naive approaches (dump all findings into context) will hit context window limits and reduce performance. Requires careful knowledge representation — embeddings, structured rules, or fine-tuning.
+- **Current State:** `moa/parallel-generator.ts` in orchestrator.
+- **What's Missing:** Multiple agents propose solutions, vote on best, produce higher-quality output
+- **Effort:** L (2-4 weeks)
+- **Dependencies:** GAP-041
+- **Acceptance Criteria:** 3 agents propose solutions → voting selects best → result is measurably better than any single proposal
+- **Competitor Reference:** No competitor has this
 
 ---
 
-### GAP-044: Custom Model Fine-Tuning Pipeline
+### GAP-047: MCTS Planning Working
 
-- **What exists:** BYO model validator for custom model integration. Model router with multi-provider support. Ollama integration for local models.
-- **What is missing:** Fine-tuning pipeline. Specific gaps: training data extraction from user interactions (accepted/rejected agent outputs), data anonymization and consent management, fine-tuning infrastructure (GPU cluster, training scripts), model evaluation and regression testing, A/B testing between base and fine-tuned models, per-organization fine-tuning (domain-specific models), model versioning and rollback, cost/benefit analysis (fine-tuning cost vs quality improvement).
-- **Why it matters:** Generic foundation models produce generic output. A model fine-tuned on a company's codebase, naming conventions, architecture patterns, and review feedback produces dramatically better output. This is the moat: the more a team uses Prometheus, the better it gets at their specific codebase.
-- **Effort:** XL (1–3 months)
-- **Dependencies:** Training infrastructure (GPU), data pipeline, consent management, evaluation framework (GAP-004)
-- **Affected services:** model-router, api
-- **Affected packages:** ai
-- **Success criteria:**
-  1. Training data extracted from 1000+ agent interactions (accepted outputs)
-  2. Data anonymized and consent obtained (opt-in per organization)
-  3. Fine-tuned model created from base model (e.g., CodeLlama, DeepSeek)
-  4. Fine-tuned model outperforms base model by 20%+ on domain-specific tasks
-  5. A/B testing: 50% of tasks routed to fine-tuned model, metrics compared
-  6. Per-org fine-tuning available for Enterprise tier
-  7. Model versioning: rollback to previous version if regression detected
-  8. Fine-tuning pipeline runs automatically monthly with new data
-- **Risks:** Fine-tuning requires significant GPU compute ($1000+ per training run). Data privacy is paramount — training on one org's data and serving another is a liability. Per-org isolation of fine-tuned models is essential.
+- **Current State:** MCTS planner in orchestrator engine.
+- **What's Missing:** Monte Carlo Tree Search exploring solution strategies and selecting optimal path
+- **Effort:** L (2-4 weeks)
+- **Dependencies:** GAP-010
+- **Acceptance Criteria:** Complex task → MCTS explores 10+ approaches → selects best → result is better than greedy approach
+- **Competitor Reference:** No competitor uses MCTS for coding tasks
 
 ---
 
-### GAP-045: Visual Programming / No-Code Mode
+### GAP-048: CRDT Collaborative Editing Working
 
-- **What exists:** Workflow engine with pipeline definitions. UI components. Agent SDK with task abstraction.
-- **What is missing:** Visual workflow builder UI. Drag-and-drop interface for composing agent workflows. Pre-built workflow blocks (fetch data, transform, generate code, review, deploy). Visual debugging (see where a workflow failed). Template workflows for common patterns. Version control for visual workflows. Export to code (for developers who want to customize).
-- **Why it matters:** Visual programming expands the market beyond developers. Product managers could define features ("add a user settings page with email preferences"), designers could trigger UI generation, QA could define test scenarios. This transforms Prometheus from a developer tool into a team tool.
-- **Effort:** XL (1–3 months)
-- **Dependencies:** Workflow engine, UI framework, agent SDK
-- **Affected services:** web, orchestrator
-- **Affected packages:** workflow, ui
-- **Success criteria:**
-  1. Drag-and-drop workflow builder in web UI
-  2. Pre-built blocks: Prompt, Code Generate, Test, Review, Deploy, Notify, Approve
-  3. Non-technical user creates a working feature via visual workflow
-  4. Visual debugging: see execution state at each block, inspect inputs/outputs
-  5. Template workflows: "New Feature," "Bug Fix," "Refactor," "Test Suite"
-  6. Workflow versioning with diff view
-  7. Export workflow to TypeScript for developer customization
-  8. Workflow sharing between team members
-- **Risks:** No-code tools promise simplicity but often deliver complexity. The visual builder must be genuinely simpler than the CLI/API for simple tasks, otherwise it is unused overhead. User testing with actual non-technical users is essential.
+- **Current State:** `packages/collaboration/` with Yjs provider, cursor presence.
+- **What's Missing:** Human and AI editing same file simultaneously with conflict-free merging
+- **Effort:** L (2-4 weeks)
+- **Dependencies:** GAP-008, GAP-013
+- **Acceptance Criteria:** Human edits line 10 while AI edits line 50 → both changes merge correctly → no conflicts
+- **Competitor Reference:** No competitor has this
 
 ---
 
-### GAP-046: AI-Powered Project Management
+### GAP-049: Knowledge Graph Population and Query
 
-- **What exists:** Sprint planning capabilities. Task tracking. Agent activity logs. Analytics foundations.
-- **What is missing:** Full AI-powered PM capabilities. Specific gaps: automated daily standups generated from agent activity, blocker detection (task stalled > 2 hours, explain why), timeline prediction (based on historical task completion rates), sprint velocity tracking, automatic priority re-ordering based on dependencies, risk identification ("this task depends on an external API that was unreliable yesterday"), resource allocation suggestions ("backend agent is idle, frontend agent is overloaded").
-- **Why it matters:** This replaces Jira + a project manager for AI-driven development teams. Instead of status meetings, the PM dashboard shows what agents accomplished, what is blocked, and what is next — automatically. This is a unique capability that no competitor offers and could justify standalone pricing.
-- **Effort:** L (2–4 weeks)
-- **Dependencies:** Analytics pipeline (GAP-036), agent activity logging, historical data
-- **Affected services:** web, api, orchestrator
-- **Affected packages:** telemetry, ui
-- **Success criteria:**
-  1. Automated daily standup: summary of completed, in-progress, and blocked tasks
-  2. Blocker detection with root cause analysis
-  3. Timeline prediction: estimated completion date for each task with confidence interval
-  4. Sprint velocity chart: tasks/points completed per sprint
-  5. Priority re-ordering suggestions based on dependencies and blockers
-  6. Risk dashboard: external dependencies, stalled tasks, overdue items
-  7. Standup delivered via email/Slack at configurable time
-  8. Accuracy: timeline predictions within 20% of actual completion time
-- **Risks:** Prediction accuracy requires sufficient historical data. Early predictions will be unreliable — communicate confidence levels clearly. Avoid promising precise estimates when the system is new.
+- **Current State:** Knowledge graph module in project brain. Graph table in DB.
+- **What's Missing:** Automatic extraction of entities (classes, functions, APIs) and relationships, graph queries informing agent decisions
+- **Effort:** L (2-4 weeks)
+- **Dependencies:** GAP-036
+- **Acceptance Criteria:** Codebase indexed → "What uses the User model?" → returns all controllers, services, tests that reference it
+- **Competitor Reference:** Sourcegraph (code graph), but Prometheus integrates it into agent decisions
 
 ---
 
-### GAP-047: Compliance Certification (SOC2, ISO27001)
+### GAP-050: Plugin Marketplace Working
 
-- **What exists:** GDPR-related code. Security practices (RLS, RBAC, encryption). Logging infrastructure. Audit capabilities.
-- **What is missing:** Formal compliance certification. SOC2 Type II requires: 6-12 month observation period by auditor, documented security policies, access control evidence, change management procedures, incident response plan, business continuity plan, vendor management, employee security training. ISO27001 requires: Information Security Management System (ISMS), risk assessment, 114 controls verified. Neither is a code task — both are organizational and procedural.
-- **Why it matters:** Enterprise procurement at companies with >500 employees almost universally requires SOC2. Government contracts require FedRAMP or ISO27001. Healthcare requires HIPAA. Financial services require SOC2 + additional controls. Without certifications, Prometheus is blocked from the most lucrative market segment.
-- **Effort:** XL (organizational, not primarily code — 6-12 months end-to-end)
-- **Dependencies:** Security practices in place (GAP-010), monitoring (GAP-022, GAP-023), logging, access controls
-- **Affected services:** All (evidence collection), operations (policies, procedures)
-- **Success criteria:**
-  1. SOC2 Type I report obtained (point-in-time assessment)
-  2. SOC2 Type II report obtained (6-month observation period)
-  3. ISO27001 certification obtained
-  4. Security policies documented: access control, change management, incident response, data classification
-  5. Employee security training completed and logged
-  6. Vendor security assessments completed (AWS, Clerk, Stripe, LLM providers)
-  7. Business continuity and disaster recovery plans tested
-  8. Annual re-certification process established
-- **Risks:** SOC2 Type II takes minimum 6 months. Start the audit engagement immediately — the observation period begins when the auditor starts, not when the code is ready. Common failures: missing access reviews, incomplete change management logs, inadequate incident response testing.
+- **Current State:** `packages/plugins/` with plugin-sdk, marketplace-client, registry. Plugin UI in web app.
+- **What's Missing:** Actual plugins published and installable, community submission process, review/approval
+- **Effort:** L (2-4 weeks)
+- **Dependencies:** GAP-013, GAP-002
+- **Acceptance Criteria:** User browses marketplace → installs "Terraform" plugin → agent gets Terraform tools
+- **Competitor Reference:** Copilot (marketplace), Claude Code (MCP tools)
 
 ---
 
-### GAP-048: Community Forum and Contribution System
+### GAP-051: Skill Packs for Domains
 
-- **What exists:** Plugin SDK for community extensions. Template system. Open source codebase (assumed).
-- **What is missing:** Community infrastructure. No forum (Discourse, GitHub Discussions). No contribution guide. No plugin submission process. No template sharing. No agent recipe sharing. No community events (office hours, hackathons). No ambassador program. No community metrics tracking.
-- **Why it matters:** Community creates ecosystem creates moat. VS Code's extension marketplace, Terraform's provider registry, and Kubernetes' operator hub all demonstrate that community contributions multiply platform value. GitHub stars and Twitter followers are vanity metrics — active contributors and plugin authors are the real indicators of community health.
-- **Effort:** L (2–4 weeks)
-- **Dependencies:** Open source release (or community edition), plugin marketplace (GAP-020)
-- **Affected services:** web (community pages), docs (contribution guides)
-- **Success criteria:**
-  1. Community forum active (GitHub Discussions or Discourse)
-  2. Contribution guide: how to contribute code, plugins, templates, translations
-  3. Plugin submission process: submit, review, publish
-  4. Template sharing: community-contributed project templates
-  5. Agent recipe sharing: custom agent configurations for specific use cases
-  6. Monthly community office hours (live Q&A)
-  7. 100+ community members within 90 days of launch
-  8. 10+ community contributions within 90 days
-- **Risks:** Community building requires sustained effort — it cannot be launched and abandoned. Assign a community manager (even part-time). Respond to every forum post within 24 hours. Recognize and celebrate contributors publicly.
+- **Current State:** Config-stacks with ecommerce, mobile, data-pipeline, SaaS templates.
+- **What's Missing:** Domain-specific agent training (e-commerce agents know Stripe, mobile agents know React Native patterns)
+- **Effort:** L (2-4 weeks)
+- **Dependencies:** GAP-009, GAP-050
+- **Acceptance Criteria:** "Build e-commerce checkout" → agent uses Stripe best practices, cart patterns, inventory management
+- **Competitor Reference:** No competitor has domain-specific agent training
 
 ---
 
-### GAP-049: Real-Time Collaborative Coding (Google Docs-style)
+### GAP-052: Air-Gapped Deployment with Local Models
 
-- **What exists:** Yjs for CRDT-based collaborative editing. Presence system for showing who is online. CodeMirror integration. Socket server for real-time communication.
-- **What is missing:** Deep human+AI collaborative editing experience. Specific gaps: simultaneous human and AI edits in the same file without conflicts, cursor awareness (see where AI agent is editing), edit attribution (which changes are human, which are AI), AI-aware conflict resolution (AI defers to human edits in same region), comment system (human comments on AI changes inline), suggestion mode (AI proposes changes, human accepts/rejects like Google Docs suggestions), split-view editing (human edits left, AI edits right).
-- **Why it matters:** Real-time collaborative coding with AI is the future of software development. Current tools are turn-based: human writes prompt, AI generates code, human reviews. Collaborative editing is simultaneous: human and AI work on the same file at the same time, each contributing their strengths. This is the "pair programming with AI" experience that developers dream about.
-- **Effort:** XL (1–3 months)
-- **Dependencies:** Yjs operational, CodeMirror integration, agent SDK (edit streaming)
-- **Affected services:** web, socket-server, orchestrator
-- **Affected packages:** collaboration, ui
-- **Success criteria:**
-  1. Two human users + AI agent editing same file simultaneously
-  2. Zero edit conflicts (Yjs CRDT guarantees convergence)
-  3. Cursor presence: see where each user and AI agent is editing in real-time
-  4. Edit attribution: color-coded by author (human A, human B, AI agent)
-  5. Suggestion mode: AI proposes changes as suggestions, human accepts/rejects
-  6. AI defers: if human is editing a region, AI waits until human moves away
-  7. Comment system: inline comments on specific lines
-  8. Latency: edit propagation < 100ms between all participants
-- **Risks:** CRDT-based collaborative editing is technically proven (Google Docs, Figma), but adding AI as a participant introduces novel UX challenges. The AI editing pace, edit granularity, and interruption behavior need extensive user testing to get right.
+- **Current State:** Ollama integration in model router. Docker compose with Ollama. K8s manifests.
+- **What's Missing:** Verified deployment with zero internet, using only Ollama models, full functionality preserved
+- **Effort:** L (2-4 weeks)
+- **Dependencies:** GAP-003
+- **Acceptance Criteria:** Deploy on isolated network → all features work → code quality acceptable with local models
+- **Competitor Reference:** No competitor offers this — unique selling point for defense/healthcare/finance
 
 ---
 
-### GAP-050: Hardware-Accelerated Local GPU Inference
+### GAP-053: Sprint Planning and Project Management
 
-- **What exists:** Ollama integration for local model inference. Model router with provider abstraction. BYO model validator.
-- **What is missing:** GPU-optimized local inference. Specific gaps: GPU detection and configuration, CUDA/ROCm/Metal support, model quantization management (GGUF, AWQ, GPTQ), multi-GPU distribution, GPU memory management (automatic model loading/unloading), inference batching for throughput, model download and caching management, performance monitoring (tokens/second, GPU utilization), fallback to CPU when GPU unavailable.
-- **Why it matters:** Self-hosted enterprise customers want fast local inference without sending code to external APIs. GPU optimization is the difference between 5 tokens/second (CPU) and 50+ tokens/second (GPU) — a 10x improvement in agent speed. For organizations with data sovereignty requirements, local inference is not optional.
-- **Effort:** L (2–4 weeks)
-- **Dependencies:** Ollama (manages most complexity), CUDA-capable hardware
-- **Affected services:** model-router
-- **Affected packages:** ai
-- **Success criteria:**
-  1. GPU auto-detection: NVIDIA (CUDA), AMD (ROCm), Apple (Metal)
-  2. Model management: download, cache, load, unload based on GPU memory
-  3. Quantization support: GGUF Q4, Q5, Q8 models for memory/quality tradeoff
-  4. Performance: 3x+ faster than CPU inference for same model
-  5. Multi-GPU: distribute model across 2+ GPUs for larger models
-  6. Memory management: automatic model unloading when GPU memory pressure
-  7. Monitoring: tokens/second, GPU utilization, memory usage in Grafana dashboard
-  8. Graceful fallback: if GPU unavailable, use CPU with warning
-  9. Configuration: simple YAML config for model preferences and GPU allocation
-- **Risks:** GPU support varies significantly across hardware, drivers, and operating systems. Ollama abstracts most of this, but edge cases (old CUDA versions, AMD driver issues) cause support burden. Document hardware requirements clearly and provide a compatibility matrix.
+- **Current State:** Sprint tables in DB, PM tRPC router, planner agent role.
+- **What's Missing:** Agent breaks large project into sprints, estimates effort, creates Jira/Linear issues, tracks progress
+- **Effort:** L (2-4 weeks)
+- **Dependencies:** GAP-010, integrations
+- **Acceptance Criteria:** "Build a CRM" → agent creates sprint plan with 20 tasks, estimates each, creates Linear issues
+- **Competitor Reference:** Devin (task decomposition), but Prometheus's PM features are deeper
 
 ---
 
-## Recommended Sprint Plan
+### GAP-054: Architecture Analysis and Visualization
 
-### Sprint 1 (Weeks 1–2): Foundation
-
-**Focus:** GAP-002, GAP-003, GAP-010
-
-| Gap | Description | Effort | Deliverable |
-|-----|-------------|--------|-------------|
-| GAP-002 | Production deployment of all 9 services | XL (start) | All services on staging K8s with health checks |
-| GAP-003 | Integration test suite | L (start) | Integration tests for top 5 service-to-service paths |
-| GAP-010 | Auth/authorization hardening | M | Cross-org isolation verified, RBAC on all routes |
-
-**Sprint goal:** All services running on staging Kubernetes. Integration test suite covering critical paths. Auth security review completed.
-
-**Why this first:** Nothing else matters if the services cannot run together and the auth is insecure. This sprint de-risks the two highest-impact failure modes.
+- **Current State:** `packages/architecture-graph/`, architecture tRPC router.
+- **What's Missing:** Visual architecture diagram generation from codebase, dependency analysis, impact analysis for changes
+- **Effort:** M (1-2 weeks)
+- **Dependencies:** GAP-036
+- **Acceptance Criteria:** Agent analyzes codebase → generates architecture diagram → identifies high-coupling areas
+- **Competitor Reference:** No competitor auto-generates architecture diagrams
 
 ---
 
-### Sprint 2 (Weeks 3–4): Core Pipeline
+### GAP-055: BYO API Keys for LLM Providers
 
-**Focus:** GAP-001, GAP-005, GAP-012
-
-| Gap | Description | Effort | Deliverable |
-|-----|-------------|--------|-------------|
-| GAP-001 | E2E project creation pipeline | XL (start) | Single template (Next.js) working end-to-end |
-| GAP-005 | Error recovery and self-healing | L (start) | Recovery from model API 500 and sandbox timeout |
-| GAP-012 | Prompt engineering quality | L (start) | Orchestrator prompt expanded, eval dataset for 3 agents |
-
-**Sprint goal:** One project template works end-to-end (prompt to deployed app). Basic error recovery operational. Agent prompt quality measurably improved.
-
-**Why this order:** The E2E pipeline is the product. Error recovery ensures it works reliably. Prompt quality ensures the output is good.
+- **Current State:** `byo-model.ts`, `byo-model-store.ts`, `byo-model-validator.ts` in model router.
+- **What's Missing:** Users bring their own API keys for Anthropic/OpenAI/etc., keys stored securely, used for their tasks
+- **Effort:** M (1-2 weeks)
+- **Dependencies:** GAP-006
+- **Acceptance Criteria:** User enters Anthropic API key → their tasks use Claude directly → no Prometheus markup
+- **Competitor Reference:** Cursor (BYO keys), Windsurf (BYO keys)
 
 ---
 
-### Sprint 3 (Weeks 5–6): Production Readiness
+### GAP-056: Prompt Versioning and Evaluation
 
-**Focus:** GAP-004, GAP-007, GAP-008, GAP-009
-
-| Gap | Description | Effort | Deliverable |
-|-----|-------------|--------|-------------|
-| GAP-004 | SWE-bench benchmarking | L | First SWE-bench Lite results recorded |
-| GAP-007 | Streaming reliability | M | 100-connection load test passing |
-| GAP-008 | Sandbox stability | L (start) | 20 concurrent sandboxes stable for 30 min |
-| GAP-009 | Billing E2E | M | Complete billing lifecycle in Stripe test mode |
-
-**Sprint goal:** Benchmark numbers published. Real-time streaming proven reliable. Sandboxes proven stable. Billing flow verified.
+- **Current State:** Prompt versioning mentioned in MISSING.md as implemented. Eval test cases mentioned.
+- **What's Missing:** UI for managing prompt versions, A/B testing between versions, automatic rollback on quality drop
+- **Effort:** M (1-2 weeks)
+- **Dependencies:** GAP-009, GAP-021
+- **Acceptance Criteria:** Create prompt variant → A/B test → variant with higher SWE-bench score auto-promoted
+- **Competitor Reference:** Internal tooling — sophisticated teams have this
 
 ---
 
-### Sprint 4 (Weeks 7–8): User Experience
+### GAP-057: CI/CD Pipeline Generation
 
-**Focus:** GAP-006, GAP-011, GAP-013, GAP-016
-
-| Gap | Description | Effort | Deliverable |
-|-----|-------------|--------|-------------|
-| GAP-006 | User onboarding | M | Sign-up to first task in 5 minutes |
-| GAP-011 | User documentation | L (start) | 10+ documentation pages |
-| GAP-013 | Mobile/responsive UI | M | All pages usable at 375px |
-| GAP-016 | Rate limiting | M | Rate limits on all API routes |
-
-**Sprint goal:** New users have a polished onboarding experience. Documentation exists. Mobile works. Abuse prevention in place.
+- **Current State:** CI integration package, CI/loop engineer agent role.
+- **What's Missing:** Agent generates GitHub Actions workflow for generated project, includes test, lint, deploy steps
+- **Effort:** M (1-2 weeks)
+- **Dependencies:** GAP-012, GAP-025
+- **Acceptance Criteria:** Agent generates project → includes `.github/workflows/ci.yml` → CI passes on first push
+- **Competitor Reference:** Devin (CI setup), Copilot (Actions generation)
 
 ---
 
-### Sprint 5 (Weeks 9–10): Async & Autonomy
+### GAP-058: Visual Regression Testing
 
-**Focus:** GAP-014, GAP-015, GAP-017
-
-| Gap | Description | Effort | Deliverable |
-|-----|-------------|--------|-------------|
-| GAP-014 | Slack bot | M | Task creation and notifications via Slack |
-| GAP-015 | Webhook triggers | M | GitHub PR review via webhook |
-| GAP-017 | 24/7 autonomous operation | XL (start) | 10 queued tasks completed overnight |
-
-**Sprint goal:** Prometheus operates asynchronously via Slack and webhooks. Overnight task execution proven.
+- **Current State:** Screenshot diffing in orchestrator. Visual verifier.
+- **What's Missing:** Automated visual comparison of UI before/after changes, pixel-diff highlighting
+- **Effort:** M (1-2 weeks)
+- **Dependencies:** GAP-034
+- **Acceptance Criteria:** Agent changes CSS → takes before/after screenshots → identifies unintended visual changes
+- **Competitor Reference:** Percy, Chromatic (dedicated tools)
 
 ---
 
-### Sprint 6 (Weeks 11–12): Polish & Ecosystem
+### GAP-059: Docker/K8s Manifest Generation
 
-**Focus:** GAP-019, GAP-021, GAP-022, GAP-023
-
-| Gap | Description | Effort | Deliverable |
-|-----|-------------|--------|-------------|
-| GAP-019 | Template gallery | L (start) | 5+ tested templates |
-| GAP-021 | Load testing baselines | L (start) | k6 suite for critical paths, baselines documented |
-| GAP-022 | Grafana dashboards | M | All dashboards showing real data |
-| GAP-023 | Alert configuration | M | Alerts firing, Slack notifications working |
-
-**Sprint goal:** Project templates accelerate creation. Performance baselines established. Monitoring and alerting operational.
+- **Current State:** IaC generator tool in agent-sdk.
+- **What's Missing:** Agent generates production-ready Dockerfile and K8s manifests for generated projects
+- **Effort:** M (1-2 weeks)
+- **Dependencies:** GAP-025
+- **Acceptance Criteria:** Generated project includes optimized Dockerfile, K8s deployment + service + ingress YAML
+- **Competitor Reference:** No coding agent does this well — differentiator
 
 ---
 
-### Sprints 7–8 (Weeks 13–16): P1 Completion
+### GAP-060: Canary Deployment and Rollback
 
-**Focus:** GAP-018, GAP-020, GAP-024, GAP-025, GAP-026, GAP-027, GAP-028, GAP-029, GAP-030
-
-Complete remaining P1 gaps. Multi-repo support, plugin marketplace (start), migration safety, API versioning, VS Code and CLI polish, benchmark dashboard, data export, and chaos testing.
-
----
-
-### Sprints 9–12 (Weeks 17–24): P2 Priorities
-
-**Focus:** Prioritized P2 gaps based on customer demand
-
-Recommended order:
-1. GAP-035 (Advanced Code Review) — highest customer value
-2. GAP-036 (Team Analytics) — enterprise sales enabler
-3. GAP-039 (Approval Workflows) — enterprise requirement
-4. GAP-040 (SSO/SCIM Testing) — enterprise deal-blocker
-5. GAP-042 (Accessibility Audit) — compliance requirement
-6. GAP-033 (Multi-Language) — quality differentiator
-7. Remaining P2 gaps based on resources and demand
+- **Current State:** Canary/rollback scripts in infra. Deploy engineer agent.
+- **What's Missing:** Agent deploys with canary strategy, monitors error rates, auto-rollback if errors spike
+- **Effort:** L (2-4 weeks)
+- **Dependencies:** GAP-024, GAP-016
+- **Acceptance Criteria:** Deploy canary → monitor → errors > threshold → auto-rollback → alert user
+- **Competitor Reference:** No competitor offers this — enterprise differentiator
 
 ---
 
-### Sprints 13+: P3 Vision
+### GAP-091: Fusion Search Pipeline (BM25 + Semantic + RRF)
 
-P3 gaps are long-term investments. Prioritize based on:
-- GAP-047 (SOC2) — start early due to 6-month observation period
-- GAP-043 (Transfer Learning) — unique differentiator
-- GAP-049 (Collaborative Coding) — future of development
-- Others based on market demand and resource availability
-
----
-
-## Effort Summary
-
-| Priority | Gaps | S | M | L | XL | Est. Person-Weeks |
-|----------|------|---|---|---|----|--------------------|
-| P0 | 16 | 0 | 8 | 6 | 2 | ~40 |
-| P1 | 14 | 0 | 7 | 5 | 2 | ~36 |
-| P2 | 12 | 0 | 4 | 4 | 4 | ~44 |
-| P3 | 8 | 0 | 0 | 3 | 5 | ~40 |
-| **Total** | **50** | **0** | **19** | **18** | **13** | **~160** |
-
-### Effort Breakdown by Size
-
-| Size | Count | Duration Each | Total Range |
-|------|-------|---------------|-------------|
-| S (1–3 days) | 0 | — | 0 weeks |
-| M (1–2 weeks) | 19 | ~1.5 weeks avg | ~28 person-weeks |
-| L (2–4 weeks) | 18 | ~3 weeks avg | ~54 person-weeks |
-| XL (1–3 months) | 13 | ~6 weeks avg | ~78 person-weeks |
-| **Total** | **50** | | **~160 person-weeks** |
-
-### Team Sizing Recommendations
-
-| Team Size | Time to Complete P0 | Time to Complete P0+P1 | Time to Complete All |
-|-----------|---------------------|------------------------|----------------------|
-| 2 engineers | ~20 weeks | ~38 weeks | ~80 weeks |
-| 4 engineers | ~10 weeks | ~19 weeks | ~40 weeks |
-| 6 engineers | ~7 weeks | ~13 weeks | ~27 weeks |
-| 8 engineers | ~5 weeks | ~10 weeks | ~20 weeks |
-
-**Recommendation:** A team of 4–6 engineers can ship P0 in 7–10 weeks and P0+P1 in 13–19 weeks. This is the sweet spot for velocity without coordination overhead.
+- **Current State:** `apps/project-brain/src/search/fusion-search.ts`, `search/semantic-reranker.ts` exist.
+- **What's Missing:** Verified that fusion search (BM25 + semantic + RRF reranking) returns better results than either alone
+- **Effort:** M (1-2 weeks)
+- **Dependencies:** GAP-036, GAP-089
+- **Acceptance Criteria:** Fusion search measurably improves agent context quality vs single-method search
 
 ---
 
-## Key Takeaways
+### GAP-092: Digital Twin Populated and Accurate
 
-1. **The code exists; the integration does not.** Prometheus has real depth in individual subsystems. The #1 priority is wiring them together and proving they work as a system.
+- **Current State:** `apps/project-brain/src/digital-twin.ts` exists.
+- **What's Missing:** Digital twin accurately reflects codebase state — files, dependencies, architecture, conventions — and stays in sync
+- **Effort:** L (2-4 weeks)
+- **Dependencies:** GAP-036, GAP-049
+- **Acceptance Criteria:** Digital twin represents >90% of codebase structure accurately, updates within 60s of file changes
 
-2. **Testing is the biggest technical debt.** 2 integration tests for 9 services is a crisis. Every code change is a roll of the dice until integration tests exist.
+---
 
-3. **Production deployment is prerequisite to everything.** You cannot test load, monitor production, run benchmarks, or demo to customers without a running system.
+### GAP-093: Meta-Learning Extracting Patterns
 
-4. **The E2E pipeline IS the product.** Gap-001 is not one gap among fifty — it is THE gap. Everything else is infrastructure supporting this one capability.
+- **Current State:** `apps/project-brain/src/meta-learning/` directory exists.
+- **What's Missing:** Meta-learning system extracts useful patterns from completed sessions, improving agent behavior
+- **Effort:** L (2-4 weeks)
+- **Dependencies:** GAP-042, real session data
+- **Acceptance Criteria:** After 100 sessions, meta-learning identifies 10+ reusable patterns that improve task completion
 
-5. **Security and billing are launch blockers.** Auth bypass or billing bugs in a multi-tenant SaaS with code execution capabilities would be catastrophic.
+---
 
-6. **160 person-weeks is achievable.** With a focused 6-engineer team, P0+P1 can ship in ~13 weeks. This is a 3-month sprint from "impressive prototype" to "shippable product."
+### GAP-094: Trust Scoring for Agent Reliability
+
+- **Current State:** `apps/orchestrator/src/governance/trust-scorer.ts` exists.
+- **What's Missing:** Trust scores computed per agent based on history, used to gate autonomous actions
+- **Effort:** M (1-2 weeks)
+- **Dependencies:** GAP-010, real session data
+- **Acceptance Criteria:** Low-trust agent requires human approval for destructive actions; high-trust agent proceeds autonomously
+
+---
+
+### GAP-095: Prompt Caching Reducing Costs
+
+- **Current State:** `apps/model-router/src/prompt-cache.ts` exists.
+- **What's Missing:** Prompt cache hit rate measured and demonstrably reducing LLM API costs
+- **Effort:** M (1-2 weeks)
+- **Dependencies:** GAP-006, GAP-043
+- **Acceptance Criteria:** >20% cache hit rate on repeated queries, measurable cost reduction
+
+---
+
+### GAP-096: Request Coalescing Saving API Calls
+
+- **Current State:** `apps/model-router/src/request-coalescer.ts` exists.
+- **What's Missing:** Near-identical requests deduplicated, reducing total LLM API calls
+- **Effort:** M (1-2 weeks)
+- **Dependencies:** GAP-006
+- **Acceptance Criteria:** Coalescing reduces total API calls by >10% during multi-agent sessions
+
+---
+
+### GAP-097: Speculative Execution Producing Faster Results
+
+- **Current State:** `apps/model-router/src/speculative.ts` exists.
+- **What's Missing:** Fast draft model + full verification producing results faster than single-model approach
+- **Effort:** L (2-4 weeks)
+- **Dependencies:** GAP-006, GAP-043
+- **Acceptance Criteria:** Speculative execution reduces p50 latency by >30% for code generation tasks
+
+---
+
+### GAP-098: Model Scorer Comparing Output Quality
+
+- **Current State:** `apps/model-router/src/model-scorer.ts` exists.
+- **What's Missing:** Quality scores per model per task type, informing routing decisions with data
+- **Effort:** M (1-2 weeks)
+- **Dependencies:** GAP-006, historical data
+- **Acceptance Criteria:** Model scorer ranks models by quality for each task type, routing uses scores
+
+---
+
+### GAP-099: Complexity Estimator Validated
+
+- **Current State:** `apps/model-router/src/complexity-estimator.ts` exists.
+- **What's Missing:** Complexity estimation accurately predicts task difficulty and selects appropriate model tier
+- **Effort:** M (1-2 weeks)
+- **Dependencies:** GAP-006
+- **Acceptance Criteria:** Complexity estimator correctly routes simple tasks to cheap models, complex tasks to premium models >80% of the time
+
+---
+
+### GAP-100: Langfuse Integration Sending Trace Data
+
+- **Current State:** Langfuse listed as planned technology. Not integrated.
+- **What's Missing:** All LLM calls traced via Langfuse — prompt, response, latency, cost, token usage per session
+- **Effort:** M (1-2 weeks)
+- **Dependencies:** GAP-006, GAP-016
+- **Acceptance Criteria:** Every LLM call visible in Langfuse dashboard with full trace data
+
+---
+
+## P3 — 100x MOONSHOT (30 Gaps)
+
+These features would make Prometheus unbeatable — the ultimate AI engineering platform.
+
+---
+
+### GAP-061: Full Project Generation (Scratch to Production)
+
+- **Description:** User says "Build me a complete e-commerce platform with auth, payments, inventory, admin dashboard" → Prometheus generates everything, deploys, provides URL
+- **Effort:** XL (1-3 months)
+- **Dependencies:** GAP-025, GAP-024, GAP-041, GAP-057
+- **Acceptance Criteria:** Complete working deployed app from single prompt, including: database schema, API, frontend, auth, payments, CI/CD, monitoring
+- **Competitor Reference:** Bolt.new (simple apps), Lovable (simple apps) — but nothing does complex apps
+
+---
+
+### GAP-062: Self-Improving Agents
+
+- **Description:** Agents get measurably better over time without human intervention. Self-play + pattern mining + prompt evolution
+- **Effort:** XL (1-3 months)
+- **Dependencies:** GAP-045, GAP-021
+- **Acceptance Criteria:** SWE-bench score improves 10%+ over 3 months with zero manual prompt changes
+- **Competitor Reference:** No competitor has this
+
+---
+
+### GAP-063: Multi-Repository Orchestration
+
+- **Description:** Agent understands and modifies multiple repos simultaneously (e.g., frontend repo + backend repo + shared library)
+- **Effort:** XL (1-3 months)
+- **Dependencies:** GAP-012, GAP-041
+- **Acceptance Criteria:** "Add user avatars" → agent modifies backend API, frontend UI, and shared types across 3 repos → all PRs are consistent
+- **Competitor Reference:** No competitor does this
+
+---
+
+### GAP-064: Design-to-Code (Figma Integration)
+
+- **Description:** Import Figma design → agent generates pixel-perfect implementation
+- **Effort:** XL (1-3 months)
+- **Dependencies:** Figma MCP adapter, GAP-034 (visual verification)
+- **Acceptance Criteria:** Figma design input → generated UI matches design within 95% pixel accuracy
+- **Competitor Reference:** v0 (partial), Lovable (partial) — but none are pixel-perfect
+
+---
+
+### GAP-065: Incident Response Agent
+
+- **Description:** Detect production error from Sentry/Datadog → diagnose → generate hotfix → deploy
+- **Effort:** XL (1-3 months)
+- **Dependencies:** GAP-060, GAP-026, integrations
+- **Acceptance Criteria:** Sentry alert → agent diagnoses root cause → generates fix → deploys hotfix → error rate drops
+- **Competitor Reference:** No competitor has this — revolutionary for SRE teams
+
+---
+
+### GAP-066: Voice-Driven Development
+
+- **Current State:** `packages/voice/` with speech recognizer, command parser.
+- **Description:** Speak task description → agent executes → speak results back
+- **Effort:** L (2-4 weeks)
+- **Dependencies:** GAP-002
+- **Acceptance Criteria:** "Hey Prometheus, add a search bar to the header" → agent executes → speaks "Done, the search bar is live on your preview"
+- **Competitor Reference:** Copilot (voice in VS Code) — but not for autonomous tasks
+
+---
+
+### GAP-067: Real-Time Pair Programming
+
+- **Description:** Human and AI code simultaneously in the same file with CRDT conflict resolution, AI suggests as human types
+- **Effort:** XL (1-3 months)
+- **Dependencies:** GAP-048
+- **Acceptance Criteria:** Human writes function signature → AI fills implementation in real-time → both see each other's cursors
+- **Competitor Reference:** Cursor (inline completion) — but not real-time collaborative
+
+---
+
+### GAP-068: Client SDK Generation
+
+- **Description:** Auto-generate TypeScript, Python, Go SDKs from our tRPC API
+- **Effort:** L (2-4 weeks)
+- **Dependencies:** GAP-002
+- **Acceptance Criteria:** `@prometheus/sdk` npm package with full typed client for all API endpoints
+- **Competitor Reference:** OpenAI (excellent SDKs), Anthropic (excellent SDKs)
+
+---
+
+### GAP-069: Cost Prediction Before Execution
+
+- **Description:** Estimate task cost and time before user commits, based on historical data
+- **Effort:** M (1-2 weeks)
+- **Dependencies:** GAP-043, historical data
+- **Acceptance Criteria:** "This task will cost ~$2.50 and take ~15 minutes" shown before execution, accurate within 30%
+- **Competitor Reference:** Devin (shows estimated cost)
+
+---
+
+### GAP-070: Team Velocity Analytics
+
+- **Description:** Track how much faster teams are with Prometheus, ROI calculation
+- **Effort:** M (1-2 weeks)
+- **Dependencies:** GAP-040
+- **Acceptance Criteria:** Dashboard shows: "Your team saved 120 hours this month, equivalent to $24,000 in developer time"
+- **Competitor Reference:** GitHub Copilot (productivity metrics)
+
+---
+
+### GAP-071: Enterprise Admin Dashboard
+
+- **Description:** Admin panel for managing 1000+ users: RBAC, cost limits, compliance, audit
+- **Effort:** L (2-4 weeks)
+- **Dependencies:** GAP-005, GAP-040
+- **Acceptance Criteria:** Admin sees all org activity, sets per-team budgets, exports audit logs, manages SSO
+- **Competitor Reference:** Copilot Enterprise, Devin Enterprise
+
+---
+
+### GAP-072: SOC2 / ISO27001 Compliance
+
+- **Description:** Organizational and technical controls for enterprise compliance
+- **Effort:** XL (1-3 months)
+- **Dependencies:** GAP-016, GAP-003
+- **Acceptance Criteria:** Pass SOC2 Type II audit, receive certification
+- **Competitor Reference:** Devin (SOC2), Copilot (SOC2)
+
+---
+
+### GAP-073: Performance Optimization Agent
+
+- **Description:** Agent analyzes app performance (Lighthouse, bundle size, DB queries) and automatically optimizes
+- **Effort:** L (2-4 weeks)
+- **Dependencies:** GAP-010, GAP-034
+- **Acceptance Criteria:** Agent runs Lighthouse → identifies issues → fixes → score improves 20+ points
+- **Competitor Reference:** No competitor has this
+
+---
+
+### GAP-074: Security Hardening Agent
+
+- **Description:** Agent runs OWASP scans, identifies vulnerabilities, generates fixes, verifies fixes
+- **Effort:** L (2-4 weeks)
+- **Dependencies:** GAP-010, guardian module
+- **Acceptance Criteria:** Agent scans codebase → finds SQL injection → generates parameterized query fix → verifies
+- **Competitor Reference:** Copilot (basic security), Snyk integration — but not autonomous
+
+---
+
+### GAP-075: Documentation Generation
+
+- **Description:** Agent auto-generates API docs, README, architecture docs, changelog from codebase
+- **Effort:** M (1-2 weeks)
+- **Dependencies:** GAP-010
+- **Acceptance Criteria:** Agent generates OpenAPI spec, README with setup instructions, architecture diagram
+- **Competitor Reference:** Copilot (doc generation) — but not comprehensive
+
+---
+
+### GAP-076: Automatic Infrastructure Provisioning
+
+- **Description:** Agent creates cloud infrastructure (AWS/GCP/Azure) for generated projects using Terraform/Pulumi
+- **Effort:** XL (1-3 months)
+- **Dependencies:** GAP-059, cloud credentials
+- **Acceptance Criteria:** "Deploy to AWS" → agent creates VPC, RDS, ECS, CloudFront → app running
+- **Competitor Reference:** No competitor does this — revolutionary
+
+---
+
+### GAP-077: Natural Language to Technical Spec
+
+- **Description:** Convert vague requirements ("build something like Airbnb for pet sitting") into detailed technical specification
+- **Effort:** L (2-4 weeks)
+- **Dependencies:** GAP-009, discovery agent
+- **Acceptance Criteria:** Vague prompt → detailed spec with user stories, tech stack, architecture, data model, API endpoints
+- **Competitor Reference:** Devin (requirement analysis) — but not formalized
+
+---
+
+### GAP-078: Cross-User Learning (Anonymized)
+
+- **Description:** Agent learns from all users' successful patterns (anonymized), improving for everyone
+- **Effort:** XL (1-3 months)
+- **Dependencies:** GAP-042, GAP-072 (privacy compliance)
+- **Acceptance Criteria:** Common patterns extracted from 1000+ tasks → agent performance improves for all users
+- **Competitor Reference:** GitHub Copilot (trained on usage data) — but Prometheus is transparent about it
+
+---
+
+### GAP-079: JetBrains Plugin
+
+- **Current State:** `packages/jetbrains-plugin/` directory exists.
+- **Description:** IntelliJ/WebStorm/PyCharm plugin with chat, code actions, session management
+- **Effort:** L (2-4 weeks)
+- **Dependencies:** GAP-002
+- **Acceptance Criteria:** Plugin installs in IntelliJ, chat panel works, code actions trigger Prometheus tasks
+- **Competitor Reference:** Copilot (JetBrains support)
+
+---
+
+### GAP-080: Mobile App / PWA
+
+- **Description:** Monitor tasks, approve actions, view results from mobile phone
+- **Effort:** L (2-4 weeks)
+- **Dependencies:** GAP-013
+- **Acceptance Criteria:** PWA installable on iOS/Android, shows active tasks, allows approval of pending actions
+- **Competitor Reference:** Devin (mobile-responsive web)
+
+---
+
+### GAP-101: AWS/GCP/Azure MCP Adapters for Cloud Provisioning
+
+- **Current State:** AWS adapter exists at `apps/mcp-gateway/src/adapters/aws/`. GCP/Azure adapters do not exist.
+- **What's Missing:** Full cloud provisioning via MCP — create VPCs, databases, compute instances, CDNs across all 3 major clouds
+- **Effort:** XL (1-3 months)
+- **Dependencies:** GAP-076, cloud credentials
+- **Acceptance Criteria:** Agent provisions cloud resources via MCP adapters for AWS, GCP, and Azure
+
+---
+
+### GAP-102: Multi-Tenant GPU Scheduling for Ollama
+
+- **Current State:** Ollama in docker-compose serves one tenant.
+- **What's Missing:** Multiple orgs sharing GPU resources with fair scheduling, queue management, and isolation
+- **Effort:** L (2-4 weeks)
+- **Dependencies:** GAP-003, GPU infrastructure
+- **Acceptance Criteria:** 10 orgs share GPU pool, each gets fair allocation, no interference
+
+---
+
+### GAP-103: Agent Replay & Step-by-Step Debugging
+
+- **Current State:** Session events logged in DB. No replay mechanism.
+- **What's Missing:** Replay completed agent sessions step-by-step, inspect decisions, understand failures
+- **Effort:** L (2-4 weeks)
+- **Dependencies:** GAP-008, GAP-013
+- **Acceptance Criteria:** Select completed session → replay each agent step with timing → see decisions and tool calls
+
+---
+
+### GAP-104: Terraform State Management for Generated IaC
+
+- **Current State:** IaC generator tool creates Terraform files. No state management.
+- **What's Missing:** Terraform state stored securely, plan/apply cycle managed, drift detection
+- **Effort:** L (2-4 weeks)
+- **Dependencies:** GAP-076
+- **Acceptance Criteria:** Agent generates Terraform → applies → state stored → subsequent runs detect drift
+
+---
+
+### GAP-105: Model Fine-Tuning Pipeline on Successful Sessions
+
+- **Current State:** Training data collection exists in `apps/orchestrator/src/training/`.
+- **What's Missing:** Pipeline to fine-tune open models on successful session data, deploy fine-tuned models via Ollama
+- **Effort:** XL (1-3 months)
+- **Dependencies:** GAP-045, GAP-062, GPU infrastructure
+- **Acceptance Criteria:** Fine-tuned model outperforms base model on domain-specific tasks
+
+---
+
+### GAP-106: API Versioning & Backward Compatibility
+
+- **Current State:** Single API version. No versioning strategy.
+- **What's Missing:** API version headers, deprecation warnings, backward-compatible changes
+- **Effort:** M (1-2 weeks)
+- **Dependencies:** GAP-068
+- **Acceptance Criteria:** API v1 continues working when v2 is deployed, deprecation warnings on old endpoints
+
+---
+
+### GAP-107: Load Testing & Benchmark Validation
+
+- **Current State:** k6 listed as planned. No load tests exist.
+- **What's Missing:** Load tests simulating 50+ concurrent agent sessions, validated throughput targets
+- **Effort:** L (2-4 weeks)
+- **Dependencies:** GAP-003
+- **Acceptance Criteria:** k6 load test runs 50 concurrent sessions → system handles within SLO targets
+
+---
+
+### GAP-108: Data Export & Portability
+
+- **Current State:** GDPR export router exists. No general data portability.
+- **What's Missing:** Export all org data in standard formats (JSON, CSV), import to new instance
+- **Effort:** M (1-2 weeks)
+- **Dependencies:** GAP-071
+- **Acceptance Criteria:** Org admin exports all data → imports into fresh Prometheus instance → all data preserved
+
+---
+
+### GAP-109: Multi-Region Deployment
+
+- **Current State:** K8s manifests for single-region. Hetzner EU planned.
+- **What's Missing:** Multi-region deployment with data replication, region-aware routing
+- **Effort:** XL (1-3 months)
+- **Dependencies:** GAP-003, GAP-072
+- **Acceptance Criteria:** US and EU regions, data residency enforced, <100ms latency per region
+
+---
+
+### GAP-110: Audit Log Retention & Archival
+
+- **Current State:** Audit logger writes to DB. No retention policy.
+- **What's Missing:** Configurable retention periods, cold storage archival, searchable historical audit trail
+- **Effort:** M (1-2 weeks)
+- **Dependencies:** GAP-071
+- **Acceptance Criteria:** 90-day hot retention, archival to S3/R2, compliance-ready export
+
+---
+
+## Summary Scorecard
+
+| Priority | Count | Effort Breakdown | Timeline |
+|----------|-------|-----------------|----------|
+| **P0 Ship Blockers** | 25 | 4 XL, 6 L, 10 M, 5 S | 0-30 days |
+| **P1 Devin Parity** | 25 | 0 XL, 4 L, 20 M, 1 S | 30-60 days |
+| **P2 10x Advantage** | 30 | 1 XL, 15 L, 14 M, 0 S | 60-120 days |
+| **P3 100x Moonshot** | 30 | 9 XL, 12 L, 7 M, 0 S | 120-365 days |
+| **TOTAL** | **110** | **14 XL, 37 L, 51 M, 6 S** | **~12 months** |
+
+---
+
+## The Path to 100x
+
+### Month 1: Ship It (P0)
+- All services running and communicating
+- End-to-end task execution working
+- Live demo instance
+- First SWE-bench run
+
+### Month 2: Match Devin (P1)
+- Slack bot and GitHub App deployed
+- Preview deployments working
+- Multi-language support
+- Onboarding flow polished
+
+### Month 3-4: Surpass Devin (P2)
+- Multi-agent orchestration proven and measured
+- Memory system improving agent quality
+- Cost optimization saving 60%+ vs competitors
+- Plugin marketplace live
+
+### Month 5-12: 100x Moonshot (P3)
+- Full project generation from scratch to production
+- Self-improving agents (SWE-bench score climbing automatically)
+- Incident response agent (detect → diagnose → fix → deploy)
+- Design-to-code (Figma → pixel-perfect implementation)
+- Enterprise admin dashboard with SOC2 compliance
+- Voice-driven development
+- Cross-user learning
+
+### The Result
+A platform where you can say "Build me a complete SaaS product with auth, billing, dashboard, API, and deploy it to production" and wake up to a working, tested, deployed application — monitored, secure, and ready for users. That's 100x.
