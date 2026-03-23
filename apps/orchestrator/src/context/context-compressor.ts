@@ -54,66 +54,66 @@ const EXPORT_NAME_RE =
   /export\s+(?:default\s+)?(?:const|function|class|type|interface|enum)\s+(\w+)/g;
 const DOCSTRING_RE = /\/\*\*[\s\S]*?\*\//g;
 
+function extractSignaturesAndTypes(content: string): string[] {
+  const parts: string[] = [];
+  const signatures = content.match(FUNCTION_SIG_RE) ?? [];
+  for (const sig of signatures) {
+    parts.push(sig.trim());
+  }
+  const types = content.match(TYPE_DEF_RE) ?? [];
+  for (const t of types) {
+    parts.push(t.trim());
+  }
+  return parts;
+}
+
+function compressSummary(content: string): string {
+  const parts: string[] = [];
+  const docstrings = content.match(DOCSTRING_RE) ?? [];
+  for (const doc of docstrings) {
+    parts.push(doc);
+  }
+  parts.push(...extractSignaturesAndTypes(content));
+  return parts.length > 0
+    ? parts.join("\n\n")
+    : content.slice(0, Math.floor(content.length * 0.4));
+}
+
+function compressSkeleton(content: string): string {
+  const parts = extractSignaturesAndTypes(content);
+  return parts.length > 0
+    ? parts.join("\n\n")
+    : content.slice(0, Math.floor(content.length * 0.15));
+}
+
+function compressReferences(content: string): string {
+  const exports: string[] = [];
+  const regex = new RegExp(EXPORT_NAME_RE.source, "g");
+  let match = regex.exec(content);
+  while (match !== null) {
+    if (match[1]) {
+      exports.push(match[1]);
+    }
+    match = regex.exec(content);
+  }
+  return exports.length > 0
+    ? `Exports: ${exports.join(", ")}`
+    : "[no exports detected]";
+}
+
+const tierCompressors: Record<CompressionTier, (content: string) => string> = {
+  full: (content) => content,
+  summary: compressSummary,
+  skeleton: compressSkeleton,
+  references: compressReferences,
+};
+
 /**
  * Compress content to a specified compression tier.
  */
 export function compressToTier(content: string, tier: CompressionTier): string {
-  switch (tier) {
-    case "full":
-      return content;
-
-    case "summary": {
-      const parts: string[] = [];
-      const docstrings = content.match(DOCSTRING_RE) ?? [];
-      for (const doc of docstrings) {
-        parts.push(doc);
-      }
-      const signatures = content.match(FUNCTION_SIG_RE) ?? [];
-      for (const sig of signatures) {
-        parts.push(sig.trim());
-      }
-      const types = content.match(TYPE_DEF_RE) ?? [];
-      for (const t of types) {
-        parts.push(t.trim());
-      }
-      return parts.length > 0
-        ? parts.join("\n\n")
-        : content.slice(0, Math.floor(content.length * 0.4));
-    }
-
-    case "skeleton": {
-      const parts: string[] = [];
-      const signatures = content.match(FUNCTION_SIG_RE) ?? [];
-      for (const sig of signatures) {
-        parts.push(sig.trim());
-      }
-      const types = content.match(TYPE_DEF_RE) ?? [];
-      for (const t of types) {
-        parts.push(t.trim());
-      }
-      return parts.length > 0
-        ? parts.join("\n\n")
-        : content.slice(0, Math.floor(content.length * 0.15));
-    }
-
-    case "references": {
-      const exports: string[] = [];
-      const regex = new RegExp(EXPORT_NAME_RE.source, "g");
-      let match = regex.exec(content);
-      while (match !== null) {
-        if (match[1]) {
-          exports.push(match[1]);
-        }
-        match = regex.exec(content);
-      }
-      return exports.length > 0
-        ? `Exports: ${exports.join(", ")}`
-        : "[no exports detected]";
-    }
-
-    default:
-      return content;
-  }
+  const compressor = tierCompressors[tier];
+  return compressor ? compressor(content) : content;
 }
 
 /**

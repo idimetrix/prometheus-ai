@@ -220,73 +220,68 @@ export class SymbolStore {
         const table = JSON.parse(
           row.content.slice(SYMBOL_PREFIX.length)
         ) as SymbolTable;
-
-        for (const fn of table.functions) {
-          if (fn.name.toLowerCase().includes(lowerName)) {
-            matches.push({
-              filePath: table.filePath,
-              kind: "function",
-              name: fn.name,
-              line: fn.line,
-            });
-          }
-        }
-        for (const cls of table.classes) {
-          if (cls.name.toLowerCase().includes(lowerName)) {
-            matches.push({
-              filePath: table.filePath,
-              kind: "class",
-              name: cls.name,
-              line: cls.line,
-            });
-          }
-          for (const method of cls.methods) {
-            if (method.name.toLowerCase().includes(lowerName)) {
-              matches.push({
-                filePath: table.filePath,
-                kind: "method",
-                name: `${cls.name}.${method.name}`,
-                line: method.line,
-              });
-            }
-          }
-        }
-        for (const iface of table.interfaces) {
-          if (iface.name.toLowerCase().includes(lowerName)) {
-            matches.push({
-              filePath: table.filePath,
-              kind: "interface",
-              name: iface.name,
-              line: iface.line,
-            });
-          }
-        }
-        for (const ta of table.typeAliases) {
-          if (ta.name.toLowerCase().includes(lowerName)) {
-            matches.push({
-              filePath: table.filePath,
-              kind: "type",
-              name: ta.name,
-              line: ta.line,
-            });
-          }
-        }
-        for (const v of table.variables) {
-          if (v.name.toLowerCase().includes(lowerName)) {
-            matches.push({
-              filePath: table.filePath,
-              kind: "variable",
-              name: v.name,
-              line: v.line,
-            });
-          }
-        }
+        this.collectMatchingSymbols(table, lowerName, matches);
       } catch {
         // skip malformed
       }
     }
 
     return matches;
+  }
+
+  private collectMatchingSymbols(
+    table: SymbolTable,
+    lowerName: string,
+    matches: Array<{
+      filePath: string;
+      kind: string;
+      name: string;
+      line: number;
+    }>
+  ): void {
+    const simpleCollections: Array<{
+      items: Array<{ name: string; line: number }>;
+      kind: string;
+    }> = [
+      { items: table.functions, kind: "function" },
+      { items: table.interfaces, kind: "interface" },
+      { items: table.typeAliases, kind: "type" },
+      { items: table.variables, kind: "variable" },
+    ];
+
+    for (const { items, kind } of simpleCollections) {
+      for (const item of items) {
+        if (item.name.toLowerCase().includes(lowerName)) {
+          matches.push({
+            filePath: table.filePath,
+            kind,
+            name: item.name,
+            line: item.line,
+          });
+        }
+      }
+    }
+
+    for (const cls of table.classes) {
+      if (cls.name.toLowerCase().includes(lowerName)) {
+        matches.push({
+          filePath: table.filePath,
+          kind: "class",
+          name: cls.name,
+          line: cls.line,
+        });
+      }
+      for (const method of cls.methods) {
+        if (method.name.toLowerCase().includes(lowerName)) {
+          matches.push({
+            filePath: table.filePath,
+            kind: "method",
+            name: `${cls.name}.${method.name}`,
+            line: method.line,
+          });
+        }
+      }
+    }
   }
 
   /**

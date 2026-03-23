@@ -1,5 +1,7 @@
 "use client";
 
+import Image from "next/image";
+
 /* -------------------------------------------------------------------------- */
 /*  Types                                                                      */
 /* -------------------------------------------------------------------------- */
@@ -40,12 +42,12 @@ function UserAvatar({ user }: { user: PresenceUser }) {
       title={user.name}
     >
       {user.avatarUrl ? (
-        // biome-ignore lint/performance/noImgElement: avatar from external URL, not a static asset
-        <img
+        <Image
           alt={user.name}
           className="h-full w-full rounded-full object-cover"
           height={32}
           src={user.avatarUrl}
+          unoptimized
           width={32}
         />
       ) : (

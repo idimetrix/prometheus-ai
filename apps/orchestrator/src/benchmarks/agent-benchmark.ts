@@ -212,60 +212,82 @@ export class AgentBenchmark {
     }
   }
 
+  private scoreLengthCheck(
+    output: string,
+    expected: ExpectedOutcome,
+    failureReasons: string[]
+  ): number {
+    if (!expected.minLength) {
+      return 0;
+    }
+    if (output.length < expected.minLength) {
+      failureReasons.push(
+        `Output too short: ${output.length} < ${expected.minLength}`
+      );
+      return -0.2;
+    }
+    return 0.1;
+  }
+
+  private scoreKeywords(
+    output: string,
+    expected: ExpectedOutcome,
+    failureReasons: string[]
+  ): number {
+    if (!expected.requiredKeywords || expected.requiredKeywords.length === 0) {
+      return 0;
+    }
+    const outputLower = output.toLowerCase();
+    let matchedCount = 0;
+
+    for (const keyword of expected.requiredKeywords) {
+      if (outputLower.includes(keyword.toLowerCase())) {
+        matchedCount++;
+      } else {
+        failureReasons.push(`Missing required keyword: "${keyword}"`);
+      }
+    }
+
+    return (matchedCount / expected.requiredKeywords.length) * 0.3;
+  }
+
+  private scoreValidator(
+    output: string,
+    expected: ExpectedOutcome,
+    failureReasons: string[]
+  ): number {
+    if (!expected.validator) {
+      return 0;
+    }
+    try {
+      const valid = expected.validator(output);
+      if (valid) {
+        return 0.2;
+      }
+      failureReasons.push("Custom validator returned false");
+      return -0.2;
+    } catch (err) {
+      failureReasons.push(
+        `Validator error: ${err instanceof Error ? err.message : String(err)}`
+      );
+      return 0;
+    }
+  }
+
   private scoreResult(
     output: string,
     expected: ExpectedOutcome
   ): { passed: boolean; qualityScore: number; failureReasons: string[] } {
-    const failureReasons: string[] = [];
-    let score = 0.5; // Base score for producing output
-
     if (!output || output.length === 0) {
       return { passed: false, qualityScore: 0, failureReasons: ["No output"] };
     }
 
-    // Check minimum length
-    if (expected.minLength && output.length < expected.minLength) {
-      failureReasons.push(
-        `Output too short: ${output.length} < ${expected.minLength}`
-      );
-      score -= 0.2;
-    } else {
-      score += 0.1;
-    }
+    const failureReasons: string[] = [];
+    let score = 0.5; // Base score for producing output
 
-    // Check required keywords
-    if (expected.requiredKeywords && expected.requiredKeywords.length > 0) {
-      const outputLower = output.toLowerCase();
-      let matchedCount = 0;
-
-      for (const keyword of expected.requiredKeywords) {
-        if (outputLower.includes(keyword.toLowerCase())) {
-          matchedCount++;
-        } else {
-          failureReasons.push(`Missing required keyword: "${keyword}"`);
-        }
-      }
-
-      const keywordRatio = matchedCount / expected.requiredKeywords.length;
-      score += keywordRatio * 0.3;
-    }
-
-    // Custom validator
-    if (expected.validator) {
-      try {
-        const valid = expected.validator(output);
-        if (valid) {
-          score += 0.2;
-        } else {
-          failureReasons.push("Custom validator returned false");
-          score -= 0.2;
-        }
-      } catch (err) {
-        failureReasons.push(
-          `Validator error: ${err instanceof Error ? err.message : String(err)}`
-        );
-      }
-    }
+    score += this.scoreLengthCheck(output, expected, failureReasons);
+    score += this.scoreKeywords(output, expected, failureReasons);
+    score += this.scoreValidator(output, expected, failureReasons);
 
     const qualityScore = Math.max(0, Math.min(1, score));
     const passed = failureReasons.length === 0 && qualityScore >= 0.5;

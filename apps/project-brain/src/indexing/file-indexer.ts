@@ -338,7 +338,6 @@ export class FileIndexer {
       "Starting tiered indexing"
     );
 
-    // Build a lookup map for quick access
     const fileMap = new Map<string, string>();
     for (const f of allFiles) {
       fileMap.set(f.path, f.content);
@@ -347,24 +346,78 @@ export class FileIndexer {
     // --- Tier 1: Files mentioned in the task description ---
     const tier1Paths = this.extractReferencedFiles(taskDescription, allFiles);
     const tier1Set = new Set(tier1Paths);
-
     logger.info(
       { projectId, tier1Count: tier1Paths.length },
       "Tier 1: indexing referenced files synchronously"
     );
-
-    for (const filePath of tier1Paths) {
-      const content = fileMap.get(filePath);
-      if (content) {
-        try {
-          await this.indexFile(projectId, filePath, content);
-        } catch (err) {
-          logger.warn({ projectId, filePath, err }, "Tier 1 indexing failed");
-        }
-      }
-    }
+    await this.indexFileList(projectId, tier1Paths, fileMap, "Tier 1");
 
     // --- Tier 2: Files within 2 hops in knowledge graph ---
+    const tier2Set = await this.collectTier2Files(
+      projectId,
+      tier1Paths,
+      tier1Set,
+      fileMap
+    );
+    logger.info(
+      { projectId, tier2Count: tier2Set.size },
+      "Tier 2: indexing graph-adjacent files"
+    );
+    await this.indexFileList(
+      projectId,
+      Array.from(tier2Set),
+      fileMap,
+      "Tier 2"
+    );
+
+    // --- Tier 3: Everything else (background) ---
+    const indexedSet = new Set([...tier1Set, ...tier2Set]);
+    const tier3Files = allFiles.filter((f) => !indexedSet.has(f.path));
+    logger.info(
+      { projectId, tier3Count: tier3Files.length },
+      "Tier 3: queuing remaining files for background indexing"
+    );
+    await this.indexInBatches(projectId, tier3Files);
+
+    logger.info(
+      {
+        projectId,
+        tier1: tier1Paths.length,
+        tier2: tier2Set.size,
+        tier3: tier3Files.length,
+      },
+      "Tiered indexing complete"
+    );
+  }
+
+  private async indexFileList(
+    projectId: string,
+    filePaths: string[],
+    fileMap: Map<string, string>,
+    tierLabel: string
+  ): Promise<void> {
+    for (const filePath of filePaths) {
+      const content = fileMap.get(filePath);
+      if (!content) {
+        continue;
+      }
+      try {
+        await this.indexFile(projectId, filePath, content);
+      } catch (err) {
+        logger.warn(
+          { projectId, filePath, err },
+          `${tierLabel} indexing failed`
+        );
+      }
+    }
+  }
+
+  private async collectTier2Files(
+    projectId: string,
+    tier1Paths: string[],
+    tier1Set: Set<string>,
+    fileMap: Map<string, string>
+  ): Promise<Set<string>> {
     const tier2Set = new Set<string>();
     for (const filePath of tier1Paths) {
       try {
@@ -388,37 +441,16 @@ export class FileIndexer {
         // Knowledge graph may not have this node yet
       }
     }
+    return tier2Set;
+  }
 
-    logger.info(
-      { projectId, tier2Count: tier2Set.size },
-      "Tier 2: indexing graph-adjacent files"
-    );
-
-    // Index tier 2 files (priority — still in-process but after tier 1)
-    for (const filePath of tier2Set) {
-      const content = fileMap.get(filePath);
-      if (content) {
-        try {
-          await this.indexFile(projectId, filePath, content);
-        } catch (err) {
-          logger.warn({ projectId, filePath, err }, "Tier 2 indexing failed");
-        }
-      }
-    }
-
-    // --- Tier 3: Everything else (background) ---
-    const indexedSet = new Set([...tier1Set, ...tier2Set]);
-    const tier3Files = allFiles.filter((f) => !indexedSet.has(f.path));
-
-    logger.info(
-      { projectId, tier3Count: tier3Files.length },
-      "Tier 3: queuing remaining files for background indexing"
-    );
-
-    // Process tier 3 in batches to avoid blocking
+  private async indexInBatches(
+    projectId: string,
+    files: Array<{ path: string; content: string }>
+  ): Promise<void> {
     const BATCH_SIZE = 20;
-    for (let i = 0; i < tier3Files.length; i += BATCH_SIZE) {
-      const batch = tier3Files.slice(i, i + BATCH_SIZE);
+    for (let i = 0; i < files.length; i += BATCH_SIZE) {
+      const batch = files.slice(i, i + BATCH_SIZE);
       const promises = batch.map(async (f) => {
         try {
           await this.indexFile(projectId, f.path, f.content);
@@ -431,16 +463,6 @@ export class FileIndexer {
       });
       await Promise.all(promises);
     }
-
-    logger.info(
-      {
-        projectId,
-        tier1: tier1Paths.length,
-        tier2: tier2Set.size,
-        tier3: tier3Files.length,
-      },
-      "Tiered indexing complete"
-    );
   }
 
   /**

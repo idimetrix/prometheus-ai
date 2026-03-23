@@ -34,48 +34,57 @@ export function useSSEStream(sessionId: string | null) {
     /* initialized below */
   });
 
-  const processEvent = useCallback(
-    function processEvent(type: string, data: Record<string, unknown>) {
-      // Deduplicate by sequence number (Phase 12)
-      const seq = data.sequence as number | undefined;
-      if (seq !== undefined) {
-        if (seenSequences.current.has(seq)) {
-          return; // Already processed this event
-        }
-        seenSequences.current.add(seq);
-        // Keep set bounded
-        if (seenSequences.current.size > 2000) {
-          const arr = Array.from(seenSequences.current).sort((a, b) => a - b);
-          seenSequences.current = new Set(arr.slice(-1000));
-        }
-      }
+  const deduplicateEvent = useCallback(function deduplicateEvent(
+    data: Record<string, unknown>
+  ): boolean {
+    const seq = data.sequence as number | undefined;
+    if (seq === undefined) {
+      return false;
+    }
+    if (seenSequences.current.has(seq)) {
+      return true;
+    }
+    seenSequences.current.add(seq);
+    if (seenSequences.current.size > 2000) {
+      const arr = Array.from(seenSequences.current).sort((a, b) => a - b);
+      seenSequences.current = new Set(arr.slice(-1000));
+    }
+    return false;
+  }, []);
 
-      // Track lastEventId for reconnection gap-fill
-      if (data.id) {
-        lastEventId.current = data.id as string;
-      }
+  const dispatchEvent = useCallback(
+    function dispatchEvent(type: string, data: Record<string, unknown>) {
+      const ts = (data.timestamp as string) ?? new Date().toISOString();
+      const nowTs = new Date().toISOString();
+
+      const addSimpleEvent = (eventType: string) => {
+        store.addEvent({
+          id: crypto.randomUUID(),
+          type: eventType,
+          data,
+          timestamp: nowTs,
+        });
+      };
 
       switch (type) {
         case "agent_output":
           store.addTerminalLine({
             content: data.content as string,
-            timestamp: (data.timestamp as string) ?? new Date().toISOString(),
+            timestamp: ts,
           });
           store.addEvent({
             id: crypto.randomUUID(),
             type: "agent_output",
             data,
-            timestamp: (data.timestamp as string) ?? new Date().toISOString(),
+            timestamp: ts,
           });
           break;
-
         case "terminal_output":
           store.addTerminalLine({
             content: data.content as string,
-            timestamp: (data.timestamp as string) ?? new Date().toISOString(),
+            timestamp: ts,
           });
           break;
-
         case "plan_update":
           if (data.steps) {
             store.setPlanSteps(
@@ -83,7 +92,6 @@ export function useSSEStream(sessionId: string | null) {
             );
           }
           break;
-
         case "plan_step_update":
           if (data.stepId) {
             store.updatePlanStep(data.stepId as string, {
@@ -93,7 +101,6 @@ export function useSSEStream(sessionId: string | null) {
             });
           }
           break;
-
         case "file_change":
           if (data.files) {
             store.setFileTree(
@@ -105,75 +112,40 @@ export function useSSEStream(sessionId: string | null) {
             );
           }
           break;
-
         case "file_diff":
         case "code_change":
-          store.addEvent({
-            id: crypto.randomUUID(),
-            type,
-            data,
-            timestamp: new Date().toISOString(),
-          });
+          addSimpleEvent(type);
           break;
-
         case "queue_position":
           store.setQueuePosition(data.position as number);
           break;
-
         case "task_status":
           store.setStatus(data.status as string);
-          store.addEvent({
-            id: crypto.randomUUID(),
-            type: "task_status",
-            data,
-            timestamp: new Date().toISOString(),
-          });
+          addSimpleEvent("task_status");
           break;
-
         case "reasoning":
           store.addReasoning(
             (data.content as string) ?? (data.thought as string) ?? ""
           );
           store.addTerminalLine({
             content: `[THINK] ${(data.content as string) ?? (data.thought as string) ?? ""}`,
-            timestamp: new Date().toISOString(),
+            timestamp: nowTs,
           });
           break;
-
         case "checkpoint":
-          store.addEvent({
-            id: crypto.randomUUID(),
-            type: "checkpoint",
-            data,
-            timestamp: new Date().toISOString(),
-          });
-          break;
-
         case "credit_update":
-          store.addEvent({
-            id: crypto.randomUUID(),
-            type: "credit_update",
-            data,
-            timestamp: new Date().toISOString(),
-          });
+          addSimpleEvent(type);
           break;
-
         case "error":
-          store.addEvent({
-            id: crypto.randomUUID(),
-            type: "error",
-            data,
-            timestamp: new Date().toISOString(),
-          });
+          addSimpleEvent("error");
           notifications.addNotification({
             id: crypto.randomUUID(),
             type: "error",
             title: "Session Error",
             message: (data.message as string) ?? "An error occurred",
-            timestamp: new Date().toISOString(),
+            timestamp: nowTs,
           });
           break;
-
         case "session_complete":
           store.setStatus((data.status as string) ?? "completed");
           notifications.addNotification({
@@ -181,22 +153,28 @@ export function useSSEStream(sessionId: string | null) {
             type: "success",
             title: "Session Complete",
             message: (data.message as string) ?? "Session has finished",
-            timestamp: new Date().toISOString(),
+            timestamp: nowTs,
           });
           break;
-
         default:
-          // Forward unknown events to the event log
-          store.addEvent({
-            id: crypto.randomUUID(),
-            type,
-            data,
-            timestamp: new Date().toISOString(),
-          });
+          addSimpleEvent(type);
           break;
       }
     },
     [store, notifications]
+  );
+
+  const processEvent = useCallback(
+    function processEvent(type: string, data: Record<string, unknown>) {
+      if (deduplicateEvent(data)) {
+        return;
+      }
+      if (data.id) {
+        lastEventId.current = data.id as string;
+      }
+      dispatchEvent(type, data);
+    },
+    [deduplicateEvent, dispatchEvent]
   );
 
   const flushBuffer = useCallback(() => {

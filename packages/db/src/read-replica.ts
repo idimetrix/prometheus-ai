@@ -2,7 +2,6 @@ import { createLogger } from "@prometheus/logger";
 import { sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
-// biome-ignore lint/performance/noNamespaceImport: Drizzle ORM requires namespace import for schema
 import * as schema from "./schema";
 
 const logger = createLogger("read-replica");

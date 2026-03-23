@@ -93,6 +93,42 @@ const DESTRUCTIVE_PATTERNS: DestructivePattern[] = [
  * @param migrationsDir - Path to the directory containing `.sql` migration files.
  *   Defaults to `./drizzle`.
  */
+function checkFileLines(
+  file: string,
+  lines: string[],
+  violations: MigrationViolation[],
+  warnings: MigrationWarning[]
+): void {
+  for (const [index, line] of lines.entries()) {
+    const trimmed = line.trim();
+
+    if (trimmed === "" || trimmed.startsWith("--")) {
+      continue;
+    }
+
+    for (const pattern of DESTRUCTIVE_PATTERNS) {
+      if (!pattern.regex.test(trimmed)) {
+        continue;
+      }
+      if (pattern.refine && !pattern.refine(trimmed)) {
+        continue;
+      }
+
+      violations.push({
+        file,
+        line: index + 1,
+        pattern: pattern.regex.source,
+        description: pattern.description,
+        severity: pattern.severity,
+      });
+
+      if (pattern.severity === "warning") {
+        warnings.push({ file, description: pattern.description });
+      }
+    }
+  }
+}
+
 export async function checkMigrationSafety(
   migrationsDir = "./drizzle"
 ): Promise<MigrationSafetyResult> {
@@ -120,40 +156,7 @@ export async function checkMigrationSafety(
     const filePath = join(migrationsDir, file);
     const content = await readFile(filePath, "utf-8");
     const lines = content.split("\n");
-
-    for (const [index, line] of lines.entries()) {
-      const trimmed = line.trim();
-
-      // Skip empty lines and SQL comments
-      if (trimmed === "" || trimmed.startsWith("--")) {
-        continue;
-      }
-
-      for (const pattern of DESTRUCTIVE_PATTERNS) {
-        if (!pattern.regex.test(trimmed)) {
-          continue;
-        }
-
-        // Apply optional refinement check
-        if (pattern.refine && !pattern.refine(trimmed)) {
-          continue;
-        }
-
-        const violation: MigrationViolation = {
-          file,
-          line: index + 1,
-          pattern: pattern.regex.source,
-          description: pattern.description,
-          severity: pattern.severity,
-        };
-
-        violations.push(violation);
-
-        if (pattern.severity === "warning") {
-          warnings.push({ file, description: pattern.description });
-        }
-      }
-    }
+    checkFileLines(file, lines, violations, warnings);
   }
 
   const hasErrors = violations.some((v) => v.severity === "error");

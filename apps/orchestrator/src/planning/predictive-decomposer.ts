@@ -68,131 +68,20 @@ export class PredictiveDecomposer {
    * Decompose a task description into predicted sub-tasks.
    */
   decompose(taskDescription: string): DecompositionResult {
-    const subTasks: SubTask[] = [];
     const desc = taskDescription.toLowerCase();
-    let confidence = 0.6;
 
     // Check historical patterns first
     const historical = this.findHistoricalMatch(desc);
-    if (historical) {
-      confidence = Math.min(0.9, confidence + 0.2);
-    }
+    const baseConfidence = historical ? 0.8 : 0.6;
 
-    const isFullStack = FULL_STACK_RE.test(desc);
+    // Generate core sub-tasks based on task type
+    const { subTasks, confidence } = this.generateCoreSubTasks(
+      desc,
+      baseConfidence
+    );
 
-    // Generate sub-tasks based on keyword detection
-    if (isFullStack || (FRONTEND_RE.test(desc) && BACKEND_RE.test(desc))) {
-      subTasks.push(
-        this.createSubTask(
-          "Discovery and requirements analysis",
-          "discovery",
-          "S",
-          []
-        ),
-        this.createSubTask("Architecture design", "architect", "M", [
-          subTasks[0]?.id ?? "",
-        ]),
-        this.createSubTask("Backend API implementation", "backend_coder", "L", [
-          subTasks[1]?.id ?? "",
-        ]),
-        this.createSubTask(
-          "Frontend UI implementation",
-          "frontend_coder",
-          "L",
-          [subTasks[1]?.id ?? ""]
-        ),
-        this.createSubTask("Integration and wiring", "integration_coder", "M", [
-          subTasks[2]?.id ?? "",
-          subTasks[3]?.id ?? "",
-        ]),
-        this.createSubTask("Testing", "test_engineer", "M", [
-          subTasks[4]?.id ?? "",
-        ])
-      );
-      confidence = 0.8;
-    } else if (FRONTEND_RE.test(desc)) {
-      subTasks.push(
-        this.createSubTask("UI component design", "architect", "S", []),
-        this.createSubTask("Frontend implementation", "frontend_coder", "M", [
-          subTasks[0]?.id ?? "",
-        ]),
-        this.createSubTask("Frontend tests", "test_engineer", "S", [
-          subTasks[1]?.id ?? "",
-        ])
-      );
-    } else if (BACKEND_RE.test(desc)) {
-      subTasks.push(
-        this.createSubTask("API design", "architect", "S", []),
-        this.createSubTask("Backend implementation", "backend_coder", "M", [
-          subTasks[0]?.id ?? "",
-        ]),
-        this.createSubTask("Backend tests", "test_engineer", "S", [
-          subTasks[1]?.id ?? "",
-        ])
-      );
-    } else if (REFACTOR_RE.test(desc)) {
-      subTasks.push(
-        this.createSubTask("Analyze current code", "discovery", "S", []),
-        this.createSubTask("Refactor implementation", "backend_coder", "M", [
-          subTasks[0]?.id ?? "",
-        ]),
-        this.createSubTask("Verify tests pass", "test_engineer", "S", [
-          subTasks[1]?.id ?? "",
-        ])
-      );
-    } else if (DATA_RE.test(desc)) {
-      subTasks.push(
-        this.createSubTask("Schema design", "architect", "S", []),
-        this.createSubTask("Migration implementation", "backend_coder", "M", [
-          subTasks[0]?.id ?? "",
-        ]),
-        this.createSubTask("Data validation tests", "test_engineer", "S", [
-          subTasks[1]?.id ?? "",
-        ])
-      );
-    } else {
-      // Generic decomposition
-      subTasks.push(
-        this.createSubTask("Analyze and plan", "discovery", "S", []),
-        this.createSubTask("Implementation", "backend_coder", "M", [
-          subTasks[0]?.id ?? "",
-        ])
-      );
-      confidence = 0.5;
-    }
-
-    // Add security sub-task if mentioned
-    if (SECURITY_RE.test(desc)) {
-      const lastTask = subTasks.at(-1);
-      subTasks.push(
-        this.createSubTask("Security audit", "security_auditor", "S", [
-          lastTask?.id ?? "",
-        ])
-      );
-    }
-
-    // Add testing if mentioned and not already included
-    if (
-      TESTING_RE.test(desc) &&
-      !subTasks.some((t) => t.agentRole === "test_engineer")
-    ) {
-      const lastTask = subTasks.at(-1);
-      subTasks.push(
-        this.createSubTask("Write tests", "test_engineer", "M", [
-          lastTask?.id ?? "",
-        ])
-      );
-    }
-
-    // Add deploy if mentioned
-    if (DEPLOY_RE.test(desc)) {
-      const lastTask = subTasks.at(-1);
-      subTasks.push(
-        this.createSubTask("Deployment configuration", "deploy_engineer", "S", [
-          lastTask?.id ?? "",
-        ])
-      );
-    }
+    // Add optional sub-tasks based on keywords
+    this.appendOptionalSubTasks(subTasks, desc);
 
     const totalComplexity = this.aggregateComplexity(subTasks);
 
@@ -210,6 +99,158 @@ export class PredictiveDecomposer {
       confidence,
       estimatedTotalComplexity: totalComplexity,
     };
+  }
+
+  private buildFullStackSubTasks(): SubTask[] {
+    const subTasks: SubTask[] = [];
+    subTasks.push(
+      this.createSubTask(
+        "Discovery and requirements analysis",
+        "discovery",
+        "S",
+        []
+      ),
+      this.createSubTask("Architecture design", "architect", "M", [
+        subTasks[0]?.id ?? "",
+      ]),
+      this.createSubTask("Backend API implementation", "backend_coder", "L", [
+        subTasks[1]?.id ?? "",
+      ]),
+      this.createSubTask("Frontend UI implementation", "frontend_coder", "L", [
+        subTasks[1]?.id ?? "",
+      ]),
+      this.createSubTask("Integration and wiring", "integration_coder", "M", [
+        subTasks[2]?.id ?? "",
+        subTasks[3]?.id ?? "",
+      ]),
+      this.createSubTask("Testing", "test_engineer", "M", [
+        subTasks[4]?.id ?? "",
+      ])
+    );
+    return subTasks;
+  }
+
+  private buildThreePhaseSubTasks(
+    designTitle: string,
+    designRole: string,
+    implTitle: string,
+    implRole: string,
+    testTitle: string
+  ): SubTask[] {
+    const subTasks: SubTask[] = [];
+    subTasks.push(
+      this.createSubTask(designTitle, designRole, "S", []),
+      this.createSubTask(implTitle, implRole, "M", [subTasks[0]?.id ?? ""]),
+      this.createSubTask(testTitle, "test_engineer", "S", [
+        subTasks[1]?.id ?? "",
+      ])
+    );
+    return subTasks;
+  }
+
+  private generateCoreSubTasks(
+    desc: string,
+    baseConfidence: number
+  ): { subTasks: SubTask[]; confidence: number } {
+    const isFullStack = FULL_STACK_RE.test(desc);
+
+    if (isFullStack || (FRONTEND_RE.test(desc) && BACKEND_RE.test(desc))) {
+      return { subTasks: this.buildFullStackSubTasks(), confidence: 0.8 };
+    }
+
+    if (FRONTEND_RE.test(desc)) {
+      return {
+        subTasks: this.buildThreePhaseSubTasks(
+          "UI component design",
+          "architect",
+          "Frontend implementation",
+          "frontend_coder",
+          "Frontend tests"
+        ),
+        confidence: baseConfidence,
+      };
+    }
+
+    if (BACKEND_RE.test(desc)) {
+      return {
+        subTasks: this.buildThreePhaseSubTasks(
+          "API design",
+          "architect",
+          "Backend implementation",
+          "backend_coder",
+          "Backend tests"
+        ),
+        confidence: baseConfidence,
+      };
+    }
+
+    if (REFACTOR_RE.test(desc)) {
+      return {
+        subTasks: this.buildThreePhaseSubTasks(
+          "Analyze current code",
+          "discovery",
+          "Refactor implementation",
+          "backend_coder",
+          "Verify tests pass"
+        ),
+        confidence: baseConfidence,
+      };
+    }
+
+    if (DATA_RE.test(desc)) {
+      return {
+        subTasks: this.buildThreePhaseSubTasks(
+          "Schema design",
+          "architect",
+          "Migration implementation",
+          "backend_coder",
+          "Data validation tests"
+        ),
+        confidence: baseConfidence,
+      };
+    }
+
+    // Generic decomposition
+    const subTasks: SubTask[] = [];
+    subTasks.push(
+      this.createSubTask("Analyze and plan", "discovery", "S", []),
+      this.createSubTask("Implementation", "backend_coder", "M", [
+        subTasks[0]?.id ?? "",
+      ])
+    );
+    return { subTasks, confidence: 0.5 };
+  }
+
+  private appendOptionalSubTasks(subTasks: SubTask[], desc: string): void {
+    if (SECURITY_RE.test(desc)) {
+      const lastTask = subTasks.at(-1);
+      subTasks.push(
+        this.createSubTask("Security audit", "security_auditor", "S", [
+          lastTask?.id ?? "",
+        ])
+      );
+    }
+
+    if (
+      TESTING_RE.test(desc) &&
+      !subTasks.some((t) => t.agentRole === "test_engineer")
+    ) {
+      const lastTask = subTasks.at(-1);
+      subTasks.push(
+        this.createSubTask("Write tests", "test_engineer", "M", [
+          lastTask?.id ?? "",
+        ])
+      );
+    }
+
+    if (DEPLOY_RE.test(desc)) {
+      const lastTask = subTasks.at(-1);
+      subTasks.push(
+        this.createSubTask("Deployment configuration", "deploy_engineer", "S", [
+          lastTask?.id ?? "",
+        ])
+      );
+    }
   }
 
   /**

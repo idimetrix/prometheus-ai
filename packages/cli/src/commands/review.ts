@@ -22,6 +22,50 @@ function formatSeverity(severity: ReviewFinding["severity"]): string {
   }
 }
 
+const SEVERITY_ORDER = { critical: 0, warning: 1, info: 2 };
+
+function printFinding(finding: ReviewFinding): void {
+  let location = "";
+  if (finding.file) {
+    location = finding.line
+      ? ` ${finding.file}:${finding.line}`
+      : ` ${finding.file}`;
+  }
+  console.log(`${formatSeverity(finding.severity)}${location}`);
+  console.log(`  ${finding.message}`);
+  if (finding.suggestion) {
+    console.log(`  Suggestion: ${finding.suggestion}`);
+  }
+  console.log();
+}
+
+function printReviewSummary(findings: ReviewFinding[], severity: string): void {
+  if (findings.length === 0) {
+    console.log("\n\nNo issues found.");
+    return;
+  }
+
+  console.log("\n\n--- Review Findings ---\n");
+
+  const minSeverity =
+    SEVERITY_ORDER[severity as keyof typeof SEVERITY_ORDER] ?? 2;
+  const filtered = findings.filter(
+    (f) => SEVERITY_ORDER[f.severity] <= minSeverity
+  );
+
+  for (const finding of filtered) {
+    printFinding(finding);
+  }
+
+  const criticalCount = filtered.filter(
+    (f) => f.severity === "critical"
+  ).length;
+  const warningCount = filtered.filter((f) => f.severity === "warning").length;
+  console.log(
+    `Found ${criticalCount} critical, ${warningCount} warnings, ${filtered.length} total findings`
+  );
+}
+
 export const reviewCommand = new Command("review")
   .description("Run AI code review on files or git diff range")
   .argument("[paths...]", "File paths or git diff range (e.g., main..HEAD)")
@@ -55,69 +99,25 @@ export const reviewCommand = new Command("review")
         const findings: ReviewFinding[] = [];
 
         const stream = client.streamSession(result.sessionId, (event) => {
-          switch (event.type) {
-            case "token": {
+          const handlers: Record<string, () => void> = {
+            token: () => {
               process.stdout.write(
                 String((event.data as { content: string }).content)
               );
-              break;
-            }
-            case "review_finding": {
-              const finding = event.data as ReviewFinding;
-              findings.push(finding);
-              break;
-            }
-            case "complete": {
-              if (findings.length > 0) {
-                console.log("\n\n--- Review Findings ---\n");
-
-                const severityOrder = { critical: 0, warning: 1, info: 2 };
-                const minSeverity =
-                  severityOrder[opts.severity as keyof typeof severityOrder] ??
-                  2;
-
-                const filtered = findings.filter(
-                  (f) => severityOrder[f.severity] <= minSeverity
-                );
-
-                for (const finding of filtered) {
-                  let location = "";
-                  if (finding.file) {
-                    location = finding.line
-                      ? ` ${finding.file}:${finding.line}`
-                      : ` ${finding.file}`;
-                  }
-                  console.log(`${formatSeverity(finding.severity)}${location}`);
-                  console.log(`  ${finding.message}`);
-                  if (finding.suggestion) {
-                    console.log(`  Suggestion: ${finding.suggestion}`);
-                  }
-                  console.log();
-                }
-
-                const criticalCount = filtered.filter(
-                  (f) => f.severity === "critical"
-                ).length;
-                const warningCount = filtered.filter(
-                  (f) => f.severity === "warning"
-                ).length;
-                console.log(
-                  `Found ${criticalCount} critical, ${warningCount} warnings, ${filtered.length} total findings`
-                );
-              } else {
-                console.log("\n\nNo issues found.");
-              }
-
+            },
+            review_finding: () => {
+              findings.push(event.data as ReviewFinding);
+            },
+            complete: () => {
+              printReviewSummary(findings, opts.severity);
               stream.close();
               const hasCritical = findings.some(
                 (f) => f.severity === "critical"
               );
               process.exit(hasCritical ? 1 : 0);
-              break;
-            }
-            default:
-              break;
-          }
+            },
+          };
+          handlers[event.type]?.();
         });
       } catch (error) {
         const msg = error instanceof Error ? error.message : String(error);

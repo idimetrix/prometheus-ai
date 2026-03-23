@@ -34,6 +34,61 @@ const ROLE_MAP: Record<string, string> = {
   deploy_engineer: "deploy_engineer",
 };
 
+function parseAcceptanceCriteriaLines(
+  block: string,
+  acRegex: RegExp,
+  bulletPrefixRegex: RegExp
+): string[] {
+  const acLines: string[] = [];
+  const acMatch = block.match(acRegex);
+  if (acMatch?.[1]) {
+    for (const line of acMatch[1].split("\n")) {
+      const cleaned = line.replace(bulletPrefixRegex, "").trim();
+      if (cleaned.length > 0) {
+        acLines.push(cleaned);
+      }
+    }
+  }
+  return acLines;
+}
+
+function parseTaskBlock(
+  block: string,
+  id: string,
+  title: string
+): SprintPlan["tasks"][number] {
+  const agentMatch = block.match(AGENT_RE);
+  const depsMatch = block.match(DEPS_RE);
+  const effortMatch = block.match(EFFORT_RE);
+
+  const depsStr = depsMatch?.[1]?.trim() ?? "none";
+  const deps: string[] = [];
+  if (depsStr.toLowerCase() !== "none") {
+    const depIds = depsStr.match(TASK_ID_RE);
+    if (depIds) {
+      deps.push(...depIds);
+    }
+  }
+
+  const acLines = parseAcceptanceCriteriaLines(
+    block,
+    AC_RE,
+    LIST_BULLET_PREFIX_RE
+  );
+
+  return {
+    id,
+    title,
+    description: title,
+    agentRole:
+      ROLE_MAP[agentMatch?.[1]?.toLowerCase() ?? "backend"] ?? "backend_coder",
+    dependencies: deps,
+    effort: (effortMatch?.[1]?.toUpperCase() ?? "M") as "S" | "M" | "L" | "XL",
+    acceptanceCriteria:
+      acLines.length > 0 ? acLines : [`${title} works correctly`],
+  };
+}
+
 /** Trace of a failed execution attempt */
 export interface FailedTrace {
   creditsConsumed: number;
@@ -418,46 +473,7 @@ TASK-1 -> TASK-3 -> TASK-5`;
       );
       const block = output.slice(startPos, endPos);
 
-      const agentMatch = block.match(AGENT_RE);
-      const depsMatch = block.match(DEPS_RE);
-      const effortMatch = block.match(EFFORT_RE);
-
-      const depsStr = depsMatch?.[1]?.trim() ?? "none";
-      const deps: string[] = [];
-      if (depsStr.toLowerCase() !== "none") {
-        const depIds = depsStr.match(TASK_ID_RE);
-        if (depIds) {
-          deps.push(...depIds);
-        }
-      }
-
-      const acLines: string[] = [];
-      const acMatch = block.match(AC_RE);
-      if (acMatch?.[1]) {
-        for (const line of acMatch[1].split("\n")) {
-          const cleaned = line.replace(LIST_BULLET_PREFIX_RE, "").trim();
-          if (cleaned.length > 0) {
-            acLines.push(cleaned);
-          }
-        }
-      }
-
-      tasks.push({
-        id,
-        title,
-        description: title,
-        agentRole:
-          ROLE_MAP[agentMatch?.[1]?.toLowerCase() ?? "backend"] ??
-          "backend_coder",
-        dependencies: deps,
-        effort: (effortMatch?.[1]?.toUpperCase() ?? "M") as
-          | "S"
-          | "M"
-          | "L"
-          | "XL",
-        acceptanceCriteria:
-          acLines.length > 0 ? acLines : [`${title} works correctly`],
-      });
+      tasks.push(parseTaskBlock(block, id, title));
       match = TASK_HEADER_RE.exec(output);
     }
 

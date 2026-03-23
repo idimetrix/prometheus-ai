@@ -258,7 +258,38 @@ export class CodeSecretDetector {
     }
 
     // Entropy-based detection for string literals
+    const entropyFindings = this.detectHighEntropyStrings(
+      code,
+      fileName,
+      findings
+    );
+    findings.push(...entropyFindings);
+
+    if (findings.length > 0) {
+      logger.warn(
+        {
+          findingCount: findings.length,
+          types: [...new Set(findings.map((f) => f.type))],
+          file: fileName,
+        },
+        "Secrets detected in generated code"
+      );
+    }
+
+    return findings;
+  }
+
+  /**
+   * Detect high-entropy strings that may be secrets.
+   */
+  private detectHighEntropyStrings(
+    code: string,
+    fileName: string | undefined,
+    existingFindings: SecretFinding[]
+  ): SecretFinding[] {
+    const findings: SecretFinding[] = [];
     const lines = code.split("\n");
+
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i] ?? "";
       const stringMatches = line.matchAll(
@@ -272,36 +303,26 @@ export class CodeSecretDetector {
         }
 
         const entropy = calculateShannonEntropy(value);
-        if (entropy >= HIGH_ENTROPY_THRESHOLD) {
-          // Check it wasn't already caught by a pattern rule
-          const alreadyFound = findings.some(
-            (f) => f.line === i + 1 && f.match.includes(value.slice(0, 10))
-          );
-          if (!alreadyFound) {
-            findings.push({
-              type: "high_entropy_string",
-              severity: "medium",
-              line: i + 1,
-              column: (sm.index ?? 0) + 1,
-              match: value.length > 40 ? `${value.slice(0, 20)}...` : value,
-              suggestion:
-                "High-entropy string detected. If this is a secret, use an environment variable instead.",
-              file: fileName,
-            });
-          }
+        if (entropy < HIGH_ENTROPY_THRESHOLD) {
+          continue;
+        }
+
+        const alreadyFound = existingFindings.some(
+          (f) => f.line === i + 1 && f.match.includes(value.slice(0, 10))
+        );
+        if (!alreadyFound) {
+          findings.push({
+            type: "high_entropy_string",
+            severity: "medium",
+            line: i + 1,
+            column: (sm.index ?? 0) + 1,
+            match: value.length > 40 ? `${value.slice(0, 20)}...` : value,
+            suggestion:
+              "High-entropy string detected. If this is a secret, use an environment variable instead.",
+            file: fileName,
+          });
         }
       }
-    }
-
-    if (findings.length > 0) {
-      logger.warn(
-        {
-          findingCount: findings.length,
-          types: [...new Set(findings.map((f) => f.type))],
-          file: fileName,
-        },
-        "Secrets detected in generated code"
-      );
     }
 
     return findings;

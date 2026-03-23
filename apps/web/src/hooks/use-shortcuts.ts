@@ -63,6 +63,38 @@ const DEFAULT_SHORTCUTS: ShortcutAction[] = [
   },
 ];
 
+function matchesShortcutAction(
+  e: KeyboardEvent,
+  shortcut: ShortcutAction
+): boolean {
+  if (e.key !== shortcut.key) {
+    return false;
+  }
+  const metaMatch = shortcut.meta ? e.metaKey || e.ctrlKey : true;
+  const ctrlMatch = shortcut.ctrl ? e.ctrlKey : true;
+  const altMatch = shortcut.alt ? e.altKey : true;
+  const shiftMatch = shortcut.shift
+    ? e.shiftKey
+    : !e.shiftKey || shortcut.key === "Escape";
+  return metaMatch && ctrlMatch && altMatch && shiftMatch;
+}
+
+function shouldSkipShortcutAction(shortcut: ShortcutAction): boolean {
+  if (shortcut.global) {
+    return false;
+  }
+  if (!isInputFocused()) {
+    return false;
+  }
+  if (shortcut.key === "Escape") {
+    return false;
+  }
+  if (shortcut.meta || shortcut.ctrl) {
+    return false;
+  }
+  return true;
+}
+
 function isInputFocused(): boolean {
   const el = document.activeElement;
   if (!el) {
@@ -93,34 +125,15 @@ export function useShortcuts(additionalShortcuts: ShortcutAction[] = []) {
 
   const handleKeyDown = useCallback((e: KeyboardEvent) => {
     for (const shortcut of allShortcuts.current) {
-      const metaMatch = shortcut.meta ? e.metaKey || e.ctrlKey : true;
-      const ctrlMatch = shortcut.ctrl ? e.ctrlKey : true;
-      const _shiftMatch = shortcut.shift
-        ? e.shiftKey
-        : !(shortcut.shift || e.shiftKey) || !!shortcut.shift;
-      const altMatch = shortcut.alt ? e.altKey : true;
-
-      if (
-        e.key === shortcut.key &&
-        metaMatch &&
-        ctrlMatch &&
-        altMatch &&
-        (shortcut.shift ? e.shiftKey : !e.shiftKey || shortcut.key === "Escape")
-      ) {
-        // Skip if input is focused and shortcut is not global
-        if (
-          !shortcut.global &&
-          isInputFocused() &&
-          shortcut.key !== "Escape" &&
-          !(shortcut.meta || shortcut.ctrl)
-        ) {
-          continue;
-        }
-
-        e.preventDefault();
-        shortcut.handler(e);
-        return;
+      if (!matchesShortcutAction(e, shortcut)) {
+        continue;
       }
+      if (shouldSkipShortcutAction(shortcut)) {
+        continue;
+      }
+      e.preventDefault();
+      shortcut.handler(e);
+      return;
     }
   }, []);
 

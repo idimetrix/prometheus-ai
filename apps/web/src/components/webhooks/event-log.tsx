@@ -87,6 +87,39 @@ function truncatePayload(payload: Record<string, unknown>): string {
   return `${str.slice(0, 120)}...`;
 }
 
+function matchesEventSearch(event: WebhookEvent, query: string): boolean {
+  if (!query.trim()) {
+    return true;
+  }
+  const q = query.toLowerCase();
+  return (
+    event.eventType.toLowerCase().includes(q) ||
+    event.provider.toLowerCase().includes(q) ||
+    JSON.stringify(event.payload).toLowerCase().includes(q)
+  );
+}
+
+function matchesEventDateRange(
+  event: WebhookEvent,
+  dateFrom: string,
+  dateTo: string
+): boolean {
+  if (dateFrom) {
+    const fromDate = new Date(dateFrom);
+    if (new Date(event.timestamp) < fromDate) {
+      return false;
+    }
+  }
+  if (dateTo) {
+    const toDate = new Date(dateTo);
+    toDate.setDate(toDate.getDate() + 1);
+    if (new Date(event.timestamp) >= toDate) {
+      return false;
+    }
+  }
+  return true;
+}
+
 /* -------------------------------------------------------------------------- */
 /*  Component                                                                  */
 /* -------------------------------------------------------------------------- */
@@ -105,44 +138,17 @@ export function EventLog({ events, onRetry, onExportCsv }: EventLogProps) {
   const [showFilters, setShowFilters] = useState(false);
 
   // Filter events
-  const filteredEvents = useMemo(() => {
-    return events.filter((event) => {
-      if (!providerFilter.has(event.provider)) {
-        return false;
-      }
-      if (!statusFilter.has(event.status)) {
-        return false;
-      }
-
-      if (searchQuery.trim()) {
-        const q = searchQuery.toLowerCase();
-        const matchesSearch =
-          event.eventType.toLowerCase().includes(q) ||
-          event.provider.toLowerCase().includes(q) ||
-          JSON.stringify(event.payload).toLowerCase().includes(q);
-        if (!matchesSearch) {
-          return false;
-        }
-      }
-
-      if (dateFrom) {
-        const fromDate = new Date(dateFrom);
-        if (new Date(event.timestamp) < fromDate) {
-          return false;
-        }
-      }
-
-      if (dateTo) {
-        const toDate = new Date(dateTo);
-        toDate.setDate(toDate.getDate() + 1);
-        if (new Date(event.timestamp) >= toDate) {
-          return false;
-        }
-      }
-
-      return true;
-    });
-  }, [events, providerFilter, statusFilter, searchQuery, dateFrom, dateTo]);
+  const filteredEvents = useMemo(
+    () =>
+      events.filter(
+        (event) =>
+          providerFilter.has(event.provider) &&
+          statusFilter.has(event.status) &&
+          matchesEventSearch(event, searchQuery) &&
+          matchesEventDateRange(event, dateFrom, dateTo)
+      ),
+    [events, providerFilter, statusFilter, searchQuery, dateFrom, dateTo]
+  );
 
   const toggleExpanded = useCallback((id: string) => {
     setExpandedIds((prev) => {

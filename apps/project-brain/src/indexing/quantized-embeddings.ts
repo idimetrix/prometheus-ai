@@ -190,7 +190,6 @@ export function binaryQuantize(embedding: number[]): Uint32Array {
     if ((embedding[i] ?? 0) > 0) {
       const wordIdx = Math.floor(i / 32);
       const bitIdx = i % 32;
-      // biome-ignore lint/suspicious/noBitwiseOperators: intentional bit packing for binary quantization
       bits[wordIdx] = (bits[wordIdx] ?? 0) | (1 << bitIdx);
     }
   }
@@ -207,10 +206,8 @@ export function hammingDistance(a: Uint32Array, b: Uint32Array): number {
   const len = Math.min(a.length, b.length);
 
   for (let i = 0; i < len; i++) {
-    // biome-ignore lint/suspicious/noBitwiseOperators: intentional XOR for hamming distance
     let xor = ((a[i] ?? 0) ^ (b[i] ?? 0)) >>> 0;
     while (xor !== 0) {
-      // biome-ignore lint/suspicious/noBitwiseOperators: intentional bit manipulation for popcount
       xor &= xor - 1;
       distance++;
     }

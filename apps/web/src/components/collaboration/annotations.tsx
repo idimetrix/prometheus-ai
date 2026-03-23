@@ -118,11 +118,10 @@ function AnnotationBubble({
           {/* Reactions */}
           {annotation.reactions && annotation.reactions.length > 0 && (
             <div className="mb-2 flex flex-wrap gap-1">
-              {annotation.reactions.map((r, i) => (
+              {annotation.reactions.map((r) => (
                 <span
                   className="rounded bg-zinc-800 px-1.5 py-0.5 text-xs"
-                  // biome-ignore lint/suspicious/noArrayIndexKey: reactions lack unique ids
-                  key={`${r.emoji}-${i}`}
+                  key={`${r.emoji}-${r.userId}`}
                 >
                   {r.emoji}
                 </span>

@@ -151,6 +151,15 @@ function buildSecurityPatterns(): Array<{
   ];
 }
 
+const ANY_TYPE_RE = /\bany\b/;
+const FILE_EXTENSION_RE = /\.(ts|tsx|js|jsx)$/;
+const TESTS_DIR_RE = /\/([^/]+)$/;
+const RAW_SQL_RE = /(?:raw|sql)`\s*(?:SELECT|INSERT|UPDATE|DELETE)/i;
+const CONSOLE_LOG_RE = /console\.log\(/g;
+const DEBUGGER_RE = /debugger/g;
+const SPREAD_IN_REDUCE_RE = /\.reduce\([\s\S]*\.\.\.acc/gm;
+const REGEXP_IN_LOOP_RE = /for\s*\([^)]*\)\s*\{[^}]*new\s+RegExp/gim;
+
 const SEVERITY_ORDER: Record<string, number> = {
   critical: 0,
   high: 1,
@@ -194,7 +203,7 @@ export class QualityGateEngine {
     const startTime = performance.now();
     const enabledSet = new Set(this.config.enabledGates);
 
-    const gateRunners: [GateId, () => Promise<GateResult>][] = [
+    const gateRunners: [GateId, () => GateResult | Promise<GateResult>][] = [
       ["lint", () => this.lintGate(codeChanges)],
       ["typeCheck", () => this.typeCheckGate(codeChanges)],
       ["test", () => this.testGate(codeChanges)],
@@ -269,7 +278,7 @@ export class QualityGateEngine {
   /*  Individual Gates                                                      */
   /* ────────────────────────────────────────────────────────────────────── */
 
-  private async lintGate(changes: CodeChanges): Promise<GateResult> {
+  private lintGate(changes: CodeChanges): GateResult {
     const start = performance.now();
 
     if (changes.lintResults) {
@@ -296,15 +305,17 @@ export class QualityGateEngine {
     const suggestions: string[] = [];
 
     for (const file of changes.files) {
-      if (/console\.log\(/g.test(file.content)) {
+      if (CONSOLE_LOG_RE.test(file.content)) {
+        CONSOLE_LOG_RE.lastIndex = 0;
         issueCount++;
         suggestions.push(`${file.path}: Remove console.log statements`);
       }
-      if (/\bany\b/.test(file.content) && file.language === "typescript") {
+      if (ANY_TYPE_RE.test(file.content) && file.language === "typescript") {
         issueCount++;
         suggestions.push(`${file.path}: Avoid using 'any' type`);
       }
-      if (/debugger/g.test(file.content)) {
+      if (DEBUGGER_RE.test(file.content)) {
+        DEBUGGER_RE.lastIndex = 0;
         issueCount++;
         suggestions.push(`${file.path}: Remove debugger statement`);
       }
@@ -323,7 +334,7 @@ export class QualityGateEngine {
     };
   }
 
-  private async typeCheckGate(changes: CodeChanges): Promise<GateResult> {
+  private typeCheckGate(changes: CodeChanges): GateResult {
     const start = performance.now();
 
     if (changes.typeCheckResults) {
@@ -381,7 +392,7 @@ export class QualityGateEngine {
     };
   }
 
-  private async testGate(changes: CodeChanges): Promise<GateResult> {
+  private testGate(changes: CodeChanges): GateResult {
     const start = performance.now();
 
     if (changes.testResults) {
@@ -403,11 +414,11 @@ export class QualityGateEngine {
     );
 
     const untestedFiles = sourceFiles.filter((sf) => {
-      const baseName = sf.path.replace(/\.(ts|tsx|js|jsx)$/, "");
+      const baseName = sf.path.replace(FILE_EXTENSION_RE, "");
       return !testFiles.some(
         (tf) =>
           tf.path.includes(baseName) ||
-          tf.path.includes(baseName.replace(/\/([^/]+)$/, "/__tests__/$1"))
+          tf.path.includes(baseName.replace(TESTS_DIR_RE, "/__tests__/$1"))
       );
     });
 
@@ -429,7 +440,7 @@ export class QualityGateEngine {
     };
   }
 
-  private async coverageGate(changes: CodeChanges): Promise<GateResult> {
+  private coverageGate(changes: CodeChanges): GateResult {
     const start = performance.now();
 
     if (changes.testResults?.coverage !== undefined) {
@@ -459,7 +470,7 @@ export class QualityGateEngine {
     };
   }
 
-  private async securityGate(changes: CodeChanges): Promise<GateResult> {
+  private securityGate(changes: CodeChanges): GateResult {
     const start = performance.now();
     const thresholdLevel: number =
       SEVERITY_ORDER[this.config.securityThreshold] ?? 1;
@@ -507,7 +518,7 @@ export class QualityGateEngine {
     };
   }
 
-  private async performanceGate(changes: CodeChanges): Promise<GateResult> {
+  private performanceGate(changes: CodeChanges): GateResult {
     const start = performance.now();
     const issues: string[] = [];
 
@@ -526,13 +537,15 @@ export class QualityGateEngine {
         }
       }
 
-      if (/\.reduce\([\s\S]*\.\.\.acc/gm.test(file.content)) {
+      SPREAD_IN_REDUCE_RE.lastIndex = 0;
+      if (SPREAD_IN_REDUCE_RE.test(file.content)) {
         issues.push(
           `${file.path}: Spread in reduce accumulator — O(n^2) memory`
         );
       }
 
-      if (/for\s*\([^)]*\)\s*\{[^}]*new\s+RegExp/gim.test(file.content)) {
+      REGEXP_IN_LOOP_RE.lastIndex = 0;
+      if (REGEXP_IN_LOOP_RE.test(file.content)) {
         issues.push(`${file.path}: Creating RegExp inside loop`);
       }
     }
@@ -550,7 +563,7 @@ export class QualityGateEngine {
     };
   }
 
-  private async blueprintGate(changes: CodeChanges): Promise<GateResult> {
+  private blueprintGate(changes: CodeChanges): GateResult {
     const start = performance.now();
 
     if (!this.config.blueprintId) {
@@ -575,17 +588,15 @@ export class QualityGateEngine {
         );
       }
 
-      if (
-        /(?:raw|sql)`\s*(?:SELECT|INSERT|UPDATE|DELETE)/i.test(file.content) &&
-        !file.path.includes("migration")
-      ) {
+      if (RAW_SQL_RE.test(file.content) && !file.path.includes("migration")) {
         issues.push(
           `${file.path}: Raw SQL detected — use Drizzle ORM per blueprint`
         );
       }
 
+      CONSOLE_LOG_RE.lastIndex = 0;
       if (
-        /console\.log\(/g.test(file.content) &&
+        CONSOLE_LOG_RE.test(file.content) &&
         !file.path.includes(".test.") &&
         !file.path.includes(".spec.")
       ) {

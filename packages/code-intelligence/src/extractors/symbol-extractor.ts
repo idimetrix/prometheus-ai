@@ -382,6 +382,61 @@ function extractDynamicImportSource(node: Node): string | undefined {
 /**
  * Walk the AST and collect symbols.
  */
+function tryExtractDynamicImport(
+  node: Node,
+  parentName: string | undefined
+): ExtractedSymbol | null {
+  if (!isDynamicImport(node)) {
+    return null;
+  }
+  const source = extractDynamicImportSource(node);
+  if (!source) {
+    return null;
+  }
+  return {
+    name: source,
+    kind: "import",
+    startLine: node.startPosition.row,
+    endLine: node.endPosition.row,
+    startColumn: node.startPosition.column,
+    endColumn: node.endPosition.column,
+    text: node.text,
+    parent: parentName,
+    isExported: false,
+    metadata: { isDynamic: true },
+    reExportSource: undefined,
+  };
+}
+
+function buildSymbolMetadata(
+  kind: SymbolKind,
+  node: Node
+): { metadata: Record<string, unknown>; reExportSource: string | undefined } {
+  const reExportSource =
+    kind === "export" ? extractReExportSource(node) : undefined;
+
+  const hierarchy =
+    kind === "class" || kind === "interface"
+      ? extractClassHierarchy(node)
+      : undefined;
+
+  const metadata: Record<string, unknown> = {};
+  if (hierarchy?.extendsClass) {
+    metadata.extends = hierarchy.extendsClass;
+  }
+  if (
+    hierarchy?.implementsInterfaces &&
+    hierarchy.implementsInterfaces.length > 0
+  ) {
+    metadata.implements = hierarchy.implementsInterfaces;
+  }
+  if (reExportSource) {
+    metadata.reExportSource = reExportSource;
+  }
+
+  return { metadata, reExportSource };
+}
+
 function walkTree(
   node: Node,
   language: SupportedLanguage,
@@ -389,66 +444,24 @@ function walkTree(
 ): ExtractedSymbol[] {
   const symbols: ExtractedSymbol[] = [];
 
+  const dynamicImport = tryExtractDynamicImport(node, parentName);
+  if (dynamicImport) {
+    symbols.push(dynamicImport);
+  }
+
   const overrides = LANGUAGE_NODE_OVERRIDES[language] ?? {};
   const kind = overrides[node.type] ?? NODE_TYPE_TO_SYMBOL_KIND[node.type];
-
-  // Handle dynamic imports as a special case
-  if (isDynamicImport(node)) {
-    const source = extractDynamicImportSource(node);
-    if (source) {
-      symbols.push({
-        name: source,
-        kind: "import",
-        startLine: node.startPosition.row,
-        endLine: node.endPosition.row,
-        startColumn: node.startPosition.column,
-        endColumn: node.endPosition.column,
-        text: node.text,
-        parent: parentName,
-        isExported: false,
-        metadata: { isDynamic: true },
-        reExportSource: undefined,
-      });
-    }
-  }
 
   if (kind) {
     const name =
       extractNodeName(node) ?? `<anonymous:${node.startPosition.row}>`;
     const isExported = isNodeExported(node) || checkGoExport(name, language);
-
-    // Extract signature for functions and methods
     const signature =
       kind === "function" || kind === "method"
         ? extractSignature(node)
         : undefined;
-
-    // Extract type information
     const typeInfo = extractTypeInfo(node, kind);
-
-    // Extract re-export source for export statements
-    const reExportSource =
-      kind === "export" ? extractReExportSource(node) : undefined;
-
-    // Extract class hierarchy
-    const hierarchy =
-      kind === "class" || kind === "interface"
-        ? extractClassHierarchy(node)
-        : undefined;
-
-    const metadata: Record<string, unknown> = {};
-    if (hierarchy?.extendsClass) {
-      metadata.extends = hierarchy.extendsClass;
-    }
-    if (
-      hierarchy?.implementsInterfaces &&
-      hierarchy.implementsInterfaces.length > 0
-    ) {
-      metadata.implements = hierarchy.implementsInterfaces;
-    }
-    if (reExportSource) {
-      metadata.reExportSource = reExportSource;
-    }
+    const { metadata, reExportSource } = buildSymbolMetadata(kind, node);
 
     symbols.push({
       name,
@@ -466,24 +479,16 @@ function walkTree(
       reExportSource,
     });
 
-    // For classes/interfaces, walk children with this as parent
     if (kind === "class" || kind === "interface") {
       for (const child of node.children) {
-        const childSymbols = walkTree(child, language, name);
-        for (const s of childSymbols) {
-          symbols.push(s);
-        }
+        symbols.push(...walkTree(child, language, name));
       }
       return symbols;
     }
   }
 
-  // Recurse into children
   for (const child of node.children) {
-    const childSymbols = walkTree(child, language, parentName);
-    for (const s of childSymbols) {
-      symbols.push(s);
-    }
+    symbols.push(...walkTree(child, language, parentName));
   }
 
   return symbols;

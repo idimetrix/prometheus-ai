@@ -211,7 +211,6 @@ export function WebPreview({
         )}
 
         {/* Iframe */}
-        {/* biome-ignore lint/a11y/noNoninteractiveElementInteractions: iframe needs load/error handlers for preview state management */}
         <iframe
           className="rounded border border-zinc-700 bg-white"
           height={dimensions.height}
@@ -220,7 +219,7 @@ export function WebPreview({
           ref={iframeRef}
           sandbox="allow-scripts allow-same-origin allow-forms allow-popups"
           src={currentUrl}
-          title="Web Preview"
+          title="Web preview"
           width={dimensions.width}
         />
       </div>

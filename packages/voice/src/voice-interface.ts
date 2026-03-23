@@ -283,80 +283,52 @@ export class VoiceInterface {
   /**
    * Extract action items from a meeting transcript.
    */
+  private extractFromPattern(
+    transcript: string,
+    pattern: RegExp,
+    seen: Set<string>,
+    items: ActionItem[],
+    options?: { assigneeIndex?: number; descriptionIndex?: number }
+  ): void {
+    const descIdx = options?.descriptionIndex ?? 1;
+    const assigneeIdx = options?.assigneeIndex;
+
+    for (const match of transcript.matchAll(pattern)) {
+      const assignee =
+        assigneeIdx === undefined ? undefined : (match[assigneeIdx] ?? "");
+      if (assignee && this.isCommonWord(assignee)) {
+        continue;
+      }
+
+      const description = (match[descIdx] ?? "").trim();
+      if (!description || seen.has(description.toLowerCase())) {
+        continue;
+      }
+
+      seen.add(description.toLowerCase());
+      items.push({
+        description,
+        assignee,
+        priority: this.inferPriority(description),
+      });
+    }
+  }
+
   extractActionItems(transcript: string): ActionItem[] {
     const items: ActionItem[] = [];
     const seen = new Set<string>();
 
-    // "we need to ..." patterns
-    for (const match of transcript.matchAll(WE_NEED_TO_PATTERN)) {
-      const description = (match[1] ?? "").trim();
-      if (description && !seen.has(description.toLowerCase())) {
-        seen.add(description.toLowerCase());
-        items.push({
-          description,
-          priority: this.inferPriority(description),
-        });
-      }
-    }
-
-    // "action item: ..." patterns
-    for (const match of transcript.matchAll(ACTION_ITEM_PATTERN)) {
-      const description = (match[1] ?? "").trim();
-      if (description && !seen.has(description.toLowerCase())) {
-        seen.add(description.toLowerCase());
-        items.push({
-          description,
-          priority: this.inferPriority(description),
-        });
-      }
-    }
-
-    // "TODO: ..." patterns
-    for (const match of transcript.matchAll(TODO_PATTERN)) {
-      const description = (match[1] ?? "").trim();
-      if (description && !seen.has(description.toLowerCase())) {
-        seen.add(description.toLowerCase());
-        items.push({
-          description,
-          priority: this.inferPriority(description),
-        });
-      }
-    }
-
-    // "[name] will ..." patterns
-    for (const match of transcript.matchAll(PERSON_WILL_PATTERN)) {
-      const assignee = match[1] ?? "";
-      const description = (match[2] ?? "").trim();
-      // Skip common false positives
-      if (this.isCommonWord(assignee)) {
-        continue;
-      }
-      if (description && !seen.has(description.toLowerCase())) {
-        seen.add(description.toLowerCase());
-        items.push({
-          description,
-          assignee,
-          priority: this.inferPriority(description),
-        });
-      }
-    }
-
-    // "[name] should ..." patterns
-    for (const match of transcript.matchAll(PERSON_SHOULD_PATTERN)) {
-      const assignee = match[1] ?? "";
-      const description = (match[2] ?? "").trim();
-      if (this.isCommonWord(assignee)) {
-        continue;
-      }
-      if (description && !seen.has(description.toLowerCase())) {
-        seen.add(description.toLowerCase());
-        items.push({
-          description,
-          assignee,
-          priority: this.inferPriority(description),
-        });
-      }
-    }
+    this.extractFromPattern(transcript, WE_NEED_TO_PATTERN, seen, items);
+    this.extractFromPattern(transcript, ACTION_ITEM_PATTERN, seen, items);
+    this.extractFromPattern(transcript, TODO_PATTERN, seen, items);
+    this.extractFromPattern(transcript, PERSON_WILL_PATTERN, seen, items, {
+      assigneeIndex: 1,
+      descriptionIndex: 2,
+    });
+    this.extractFromPattern(transcript, PERSON_SHOULD_PATTERN, seen, items, {
+      assigneeIndex: 1,
+      descriptionIndex: 2,
+    });
 
     logger.info(
       { actionItemCount: items.length },

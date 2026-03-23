@@ -112,10 +112,9 @@ export class MergeCoordinator {
       }
     }
 
-    // Process non-conflicting files first
+    // Separate non-conflicting and conflicting files
     for (const [file, modifiers] of fileToWorktrees) {
       if (modifiers.length === 1) {
-        // No conflict, take the change directly
         resolvedFiles.push(file);
       }
     }
@@ -131,46 +130,22 @@ export class MergeCoordinator {
         "File modified by multiple worktrees"
       );
 
-      // Try auto-merge first
-      if (this.strategy.allowAutoMerge) {
-        const autoMergeResult = await this.attemptAutoMerge(
-          file,
-          modifiers,
-          sandboxId
-        );
-        if (autoMergeResult) {
-          resolvedFiles.push(file);
-          continue;
-        }
-      }
-
-      // Try LLM-assisted resolution
-      if (this.strategy.llmAssisted) {
-        const llmResult = await this.attemptLlmResolution(
-          file,
-          modifiers,
-          sandboxId
-        );
-        if (llmResult) {
-          resolvedFiles.push(file);
-          continue;
-        }
-      }
-
-      // Try priority-based resolution
-      if (this.strategy.agentPriority?.length) {
-        // Priority resolution: take the version from the highest-priority agent
+      const resolved = await this.tryResolveConflict(
+        file,
+        modifiers,
+        sandboxId
+      );
+      if (resolved) {
         resolvedFiles.push(file);
-        continue;
+      } else {
+        conflicts.push({
+          filePath: file,
+          agents: modifiers,
+          severity: "medium",
+          reason:
+            "Multiple agents modified this file and automatic merge failed",
+        });
       }
-
-      // Unresolved conflict
-      conflicts.push({
-        filePath: file,
-        agents: modifiers,
-        severity: "medium",
-        reason: "Multiple agents modified this file and automatic merge failed",
-      });
     }
 
     // Create a unified merge commit if we have a sandbox
@@ -200,6 +175,43 @@ export class MergeCoordinator {
   }
 
   /**
+   * Try resolving a file conflict using auto-merge, LLM, or priority strategies.
+   */
+  private async tryResolveConflict(
+    file: string,
+    modifiers: string[],
+    sandboxId?: string
+  ): Promise<boolean> {
+    if (this.strategy.allowAutoMerge) {
+      const autoMergeResult = await this.attemptAutoMerge(
+        file,
+        modifiers,
+        sandboxId
+      );
+      if (autoMergeResult) {
+        return true;
+      }
+    }
+
+    if (this.strategy.llmAssisted) {
+      const llmResult = await this.attemptLlmResolution(
+        file,
+        modifiers,
+        sandboxId
+      );
+      if (llmResult) {
+        return true;
+      }
+    }
+
+    if (this.strategy.agentPriority?.length) {
+      return true;
+    }
+
+    return false;
+  }
+
+  /**
    * Coordinate merge using a conflict report from the ConflictDetector.
    * This is the legacy API maintained for backward compatibility.
    */
@@ -219,70 +231,16 @@ export class MergeCoordinator {
     const unresolvedConflicts: UnresolvedConflict[] = [];
 
     for (const conflict of report.conflicts) {
-      if (conflict.severity === "high" || this.strategy.requireHumanReview) {
-        unresolvedConflicts.push({
-          filePath: conflict.filePath,
-          reason: `${conflict.severity} severity conflict requires manual review: ${conflict.suggestion}`,
-        });
-        continue;
-      }
-
-      if (this.strategy.allowAutoMerge && conflict.severity === "low") {
+      const resolution = await this.resolveConflict(conflict, worktrees);
+      if (resolution.resolved) {
         merged.push({
           filePath: conflict.filePath,
-          strategy: "auto",
-        });
-        continue;
-      }
-
-      // Try LLM-assisted resolution for medium-severity conflicts
-      if (this.strategy.llmAssisted && conflict.severity === "medium") {
-        const worktreePaths = conflict.agents
-          .map((a) => worktrees.get(a.id))
-          .filter(Boolean) as string[];
-
-        if (worktreePaths.length >= 2) {
-          const llmResult = await this.attemptLlmResolution(
-            conflict.filePath,
-            worktreePaths
-          );
-          if (llmResult) {
-            merged.push({
-              filePath: conflict.filePath,
-              strategy: "llm-assisted",
-            });
-            continue;
-          }
-        }
-      }
-
-      if (this.strategy.agentPriority?.length) {
-        const winner = this.resolveByPriority(
-          conflict,
-          this.strategy.agentPriority
-        );
-        if (winner) {
-          merged.push({
-            filePath: conflict.filePath,
-            strategy: "agent-priority",
-          });
-          continue;
-        }
-      }
-
-      const autoMergeResult = await this.attemptThreeWayMerge(
-        conflict,
-        worktrees
-      );
-      if (autoMergeResult) {
-        merged.push({
-          filePath: conflict.filePath,
-          strategy: "auto",
+          strategy: resolution.strategy,
         });
       } else {
         unresolvedConflicts.push({
           filePath: conflict.filePath,
-          reason: "Three-way merge failed. Manual resolution required.",
+          reason: resolution.reason,
         });
       }
     }
@@ -304,6 +262,74 @@ export class MergeCoordinator {
     );
 
     return { status, merged, conflicts: unresolvedConflicts };
+  }
+
+  /**
+   * Try to resolve a single conflict using the configured strategy chain.
+   */
+  private async resolveConflict(
+    conflict: {
+      filePath: string;
+      severity: string;
+      suggestion: string;
+      agents: Array<{ id: string }>;
+    },
+    worktrees: Map<string, string>
+  ): Promise<
+    | {
+        resolved: true;
+        strategy: "auto" | "agent-priority" | "manual" | "llm-assisted";
+      }
+    | { resolved: false; reason: string }
+  > {
+    if (conflict.severity === "high" || this.strategy.requireHumanReview) {
+      return {
+        resolved: false,
+        reason: `${conflict.severity} severity conflict requires manual review: ${conflict.suggestion}`,
+      };
+    }
+
+    if (this.strategy.allowAutoMerge && conflict.severity === "low") {
+      return { resolved: true, strategy: "auto" };
+    }
+
+    if (this.strategy.llmAssisted && conflict.severity === "medium") {
+      const worktreePaths = conflict.agents
+        .map((a) => worktrees.get(a.id))
+        .filter(Boolean) as string[];
+      if (worktreePaths.length >= 2) {
+        const llmResult = await this.attemptLlmResolution(
+          conflict.filePath,
+          worktreePaths
+        );
+        if (llmResult) {
+          return { resolved: true, strategy: "llm-assisted" };
+        }
+      }
+    }
+
+    if (this.strategy.agentPriority?.length) {
+      const winner = this.resolveByPriority(
+        conflict as Parameters<typeof this.resolveByPriority>[0],
+        this.strategy.agentPriority
+      );
+      if (winner) {
+        return { resolved: true, strategy: "agent-priority" };
+      }
+    }
+
+    const autoMergeResult = await this.attemptThreeWayMerge(
+      conflict as Parameters<typeof this.attemptThreeWayMerge>[0],
+      worktrees
+    );
+    if (autoMergeResult) {
+      return { resolved: true, strategy: "auto" };
+    }
+
+    return {
+      resolved: false,
+      reason: "Three-way merge failed. Manual resolution required.",
+    };
   }
 
   // ─── Private helpers ────────────────────────────────────────────────

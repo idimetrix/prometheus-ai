@@ -86,8 +86,7 @@ function MiniTrend({ data }: { data: number[] }) {
     .join(" ");
 
   return (
-    // biome-ignore lint/a11y/noSvgWithoutTitle: decorative sparkline
-    <svg className="shrink-0" height={height} role="img" width={width}>
+    <svg aria-hidden="true" className="shrink-0" height={height} width={width}>
       <polyline
         fill="none"
         points={points}

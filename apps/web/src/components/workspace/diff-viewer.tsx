@@ -48,83 +48,93 @@ function getHunkBgColor(isAccepted: boolean, isRejected: boolean): string {
 // Diff computation (simplified LCS)
 // ---------------------------------------------------------------------------
 
-function computeHunks(
-  original: string,
-  modified: string,
-  contextLines = 3
-): DiffHunk[] {
-  const oldLines = original.split("\n");
-  const newLines = modified.split("\n");
+interface EditOp {
+  newIdx: number;
+  oldIdx: number;
+  type: "equal" | "insert" | "delete";
+}
 
-  // Build edit operations
-  const ops: Array<{
-    newIdx: number;
-    oldIdx: number;
-    type: "equal" | "insert" | "delete";
-  }> = [];
-
+function simpleDiffOps(oldLines: string[], newLines: string[]): EditOp[] {
+  const ops: EditOp[] = [];
   const m = oldLines.length;
   const n = newLines.length;
-
-  // For large files use simple diff
-  if (m * n > 5_000_000) {
-    const maxLen = Math.max(m, n);
-    for (let i = 0; i < maxLen; i++) {
-      if (i < m && i < n) {
-        if (oldLines[i] === newLines[i]) {
-          ops.push({ type: "equal", oldIdx: i, newIdx: i });
-        } else {
-          ops.push({ type: "delete", oldIdx: i, newIdx: i });
-          ops.push({ type: "insert", oldIdx: i, newIdx: i });
-        }
-      } else if (i < m) {
-        ops.push({ type: "delete", oldIdx: i, newIdx: n });
+  const maxLen = Math.max(m, n);
+  for (let i = 0; i < maxLen; i++) {
+    if (i < m && i < n) {
+      if (oldLines[i] === newLines[i]) {
+        ops.push({ type: "equal", oldIdx: i, newIdx: i });
       } else {
-        ops.push({ type: "insert", oldIdx: m, newIdx: i });
+        ops.push({ type: "delete", oldIdx: i, newIdx: i });
+        ops.push({ type: "insert", oldIdx: i, newIdx: i });
       }
+    } else if (i < m) {
+      ops.push({ type: "delete", oldIdx: i, newIdx: n });
+    } else {
+      ops.push({ type: "insert", oldIdx: m, newIdx: i });
     }
-  } else {
-    // LCS DP
-    const dp: number[][] = Array.from({ length: m + 1 }, () =>
-      new Array(n + 1).fill(0)
-    );
-    for (let i = 1; i <= m; i++) {
-      for (let j = 1; j <= n; j++) {
-        if (oldLines[i - 1] === newLines[j - 1]) {
-          const row = dp[i];
-          if (row) {
-            row[j] = (dp[i - 1]?.[j - 1] ?? 0) + 1;
-          }
-        } else {
-          const row = dp[i];
-          if (row) {
-            row[j] = Math.max(dp[i - 1]?.[j] ?? 0, dp[i]?.[j - 1] ?? 0);
-          }
-        }
-      }
-    }
+  }
+  return ops;
+}
 
-    let i = m;
-    let j = n;
-    while (i > 0 || j > 0) {
-      if (i > 0 && j > 0 && oldLines[i - 1] === newLines[j - 1]) {
-        ops.unshift({ type: "equal", oldIdx: i - 1, newIdx: j - 1 });
-        i--;
-        j--;
-      } else if (
-        j > 0 &&
-        (i === 0 || (dp[i]?.[j - 1] ?? 0) >= (dp[i - 1]?.[j] ?? 0))
-      ) {
-        ops.unshift({ type: "insert", oldIdx: i - 1, newIdx: j - 1 });
-        j--;
+function buildWsDpTable(oldLines: string[], newLines: string[]): number[][] {
+  const m = oldLines.length;
+  const n = newLines.length;
+  const dp: number[][] = Array.from({ length: m + 1 }, () =>
+    new Array(n + 1).fill(0)
+  );
+  for (let i = 1; i <= m; i++) {
+    for (let j = 1; j <= n; j++) {
+      const row = dp[i];
+      if (!row) {
+        continue;
+      }
+      if (oldLines[i - 1] === newLines[j - 1]) {
+        row[j] = (dp[i - 1]?.[j - 1] ?? 0) + 1;
       } else {
-        ops.unshift({ type: "delete", oldIdx: i - 1, newIdx: j - 1 });
-        i--;
+        row[j] = Math.max(dp[i - 1]?.[j] ?? 0, dp[i]?.[j - 1] ?? 0);
       }
     }
   }
+  return dp;
+}
 
-  // Convert ops to diff lines
+function backtrackWsOps(
+  dp: number[][],
+  oldLines: string[],
+  newLines: string[]
+): EditOp[] {
+  const ops: EditOp[] = [];
+  let i = oldLines.length;
+  let j = newLines.length;
+  while (i > 0 || j > 0) {
+    if (i > 0 && j > 0 && oldLines[i - 1] === newLines[j - 1]) {
+      ops.unshift({ type: "equal", oldIdx: i - 1, newIdx: j - 1 });
+      i--;
+      j--;
+    } else if (
+      j > 0 &&
+      (i === 0 || (dp[i]?.[j - 1] ?? 0) >= (dp[i - 1]?.[j] ?? 0))
+    ) {
+      ops.unshift({ type: "insert", oldIdx: i - 1, newIdx: j - 1 });
+      j--;
+    } else {
+      ops.unshift({ type: "delete", oldIdx: i - 1, newIdx: j - 1 });
+      i--;
+    }
+  }
+  return ops;
+}
+
+function lcsDiffOps(oldLines: string[], newLines: string[]): EditOp[] {
+  const dp = buildWsDpTable(oldLines, newLines);
+  return backtrackWsOps(dp, oldLines, newLines);
+}
+
+function opsToAllLines(
+  ops: EditOp[],
+  oldLines: string[],
+  newLines: string[]
+): DiffLine[] {
   const allLines: DiffLine[] = [];
   let oldNum = 1;
   let newNum = 1;
@@ -158,7 +168,13 @@ function computeHunks(
     }
   }
 
-  // Group into hunks with context
+  return allLines;
+}
+
+function collectChangeIndicesForHunks(
+  allLines: DiffLine[],
+  contextLines: number
+): Set<number> {
   const changeIndices = new Set<number>();
   for (let idx = 0; idx < allLines.length; idx++) {
     const line = allLines[idx];
@@ -172,6 +188,24 @@ function computeHunks(
       }
     }
   }
+  return changeIndices;
+}
+
+function computeHunks(
+  original: string,
+  modified: string,
+  contextLines = 3
+): DiffHunk[] {
+  const oldLines = original.split("\n");
+  const newLines = modified.split("\n");
+
+  const ops =
+    oldLines.length * newLines.length > 5_000_000
+      ? simpleDiffOps(oldLines, newLines)
+      : lcsDiffOps(oldLines, newLines);
+
+  const allLines = opsToAllLines(ops, oldLines, newLines);
+  const changeIndices = collectChangeIndicesForHunks(allLines, contextLines);
 
   if (changeIndices.size === 0) {
     return [];
@@ -188,7 +222,6 @@ function computeHunks(
     if (!line) {
       continue;
     }
-
     if (idx - lastIdx > 1 && currentLines.length > 0) {
       hunks.push(buildHunk(currentLines, hunkCount));
       hunkCount++;
@@ -283,6 +316,52 @@ function getPrefixColor(type: DiffLine["type"]): string {
 // ---------------------------------------------------------------------------
 // Component
 // ---------------------------------------------------------------------------
+
+function WsSplitRow({
+  line,
+  isResolved,
+}: {
+  hunkId: string;
+  line: DiffLine;
+  isResolved: boolean;
+}) {
+  return (
+    <div className={`flex ${isResolved ? "opacity-60" : ""}`}>
+      <div
+        className={`flex w-1/2 border-zinc-800/50 border-r leading-5 ${
+          line.type === "deletion" ? "bg-red-500/10" : ""
+        }`}
+      >
+        <span className="w-10 shrink-0 select-none pr-2 text-right text-zinc-700">
+          {line.oldLineNum ?? ""}
+        </span>
+        <span
+          className={`min-w-0 whitespace-pre-wrap break-all pl-1 ${
+            line.type === "deletion" ? "text-red-300" : "text-zinc-400"
+          }`}
+        >
+          {line.type === "addition" ? "" : line.content}
+        </span>
+      </div>
+      <div
+        className={`flex w-1/2 leading-5 ${
+          line.type === "addition" ? "bg-green-500/10" : ""
+        }`}
+      >
+        <span className="w-10 shrink-0 select-none pr-2 text-right text-zinc-700">
+          {line.newLineNum ?? ""}
+        </span>
+        <span
+          className={`min-w-0 whitespace-pre-wrap break-all pl-1 ${
+            line.type === "addition" ? "text-green-300" : "text-zinc-400"
+          }`}
+        >
+          {line.type === "deletion" ? "" : line.content}
+        </span>
+      </div>
+    </div>
+  );
+}
 
 export function DiffViewer({
   original,
@@ -456,49 +535,13 @@ export function DiffViewer({
                       </span>
                     </div>
                   ))
-                : /* Split view */
-                  hunk.lines.map((line) => (
-                    <div
-                      className={`flex ${isResolved ? "opacity-60" : ""}`}
+                : hunk.lines.map((line) => (
+                    <WsSplitRow
+                      hunkId={hunk.id}
+                      isResolved={isResolved}
                       key={`split-${hunk.id}-${line.type}-${line.oldLineNum ?? "n"}-${line.newLineNum ?? "n"}`}
-                    >
-                      <div
-                        className={`flex w-1/2 border-zinc-800/50 border-r leading-5 ${
-                          line.type === "deletion" ? "bg-red-500/10" : ""
-                        }`}
-                      >
-                        <span className="w-10 shrink-0 select-none pr-2 text-right text-zinc-700">
-                          {line.oldLineNum ?? ""}
-                        </span>
-                        <span
-                          className={`min-w-0 whitespace-pre-wrap break-all pl-1 ${
-                            line.type === "deletion"
-                              ? "text-red-300"
-                              : "text-zinc-400"
-                          }`}
-                        >
-                          {line.type === "addition" ? "" : line.content}
-                        </span>
-                      </div>
-                      <div
-                        className={`flex w-1/2 leading-5 ${
-                          line.type === "addition" ? "bg-green-500/10" : ""
-                        }`}
-                      >
-                        <span className="w-10 shrink-0 select-none pr-2 text-right text-zinc-700">
-                          {line.newLineNum ?? ""}
-                        </span>
-                        <span
-                          className={`min-w-0 whitespace-pre-wrap break-all pl-1 ${
-                            line.type === "addition"
-                              ? "text-green-300"
-                              : "text-zinc-400"
-                          }`}
-                        >
-                          {line.type === "deletion" ? "" : line.content}
-                        </span>
-                      </div>
-                    </div>
+                      line={line}
+                    />
                   ))}
             </div>
           );

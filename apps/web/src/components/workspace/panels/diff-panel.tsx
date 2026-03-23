@@ -65,16 +65,9 @@ interface EditOp {
   type: "equal" | "insert" | "delete";
 }
 
-function computeEditOps(oldLines: string[], newLines: string[]): EditOp[] {
+function buildLcsDpTable(oldLines: string[], newLines: string[]): number[][] {
   const m = oldLines.length;
   const n = newLines.length;
-
-  // For very large files, fall back to a simpler approach
-  if (m * n > 10_000_000) {
-    return simpleDiff(oldLines, newLines);
-  }
-
-  // Standard LCS DP
   const dp: number[][] = Array.from({ length: m + 1 }, () =>
     new Array(n + 1).fill(0)
   );
@@ -94,10 +87,17 @@ function computeEditOps(oldLines: string[], newLines: string[]): EditOp[] {
     }
   }
 
-  // Backtrack to build edit ops
+  return dp;
+}
+
+function backtrackOps(
+  dp: number[][],
+  oldLines: string[],
+  newLines: string[]
+): EditOp[] {
   const ops: EditOp[] = [];
-  let i = m;
-  let j = n;
+  let i = oldLines.length;
+  let j = newLines.length;
 
   while (i > 0 || j > 0) {
     if (i > 0 && j > 0 && oldLines[i - 1] === newLines[j - 1]) {
@@ -117,6 +117,14 @@ function computeEditOps(oldLines: string[], newLines: string[]): EditOp[] {
   }
 
   return ops;
+}
+
+function computeEditOps(oldLines: string[], newLines: string[]): EditOp[] {
+  if (oldLines.length * newLines.length > 10_000_000) {
+    return simpleDiff(oldLines, newLines);
+  }
+  const dp = buildLcsDpTable(oldLines, newLines);
+  return backtrackOps(dp, oldLines, newLines);
 }
 
 /** Simple line-by-line diff for very large files */
@@ -142,13 +150,11 @@ function simpleDiff(oldLines: string[], newLines: string[]): EditOp[] {
   return ops;
 }
 
-function buildHunks(
+function opsToDiffLines(
   ops: EditOp[],
   oldLines: string[],
-  newLines: string[],
-  contextLines: number
-): DiffHunk[] {
-  // Convert ops to DiffLines with line numbers
+  newLines: string[]
+): DiffLine[] {
   const allDiffLines: DiffLine[] = [];
   let oldLineNum = 1;
   let newLineNum = 1;
@@ -182,7 +188,13 @@ function buildHunks(
     }
   }
 
-  // Find change regions and expand with context
+  return allDiffLines;
+}
+
+function findChangeRegions(
+  allDiffLines: DiffLine[],
+  contextLines: number
+): Set<number> {
   const changeIndices = new Set<number>();
   for (let idx = 0; idx < allDiffLines.length; idx++) {
     const line = allDiffLines[idx];
@@ -196,12 +208,22 @@ function buildHunks(
       }
     }
   }
+  return changeIndices;
+}
+
+function buildHunks(
+  ops: EditOp[],
+  oldLines: string[],
+  newLines: string[],
+  contextLines: number
+): DiffHunk[] {
+  const allDiffLines = opsToDiffLines(ops, oldLines, newLines);
+  const changeIndices = findChangeRegions(allDiffLines, contextLines);
 
   if (changeIndices.size === 0) {
     return [];
   }
 
-  // Group consecutive indices into hunks
   const sortedIndices = [...changeIndices].sort((a, b) => a - b);
   const hunks: DiffHunk[] = [];
   let currentHunkLines: DiffLine[] = [];
@@ -215,7 +237,6 @@ function buildHunks(
       continue;
     }
 
-    // If there's a gap, start a new hunk
     if (idx - lastIdx > 1 && currentHunkLines.length > 0) {
       hunks.push(finalizeHunk(currentHunkLines, hunkStartOld, hunkStartNew));
       currentHunkLines = [];
@@ -545,6 +566,123 @@ function UnifiedDiffView({
 // Split diff view
 // ---------------------------------------------------------------------------
 
+function collectConsecutive(
+  lines: DiffLine[],
+  startIdx: number,
+  type: string
+): { collected: DiffLine[]; nextIdx: number } {
+  const collected: DiffLine[] = [];
+  let idx = startIdx;
+  while (idx < lines.length && lines[idx]?.type === type) {
+    const line = lines[idx];
+    if (line) {
+      collected.push(line);
+    }
+    idx++;
+  }
+  return { collected, nextIdx: idx };
+}
+
+function pairHunkLines(
+  lines: DiffLine[],
+  hunkIdx: number
+): Array<{ left: DiffLine | null; right: DiffLine | null; hunkIdx: number }> {
+  const rows: Array<{
+    left: DiffLine | null;
+    right: DiffLine | null;
+    hunkIdx: number;
+  }> = [];
+  let lineIdx = 0;
+
+  while (lineIdx < lines.length) {
+    const line = lines[lineIdx];
+    if (!line) {
+      lineIdx++;
+      continue;
+    }
+
+    if (line.type === "context") {
+      rows.push({ left: line, right: line, hunkIdx });
+      lineIdx++;
+    } else if (line.type === "deletion") {
+      const { collected: deletions, nextIdx } = collectConsecutive(
+        lines,
+        lineIdx,
+        "deletion"
+      );
+      lineIdx = nextIdx;
+      const { collected: additions, nextIdx: nextIdx2 } = collectConsecutive(
+        lines,
+        lineIdx,
+        "addition"
+      );
+      lineIdx = nextIdx2;
+
+      const maxPairs = Math.max(deletions.length, additions.length);
+      for (let p = 0; p < maxPairs; p++) {
+        rows.push({
+          left: deletions[p] ?? null,
+          right: additions[p] ?? null,
+          hunkIdx,
+        });
+      }
+    } else {
+      rows.push({ left: null, right: line, hunkIdx });
+      lineIdx++;
+    }
+  }
+
+  return rows;
+}
+
+function SplitRowPair({
+  left,
+  right,
+}: {
+  hunkId: string;
+  left: DiffLine | null;
+  right: DiffLine | null;
+}) {
+  return (
+    <div className="flex">
+      <div
+        className={`flex w-1/2 border-zinc-800/50 border-r leading-5 ${getSplitLineBg(left?.type ?? null, "old")}`}
+      >
+        <span className="w-10 shrink-0 select-none pr-2 text-right text-zinc-700">
+          {left?.oldLineNum ?? ""}
+        </span>
+        <span
+          className={`w-4 shrink-0 select-none text-center ${left?.type === "deletion" ? "text-red-500" : "text-zinc-700"}`}
+        >
+          {left?.type === "deletion" ? "-" : " "}
+        </span>
+        <span
+          className={`min-w-0 whitespace-pre-wrap break-all pl-1 ${left?.type === "deletion" ? "text-red-300" : "text-zinc-400"}`}
+        >
+          {left?.content ?? ""}
+        </span>
+      </div>
+      <div
+        className={`flex w-1/2 leading-5 ${getSplitLineBg(right?.type ?? null, "new")}`}
+      >
+        <span className="w-10 shrink-0 select-none pr-2 text-right text-zinc-700">
+          {right?.newLineNum ?? ""}
+        </span>
+        <span
+          className={`w-4 shrink-0 select-none text-center ${right?.type === "addition" ? "text-green-500" : "text-zinc-700"}`}
+        >
+          {right?.type === "addition" ? "+" : " "}
+        </span>
+        <span
+          className={`min-w-0 whitespace-pre-wrap break-all pl-1 ${right?.type === "addition" ? "text-green-300" : "text-zinc-400"}`}
+        >
+          {right?.content ?? ""}
+        </span>
+      </div>
+    </div>
+  );
+}
+
 function SplitDiffView({
   hunks,
   expandedHunks,
@@ -568,60 +706,8 @@ function SplitDiffView({
         continue;
       }
 
-      // Group consecutive deletions and additions for side-by-side pairing
-      let lineIdx = 0;
-      while (lineIdx < hunk.lines.length) {
-        const line = hunk.lines[lineIdx];
-        if (!line) {
-          lineIdx++;
-          continue;
-        }
-
-        if (line.type === "context") {
-          result.push({ left: line, right: line, hunkIdx });
-          lineIdx++;
-        } else if (line.type === "deletion") {
-          // Collect consecutive deletions
-          const deletions: DiffLine[] = [];
-          while (
-            lineIdx < hunk.lines.length &&
-            hunk.lines[lineIdx]?.type === "deletion"
-          ) {
-            const delLine = hunk.lines[lineIdx];
-            if (delLine) {
-              deletions.push(delLine);
-            }
-            lineIdx++;
-          }
-
-          // Collect consecutive additions
-          const additions: DiffLine[] = [];
-          while (
-            lineIdx < hunk.lines.length &&
-            hunk.lines[lineIdx]?.type === "addition"
-          ) {
-            const addLine = hunk.lines[lineIdx];
-            if (addLine) {
-              additions.push(addLine);
-            }
-            lineIdx++;
-          }
-
-          // Pair them up
-          const maxPairs = Math.max(deletions.length, additions.length);
-          for (let p = 0; p < maxPairs; p++) {
-            result.push({
-              left: deletions[p] ?? null,
-              right: additions[p] ?? null,
-              hunkIdx,
-            });
-          }
-        } else {
-          // Standalone addition (no paired deletion)
-          result.push({ left: null, right: line, hunkIdx });
-          lineIdx++;
-        }
-      }
+      const pairedRows = pairHunkLines(hunk.lines, hunkIdx);
+      result.push(...pairedRows);
     }
 
     return result;
@@ -667,48 +753,12 @@ function SplitDiffView({
 
             {/* Split rows */}
             {displayRows.map((row) => (
-              <div
-                className="flex"
+              <SplitRowPair
+                hunkId={hunkId}
                 key={`${hunkId}-${row.left?.oldLineNum ?? "n"}-${row.right?.newLineNum ?? "n"}-${row.left?.type ?? "e"}-${row.right?.type ?? "e"}`}
-              >
-                {/* Left side (old) */}
-                <div
-                  className={`flex w-1/2 border-zinc-800/50 border-r leading-5 ${getSplitLineBg(row.left?.type ?? null, "old")}`}
-                >
-                  <span className="w-10 shrink-0 select-none pr-2 text-right text-zinc-700">
-                    {row.left?.oldLineNum ?? ""}
-                  </span>
-                  <span
-                    className={`w-4 shrink-0 select-none text-center ${row.left?.type === "deletion" ? "text-red-500" : "text-zinc-700"}`}
-                  >
-                    {row.left?.type === "deletion" ? "-" : " "}
-                  </span>
-                  <span
-                    className={`min-w-0 whitespace-pre-wrap break-all pl-1 ${row.left?.type === "deletion" ? "text-red-300" : "text-zinc-400"}`}
-                  >
-                    {row.left?.content ?? ""}
-                  </span>
-                </div>
-
-                {/* Right side (new) */}
-                <div
-                  className={`flex w-1/2 leading-5 ${getSplitLineBg(row.right?.type ?? null, "new")}`}
-                >
-                  <span className="w-10 shrink-0 select-none pr-2 text-right text-zinc-700">
-                    {row.right?.newLineNum ?? ""}
-                  </span>
-                  <span
-                    className={`w-4 shrink-0 select-none text-center ${row.right?.type === "addition" ? "text-green-500" : "text-zinc-700"}`}
-                  >
-                    {row.right?.type === "addition" ? "+" : " "}
-                  </span>
-                  <span
-                    className={`min-w-0 whitespace-pre-wrap break-all pl-1 ${row.right?.type === "addition" ? "text-green-300" : "text-zinc-400"}`}
-                  >
-                    {row.right?.content ?? ""}
-                  </span>
-                </div>
-              </div>
+                left={row.left}
+                right={row.right}
+              />
             ))}
 
             {isCollapsed && (

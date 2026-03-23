@@ -308,52 +308,17 @@ export class ProceduralLayer {
       const allSteps = record.steps as string[];
       const { steps, metadata } = this.separateMetadata(allSteps);
 
-      // Calculate relevance score
-      let relevance = 0;
-
-      // Match against procedure name
-      const nameLower = record.procedureName.toLowerCase();
-      for (const word of taskWords) {
-        if (nameLower.includes(word)) {
-          relevance += 0.3;
-        }
-      }
-
-      // Match against description
-      if (metadata?.description) {
-        const descLower = metadata.description.toLowerCase();
-        for (const word of taskWords) {
-          if (descLower.includes(word)) {
-            relevance += 0.2;
-          }
-        }
-      }
-
-      // Match against task patterns
-      if (metadata?.taskPatterns) {
-        for (const pattern of metadata.taskPatterns) {
-          const patternLower = pattern.toLowerCase();
-          for (const word of taskWords) {
-            if (patternLower.includes(word)) {
-              relevance += 0.4;
-            }
-          }
-
-          // Exact or near-exact pattern match gets a big boost
-          if (this.calculateSimilarity(patternLower, taskLower) > 0.6) {
-            relevance += 1.0;
-          }
-        }
-      }
-
+      const relevance = this.scoreProcedureRelevance(
+        record.procedureName,
+        metadata,
+        taskWords,
+        taskLower
+      );
       if (relevance <= 0) {
         continue;
       }
 
-      // Calculate effectiveness with decay
       const effectiveness = this.calculateEffectiveness(metadata, now);
-
-      // Scale relevance by effectiveness
       const finalRelevance = relevance * (0.5 + 0.5 * effectiveness);
 
       scored.push({
@@ -375,10 +340,62 @@ export class ProceduralLayer {
       });
     }
 
-    // Sort by relevance score, descending
     scored.sort((a, b) => b.relevanceScore - a.relevanceScore);
-
     return scored.slice(0, limit);
+  }
+
+  private scoreProcedureRelevance(
+    procedureName: string,
+    metadata: ReturnType<typeof this.separateMetadata>["metadata"],
+    taskWords: string[],
+    taskLower: string
+  ): number {
+    let relevance = 0;
+
+    const nameLower = procedureName.toLowerCase();
+    relevance += this.countWordMatches(taskWords, nameLower) * 0.3;
+
+    if (metadata?.description) {
+      relevance +=
+        this.countWordMatches(taskWords, metadata.description.toLowerCase()) *
+        0.2;
+    }
+
+    if (metadata?.taskPatterns) {
+      relevance += this.scoreTaskPatterns(
+        metadata.taskPatterns,
+        taskWords,
+        taskLower
+      );
+    }
+
+    return relevance;
+  }
+
+  private countWordMatches(words: string[], text: string): number {
+    let count = 0;
+    for (const word of words) {
+      if (text.includes(word)) {
+        count++;
+      }
+    }
+    return count;
+  }
+
+  private scoreTaskPatterns(
+    patterns: string[],
+    taskWords: string[],
+    taskLower: string
+  ): number {
+    let score = 0;
+    for (const pattern of patterns) {
+      const patternLower = pattern.toLowerCase();
+      score += this.countWordMatches(taskWords, patternLower) * 0.4;
+      if (this.calculateSimilarity(patternLower, taskLower) > 0.6) {
+        score += 1.0;
+      }
+    }
+    return score;
   }
 
   /**

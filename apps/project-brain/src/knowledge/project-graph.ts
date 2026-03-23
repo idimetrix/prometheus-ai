@@ -147,85 +147,42 @@ export class ProjectGraph {
       )
       .limit(200);
 
+    const edgeTypeToUsageType: Record<string, string> = {
+      imports: "import",
+      calls: "call",
+      extends: "extends",
+      implements: "implements",
+      uses_type: "uses_type",
+    };
+
     for (const edge of edges) {
-      // For import edges, the source file imports the symbol
-      if (
-        edge.edgeType === "imports" &&
-        symbolNodeIds.includes(edge.targetId)
-      ) {
-        const sourceNode = await db
-          .select()
-          .from(graphNodes)
-          .where(eq(graphNodes.id, edge.sourceId))
-          .limit(1);
-
-        if (sourceNode.length > 0 && sourceNode[0]) {
-          const metadata = (edge.metadata ?? {}) as Record<string, unknown>;
-          usages.push({
-            filePath: sourceNode[0].filePath,
-            nodeId: edge.sourceId,
-            usageType: "import",
-            specifiers: (metadata.specifiers as string[]) ?? [],
-          });
-        }
+      const usageType = edgeTypeToUsageType[edge.edgeType];
+      if (!(usageType && symbolNodeIds.includes(edge.targetId))) {
+        continue;
       }
 
-      // For call edges
-      if (edge.edgeType === "calls" && symbolNodeIds.includes(edge.targetId)) {
-        const sourceNode = await db
-          .select()
-          .from(graphNodes)
-          .where(eq(graphNodes.id, edge.sourceId))
-          .limit(1);
+      const sourceNode = await db
+        .select()
+        .from(graphNodes)
+        .where(eq(graphNodes.id, edge.sourceId))
+        .limit(1);
 
-        if (sourceNode.length > 0 && sourceNode[0]) {
-          usages.push({
-            filePath: sourceNode[0].filePath,
-            nodeId: edge.sourceId,
-            usageType: "call",
-          });
-        }
+      if (sourceNode.length === 0 || !sourceNode[0]) {
+        continue;
       }
 
-      // For extends/implements edges
-      if (
-        (edge.edgeType === "extends" || edge.edgeType === "implements") &&
-        symbolNodeIds.includes(edge.targetId)
-      ) {
-        const sourceNode = await db
-          .select()
-          .from(graphNodes)
-          .where(eq(graphNodes.id, edge.sourceId))
-          .limit(1);
+      const usage: SymbolUsage = {
+        filePath: sourceNode[0].filePath,
+        nodeId: edge.sourceId,
+        usageType: usageType as SymbolUsage["usageType"],
+      };
 
-        if (sourceNode.length > 0 && sourceNode[0]) {
-          usages.push({
-            filePath: sourceNode[0].filePath,
-            nodeId: edge.sourceId,
-            usageType: edge.edgeType as "extends" | "implements",
-          });
-        }
+      if (edge.edgeType === "imports") {
+        const metadata = (edge.metadata ?? {}) as Record<string, unknown>;
+        usage.specifiers = (metadata.specifiers as string[]) ?? [];
       }
 
-      // For uses_type edges
-      if (
-        edge.edgeType === "uses_type" &&
-        symbolNodeIds.includes(edge.targetId)
-      ) {
-        const sourceNode = await db
-          .select()
-          .from(graphNodes)
-          .where(eq(graphNodes.id, edge.sourceId))
-          .limit(1);
-
-        if (sourceNode.length > 0 && sourceNode[0]) {
-          usages.push({
-            filePath: sourceNode[0].filePath,
-            nodeId: edge.sourceId,
-            usageType: "uses_type",
-          });
-        }
-      }
+      usages.push(usage);
     }
 
     logger.debug(

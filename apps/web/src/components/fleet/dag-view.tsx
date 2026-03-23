@@ -87,11 +87,10 @@ interface LayoutEdge {
   to: string;
 }
 
-function computeLayout(
-  nodes: TaskNode[],
-  progress: Record<string, TaskStatus>
-): { edges: LayoutEdge[]; layoutNodes: LayoutNode[] } {
-  const nodeMap = new Map(nodes.map((n) => [n.id, n]));
+function buildDependencyGraph(nodes: TaskNode[]): {
+  inDegree: Map<string, number>;
+  children: Map<string, string[]>;
+} {
   const inDegree = new Map<string, number>();
   const children = new Map<string, string[]>();
 
@@ -107,6 +106,13 @@ function computeLayout(
     }
   }
 
+  return { inDegree, children };
+}
+
+function assignLayers(
+  inDegree: Map<string, number>,
+  children: Map<string, string[]>
+): Map<string, number> {
   const layers = new Map<string, number>();
   const queue: string[] = [];
   for (const [id, deg] of inDegree) {
@@ -122,8 +128,7 @@ function computeLayout(
     idx++;
     const currentLayer = layers.get(current) ?? 0;
     for (const child of children.get(current) ?? []) {
-      const existingLayer = layers.get(child) ?? 0;
-      layers.set(child, Math.max(existingLayer, currentLayer + 1));
+      layers.set(child, Math.max(layers.get(child) ?? 0, currentLayer + 1));
       const deg = (inDegree.get(child) ?? 1) - 1;
       inDegree.set(child, deg);
       if (deg === 0) {
@@ -131,6 +136,17 @@ function computeLayout(
       }
     }
   }
+
+  return layers;
+}
+
+function computeLayout(
+  nodes: TaskNode[],
+  progress: Record<string, TaskStatus>
+): { edges: LayoutEdge[]; layoutNodes: LayoutNode[] } {
+  const nodeMap = new Map(nodes.map((n) => [n.id, n]));
+  const { inDegree, children } = buildDependencyGraph(nodes);
+  const layers = assignLayers(inDegree, children);
 
   const layerGroups = new Map<number, string[]>();
   for (const [id, layer] of layers) {
@@ -219,12 +235,18 @@ function Minimap({
 
   return (
     <div className="absolute right-2 bottom-2 overflow-hidden rounded border border-zinc-800 bg-zinc-900/90 shadow-lg">
-      {/* biome-ignore lint/a11y/useKeyWithClickEvents: minimap uses click-only navigation */}
-      {/* biome-ignore lint/a11y/noNoninteractiveElementInteractions: minimap SVG interactive */}
       <svg
+        aria-label="Pipeline minimap"
         className="cursor-crosshair"
         height={minimapH}
         onClick={handleClick}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+          }
+        }}
+        role="application"
+        tabIndex={0}
         viewBox={vb}
         width={minimapW}
       >
@@ -454,13 +476,18 @@ export function DAGView({ plan, progress, onNodeClick }: DAGViewProps) {
   }
 
   return (
-    // biome-ignore lint/a11y/noStaticElementInteractions: DAG canvas requires mouse interactions
-    // biome-ignore lint/a11y/noNoninteractiveElementInteractions: DAG canvas interactive
     <div
       className={containerCls}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+        }
+      }}
       onMouseDown={handleMouseDown}
       onWheel={handleWheel}
       ref={containerRef}
+      role="application"
+      tabIndex={0}
     >
       <div className="absolute top-2 left-2 z-10 flex flex-col gap-1">
         <button
@@ -569,7 +596,6 @@ export function DAGView({ plan, progress, onNodeClick }: DAGViewProps) {
             const isFocused = focusedNodeId === node.id;
 
             return (
-              // biome-ignore lint/a11y/noStaticElementInteractions: SVG group used as interactive node
               <g
                 className="cursor-pointer"
                 data-dag-node="true"
@@ -577,9 +603,11 @@ export function DAGView({ plan, progress, onNodeClick }: DAGViewProps) {
                 onClick={() => handleNodeClick(node.id)}
                 onKeyDown={(e) => {
                   if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
                     handleNodeClick(node.id);
                   }
                 }}
+                role="button"
                 tabIndex={0}
               >
                 {isFocused && (

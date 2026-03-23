@@ -200,14 +200,13 @@ export function PlanReview({
                       </button>
                     </div>
                   ) : (
-                    // biome-ignore lint/a11y/noStaticElementInteractions: double-click to edit
-                    // biome-ignore lint/a11y/noNoninteractiveElementInteractions: double-click to edit
-                    <div
+                    <button
                       className="cursor-pointer font-medium text-xs text-zinc-300"
-                      onDoubleClick={() => startEdit(step)}
+                      onClick={() => startEdit(step)}
+                      type="button"
                     >
                       {i + 1}. {step.title}
-                    </div>
+                    </button>
                   )}
                   {step.description && !isEditing && (
                     <p className="mt-0.5 text-[10px] text-zinc-600">

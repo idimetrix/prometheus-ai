@@ -108,118 +108,151 @@ export class HttpClient {
     return this.request<T>(path, { ...options, method: "DELETE" });
   }
 
+  private checkCircuitBreaker(): void {
+    if (this.circuitState !== "open") {
+      return;
+    }
+    const elapsed = Date.now() - this.circuitOpenedAt;
+    if (elapsed < this.config.circuitBreakerResetMs) {
+      throw new HttpClientError(
+        `Circuit breaker is open for ${this.config.baseUrl}. Retry after ${Math.ceil((this.config.circuitBreakerResetMs - elapsed) / 1000)}s.`,
+        0,
+        "CIRCUIT_OPEN"
+      );
+    }
+    this.circuitState = "half-open";
+    logger.info(
+      { baseUrl: this.config.baseUrl },
+      "Circuit breaker half-open, attempting request"
+    );
+  }
+
+  private async handleResponse<T>(
+    response: Response,
+    _method: string,
+    _path: string
+  ): Promise<HttpResponse<T> | null> {
+    if (!(response.ok || (response.status >= 400 && response.status < 500))) {
+      return null;
+    }
+
+    this.onSuccess();
+    const data = await this.parseResponse<T>(response);
+
+    if (!response.ok) {
+      throw new HttpClientError(
+        `HTTP ${response.status}: ${JSON.stringify(data)}`,
+        response.status,
+        "CLIENT_ERROR"
+      );
+    }
+
+    return {
+      data,
+      status: response.status,
+      headers: response.headers,
+      ok: true,
+    };
+  }
+
+  private async retryDelay(
+    url: string,
+    attempt: number,
+    reason: string,
+    detail: unknown
+  ): Promise<void> {
+    const delay = this.config.retryBaseDelay * 2 ** attempt;
+    logger.warn(
+      {
+        url,
+        attempt: attempt + 1,
+        nextRetryMs: delay,
+        ...(typeof detail === "object"
+          ? (detail as Record<string, unknown>)
+          : { error: detail }),
+      },
+      reason
+    );
+    await new Promise((r) => setTimeout(r, delay));
+  }
+
+  private async executeAttempt<T>(
+    url: string,
+    method: string,
+    path: string,
+    options: RequestOptions,
+    timeout: number
+  ): Promise<{ result: HttpResponse<T> | null; error: Error | null }> {
+    try {
+      const response = await fetch(url, {
+        method,
+        headers: {
+          ...this.config.defaultHeaders,
+          ...getCorrelationHeaders(),
+          ...getTraceHeaders(),
+          ...options.headers,
+        },
+        body: options.body == null ? undefined : JSON.stringify(options.body),
+        signal: AbortSignal.timeout(timeout),
+      });
+
+      const result = await this.handleResponse<T>(response, method, path);
+      if (result) {
+        return { result, error: null };
+      }
+
+      return {
+        result: null,
+        error: new HttpClientError(
+          `HTTP ${response.status} from ${method} ${path}`,
+          response.status,
+          "SERVER_ERROR"
+        ),
+      };
+    } catch (error) {
+      if (error instanceof HttpClientError && error.code === "CLIENT_ERROR") {
+        throw error;
+      }
+      return {
+        result: null,
+        error: error instanceof Error ? error : new Error(String(error)),
+      };
+    }
+  }
+
   private async request<T>(
     path: string,
     options: RequestOptions = {}
   ): Promise<HttpResponse<T>> {
-    // Circuit breaker check
-    if (this.circuitState === "open") {
-      const elapsed = Date.now() - this.circuitOpenedAt;
-      if (elapsed < this.config.circuitBreakerResetMs) {
-        throw new HttpClientError(
-          `Circuit breaker is open for ${this.config.baseUrl}. Retry after ${Math.ceil((this.config.circuitBreakerResetMs - elapsed) / 1000)}s.`,
-          0,
-          "CIRCUIT_OPEN"
-        );
-      }
-      // Transition to half-open
-      this.circuitState = "half-open";
-      logger.info(
-        { baseUrl: this.config.baseUrl },
-        "Circuit breaker half-open, attempting request"
-      );
-    }
+    this.checkCircuitBreaker();
 
     const method = options.method ?? "GET";
     const url = `${this.config.baseUrl}${path}`;
     const timeout = options.timeout ?? this.config.timeout;
     const maxRetries = options.skipRetry ? 0 : this.config.maxRetries;
-
     let lastError: Error | null = null;
 
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
-      try {
-        const response = await fetch(url, {
-          method,
-          headers: {
-            ...this.config.defaultHeaders,
-            ...getCorrelationHeaders(),
-            ...getTraceHeaders(),
-            ...options.headers,
-          },
-          body: options.body == null ? undefined : JSON.stringify(options.body),
-          signal: AbortSignal.timeout(timeout),
-        });
-
-        if (response.ok || (response.status >= 400 && response.status < 500)) {
-          // Success or client error (don't retry 4xx)
-          this.onSuccess();
-
-          const data = await this.parseResponse<T>(response);
-
-          if (!response.ok) {
-            throw new HttpClientError(
-              `HTTP ${response.status}: ${JSON.stringify(data)}`,
-              response.status,
-              "CLIENT_ERROR"
-            );
-          }
-
-          return {
-            data,
-            status: response.status,
-            headers: response.headers,
-            ok: true,
-          };
-        }
-
-        // 5xx: retry
-        lastError = new HttpClientError(
-          `HTTP ${response.status} from ${method} ${path}`,
-          response.status,
-          "SERVER_ERROR"
-        );
-
-        if (attempt < maxRetries) {
-          const delay = this.config.retryBaseDelay * 2 ** attempt;
-          logger.warn(
-            {
-              url,
-              status: response.status,
-              attempt: attempt + 1,
-              nextRetryMs: delay,
-            },
-            "Request failed, retrying"
-          );
-          await new Promise((r) => setTimeout(r, delay));
-        }
-      } catch (error) {
-        if (error instanceof HttpClientError) {
-          if (error.code === "CLIENT_ERROR") {
-            throw error;
-          }
-          lastError = error;
-        } else {
-          lastError = error instanceof Error ? error : new Error(String(error));
-        }
-
-        if (attempt < maxRetries) {
-          const delay = this.config.retryBaseDelay * 2 ** attempt;
-          logger.warn(
-            {
-              url,
-              error: lastError.message,
-              attempt: attempt + 1,
-              nextRetryMs: delay,
-            },
-            "Request error, retrying"
-          );
-          await new Promise((r) => setTimeout(r, delay));
-        }
+      const { result, error } = await this.executeAttempt<T>(
+        url,
+        method,
+        path,
+        options,
+        timeout
+      );
+      if (result) {
+        return result;
+      }
+      lastError = error;
+      if (attempt < maxRetries && lastError) {
+        const detail =
+          lastError instanceof HttpClientError
+            ? { status: lastError.status }
+            : lastError.message;
+        await this.retryDelay(url, attempt, "Request failed, retrying", detail);
       }
     }
 
-    // All retries exhausted
     this.onFailure();
     throw lastError ?? new Error(`Request failed: ${method} ${path}`);
   }

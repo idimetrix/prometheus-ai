@@ -13,7 +13,6 @@ interface TerminalOutputProps {
 function parseAnsi(text: string): Array<{ text: string; className: string }> {
   const segments: Array<{ text: string; className: string }> = [];
   // Match ANSI escape sequences
-  // biome-ignore lint/suspicious/noControlCharactersInRegex: intentional ANSI escape sequence matching
   const ansiRegex = /\x1b\[([0-9;]*)m/g;
 
   let lastIndex = 0;

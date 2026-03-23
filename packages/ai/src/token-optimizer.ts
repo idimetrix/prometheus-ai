@@ -65,11 +65,9 @@ export class TokenOptimizer {
     // Fast string hash (FNV-1a inspired, JS-safe 32-bit)
     let hash = 0x81_1c_9d_c5;
     for (let i = 0; i < systemPrompt.length; i++) {
-      // biome-ignore lint/suspicious/noBitwiseOperators: FNV-1a hash requires XOR
       hash ^= systemPrompt.charCodeAt(i);
       hash = Math.imul(hash, 0x01_00_01_93);
     }
-    // biome-ignore lint/suspicious/noBitwiseOperators: unsigned right shift for positive 32-bit
     const key = `prompt_${(hash >>> 0).toString(36)}`;
 
     // Store in local cache for lookup
@@ -175,11 +173,90 @@ export class TokenOptimizer {
    * @param maxTokens - Target token budget to compress into
    * @returns Compressed message array fitting within the budget
    */
-  compressContext(messages: Message[], maxTokens: number): Message[] {
-    const currentTokens = estimateMessageTokens(
-      messages.map((m) => ({ role: m.role, content: m.content }))
+  private estimateResultTokens(result: Message[]): number {
+    return estimateMessageTokens(
+      result.map((m) => ({ role: m.role, content: m.content }))
     );
+  }
 
+  private truncateToolMessages(result: Message[]): void {
+    const toolMessageBudget = 200;
+    for (let i = 0; i < result.length; i++) {
+      const msg = result[i] as Message;
+      if (msg.role === "tool" && msg.content.length > toolMessageBudget) {
+        result[i] = {
+          ...msg,
+          content: `${msg.content.slice(0, toolMessageBudget)}\n... [tool output truncated, ${estimateTokens(msg.content)} tokens original]`,
+        };
+      }
+    }
+  }
+
+  private summarizeOlderAssistantMessages(
+    result: Message[],
+    preserveRecent: number
+  ): void {
+    let assistantCount = 0;
+    for (let i = result.length - 1; i >= 0; i--) {
+      if ((result[i] as Message).role === "assistant") {
+        assistantCount++;
+      }
+    }
+
+    if (assistantCount <= preserveRecent) {
+      return;
+    }
+
+    let seen = 0;
+    for (let i = result.length - 1; i >= 0; i--) {
+      const msg = result[i] as Message;
+      if (msg.role === "assistant") {
+        seen++;
+        if (seen > preserveRecent && msg.content.length > 300) {
+          result[i] = {
+            ...msg,
+            content: `[Earlier assistant response summarized: ${msg.content.slice(0, 150)}...]`,
+          };
+        }
+      }
+    }
+  }
+
+  private truncateLongestMessages(result: Message[], maxTokens: number): void {
+    const firstSystemIdx = result.findIndex((m) => m.role === "system");
+    let lastUserIdx = -1;
+    for (let i = result.length - 1; i >= 0; i--) {
+      if ((result[i] as Message).role === "user") {
+        lastUserIdx = i;
+        break;
+      }
+    }
+
+    const truncateCandidates = result
+      .map((m, idx) => ({ idx, length: m.content.length }))
+      .filter(
+        (entry) => entry.idx !== firstSystemIdx && entry.idx !== lastUserIdx
+      )
+      .sort((a, b) => b.length - a.length);
+
+    for (const candidate of truncateCandidates) {
+      if (this.estimateResultTokens(result) <= maxTokens) {
+        break;
+      }
+
+      const msg = result[candidate.idx] as Message;
+      const msgTokens = estimateTokens(msg.content);
+      const targetTokens = Math.min(
+        msgTokens,
+        Math.ceil(maxTokens / result.length)
+      );
+      const truncated = truncateToTokens(msg.content, targetTokens);
+      result[candidate.idx] = { ...msg, content: truncated };
+    }
+  }
+
+  compressContext(messages: Message[], maxTokens: number): Message[] {
+    const currentTokens = this.estimateResultTokens(messages);
     if (currentTokens <= maxTokens) {
       return messages;
     }
@@ -191,96 +268,19 @@ export class TokenOptimizer {
 
     const result = [...messages];
 
-    // Phase 1: Truncate tool result messages (keep first 200 chars + summary)
-    const toolMessageBudget = 200;
-    for (let i = 0; i < result.length; i++) {
-      const msg = result[i] as Message;
-      if (msg.role === "tool" && msg.content.length > toolMessageBudget) {
-        result[i] = {
-          ...msg,
-          content: `${msg.content.slice(0, toolMessageBudget)}\n... [tool output truncated, ${estimateTokens(msg.content)} tokens original]`,
-        };
-      }
-    }
-
-    let compressed = estimateMessageTokens(
-      result.map((m) => ({ role: m.role, content: m.content }))
-    );
-    if (compressed <= maxTokens) {
+    this.truncateToolMessages(result);
+    if (this.estimateResultTokens(result) <= maxTokens) {
       return result;
     }
 
-    // Phase 2: Summarize older assistant messages (preserve last 4)
-    const preserveRecent = 4;
-    let assistantCount = 0;
-    for (let i = result.length - 1; i >= 0; i--) {
-      if ((result[i] as Message).role === "assistant") {
-        assistantCount++;
-      }
-    }
-
-    if (assistantCount > preserveRecent) {
-      let seen = 0;
-      for (let i = result.length - 1; i >= 0; i--) {
-        const msg = result[i] as Message;
-        if (msg.role === "assistant") {
-          seen++;
-          if (seen > preserveRecent && msg.content.length > 300) {
-            result[i] = {
-              ...msg,
-              content: `[Earlier assistant response summarized: ${msg.content.slice(0, 150)}...]`,
-            };
-          }
-        }
-      }
-    }
-
-    compressed = estimateMessageTokens(
-      result.map((m) => ({ role: m.role, content: m.content }))
-    );
-    if (compressed <= maxTokens) {
+    this.summarizeOlderAssistantMessages(result, 4);
+    if (this.estimateResultTokens(result) <= maxTokens) {
       return result;
     }
 
-    // Phase 3: Truncate the longest messages (skip first system and last user)
-    const firstSystemIdx = result.findIndex((m) => m.role === "system");
-    let lastUserIdx = -1;
-    for (let i = result.length - 1; i >= 0; i--) {
-      if ((result[i] as Message).role === "user") {
-        lastUserIdx = i;
-        break;
-      }
-    }
+    this.truncateLongestMessages(result, maxTokens);
 
-    // Sort indices by content length (longest first), excluding protected messages
-    const truncateCandidates = result
-      .map((m, idx) => ({ idx, length: m.content.length }))
-      .filter(
-        (entry) => entry.idx !== firstSystemIdx && entry.idx !== lastUserIdx
-      )
-      .sort((a, b) => b.length - a.length);
-
-    for (const candidate of truncateCandidates) {
-      if (compressed <= maxTokens) {
-        break;
-      }
-
-      const msg = result[candidate.idx] as Message;
-      const msgTokens = estimateTokens(msg.content);
-      // Allow at most half the per-message budget
-      const targetTokens = Math.min(
-        msgTokens,
-        Math.ceil(maxTokens / result.length)
-      );
-      const truncated = truncateToTokens(msg.content, targetTokens);
-
-      result[candidate.idx] = { ...msg, content: truncated };
-
-      compressed = estimateMessageTokens(
-        result.map((m) => ({ role: m.role, content: m.content }))
-      );
-    }
-
+    const compressed = this.estimateResultTokens(result);
     logger.info(
       {
         originalTokens: currentTokens,
@@ -321,9 +321,63 @@ export class TokenOptimizer {
    * @param maxTokens - Maximum token budget for the entire message array
    * @returns Message array that fits within the budget
    */
+  private findProtectedIndices(result: Message[]): Set<number> {
+    const systemIdx = result.findIndex((m) => m.role === "system");
+    const recentUserIndices = this.findRecentIndicesByRole(result, "user", 3);
+    const recentToolIndices = this.findRecentIndicesByRole(result, "tool", 2);
+
+    return new Set([
+      ...(systemIdx >= 0 ? [systemIdx] : []),
+      ...recentUserIndices,
+      ...recentToolIndices,
+    ]);
+  }
+
+  private findRecentIndicesByRole(
+    result: Message[],
+    role: string,
+    count: number
+  ): number[] {
+    const indices: number[] = [];
+    for (let i = result.length - 1; i >= 0; i--) {
+      if ((result[i] as Message).role === role) {
+        indices.push(i);
+        if (indices.length >= count) {
+          break;
+        }
+      }
+    }
+    return indices;
+  }
+
+  private truncateByRole(
+    result: Message[],
+    maxTokens: number,
+    protectedIndices: Set<number>,
+    role: string,
+    maxLength: number,
+    sliceLength: number
+  ): void {
+    for (let i = 0; i < result.length; i++) {
+      if (this.predictTokenBudget(result) <= maxTokens) {
+        break;
+      }
+      const msg = result[i] as Message;
+      if (
+        msg.role === role &&
+        !protectedIndices.has(i) &&
+        msg.content.length > maxLength
+      ) {
+        result[i] = {
+          ...msg,
+          content: `${msg.content.slice(0, sliceLength)}\n... [truncated]`,
+        };
+      }
+    }
+  }
+
   fitToBudget(messages: Message[], maxTokens: number): Message[] {
     const currentTokens = this.predictTokenBudget(messages);
-
     if (currentTokens <= maxTokens) {
       return messages;
     }
@@ -334,78 +388,23 @@ export class TokenOptimizer {
     );
 
     const result = [...messages];
-
-    // Identify protected indices: first system message and recent user messages
-    const systemIdx = result.findIndex((m) => m.role === "system");
-
-    // Find the last 3 user message indices (high priority to keep)
-    const recentUserIndices: number[] = [];
-    for (let i = result.length - 1; i >= 0; i--) {
-      if ((result[i] as Message).role === "user") {
-        recentUserIndices.push(i);
-        if (recentUserIndices.length >= 3) {
-          break;
-        }
-      }
-    }
-
-    // Find recent tool result indices (keep last 2)
-    const recentToolIndices: number[] = [];
-    for (let i = result.length - 1; i >= 0; i--) {
-      if ((result[i] as Message).role === "tool") {
-        recentToolIndices.push(i);
-        if (recentToolIndices.length >= 2) {
-          break;
-        }
-      }
-    }
-
-    const protectedIndices = new Set([
-      ...(systemIdx >= 0 ? [systemIdx] : []),
-      ...recentUserIndices,
-      ...recentToolIndices,
-    ]);
+    const protectedIndices = this.findProtectedIndices(result);
 
     // Phase 1: Truncate older tool results aggressively
-    for (let i = 0; i < result.length; i++) {
-      if (this.predictTokenBudget(result) <= maxTokens) {
-        break;
-      }
-      const msg = result[i] as Message;
-      if (
-        msg.role === "tool" &&
-        !protectedIndices.has(i) &&
-        msg.content.length > 100
-      ) {
-        result[i] = {
-          ...msg,
-          content: `${msg.content.slice(0, 100)}\n... [truncated]`,
-        };
-      }
-    }
-
+    this.truncateByRole(result, maxTokens, protectedIndices, "tool", 100, 100);
     if (this.predictTokenBudget(result) <= maxTokens) {
       return result;
     }
 
     // Phase 2: Progressively truncate older assistant messages
-    for (let i = 0; i < result.length; i++) {
-      if (this.predictTokenBudget(result) <= maxTokens) {
-        break;
-      }
-      const msg = result[i] as Message;
-      if (
-        msg.role === "assistant" &&
-        !protectedIndices.has(i) &&
-        msg.content.length > 200
-      ) {
-        result[i] = {
-          ...msg,
-          content: `${msg.content.slice(0, 150)}\n... [truncated]`,
-        };
-      }
-    }
-
+    this.truncateByRole(
+      result,
+      maxTokens,
+      protectedIndices,
+      "assistant",
+      200,
+      150
+    );
     if (this.predictTokenBudget(result) <= maxTokens) {
       return result;
     }
@@ -421,7 +420,6 @@ export class TokenOptimizer {
       }
     }
 
-    // Remove from the end to preserve indices
     const filtered = result.filter((_, idx) => !toRemove.includes(idx));
 
     logger.info(

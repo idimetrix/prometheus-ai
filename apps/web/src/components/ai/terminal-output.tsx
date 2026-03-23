@@ -54,7 +54,6 @@ const ANSI_COLOR_MAP: Record<string, string> = {
 
 function parseAnsi(text: string): AnsiSpan[] {
   const spans: AnsiSpan[] = [];
-  // biome-ignore lint/suspicious/noControlCharactersInRegex: ANSI escape sequences use control characters by design
   const regex = /\x1b\[(\d+)m/g;
   let lastIndex = 0;
   let currentColor = "";
@@ -171,9 +170,11 @@ export function TerminalOutput({
                 {new Date(line.timestamp).toLocaleTimeString()}
               </span>
             )}
-            {parseAnsi(line.text).map((span, i) => (
-              // biome-ignore lint/suspicious/noArrayIndexKey: ANSI spans lack unique identifiers
-              <span className={span.className} key={`${line.id}-${i}`}>
+            {parseAnsi(line.text).map((span) => (
+              <span
+                className={span.className}
+                key={`${line.id}-${span.text.slice(0, 20)}-${span.className ?? ""}`}
+              >
                 {span.text}
               </span>
             ))}

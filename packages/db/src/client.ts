@@ -1,6 +1,5 @@
 import { drizzle } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
-// biome-ignore lint/performance/noNamespaceImport: Drizzle ORM requires namespace import for schema
 import * as schema from "./schema";
 
 // Prefer PGBOUNCER_URL for pooled connections (transaction mode),

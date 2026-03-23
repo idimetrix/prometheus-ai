@@ -167,65 +167,64 @@ export class ContextPrefetcher {
     }
     const result: PrefetchedPriorityContent = {};
     let hasContent = false;
+    const assembler = this.contextAssembler;
+
+    const fetchers: Array<{
+      enabled: boolean;
+      available: boolean;
+      fetch: () => Promise<unknown> | undefined;
+      assign: (value: unknown) => void;
+    }> = [
+      {
+        enabled: priorityConfig.includeStackTraces,
+        available: !!assembler.getStackTraces,
+        fetch: () => assembler.getStackTraces?.(projectId, taskDescription),
+        assign: (v) => {
+          result.stackTraces = v as typeof result.stackTraces;
+        },
+      },
+      {
+        enabled: priorityConfig.includeConventions,
+        available: !!assembler.getConventions,
+        fetch: () => assembler.getConventions?.(projectId),
+        assign: (v) => {
+          result.conventions = v as typeof result.conventions;
+        },
+      },
+      {
+        enabled: priorityConfig.includeDependencyGraph,
+        available: !!assembler.getDependencyGraph,
+        fetch: () => assembler.getDependencyGraph?.(projectId, taskDescription),
+        assign: (v) => {
+          result.dependencyGraph = v as typeof result.dependencyGraph;
+        },
+      },
+      {
+        enabled: priorityConfig.includeErrorLogs,
+        available: !!assembler.getErrorLogs,
+        fetch: () => assembler.getErrorLogs?.(projectId),
+        assign: (v) => {
+          result.errorLogs = v as typeof result.errorLogs;
+        },
+      },
+      {
+        enabled: priorityConfig.includeTestContext,
+        available: !!assembler.getRelatedTests,
+        fetch: () => assembler.getRelatedTests?.(projectId, taskDescription),
+        assign: (v) => {
+          result.testFiles = v as typeof result.testFiles;
+        },
+      },
+    ];
 
     try {
-      if (
-        priorityConfig.includeStackTraces &&
-        this.contextAssembler.getStackTraces
-      ) {
-        const traces = await this.contextAssembler.getStackTraces(
-          projectId,
-          taskDescription
-        );
-        if (traces) {
-          result.stackTraces = traces;
-          hasContent = true;
+      for (const fetcher of fetchers) {
+        if (!(fetcher.enabled && fetcher.available)) {
+          continue;
         }
-      }
-      if (
-        priorityConfig.includeConventions &&
-        this.contextAssembler.getConventions
-      ) {
-        const conventions =
-          await this.contextAssembler.getConventions(projectId);
-        if (conventions) {
-          result.conventions = conventions;
-          hasContent = true;
-        }
-      }
-      if (
-        priorityConfig.includeDependencyGraph &&
-        this.contextAssembler.getDependencyGraph
-      ) {
-        const graph = await this.contextAssembler.getDependencyGraph(
-          projectId,
-          taskDescription
-        );
-        if (graph) {
-          result.dependencyGraph = graph;
-          hasContent = true;
-        }
-      }
-      if (
-        priorityConfig.includeErrorLogs &&
-        this.contextAssembler.getErrorLogs
-      ) {
-        const logs = await this.contextAssembler.getErrorLogs(projectId);
-        if (logs) {
-          result.errorLogs = logs;
-          hasContent = true;
-        }
-      }
-      if (
-        priorityConfig.includeTestContext &&
-        this.contextAssembler.getRelatedTests
-      ) {
-        const tests = await this.contextAssembler.getRelatedTests(
-          projectId,
-          taskDescription
-        );
-        if (tests) {
-          result.testFiles = tests;
+        const value = await fetcher.fetch();
+        if (value) {
+          fetcher.assign(value);
           hasContent = true;
         }
       }

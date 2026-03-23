@@ -220,28 +220,7 @@ export class CallGraph {
     let frontier = new Set(directCallers.map((n) => n.id));
 
     while (frontier.size > 0 && currentDepth < maxDepth) {
-      const nextFrontier = new Set<string>();
-      for (const callerId of frontier) {
-        if (visited.has(callerId)) {
-          continue;
-        }
-        visited.add(callerId);
-
-        const node = this.nodes.get(callerId);
-        if (node) {
-          transitiveCallers.push(node);
-        }
-
-        const upstreamCallers = this.callers.get(callerId);
-        if (upstreamCallers) {
-          for (const id of upstreamCallers) {
-            if (!visited.has(id)) {
-              nextFrontier.add(id);
-            }
-          }
-        }
-      }
-      frontier = nextFrontier;
+      frontier = this.expandFrontier(frontier, visited, transitiveCallers);
       currentDepth++;
     }
 
@@ -256,6 +235,44 @@ export class CallGraph {
       affectedFiles,
       maxDepth: currentDepth,
     };
+  }
+
+  private expandFrontier(
+    frontier: Set<string>,
+    visited: Set<string>,
+    transitiveCallers: CallGraphNode[]
+  ): Set<string> {
+    const nextFrontier = new Set<string>();
+    for (const callerId of frontier) {
+      if (visited.has(callerId)) {
+        continue;
+      }
+      visited.add(callerId);
+
+      const node = this.nodes.get(callerId);
+      if (node) {
+        transitiveCallers.push(node);
+      }
+
+      this.collectUpstreamCallers(callerId, visited, nextFrontier);
+    }
+    return nextFrontier;
+  }
+
+  private collectUpstreamCallers(
+    callerId: string,
+    visited: Set<string>,
+    nextFrontier: Set<string>
+  ): void {
+    const upstreamCallers = this.callers.get(callerId);
+    if (!upstreamCallers) {
+      return;
+    }
+    for (const id of upstreamCallers) {
+      if (!visited.has(id)) {
+        nextFrontier.add(id);
+      }
+    }
   }
 
   /**
@@ -382,96 +399,114 @@ export class CallGraph {
     return defs;
   }
 
-  private extractCalls(
+  private extractCallsFromRegex(
     filePath: string,
     content: string,
-    localDefs: CallGraphNode[]
+    regex: RegExp,
+    localNames: Set<string>,
+    functionRanges: Array<{ id: string; startLine: number; endLine: number }>,
+    callType: "direct" | "constructor" | "method"
   ): CallGraphEdge[] {
     const edges: CallGraphEdge[] = [];
-    const localNames = new Set(localDefs.map((d) => d.name));
 
-    // Find the enclosing function for each call
-    const functionRanges = this.buildFunctionRanges(filePath, content);
+    for (const match of content.matchAll(regex)) {
+      let name: string | undefined;
+      let callee: string;
 
-    // Direct function calls
-    for (const match of content.matchAll(FUNC_CALL_RE)) {
-      const name = match[1];
-      if (!name || BUILTIN_GLOBALS.has(name)) {
-        continue;
-      }
-
-      const callLine = getLineNumber(content, match.index ?? 0);
-      const enclosingFunc = findEnclosing(functionRanges, callLine);
-      const callerId = enclosingFunc ?? `${filePath}:<module>`;
-
-      // If calling a local function
-      if (localNames.has(name)) {
-        edges.push({
-          caller: callerId,
-          callee: `${filePath}:${name}`,
-          callSiteLine: callLine,
-          callType: "direct",
-        });
+      if (callType === "method") {
+        const obj = match[1];
+        const method = match[2];
+        if (!(obj && method) || BUILTIN_GLOBALS.has(obj)) {
+          continue;
+        }
+        name = obj;
+        callee = `*:${obj}.${method}`;
       } else {
-        // Cross-file call — callee will be resolved via node matching
-        edges.push({
-          caller: callerId,
-          callee: `*:${name}`,
-          callSiteLine: callLine,
-          callType: "direct",
-        });
+        name = match[1];
+        if (!name || BUILTIN_GLOBALS.has(name)) {
+          continue;
+        }
+        callee = localNames.has(name) ? `${filePath}:${name}` : `*:${name}`;
       }
-    }
 
-    // Constructor calls
-    for (const match of content.matchAll(NEW_CALL_RE)) {
-      const name = match[1];
-      if (!name || BUILTIN_GLOBALS.has(name)) {
-        continue;
-      }
       const callLine = getLineNumber(content, match.index ?? 0);
       const enclosingFunc = findEnclosing(functionRanges, callLine);
       const callerId = enclosingFunc ?? `${filePath}:<module>`;
 
       edges.push({
         caller: callerId,
-        callee: localNames.has(name) ? `${filePath}:${name}` : `*:${name}`,
+        callee,
         callSiteLine: callLine,
-        callType: "constructor",
-      });
-    }
-
-    // Method calls
-    for (const match of content.matchAll(METHOD_CALL_RE)) {
-      const obj = match[1];
-      const method = match[2];
-      if (!(obj && method) || BUILTIN_GLOBALS.has(obj)) {
-        continue;
-      }
-      const callLine = getLineNumber(content, match.index ?? 0);
-      const enclosingFunc = findEnclosing(functionRanges, callLine);
-      const callerId = enclosingFunc ?? `${filePath}:<module>`;
-
-      edges.push({
-        caller: callerId,
-        callee: `*:${obj}.${method}`,
-        callSiteLine: callLine,
-        callType: "method",
+        callType,
       });
     }
 
     return edges;
   }
 
+  private extractCalls(
+    filePath: string,
+    content: string,
+    localDefs: CallGraphNode[]
+  ): CallGraphEdge[] {
+    const localNames = new Set(localDefs.map((d) => d.name));
+    const functionRanges = this.buildFunctionRanges(filePath, content);
+
+    return [
+      ...this.extractCallsFromRegex(
+        filePath,
+        content,
+        FUNC_CALL_RE,
+        localNames,
+        functionRanges,
+        "direct"
+      ),
+      ...this.extractCallsFromRegex(
+        filePath,
+        content,
+        NEW_CALL_RE,
+        localNames,
+        functionRanges,
+        "constructor"
+      ),
+      ...this.extractCallsFromRegex(
+        filePath,
+        content,
+        METHOD_CALL_RE,
+        localNames,
+        functionRanges,
+        "method"
+      ),
+    ];
+  }
+
+  private findEndLineByBraces(lines: string[], startLine: number): number {
+    let braceCount = 0;
+    let started = false;
+
+    for (let i = startLine - 1; i < lines.length; i++) {
+      const line = lines[i] ?? "";
+      for (const ch of line) {
+        if (ch === "{") {
+          braceCount++;
+          started = true;
+        } else if (ch === "}") {
+          braceCount--;
+        }
+      }
+      if (started && braceCount <= 0) {
+        return i + 1;
+      }
+    }
+    return startLine;
+  }
+
   private buildFunctionRanges(
     filePath: string,
     content: string
   ): Array<{ id: string; startLine: number; endLine: number }> {
-    const ranges: Array<{
-      id: string;
-      startLine: number;
-      endLine: number;
-    }> = [];
+    const ranges: Array<{ id: string; startLine: number; endLine: number }> =
+      [];
     const lines = content.split("\n");
 
     for (const match of content.matchAll(FUNC_DEF_RE)) {
@@ -480,27 +515,7 @@ export class CallGraph {
         continue;
       }
       const startLine = getLineNumber(content, match.index ?? 0);
-      // Estimate end line by counting braces
-      let braceCount = 0;
-      let endLine = startLine;
-      let started = false;
-
-      for (let i = startLine - 1; i < lines.length; i++) {
-        const line = lines[i] ?? "";
-        for (const ch of line) {
-          if (ch === "{") {
-            braceCount++;
-            started = true;
-          } else if (ch === "}") {
-            braceCount--;
-          }
-        }
-        if (started && braceCount <= 0) {
-          endLine = i + 1;
-          break;
-        }
-      }
-
+      const endLine = this.findEndLineByBraces(lines, startLine);
       ranges.push({ id: `${filePath}:${name}`, startLine, endLine });
     }
 

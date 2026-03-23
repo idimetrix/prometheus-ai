@@ -387,65 +387,93 @@ export class ContextAssembler {
     let usedChars = 0;
     const maxChars = budgetTokens * 4;
 
-    if (graphResults.nodes.length > 0) {
-      parts.push("## Knowledge Graph: Related Components");
-      for (const node of graphResults.nodes.slice(0, 15)) {
-        const entry = `- ${node.name} (${node.filePath}) [${node.type}]`;
-        if (usedChars + entry.length > maxChars) {
-          break;
-        }
-        parts.push(entry);
-        usedChars += entry.length;
-      }
-    }
+    usedChars = this.appendNodeEntries(
+      parts,
+      usedChars,
+      maxChars,
+      "## Knowledge Graph: Related Components",
+      graphResults.nodes.slice(0, 15),
+      (node) => `- ${node.name} (${node.filePath}) [${node.type}]`
+    );
 
-    if (graphResults.edges.length > 0) {
-      parts.push("\n### Relationships");
-      for (const edge of graphResults.edges.slice(0, 15)) {
-        const entry = `- ${edge.source} --[${edge.type}]--> ${edge.target}`;
-        if (usedChars + entry.length > maxChars) {
-          break;
-        }
-        parts.push(entry);
-        usedChars += entry.length;
-      }
-    }
+    usedChars = this.appendNodeEntries(
+      parts,
+      usedChars,
+      maxChars,
+      "\n### Relationships",
+      graphResults.edges.slice(0, 15),
+      (edge) => `- ${edge.source} --[${edge.type}]--> ${edge.target}`
+    );
 
-    if (dependencies.length > 0) {
-      parts.push("\n### Dependencies (files these depend on)");
-      const seen = new Set<string>();
-      for (const dep of dependencies.slice(0, 10)) {
-        if (seen.has(dep.filePath)) {
-          continue;
-        }
-        seen.add(dep.filePath);
-        const entry = `- ${dep.name} (${dep.filePath})`;
-        if (usedChars + entry.length > maxChars) {
-          break;
-        }
-        parts.push(entry);
-        usedChars += entry.length;
-      }
-    }
+    usedChars = this.appendDeduplicatedNodes(
+      parts,
+      usedChars,
+      maxChars,
+      "\n### Dependencies (files these depend on)",
+      dependencies.slice(0, 10)
+    );
 
-    if (dependents.length > 0) {
-      parts.push("\n### Dependents (files that depend on relevant code)");
-      const seen = new Set<string>();
-      for (const dep of dependents.slice(0, 10)) {
-        if (seen.has(dep.filePath)) {
-          continue;
-        }
-        seen.add(dep.filePath);
-        const entry = `- ${dep.name} (${dep.filePath})`;
-        if (usedChars + entry.length > maxChars) {
-          break;
-        }
-        parts.push(entry);
-        usedChars += entry.length;
-      }
-    }
+    this.appendDeduplicatedNodes(
+      parts,
+      usedChars,
+      maxChars,
+      "\n### Dependents (files that depend on relevant code)",
+      dependents.slice(0, 10)
+    );
 
     return parts.join("\n");
+  }
+
+  private appendNodeEntries<T>(
+    parts: string[],
+    usedChars: number,
+    maxChars: number,
+    heading: string,
+    items: T[],
+    formatEntry: (item: T) => string
+  ): number {
+    if (items.length === 0) {
+      return usedChars;
+    }
+    let used = usedChars;
+    parts.push(heading);
+    for (const item of items) {
+      const entry = formatEntry(item);
+      if (used + entry.length > maxChars) {
+        break;
+      }
+      parts.push(entry);
+      used += entry.length;
+    }
+    return used;
+  }
+
+  private appendDeduplicatedNodes(
+    parts: string[],
+    usedChars: number,
+    maxChars: number,
+    heading: string,
+    nodes: GraphNode[]
+  ): number {
+    if (nodes.length === 0) {
+      return usedChars;
+    }
+    let used = usedChars;
+    parts.push(heading);
+    const seen = new Set<string>();
+    for (const dep of nodes) {
+      if (seen.has(dep.filePath)) {
+        continue;
+      }
+      seen.add(dep.filePath);
+      const entry = `- ${dep.name} (${dep.filePath})`;
+      if (used + entry.length > maxChars) {
+        break;
+      }
+      parts.push(entry);
+      used += entry.length;
+    }
+    return used;
   }
 
   private buildEpisodicContext(

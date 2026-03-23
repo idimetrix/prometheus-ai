@@ -260,7 +260,7 @@ describe("Error Recovery and Self-Healing", () => {
       let processAttempts = 0;
 
       // Register a processor that always fails
-      queue.onProcess(async () => {
+      queue.onProcess(() => {
         processAttempts++;
         throw new Error("Transient processing error");
       });

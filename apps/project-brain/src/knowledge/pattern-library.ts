@@ -371,50 +371,65 @@ export class PatternLibrary {
   private async loadOrgPatterns(orgId: string): Promise<CodePattern[]> {
     const patterns = new Map<string, CodePattern>();
 
-    // Load from in-memory store
     for (const [id, pattern] of this.inMemoryStore) {
       if (pattern.orgId === orgId) {
         patterns.set(id, pattern);
       }
     }
 
-    // Load from Redis (may have patterns not in memory)
-    const redis = await this.getRedis();
-    if (redis) {
-      try {
-        const patternIds = await redis.smembers(orgIndexKey(orgId));
-        if (patternIds.length > 0) {
-          const keys = patternIds.map((id) => patternKey(orgId, id));
-          const values = await redis.mget(...keys);
-
-          for (const value of values) {
-            if (value) {
-              try {
-                const pattern = JSON.parse(value) as CodePattern;
-                // Redis is source of truth if not in memory
-                if (!patterns.has(pattern.id)) {
-                  patterns.set(pattern.id, pattern);
-                  // Hydrate in-memory store
-                  this.inMemoryStore.set(pattern.id, pattern);
-                }
-              } catch {
-                // Skip malformed entries
-              }
-            }
-          }
-        }
-      } catch (error) {
-        logger.warn(
-          {
-            orgId,
-            error: error instanceof Error ? error.message : String(error),
-          },
-          "Failed to load patterns from Redis"
-        );
-      }
-    }
+    await this.hydrateFromRedis(orgId, patterns);
 
     return Array.from(patterns.values());
+  }
+
+  private async hydrateFromRedis(
+    orgId: string,
+    patterns: Map<string, CodePattern>
+  ): Promise<void> {
+    const redis = await this.getRedis();
+    if (!redis) {
+      return;
+    }
+
+    try {
+      const patternIds = await redis.smembers(orgIndexKey(orgId));
+      if (patternIds.length === 0) {
+        return;
+      }
+
+      const keys = patternIds.map((id) => patternKey(orgId, id));
+      const values = await redis.mget(...keys);
+
+      for (const value of values) {
+        this.hydratePatternFromValue(value, patterns);
+      }
+    } catch (error) {
+      logger.warn(
+        {
+          orgId,
+          error: error instanceof Error ? error.message : String(error),
+        },
+        "Failed to load patterns from Redis"
+      );
+    }
+  }
+
+  private hydratePatternFromValue(
+    value: string | null,
+    patterns: Map<string, CodePattern>
+  ): void {
+    if (!value) {
+      return;
+    }
+    try {
+      const pattern = JSON.parse(value) as CodePattern;
+      if (!patterns.has(pattern.id)) {
+        patterns.set(pattern.id, pattern);
+        this.inMemoryStore.set(pattern.id, pattern);
+      }
+    } catch {
+      // Skip malformed entries
+    }
   }
 
   /**

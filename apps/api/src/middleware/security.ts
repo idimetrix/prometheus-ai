@@ -272,6 +272,134 @@ function getLockoutDuration(attempts: number): number {
  * - Lockout persists across service restarts (via Redis)
  * - Falls back to in-memory store when Redis is unavailable
  */
+/**
+ * Build a lockout response with appropriate headers.
+ */
+function buildLockoutResponse(
+  c: Context,
+  clientIp: string,
+  lockoutTs: number,
+  source: string
+): Response {
+  const now = Date.now();
+  const retryAfterSec = Math.ceil((lockoutTs - now) / 1000);
+  logger.warn(
+    { clientIp, retryAfterSec },
+    `Brute force lockout active (${source})`
+  );
+  c.header("Retry-After", String(retryAfterSec));
+  return c.json(
+    {
+      error: "Too Many Requests",
+      message: "Account temporarily locked due to too many failed attempts",
+      retryAfterSec,
+    },
+    429
+  );
+}
+
+/**
+ * Check Redis lockout and return lockout timestamp if active, or null.
+ */
+async function checkRedisLockout(
+  redisClient: BruteForceRedisClient,
+  lockoutKey: string
+): Promise<number | null> {
+  try {
+    const lockoutUntil = await redisClient.get(lockoutKey);
+    if (!lockoutUntil) {
+      return null;
+    }
+    const lockoutTs = Number.parseInt(lockoutUntil, 10);
+    return Date.now() < lockoutTs ? lockoutTs : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Track a failed auth attempt in Redis.
+ */
+async function trackRedisFailure(
+  redisClient: BruteForceRedisClient,
+  clientIp: string,
+  attemptsKey: string,
+  lockoutKey: string,
+  reputationKey: string
+): Promise<void> {
+  try {
+    const totalAttempts = await redisClient.incr(attemptsKey);
+    if (totalAttempts === 1) {
+      await redisClient.expire(attemptsKey, BRUTE_FORCE_WINDOW_SEC);
+    }
+
+    const reputation = await redisClient.incr(reputationKey);
+    if (reputation === 1) {
+      await redisClient.expire(reputationKey, 24 * 60 * 60);
+    }
+
+    if (totalAttempts >= BRUTE_FORCE_MAX_ATTEMPTS) {
+      const lockoutSec = getLockoutDuration(totalAttempts);
+      const lockUntil = Date.now() + lockoutSec * 1000;
+      await redisClient.set(lockoutKey, String(lockUntil), "EX", lockoutSec);
+      logger.warn(
+        { clientIp, attempts: totalAttempts, lockoutSec, reputation },
+        "Brute force lockout triggered (Redis)"
+      );
+    }
+  } catch {
+    // Fall through to in-memory tracking
+  }
+}
+
+/**
+ * Track a failed auth attempt in the in-memory fallback store.
+ */
+function trackMemoryFailure(clientIp: string): void {
+  const existing = fallbackStore.get(clientIp) ?? {
+    attempts: 0,
+    lockedUntil: null,
+    reputation: 0,
+  };
+  existing.attempts++;
+  existing.reputation++;
+
+  if (existing.attempts >= BRUTE_FORCE_MAX_ATTEMPTS) {
+    const lockoutSec = getLockoutDuration(existing.attempts);
+    existing.lockedUntil = Date.now() + lockoutSec * 1000;
+    logger.warn(
+      { clientIp, attempts: existing.attempts, lockoutSec },
+      "Brute force lockout triggered (memory)"
+    );
+  }
+
+  fallbackStore.set(clientIp, existing);
+}
+
+/**
+ * Clear attempt counters on successful auth.
+ */
+async function clearAttemptsOnSuccess(
+  redisClient: BruteForceRedisClient | undefined,
+  clientIp: string,
+  attemptsKey: string,
+  lockoutKey: string
+): Promise<void> {
+  if (redisClient) {
+    try {
+      await redisClient.del(attemptsKey);
+      await redisClient.del(lockoutKey);
+    } catch {
+      // Ignore Redis errors
+    }
+  }
+  const existing = fallbackStore.get(clientIp);
+  if (existing) {
+    existing.attempts = 0;
+    existing.lockedUntil = null;
+  }
+}
+
 export function bruteForceProtection(
   redisClient?: BruteForceRedisClient
 ): MiddlewareHandler {
@@ -299,140 +427,47 @@ export function bruteForceProtection(
     const lockoutKey = `bf:lockout:${clientIp}`;
     const reputationKey = `bf:reputation:${clientIp}`;
 
-    // Check lockout using Redis
+    // Check Redis lockout
     if (redisClient) {
-      try {
-        const lockoutUntil = await redisClient.get(lockoutKey);
-        if (lockoutUntil) {
-          const lockoutTs = Number.parseInt(lockoutUntil, 10);
-          const now = Date.now();
-          if (now < lockoutTs) {
-            const retryAfterSec = Math.ceil((lockoutTs - now) / 1000);
-            logger.warn(
-              { clientIp, retryAfterSec },
-              "Brute force lockout active (Redis)"
-            );
-            c.header("Retry-After", String(retryAfterSec));
-            return c.json(
-              {
-                error: "Too Many Requests",
-                message:
-                  "Account temporarily locked due to too many failed attempts",
-                retryAfterSec,
-              },
-              429
-            );
-          }
-        }
-      } catch {
-        // Fall through to in-memory check
+      const lockoutTs = await checkRedisLockout(redisClient, lockoutKey);
+      if (lockoutTs) {
+        return buildLockoutResponse(c, clientIp, lockoutTs, "Redis");
       }
     }
 
-    // Check in-memory fallback
+    // Check in-memory fallback lockout
     const fallbackEntry = fallbackStore.get(clientIp);
-    if (fallbackEntry?.lockedUntil) {
-      const now = Date.now();
-      if (now < fallbackEntry.lockedUntil) {
-        const retryAfterSec = Math.ceil(
-          (fallbackEntry.lockedUntil - now) / 1000
-        );
-        logger.warn(
-          { clientIp, retryAfterSec },
-          "Brute force lockout active (memory)"
-        );
-        c.header("Retry-After", String(retryAfterSec));
-        return c.json(
-          {
-            error: "Too Many Requests",
-            message:
-              "Account temporarily locked due to too many failed attempts",
-            retryAfterSec,
-          },
-          429
-        );
-      }
+    if (fallbackEntry?.lockedUntil && Date.now() < fallbackEntry.lockedUntil) {
+      return buildLockoutResponse(
+        c,
+        clientIp,
+        fallbackEntry.lockedUntil,
+        "memory"
+      );
     }
 
     await next();
 
     const status = c.res.status;
 
-    // Track failed auth attempts
     if (status === 401 || status === 403) {
-      // Update Redis counters
       if (redisClient) {
-        try {
-          const totalAttempts = await redisClient.incr(attemptsKey);
-          if (totalAttempts === 1) {
-            await redisClient.expire(attemptsKey, BRUTE_FORCE_WINDOW_SEC);
-          }
-
-          // Update reputation score (long-term tracking, 24h window)
-          const reputation = await redisClient.incr(reputationKey);
-          if (reputation === 1) {
-            await redisClient.expire(reputationKey, 24 * 60 * 60);
-          }
-
-          // Progressive lockout
-          if (totalAttempts >= BRUTE_FORCE_MAX_ATTEMPTS) {
-            const lockoutSec = getLockoutDuration(totalAttempts);
-            const lockUntil = Date.now() + lockoutSec * 1000;
-            await redisClient.set(
-              lockoutKey,
-              String(lockUntil),
-              "EX",
-              lockoutSec
-            );
-            logger.warn(
-              {
-                clientIp,
-                attempts: totalAttempts,
-                lockoutSec,
-                reputation,
-              },
-              "Brute force lockout triggered (Redis)"
-            );
-          }
-        } catch {
-          // Fall through to in-memory tracking
-        }
-      }
-
-      // In-memory fallback tracking
-      const existing = fallbackStore.get(clientIp) ?? {
-        attempts: 0,
-        lockedUntil: null,
-        reputation: 0,
-      };
-      existing.attempts++;
-      existing.reputation++;
-
-      if (existing.attempts >= BRUTE_FORCE_MAX_ATTEMPTS) {
-        const lockoutSec = getLockoutDuration(existing.attempts);
-        existing.lockedUntil = Date.now() + lockoutSec * 1000;
-        logger.warn(
-          { clientIp, attempts: existing.attempts, lockoutSec },
-          "Brute force lockout triggered (memory)"
+        await trackRedisFailure(
+          redisClient,
+          clientIp,
+          attemptsKey,
+          lockoutKey,
+          reputationKey
         );
       }
-
-      fallbackStore.set(clientIp, existing);
+      trackMemoryFailure(clientIp);
     } else if (status >= 200 && status < 300) {
-      // Successful auth clears the attempt counter (but not reputation)
-      if (redisClient) {
-        try {
-          await redisClient.del(attemptsKey);
-          await redisClient.del(lockoutKey);
-        } catch {
-          // Ignore Redis errors
-        }
-      }
-      const existing = fallbackStore.get(clientIp);
-      if (existing) {
-        existing.attempts = 0;
-        existing.lockedUntil = null;
-      }
+      await clearAttemptsOnSuccess(
+        redisClient,
+        clientIp,
+        attemptsKey,
+        lockoutKey
+      );
     }
   };
 }

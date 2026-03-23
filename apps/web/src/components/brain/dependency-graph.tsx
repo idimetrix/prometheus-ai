@@ -232,6 +232,130 @@ function NodeTooltip({ node, x, y }: { node: D3Node; x: number; y: number }) {
 }
 
 /* -------------------------------------------------------------------------- */
+/*  Render helpers                                                             */
+/* -------------------------------------------------------------------------- */
+
+function computeLinkOpacity(
+  hl: boolean,
+  searchHl: boolean,
+  hasSearch: boolean
+): number {
+  if (hasSearch && !searchHl) {
+    return 0.08;
+  }
+  if (hl) {
+    return 0.8;
+  }
+  return 0.3;
+}
+
+function renderLink(
+  link: D3Link & { source: D3Node; target: D3Node },
+  isNodeVisible: (node: D3Node) => boolean,
+  isNodeHighlighted: (nodeId: string) => boolean,
+  hoveredNode: string | null,
+  searchMatches: Set<string> | null
+): React.ReactNode {
+  if (!(isNodeVisible(link.source) && isNodeVisible(link.target))) {
+    return null;
+  }
+
+  const sx = link.source.x ?? 0;
+  const sy = link.source.y ?? 0;
+  const tx = link.target.x ?? 0;
+  const ty = link.target.y ?? 0;
+  const hl = hoveredNode === link.source.id || hoveredNode === link.target.id;
+  const searchHl =
+    searchMatches !== null &&
+    (isNodeHighlighted(link.source.id) || isNodeHighlighted(link.target.id));
+  const linkOpacity = computeLinkOpacity(hl, searchHl, searchMatches !== null);
+
+  return (
+    <line
+      key={`${link.source.id}-${link.target.id}`}
+      stroke={hl || searchHl ? "#8b5cf6" : "#3f3f46"}
+      strokeOpacity={linkOpacity}
+      strokeWidth={hl ? 2 : Math.max(1, (link.strength ?? 1) * 1.5)}
+      x1={sx}
+      x2={tx}
+      y1={sy}
+      y2={ty}
+    />
+  );
+}
+
+function renderNode(
+  node: D3Node,
+  isNodeVisible: (node: D3Node) => boolean,
+  isNodeHighlighted: (nodeId: string) => boolean,
+  hoveredNode: string | null,
+  searchMatches: Set<string> | null,
+  onNodeClick: ((nodeId: string) => void) | undefined,
+  handleNodeMouseDown: (nodeId: string, e: React.MouseEvent) => void,
+  setHoveredNode: (nodeId: string | null) => void
+): React.ReactNode {
+  if (!isNodeVisible(node)) {
+    return null;
+  }
+
+  const isHov = hoveredNode === node.id;
+  const isSearchMatch = isNodeHighlighted(node.id);
+  const dimmed = searchMatches !== null && !isSearchMatch;
+  const color = getNodeColor(node.type);
+  const nx = node.x ?? 0;
+  const ny = node.y ?? 0;
+
+  return (
+    <g
+      className="cursor-pointer"
+      key={node.id}
+      onClick={() => onNodeClick?.(node.id)}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onNodeClick?.(node.id);
+        }
+      }}
+      onMouseDown={(e) => handleNodeMouseDown(node.id, e)}
+      onMouseEnter={() => setHoveredNode(node.id)}
+      onMouseLeave={() => setHoveredNode(null)}
+      opacity={dimmed ? 0.2 : 1}
+      role="button"
+      tabIndex={0}
+      transform={`translate(${nx},${ny})`}
+    >
+      {isSearchMatch && (
+        <circle
+          fill="none"
+          r={NODE_RADIUS + 8}
+          stroke="#8b5cf6"
+          strokeDasharray="4 2"
+          strokeOpacity={0.6}
+          strokeWidth={1.5}
+        />
+      )}
+      <circle
+        fill={color}
+        fillOpacity={isHov ? 0.3 : 0.15}
+        r={isHov ? NODE_RADIUS + 4 : NODE_RADIUS}
+        stroke={color}
+        strokeOpacity={isHov ? 1 : 0.6}
+        strokeWidth={isHov ? 2 : 1}
+      />
+      <text
+        className="select-none"
+        dominantBaseline="middle"
+        fill="#fafafa"
+        fontSize={10}
+        textAnchor="middle"
+      >
+        {node.label.length > 12 ? `${node.label.slice(0, 10)}...` : node.label}
+      </text>
+    </g>
+  );
+}
+
+/* -------------------------------------------------------------------------- */
 /*  DependencyGraph (Enhanced)                                                 */
 /* -------------------------------------------------------------------------- */
 
@@ -502,9 +626,8 @@ export function DependencyGraph({
         />
       )}
 
-      {/* biome-ignore lint/a11y/noSvgWithoutTitle: interactive graph visualization */}
-      {/* biome-ignore lint/a11y/noNoninteractiveElementInteractions: graph has interactive drag/zoom */}
       <svg
+        aria-label="Dependency graph"
         className="rounded-lg border border-border bg-card"
         height={height}
         onMouseDown={handleSvgMouseDown}
@@ -513,116 +636,36 @@ export function DependencyGraph({
         onMouseUp={handleMouseUp}
         onWheel={handleWheel}
         ref={svgRef}
-        role="img"
+        role="application"
         width={width}
       >
+        <title>Dependency graph</title>
         {/* Background rect for pan events */}
         <rect fill="transparent" height={height} width={width} />
 
         <g transform={`translate(${pan.x},${pan.y}) scale(${zoom})`}>
-          {simLinks.map((link) => {
-            const sourceVisible = isNodeVisible(link.source);
-            const targetVisible = isNodeVisible(link.target);
-            if (!(sourceVisible && targetVisible)) {
-              return null;
-            }
+          {simLinks.map((link) =>
+            renderLink(
+              link,
+              isNodeVisible,
+              isNodeHighlighted,
+              hoveredNode,
+              searchMatches
+            )
+          )}
 
-            const sx = link.source.x ?? 0;
-            const sy = link.source.y ?? 0;
-            const tx = link.target.x ?? 0;
-            const ty = link.target.y ?? 0;
-            const hl =
-              hoveredNode === link.source.id || hoveredNode === link.target.id;
-            const searchHl =
-              searchMatches !== null &&
-              (isNodeHighlighted(link.source.id) ||
-                isNodeHighlighted(link.target.id));
-
-            let linkOpacity = 0.3;
-            if (searchMatches !== null && !searchHl) {
-              linkOpacity = 0.08;
-            } else if (hl) {
-              linkOpacity = 0.8;
-            }
-
-            return (
-              <line
-                key={`${link.source.id}-${link.target.id}`}
-                stroke={hl || searchHl ? "#8b5cf6" : "#3f3f46"}
-                strokeOpacity={linkOpacity}
-                strokeWidth={hl ? 2 : Math.max(1, (link.strength ?? 1) * 1.5)}
-                x1={sx}
-                x2={tx}
-                y1={sy}
-                y2={ty}
-              />
-            );
-          })}
-
-          {simNodes.map((node) => {
-            if (!isNodeVisible(node)) {
-              return null;
-            }
-
-            const isHov = hoveredNode === node.id;
-            const isSearchMatch = isNodeHighlighted(node.id);
-            const dimmed = searchMatches !== null && !isSearchMatch;
-            const color = getNodeColor(node.type);
-            const nx = node.x ?? 0;
-            const ny = node.y ?? 0;
-
-            return (
-              // biome-ignore lint/a11y/useSemanticElements: SVG <g> cannot be replaced with <button>
-              <g
-                className="cursor-pointer"
-                key={node.id}
-                onClick={() => onNodeClick?.(node.id)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") {
-                    onNodeClick?.(node.id);
-                  }
-                }}
-                onMouseDown={(e) => handleNodeMouseDown(node.id, e)}
-                onMouseEnter={() => setHoveredNode(node.id)}
-                onMouseLeave={() => setHoveredNode(null)}
-                opacity={dimmed ? 0.2 : 1}
-                role="button"
-                tabIndex={0}
-                transform={`translate(${nx},${ny})`}
-              >
-                {/* Search highlight ring */}
-                {isSearchMatch && (
-                  <circle
-                    fill="none"
-                    r={NODE_RADIUS + 8}
-                    stroke="#8b5cf6"
-                    strokeDasharray="4 2"
-                    strokeOpacity={0.6}
-                    strokeWidth={1.5}
-                  />
-                )}
-                <circle
-                  fill={color}
-                  fillOpacity={isHov ? 0.3 : 0.15}
-                  r={isHov ? NODE_RADIUS + 4 : NODE_RADIUS}
-                  stroke={color}
-                  strokeOpacity={isHov ? 1 : 0.6}
-                  strokeWidth={isHov ? 2 : 1}
-                />
-                <text
-                  className="select-none"
-                  dominantBaseline="middle"
-                  fill="#fafafa"
-                  fontSize={10}
-                  textAnchor="middle"
-                >
-                  {node.label.length > 12
-                    ? `${node.label.slice(0, 10)}...`
-                    : node.label}
-                </text>
-              </g>
-            );
-          })}
+          {simNodes.map((node) =>
+            renderNode(
+              node,
+              isNodeVisible,
+              isNodeHighlighted,
+              hoveredNode,
+              searchMatches,
+              onNodeClick,
+              handleNodeMouseDown,
+              setHoveredNode
+            )
+          )}
         </g>
       </svg>
     </div>

@@ -172,77 +172,120 @@ export class TechDebtScorer {
   private analyzeFile(filePath: string, content: string): DebtItem[] {
     const items: DebtItem[] = [];
 
-    // Check for TODOs/FIXMEs
-    const todoMatches = content.match(TODO_PATTERN);
-    if (todoMatches && todoMatches.length > 0) {
-      items.push({
-        id: generateId("debt"),
-        category: "todos",
-        description: `${todoMatches.length} TODO/FIXME marker(s) found`,
-        filePath,
-        impact: todoMatches.length * 2,
-        priority: todoMatches.length > 3 ? 7 : 4,
-        effort: todoMatches.length > 5 ? "M" : "S",
-      });
+    const todoItem = this.checkTodos(filePath, content);
+    if (todoItem) {
+      items.push(todoItem);
     }
 
-    // Check for `any` usage
-    const anyMatches = content.match(ANY_PATTERN);
-    if (anyMatches && anyMatches.length > 0) {
-      items.push({
-        id: generateId("debt"),
-        category: "type-safety",
-        description: `${anyMatches.length} \`any\` type usage(s) found`,
-        filePath,
-        impact: anyMatches.length * 3,
-        priority: anyMatches.length > 2 ? 8 : 5,
-        effort: anyMatches.length > 5 ? "M" : "S",
-      });
+    const anyItem = this.checkAnyUsage(filePath, content);
+    if (anyItem) {
+      items.push(anyItem);
     }
 
-    // Check function length (complexity)
-    const longFunctions = this.detectLongFunctions(content);
-    if (longFunctions > 0) {
-      items.push({
-        id: generateId("debt"),
-        category: "complexity",
-        description: `${longFunctions} function(s) exceed ${LONG_FUNCTION_THRESHOLD} lines`,
-        filePath,
-        impact: longFunctions * 5,
-        priority: longFunctions > 2 ? 8 : 5,
-        effort: "M",
-      });
+    const longFnItem = this.checkLongFunctions(filePath, content);
+    if (longFnItem) {
+      items.push(longFnItem);
     }
 
-    // Check for missing documentation on exports
-    const undocumentedExports = this.countUndocumentedExports(content);
-    if (undocumentedExports > 0) {
-      items.push({
-        id: generateId("debt"),
-        category: "documentation",
-        description: `${undocumentedExports} exported symbol(s) without JSDoc`,
-        filePath,
-        impact: undocumentedExports * 1,
-        priority: 3,
-        effort: "S",
-      });
+    const docItem = this.checkUndocumentedExports(filePath, content);
+    if (docItem) {
+      items.push(docItem);
     }
 
-    // Check cyclomatic complexity heuristic
-    const complexity = this.estimateCyclomaticComplexity(content);
-    if (complexity > HIGH_COMPLEXITY_THRESHOLD) {
-      items.push({
-        id: generateId("debt"),
-        category: "complexity",
-        description: `High cyclomatic complexity (~${complexity})`,
-        filePath,
-        impact: Math.min(complexity, 20),
-        priority: complexity > 20 ? 9 : 6,
-        effort: complexity > 20 ? "L" : "M",
-      });
+    const complexityItem = this.checkComplexity(filePath, content);
+    if (complexityItem) {
+      items.push(complexityItem);
     }
 
     return items;
+  }
+
+  private checkTodos(filePath: string, content: string): DebtItem | null {
+    const todoMatches = content.match(TODO_PATTERN);
+    if (!todoMatches || todoMatches.length === 0) {
+      return null;
+    }
+    const count = todoMatches.length;
+    return {
+      id: generateId("debt"),
+      category: "todos",
+      description: `${count} TODO/FIXME marker(s) found`,
+      filePath,
+      impact: count * 2,
+      priority: count > 3 ? 7 : 4,
+      effort: count > 5 ? "M" : "S",
+    };
+  }
+
+  private checkAnyUsage(filePath: string, content: string): DebtItem | null {
+    const anyMatches = content.match(ANY_PATTERN);
+    if (!anyMatches || anyMatches.length === 0) {
+      return null;
+    }
+    const count = anyMatches.length;
+    return {
+      id: generateId("debt"),
+      category: "type-safety",
+      description: `${count} \`any\` type usage(s) found`,
+      filePath,
+      impact: count * 3,
+      priority: count > 2 ? 8 : 5,
+      effort: count > 5 ? "M" : "S",
+    };
+  }
+
+  private checkLongFunctions(
+    filePath: string,
+    content: string
+  ): DebtItem | null {
+    const longFunctions = this.detectLongFunctions(content);
+    if (longFunctions === 0) {
+      return null;
+    }
+    return {
+      id: generateId("debt"),
+      category: "complexity",
+      description: `${longFunctions} function(s) exceed ${LONG_FUNCTION_THRESHOLD} lines`,
+      filePath,
+      impact: longFunctions * 5,
+      priority: longFunctions > 2 ? 8 : 5,
+      effort: "M",
+    };
+  }
+
+  private checkUndocumentedExports(
+    filePath: string,
+    content: string
+  ): DebtItem | null {
+    const undocumentedExports = this.countUndocumentedExports(content);
+    if (undocumentedExports === 0) {
+      return null;
+    }
+    return {
+      id: generateId("debt"),
+      category: "documentation",
+      description: `${undocumentedExports} exported symbol(s) without JSDoc`,
+      filePath,
+      impact: undocumentedExports * 1,
+      priority: 3,
+      effort: "S",
+    };
+  }
+
+  private checkComplexity(filePath: string, content: string): DebtItem | null {
+    const complexity = this.estimateCyclomaticComplexity(content);
+    if (complexity <= HIGH_COMPLEXITY_THRESHOLD) {
+      return null;
+    }
+    return {
+      id: generateId("debt"),
+      category: "complexity",
+      description: `High cyclomatic complexity (~${complexity})`,
+      filePath,
+      impact: Math.min(complexity, 20),
+      priority: complexity > 20 ? 9 : 6,
+      effort: complexity > 20 ? "L" : "M",
+    };
   }
 
   private detectLongFunctions(content: string): number {
@@ -258,24 +301,55 @@ export class TechDebtScorer {
         functionStart = i;
       }
 
-      for (const ch of line ?? "") {
-        if (ch === "{") {
-          braceDepth++;
-        }
-        if (ch === "}") {
-          braceDepth--;
-          if (braceDepth === 0 && functionStart >= 0) {
-            const length = i - functionStart;
-            if (length > LONG_FUNCTION_THRESHOLD) {
-              longCount++;
-            }
-            functionStart = -1;
-          }
-        }
-      }
+      const result = this.processBracesInLine(
+        line ?? "",
+        braceDepth,
+        functionStart,
+        i
+      );
+      braceDepth = result.braceDepth;
+      functionStart = result.functionStart;
+      longCount += result.longFunctionsFound;
     }
 
     return longCount;
+  }
+
+  private processBracesInLine(
+    line: string,
+    braceDepth: number,
+    functionStart: number,
+    lineIndex: number
+  ): {
+    braceDepth: number;
+    functionStart: number;
+    longFunctionsFound: number;
+  } {
+    let depth = braceDepth;
+    let fnStart = functionStart;
+    let found = 0;
+
+    for (const ch of line) {
+      if (ch === "{") {
+        depth++;
+      }
+      if (ch !== "}") {
+        continue;
+      }
+      depth--;
+      if (depth === 0 && fnStart >= 0) {
+        if (lineIndex - fnStart > LONG_FUNCTION_THRESHOLD) {
+          found++;
+        }
+        fnStart = -1;
+      }
+    }
+
+    return {
+      braceDepth: depth,
+      functionStart: fnStart,
+      longFunctionsFound: found,
+    };
   }
 
   private countUndocumentedExports(content: string): number {

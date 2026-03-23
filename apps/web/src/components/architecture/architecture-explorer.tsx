@@ -94,6 +94,77 @@ interface SimNode {
   y: number;
 }
 
+function applyRepulsion(simNodes: SimNode[], alpha: number): void {
+  for (let i = 0; i < simNodes.length; i++) {
+    for (let j = i + 1; j < simNodes.length; j++) {
+      const a = simNodes[i];
+      const b = simNodes[j];
+      if (!(a && b)) {
+        continue;
+      }
+      const dx = b.x - a.x;
+      const dy = b.y - a.y;
+      const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+      const force = (300 * alpha) / (dist * dist);
+      const fx = (dx / dist) * force;
+      const fy = (dy / dist) * force;
+      a.vx -= fx;
+      a.vy -= fy;
+      b.vx += fx;
+      b.vy += fy;
+    }
+  }
+}
+
+function applyAttraction(
+  simNodes: SimNode[],
+  edges: ArchEdge[],
+  nodeIndex: Map<string, number>,
+  alpha: number
+): void {
+  for (const edge of edges) {
+    const si = nodeIndex.get(edge.source);
+    const ti = nodeIndex.get(edge.target);
+    if (si === undefined || ti === undefined) {
+      continue;
+    }
+    const a = simNodes[si];
+    const b = simNodes[ti];
+    if (!(a && b)) {
+      continue;
+    }
+    const dx = b.x - a.x;
+    const dy = b.y - a.y;
+    const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+    const force = (dist - 120) * 0.05 * alpha;
+    const fx = (dx / dist) * force;
+    const fy = (dy / dist) * force;
+    a.vx += fx;
+    a.vy += fy;
+    b.vx -= fx;
+    b.vy -= fy;
+  }
+}
+
+function applyVelocities(
+  simNodes: SimNode[],
+  width: number,
+  height: number,
+  alpha: number,
+  dampening: number
+): void {
+  for (const node of simNodes) {
+    node.vx += (width / 2 - node.x) * 0.01 * alpha;
+    node.vy += (height / 2 - node.y) * 0.01 * alpha;
+    node.vx *= dampening;
+    node.vy *= dampening;
+    node.x += node.vx;
+    node.y += node.vy;
+    node.x = Math.max(60, Math.min(width - 60, node.x));
+    node.y = Math.max(30, Math.min(height - 30, node.y));
+  }
+}
+
 function runForceLayout(
   nodes: ArchNode[],
   edges: ArchEdge[],
@@ -113,68 +184,9 @@ function runForceLayout(
 
   for (let iter = 0; iter < iterations; iter++) {
     const alpha = 1 - iter / iterations;
-    const dampening = 0.85;
-
-    // Repulsion between all node pairs
-    for (let i = 0; i < simNodes.length; i++) {
-      for (let j = i + 1; j < simNodes.length; j++) {
-        const a = simNodes[i];
-        const b = simNodes[j];
-        if (!(a && b)) {
-          continue;
-        }
-        let dx = b.x - a.x;
-        let dy = b.y - a.y;
-        const dist = Math.sqrt(dx * dx + dy * dy) || 1;
-        const force = (300 * alpha) / (dist * dist);
-        dx = (dx / dist) * force;
-        dy = (dy / dist) * force;
-        a.vx -= dx;
-        a.vy -= dy;
-        b.vx += dx;
-        b.vy += dy;
-      }
-    }
-
-    // Attraction along edges
-    for (const edge of edges) {
-      const si = nodeIndex.get(edge.source);
-      const ti = nodeIndex.get(edge.target);
-      if (si === undefined || ti === undefined) {
-        continue;
-      }
-      const a = simNodes[si];
-      const b = simNodes[ti];
-      if (!(a && b)) {
-        continue;
-      }
-      let dx = b.x - a.x;
-      let dy = b.y - a.y;
-      const dist = Math.sqrt(dx * dx + dy * dy) || 1;
-      const force = (dist - 120) * 0.05 * alpha;
-      dx = (dx / dist) * force;
-      dy = (dy / dist) * force;
-      a.vx += dx;
-      a.vy += dy;
-      b.vx -= dx;
-      b.vy -= dy;
-    }
-
-    // Center gravity
-    for (const node of simNodes) {
-      node.vx += (width / 2 - node.x) * 0.01 * alpha;
-      node.vy += (height / 2 - node.y) * 0.01 * alpha;
-    }
-
-    // Apply velocities
-    for (const node of simNodes) {
-      node.vx *= dampening;
-      node.vy *= dampening;
-      node.x += node.vx;
-      node.y += node.vy;
-      node.x = Math.max(60, Math.min(width - 60, node.x));
-      node.y = Math.max(30, Math.min(height - 30, node.y));
-    }
+    applyRepulsion(simNodes, alpha);
+    applyAttraction(simNodes, edges, nodeIndex, alpha);
+    applyVelocities(simNodes, width, height, alpha, 0.85);
   }
 
   return simNodes;
@@ -355,13 +367,12 @@ export function ArchitectureExplorer({
           style={{ width: `${width}px`, height: `${height}px` }}
         >
           {/* SVG connections layer */}
-          {/* biome-ignore lint/a11y/noSvgWithoutTitle: decorative connection lines */}
           <svg
             className="pointer-events-none absolute inset-0"
             height={height}
-            role="img"
             width={width}
           >
+            <title>Architecture diagram</title>
             <defs>
               <marker
                 id="arrowhead"
@@ -489,8 +500,8 @@ export function ArchitectureExplorer({
 
         {/* Minimap */}
         <div className="absolute right-2 bottom-2 rounded-md border border-zinc-700 bg-zinc-900/90 p-1">
-          {/* biome-ignore lint/a11y/noSvgWithoutTitle: minimap overview */}
-          <svg height={minimapH} role="img" width={minimapW}>
+          <svg height={minimapH} width={minimapW}>
+            <title>Architecture diagram</title>
             {filteredEdges.map((edge) => {
               const sp = nodePositions.get(edge.source);
               const tp = nodePositions.get(edge.target);

@@ -53,42 +53,11 @@ export class PlannerProtocol {
     const workstreams = blueprint.parallelWorkstreams;
 
     for (const ws of workstreams) {
-      const group: ParallelGroup = {
-        id: generateId("pg"),
-        name: ws.name,
-        taskIds: [],
-      };
-
-      for (const taskDesc of ws.tasks) {
-        const task = this.createTask(taskDesc, ws);
-        this.plan.tasks.push(task);
-        group.taskIds.push(task.id);
-      }
-
+      const group = this.createWorkstreamGroup(ws);
       if (ws.parallelizable) {
         this.plan.parallelGroups.push(group);
       }
-
-      // Add dependencies
-      for (const depName of ws.dependencies) {
-        const depWorkstream = workstreams.find((w) => w.name === depName);
-        if (depWorkstream) {
-          for (const taskId of group.taskIds) {
-            // Each task in this group depends on all tasks in the dependency workstream
-            const depGroup = this.plan.parallelGroups.find(
-              (pg) => pg.name === depName
-            );
-            if (depGroup) {
-              for (const depTaskId of depGroup.taskIds) {
-                this.plan.dependencies.push({
-                  taskId,
-                  dependsOn: depTaskId,
-                });
-              }
-            }
-          }
-        }
-      }
+      this.addWorkstreamDependencies(group, ws.dependencies);
     }
 
     this.plan.totalEstimatedCredits = this.plan.tasks.reduce(
@@ -97,6 +66,39 @@ export class PlannerProtocol {
     );
 
     return this.plan;
+  }
+
+  private createWorkstreamGroup(ws: Workstream): ParallelGroup {
+    const group: ParallelGroup = {
+      id: generateId("pg"),
+      name: ws.name,
+      taskIds: [],
+    };
+    for (const taskDesc of ws.tasks) {
+      const task = this.createTask(taskDesc, ws);
+      this.plan.tasks.push(task);
+      group.taskIds.push(task.id);
+    }
+    return group;
+  }
+
+  private addWorkstreamDependencies(
+    group: ParallelGroup,
+    depNames: string[]
+  ): void {
+    for (const depName of depNames) {
+      const depGroup = this.plan.parallelGroups.find(
+        (pg) => pg.name === depName
+      );
+      if (!depGroup) {
+        continue;
+      }
+      for (const taskId of group.taskIds) {
+        for (const depTaskId of depGroup.taskIds) {
+          this.plan.dependencies.push({ taskId, dependsOn: depTaskId });
+        }
+      }
+    }
   }
 
   createFromDescription(description: string, agentRole?: string): SprintPlan {
@@ -175,65 +177,44 @@ export class PlannerProtocol {
     };
   }
 
+  private static readonly ROLE_KEYWORDS: Array<{
+    keywords: string[];
+    role: string;
+  }> = [
+    {
+      keywords: ["database", "schema", "migration", "orm"],
+      role: "backend_coder",
+    },
+    {
+      keywords: ["api", "endpoint", "route", "service"],
+      role: "backend_coder",
+    },
+    {
+      keywords: ["component", "page", "layout", "ui", "frontend"],
+      role: "frontend_coder",
+    },
+    {
+      keywords: ["connect", "wire", "integration", "client"],
+      role: "integration_coder",
+    },
+    { keywords: ["test", "spec", "coverage"], role: "test_engineer" },
+    {
+      keywords: ["security", "audit", "vulnerability"],
+      role: "security_auditor",
+    },
+    {
+      keywords: ["deploy", "docker", "ci/cd", "kubernetes"],
+      role: "deploy_engineer",
+    },
+  ];
+
   private inferAgentRole(description: string): string {
     const lower = description.toLowerCase();
-
-    if (
-      lower.includes("database") ||
-      lower.includes("schema") ||
-      lower.includes("migration") ||
-      lower.includes("orm")
-    ) {
-      return "backend_coder";
+    for (const entry of PlannerProtocol.ROLE_KEYWORDS) {
+      if (entry.keywords.some((kw) => lower.includes(kw))) {
+        return entry.role;
+      }
     }
-    if (
-      lower.includes("api") ||
-      lower.includes("endpoint") ||
-      lower.includes("route") ||
-      lower.includes("service")
-    ) {
-      return "backend_coder";
-    }
-    if (
-      lower.includes("component") ||
-      lower.includes("page") ||
-      lower.includes("layout") ||
-      lower.includes("ui") ||
-      lower.includes("frontend")
-    ) {
-      return "frontend_coder";
-    }
-    if (
-      lower.includes("connect") ||
-      lower.includes("wire") ||
-      lower.includes("integration") ||
-      lower.includes("client")
-    ) {
-      return "integration_coder";
-    }
-    if (
-      lower.includes("test") ||
-      lower.includes("spec") ||
-      lower.includes("coverage")
-    ) {
-      return "test_engineer";
-    }
-    if (
-      lower.includes("security") ||
-      lower.includes("audit") ||
-      lower.includes("vulnerability")
-    ) {
-      return "security_auditor";
-    }
-    if (
-      lower.includes("deploy") ||
-      lower.includes("docker") ||
-      lower.includes("ci/cd") ||
-      lower.includes("kubernetes")
-    ) {
-      return "deploy_engineer";
-    }
-
     return "backend_coder";
   }
 

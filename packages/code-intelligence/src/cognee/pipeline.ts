@@ -268,6 +268,114 @@ export class CogneePipeline {
   /**
    * Stage 4: Extract graph nodes and edges from files.
    */
+  private extractByRegex(
+    regex: RegExp,
+    content: string,
+    filePath: string,
+    fileNodeId: string,
+    nodeType: GraphNode["type"],
+    idPrefix: string,
+    nodes: GraphNode[],
+    edges: GraphEdge[]
+  ): void {
+    regex.lastIndex = 0;
+    let match: RegExpExecArray | null = regex.exec(content);
+    while (match !== null) {
+      const name = match[1];
+      if (name) {
+        const nodeId = `${idPrefix}:${filePath}:${name}`;
+        nodes.push({
+          id: nodeId,
+          type: nodeType,
+          name,
+          filePath,
+          metadata: {},
+        });
+        edges.push({
+          source: fileNodeId,
+          target: nodeId,
+          type: "contains",
+          weight: 1,
+        });
+      }
+      match = regex.exec(content);
+    }
+  }
+
+  private extractClassNodes(
+    content: string,
+    filePath: string,
+    fileNodeId: string,
+    nodes: GraphNode[],
+    edges: GraphEdge[]
+  ): void {
+    CLASS_RE.lastIndex = 0;
+    let clsMatch: RegExpExecArray | null = CLASS_RE.exec(content);
+    while (clsMatch !== null) {
+      const className = clsMatch[1];
+      if (className) {
+        const classId = `class:${filePath}:${className}`;
+        nodes.push({
+          id: classId,
+          type: "class",
+          name: className,
+          filePath,
+          metadata: {},
+        });
+        edges.push({
+          source: fileNodeId,
+          target: classId,
+          type: "contains",
+          weight: 1,
+        });
+
+        if (clsMatch[2]) {
+          edges.push({
+            source: classId,
+            target: `class:unknown:${clsMatch[2]}`,
+            type: "extends",
+            weight: 0.9,
+          });
+        }
+        if (clsMatch[3]) {
+          for (const iface of clsMatch[3].split(",")) {
+            const trimmed = iface.trim();
+            if (trimmed) {
+              edges.push({
+                source: classId,
+                target: `interface:unknown:${trimmed}`,
+                type: "implements",
+                weight: 0.8,
+              });
+            }
+          }
+        }
+      }
+      clsMatch = CLASS_RE.exec(content);
+    }
+  }
+
+  private extractImportEdges(
+    content: string,
+    fileNodeId: string,
+    edges: GraphEdge[]
+  ): void {
+    IMPORT_RE.lastIndex = 0;
+    let impMatch: RegExpExecArray | null = IMPORT_RE.exec(content);
+    while (impMatch !== null) {
+      const source = impMatch[1];
+      if (source) {
+        edges.push({
+          source: fileNodeId,
+          target: `file:${source}`,
+          type: "imports",
+          weight: 1,
+        });
+      }
+      impMatch = IMPORT_RE.exec(content);
+    }
+  }
+
   graph(
     files: CodeFile[],
     classifications: FileClassification[]
@@ -293,140 +401,38 @@ export class CogneePipeline {
         },
       });
 
-      // Extract functions
-      FUNCTION_RE.lastIndex = 0;
-      let fnMatch: RegExpExecArray | null = FUNCTION_RE.exec(file.content);
-      while (fnMatch !== null) {
-        const name = fnMatch[1];
-        if (name) {
-          const fnId = `fn:${file.path}:${name}`;
-          nodes.push({
-            id: fnId,
-            type: "function",
-            name,
-            filePath: file.path,
-            metadata: {},
-          });
-          edges.push({
-            source: fileNodeId,
-            target: fnId,
-            type: "contains",
-            weight: 1,
-          });
-        }
-        fnMatch = FUNCTION_RE.exec(file.content);
-      }
-
-      // Extract classes
-      CLASS_RE.lastIndex = 0;
-      let clsMatch: RegExpExecArray | null = CLASS_RE.exec(file.content);
-      while (clsMatch !== null) {
-        const className = clsMatch[1];
-        if (className) {
-          const classId = `class:${file.path}:${className}`;
-          nodes.push({
-            id: classId,
-            type: "class",
-            name: className,
-            filePath: file.path,
-            metadata: {},
-          });
-          edges.push({
-            source: fileNodeId,
-            target: classId,
-            type: "contains",
-            weight: 1,
-          });
-
-          if (clsMatch[2]) {
-            edges.push({
-              source: classId,
-              target: `class:unknown:${clsMatch[2]}`,
-              type: "extends",
-              weight: 0.9,
-            });
-          }
-
-          if (clsMatch[3]) {
-            for (const iface of clsMatch[3].split(",")) {
-              const trimmed = iface.trim();
-              if (trimmed) {
-                edges.push({
-                  source: classId,
-                  target: `interface:unknown:${trimmed}`,
-                  type: "implements",
-                  weight: 0.8,
-                });
-              }
-            }
-          }
-        }
-        clsMatch = CLASS_RE.exec(file.content);
-      }
-
-      // Extract interfaces
-      INTERFACE_RE.lastIndex = 0;
-      let ifMatch: RegExpExecArray | null = INTERFACE_RE.exec(file.content);
-      while (ifMatch !== null) {
-        const name = ifMatch[1];
-        if (name) {
-          const ifaceId = `interface:${file.path}:${name}`;
-          nodes.push({
-            id: ifaceId,
-            type: "interface",
-            name,
-            filePath: file.path,
-            metadata: {},
-          });
-          edges.push({
-            source: fileNodeId,
-            target: ifaceId,
-            type: "contains",
-            weight: 1,
-          });
-        }
-        ifMatch = INTERFACE_RE.exec(file.content);
-      }
-
-      // Extract types
-      TYPE_RE.lastIndex = 0;
-      let tpMatch: RegExpExecArray | null = TYPE_RE.exec(file.content);
-      while (tpMatch !== null) {
-        const name = tpMatch[1];
-        if (name) {
-          const typeId = `type:${file.path}:${name}`;
-          nodes.push({
-            id: typeId,
-            type: "type",
-            name,
-            filePath: file.path,
-            metadata: {},
-          });
-          edges.push({
-            source: fileNodeId,
-            target: typeId,
-            type: "contains",
-            weight: 1,
-          });
-        }
-        tpMatch = TYPE_RE.exec(file.content);
-      }
-
-      // Extract import edges
-      IMPORT_RE.lastIndex = 0;
-      let impMatch: RegExpExecArray | null = IMPORT_RE.exec(file.content);
-      while (impMatch !== null) {
-        const source = impMatch[1];
-        if (source) {
-          edges.push({
-            source: fileNodeId,
-            target: `file:${source}`,
-            type: "imports",
-            weight: 1,
-          });
-        }
-        impMatch = IMPORT_RE.exec(file.content);
-      }
+      this.extractByRegex(
+        FUNCTION_RE,
+        file.content,
+        file.path,
+        fileNodeId,
+        "function",
+        "fn",
+        nodes,
+        edges
+      );
+      this.extractClassNodes(file.content, file.path, fileNodeId, nodes, edges);
+      this.extractByRegex(
+        INTERFACE_RE,
+        file.content,
+        file.path,
+        fileNodeId,
+        "interface",
+        "interface",
+        nodes,
+        edges
+      );
+      this.extractByRegex(
+        TYPE_RE,
+        file.content,
+        file.path,
+        fileNodeId,
+        "type",
+        "type",
+        nodes,
+        edges
+      );
+      this.extractImportEdges(file.content, fileNodeId, edges);
     }
 
     return { nodes, edges };

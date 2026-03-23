@@ -80,8 +80,7 @@ function ScoreRing({ score, size = 100 }: { score: number; size?: number }) {
   const offset = circumference - (score / 100) * circumference;
 
   return (
-    // biome-ignore lint/a11y/noSvgWithoutTitle: score visualization
-    <svg className="shrink-0" height={size} role="img" width={size}>
+    <svg aria-hidden="true" className="shrink-0" height={size} width={size}>
       <circle
         cx={size / 2}
         cy={size / 2}

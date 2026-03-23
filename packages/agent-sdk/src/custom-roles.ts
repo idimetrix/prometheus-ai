@@ -68,96 +68,127 @@ export interface CustomAgentSpec {
  * This is a lightweight parser that handles the specific YAML subset
  * used by agent specs (no need for a full YAML library).
  */
+interface YamlParserState {
+  currentKey: string | null;
+  currentList: string[] | null;
+  currentMultiline: string[] | null;
+  result: Record<string, unknown>;
+}
+
+function flushMultiline(state: YamlParserState): void {
+  if (state.currentMultiline !== null && state.currentKey !== null) {
+    state.result[state.currentKey] = state.currentMultiline
+      .join("\n")
+      .trimEnd();
+    state.currentMultiline = null;
+    state.currentKey = null;
+  }
+}
+
+function flushList(state: YamlParserState): void {
+  if (state.currentList !== null && state.currentKey !== null) {
+    state.result[state.currentKey] = state.currentList;
+    state.currentList = null;
+    state.currentKey = null;
+  }
+}
+
+function handleMultilineContinuation(
+  state: YamlParserState,
+  line: string
+): boolean {
+  if (state.currentMultiline === null || state.currentKey === null) {
+    return false;
+  }
+  if (line.startsWith("  ") || line === "") {
+    state.currentMultiline.push(line.startsWith("  ") ? line.slice(2) : "");
+    return true;
+  }
+  flushMultiline(state);
+  return false;
+}
+
+function handleListContinuation(
+  state: YamlParserState,
+  trimmed: string
+): boolean {
+  if (state.currentList === null || state.currentKey === null) {
+    return false;
+  }
+  if (trimmed.startsWith("- ")) {
+    state.currentList.push(trimmed.slice(2).trim());
+    return true;
+  }
+  if (trimmed === "") {
+    return true;
+  }
+  flushList(state);
+  return false;
+}
+
+function parseKeyValue(state: YamlParserState, trimmed: string): void {
+  const colonIdx = trimmed.indexOf(":");
+  if (colonIdx === -1) {
+    return;
+  }
+
+  const key = trimmed.slice(0, colonIdx).trim();
+  const value = trimmed.slice(colonIdx + 1).trim();
+
+  if (value === "|") {
+    state.currentKey = key;
+    state.currentMultiline = [];
+  } else if (value === "") {
+    state.currentKey = key;
+    state.currentList = [];
+  } else {
+    state.result[key] = value;
+  }
+}
+
 export function parseAgentSpec(yamlContent: string): CustomAgentSpec {
   const lines = yamlContent.split("\n");
-  const result: Record<string, unknown> = {};
-  let currentKey: string | null = null;
-  let currentMultiline: string[] | null = null;
-  let currentList: string[] | null = null;
+  const state: YamlParserState = {
+    result: {},
+    currentKey: null,
+    currentMultiline: null,
+    currentList: null,
+  };
 
   for (const line of lines) {
     const trimmed = line.trim();
 
-    // Skip comments and empty lines (unless in multiline block)
     if (trimmed.startsWith("#")) {
       continue;
     }
 
-    // Check for multiline block continuation
-    if (currentMultiline !== null && currentKey !== null) {
-      if (line.startsWith("  ") || line === "") {
-        currentMultiline.push(line.startsWith("  ") ? line.slice(2) : "");
-        continue;
-      }
-      // End of multiline block
-      result[currentKey] = currentMultiline.join("\n").trimEnd();
-      currentMultiline = null;
-      currentKey = null;
+    if (handleMultilineContinuation(state, line)) {
+      continue;
     }
-
-    // Check for list item continuation
-    if (currentList !== null && currentKey !== null) {
-      if (trimmed.startsWith("- ")) {
-        currentList.push(trimmed.slice(2).trim());
-        continue;
-      }
-      if (trimmed === "") {
-        continue;
-      }
-      // End of list
-      result[currentKey] = currentList;
-      currentList = null;
-      currentKey = null;
+    if (handleListContinuation(state, trimmed)) {
+      continue;
     }
-
     if (trimmed === "") {
       continue;
     }
 
-    // Parse key: value pairs
-    const colonIdx = trimmed.indexOf(":");
-    if (colonIdx === -1) {
-      continue;
-    }
-
-    const key = trimmed.slice(0, colonIdx).trim();
-    const value = trimmed.slice(colonIdx + 1).trim();
-
-    if (value === "|") {
-      // Start of multiline block
-      currentKey = key;
-      currentMultiline = [];
-    } else if (value === "") {
-      // Could be start of a list (next lines start with "- ")
-      currentKey = key;
-      currentList = [];
-    } else {
-      result[key] = value;
-    }
+    parseKeyValue(state, trimmed);
   }
 
-  // Flush any remaining multiline or list
-  if (currentMultiline !== null && currentKey !== null) {
-    result[currentKey] = currentMultiline.join("\n").trimEnd();
-  }
-  if (currentList !== null && currentKey !== null) {
-    result[currentKey] = currentList;
-  }
+  flushMultiline(state);
+  flushList(state);
 
+  const r = state.result;
   return {
-    role: String(result.role ?? ""),
-    displayName: String(result.displayName ?? ""),
-    description: String(result.description ?? ""),
-    preferredModel: String(result.preferredModel ?? "ollama/qwen3-coder-next"),
-    tools: Array.isArray(result.tools) ? result.tools : [],
-    systemPrompt: String(result.systemPrompt ?? ""),
-    constraints: Array.isArray(result.constraints)
-      ? result.constraints
-      : undefined,
-    capabilities: Array.isArray(result.capabilities)
-      ? result.capabilities
-      : undefined,
-    tags: Array.isArray(result.tags) ? result.tags : undefined,
+    role: String(r.role ?? ""),
+    displayName: String(r.displayName ?? ""),
+    description: String(r.description ?? ""),
+    preferredModel: String(r.preferredModel ?? "ollama/qwen3-coder-next"),
+    tools: Array.isArray(r.tools) ? r.tools : [],
+    systemPrompt: String(r.systemPrompt ?? ""),
+    constraints: Array.isArray(r.constraints) ? r.constraints : undefined,
+    capabilities: Array.isArray(r.capabilities) ? r.capabilities : undefined,
+    tags: Array.isArray(r.tags) ? r.tags : undefined,
   };
 }
 

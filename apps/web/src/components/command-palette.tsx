@@ -205,12 +205,15 @@ export function CommandPalette({
 
   return (
     <div className="fixed inset-0 z-50 flex items-start justify-center pt-[15vh]">
-      {/* biome-ignore lint/a11y/useKeyWithClickEvents: backdrop click-to-close */}
-      {/* biome-ignore lint/a11y/noStaticElementInteractions: backdrop overlay */}
-      {/* biome-ignore lint/a11y/noNoninteractiveElementInteractions: backdrop overlay */}
       <div
         className="fixed inset-0 bg-black/60 backdrop-blur-sm"
         onClick={() => setIsOpen(false)}
+        onKeyDown={(e) => {
+          if (e.key === "Escape") {
+            setIsOpen(false);
+          }
+        }}
+        role="presentation"
       />
 
       <div className="relative w-full max-w-lg rounded-xl border border-border bg-popover shadow-2xl">

@@ -1,4 +1,3 @@
-/* biome-ignore-all lint/correctness/noUndeclaredVariables: k6 provides __ENV as a global */
 /**
  * Prometheus Platform — k6 WebSocket Streaming Reliability Load Test
  *

@@ -45,6 +45,38 @@ const TYPE_LABELS: Record<string, string> = {
   credit_update: "Credits",
 };
 
+function extractEventDetail(
+  type: string,
+  data: Record<string, unknown>
+): string | undefined {
+  if (type === "tool_call" && data.tool) {
+    return `${data.tool}(${JSON.stringify(data.args ?? {}).slice(0, 60)})`;
+  }
+  if (type === "tool_result" && data.tool) {
+    return `${data.tool}: ${data.success ? "ok" : "failed"}`;
+  }
+  if (type === "file_change" && data.filePath) {
+    return String(data.filePath);
+  }
+  if (type === "confidence") {
+    return `Score: ${Number(data.confidence ?? data.score ?? 0).toFixed(2)}`;
+  }
+  if (type === "reasoning" && data.content) {
+    return String(data.content).slice(0, 80);
+  }
+  if (type === "checkpoint") {
+    return String(data.reason ?? data.checkpointType ?? "");
+  }
+  if (type === "error" && data.error) {
+    return String(
+      typeof data.error === "string"
+        ? data.error
+        : ((data.error as Record<string, unknown>).message ?? "")
+    ).slice(0, 80);
+  }
+  return undefined;
+}
+
 export function TimelineView() {
   const { events } = useSessionStore();
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -57,28 +89,8 @@ export function TimelineView() {
     const baseTime = new Date(events[0]?.timestamp ?? 0).getTime();
 
     return events.map((event): TimelineEntry => {
-      let detail: string | undefined;
       const data = event.data as Record<string, unknown>;
-
-      if (event.type === "tool_call" && data.tool) {
-        detail = `${data.tool}(${JSON.stringify(data.args ?? {}).slice(0, 60)})`;
-      } else if (event.type === "tool_result" && data.tool) {
-        detail = `${data.tool}: ${data.success ? "ok" : "failed"}`;
-      } else if (event.type === "file_change" && data.filePath) {
-        detail = String(data.filePath);
-      } else if (event.type === "confidence") {
-        detail = `Score: ${Number(data.confidence ?? data.score ?? 0).toFixed(2)}`;
-      } else if (event.type === "reasoning" && data.content) {
-        detail = String(data.content).slice(0, 80);
-      } else if (event.type === "checkpoint") {
-        detail = String(data.reason ?? data.checkpointType ?? "");
-      } else if (event.type === "error" && data.error) {
-        detail = String(
-          typeof data.error === "string"
-            ? data.error
-            : ((data.error as Record<string, unknown>).message ?? "")
-        ).slice(0, 80);
-      }
+      const detail = extractEventDetail(event.type, data);
 
       return {
         id: event.id,

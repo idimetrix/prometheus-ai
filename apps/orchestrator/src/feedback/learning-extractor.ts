@@ -466,6 +466,29 @@ export class LearningExtractor {
    * Detect conditional patterns: "When error X occurs AND file type is Y,
    * tool Z resolves it." Built from error+tool co-occurrence data.
    */
+  private buildConditionalPattern(
+    err: { message: string; occurrences: number; resolvedAfter: string[] },
+    resolutionTool: string,
+    successRate: number,
+    analysis: SessionAnalysis,
+    now: string
+  ): LearningPattern {
+    const fileType = extractFileTypeFromError(err.message);
+    const condition = fileType
+      ? `When error "${truncate(err.message, 80)}" occurs in ${fileType} files`
+      : `When error "${truncate(err.message, 80)}" occurs`;
+
+    return {
+      type: "conditional_pattern",
+      agentRole: analysis.agentRole,
+      taskType: analysis.taskType,
+      pattern: `${condition}, use "${resolutionTool}" to resolve it (${(successRate * 100).toFixed(0)}% success, ${err.occurrences} observations).`,
+      confidence: clamp(successRate * (1 - 1 / err.occurrences), 0, 0.95),
+      occurrences: err.occurrences,
+      lastSeen: now,
+    };
+  }
+
   private analyzeConditionalPatterns(
     analysis: SessionAnalysis
   ): LearningPattern[] {
@@ -485,7 +508,6 @@ export class LearningExtractor {
         continue;
       }
 
-      // Find tools that consistently resolve this error
       for (const resolutionTool of err.resolvedAfter) {
         const toolEntry = toolMap.get(resolutionTool);
         if (!toolEntry) {
@@ -496,21 +518,15 @@ export class LearningExtractor {
         const successRate = total > 0 ? toolEntry.successCount / total : 0;
 
         if (successRate >= 0.7 && err.occurrences >= 2) {
-          // Detect file type context from error message
-          const fileType = extractFileTypeFromError(err.message);
-          const condition = fileType
-            ? `When error "${truncate(err.message, 80)}" occurs in ${fileType} files`
-            : `When error "${truncate(err.message, 80)}" occurs`;
-
-          patterns.push({
-            type: "conditional_pattern",
-            agentRole: analysis.agentRole,
-            taskType: analysis.taskType,
-            pattern: `${condition}, use "${resolutionTool}" to resolve it (${(successRate * 100).toFixed(0)}% success, ${err.occurrences} observations).`,
-            confidence: clamp(successRate * (1 - 1 / err.occurrences), 0, 0.95),
-            occurrences: err.occurrences,
-            lastSeen: now,
-          });
+          patterns.push(
+            this.buildConditionalPattern(
+              err,
+              resolutionTool,
+              successRate,
+              analysis,
+              now
+            )
+          );
         }
       }
     }
@@ -712,6 +728,37 @@ export class LearningExtractor {
    * Record a session's data into the local history maps so subsequent
    * analysis calls have cumulative data to work with.
    */
+  private recordErrorHistory(key: string, analysis: SessionAnalysis): void {
+    if (!this.errorHistory.has(key)) {
+      this.errorHistory.set(key, []);
+    }
+    const errors = this.errorHistory.get(key) as ErrorHistoryEntry[];
+    const resolutionTools = analysis.success
+      ? analysis.toolCalls.filter((t) => t.success).map((t) => t.name)
+      : [];
+
+    for (const msg of analysis.errorMessages) {
+      const normalised = normaliseError(msg);
+      const existing = errors.find((e) => e.message === normalised);
+      if (existing) {
+        existing.occurrences++;
+        if (analysis.success) {
+          const unique = new Set([
+            ...existing.resolvedAfter,
+            ...resolutionTools,
+          ]);
+          existing.resolvedAfter = [...unique].slice(0, 5);
+        }
+      } else {
+        errors.push({
+          message: normalised,
+          occurrences: 1,
+          resolvedAfter: resolutionTools.slice(0, 3),
+        });
+      }
+    }
+  }
+
   private recordSession(analysis: SessionAnalysis): void {
     const key = compositeKey(analysis.agentRole, analysis.taskType);
 
@@ -739,41 +786,7 @@ export class LearningExtractor {
 
     // Error history
     if (analysis.errorMessages.length > 0) {
-      if (!this.errorHistory.has(key)) {
-        this.errorHistory.set(key, []);
-      }
-      const errors = this.errorHistory.get(key) as ErrorHistoryEntry[];
-
-      for (const msg of analysis.errorMessages) {
-        const normalised = normaliseError(msg);
-        const existing = errors.find((e) => e.message === normalised);
-        if (existing) {
-          existing.occurrences++;
-          // If this session succeeded despite the error, record what tools
-          // were used after the error as potential resolution strategies
-          if (analysis.success) {
-            const resolutionTools = analysis.toolCalls
-              .filter((t) => t.success)
-              .map((t) => t.name);
-            const unique = new Set([
-              ...existing.resolvedAfter,
-              ...resolutionTools,
-            ]);
-            existing.resolvedAfter = [...unique].slice(0, 5);
-          }
-        } else {
-          errors.push({
-            message: normalised,
-            occurrences: 1,
-            resolvedAfter: analysis.success
-              ? analysis.toolCalls
-                  .filter((t) => t.success)
-                  .map((t) => t.name)
-                  .slice(0, 3)
-              : [],
-          });
-        }
-      }
+      this.recordErrorHistory(key, analysis);
     }
 
     // Quality snapshots

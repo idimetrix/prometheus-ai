@@ -109,68 +109,8 @@ export class CouplingAnalyzer {
     }
 
     const couplingThreshold = 0.3;
-
-    // Build coupling matrix
-    const couplings = new Map<string, number>();
-    for (let i = 0; i < files.length; i++) {
-      for (let j = i + 1; j < files.length; j++) {
-        const a = files[i] as string;
-        const b = files[j] as string;
-        const score = this.getCouplingScore(a, b);
-        couplings.set(`${a}::${b}`, score);
-      }
-    }
-
-    // Greedy clustering: assign files to groups based on coupling
-    const assigned = new Set<string>();
-    const groups: CoupledGroup[] = [];
-
-    for (const file of files) {
-      if (assigned.has(file)) {
-        continue;
-      }
-
-      const group: string[] = [file];
-      assigned.add(file);
-
-      // Find all files coupled to this one above threshold
-      for (const other of files) {
-        if (assigned.has(other)) {
-          continue;
-        }
-
-        const key1 = `${file}::${other}`;
-        const key2 = `${other}::${file}`;
-        const score = couplings.get(key1) ?? couplings.get(key2) ?? 0;
-
-        if (score >= couplingThreshold) {
-          group.push(other);
-          assigned.add(other);
-        }
-      }
-
-      // Calculate average coupling within the group
-      let totalCoupling = 0;
-      let pairCount = 0;
-      for (let i = 0; i < group.length; i++) {
-        for (let j = i + 1; j < group.length; j++) {
-          const a = group[i] as string;
-          const b = group[j] as string;
-          const key1 = `${a}::${b}`;
-          const key2 = `${b}::${a}`;
-          totalCoupling += couplings.get(key1) ?? couplings.get(key2) ?? 0;
-          pairCount++;
-        }
-      }
-
-      groups.push({
-        files: group,
-        avgCoupling:
-          pairCount > 0
-            ? Math.round((totalCoupling / pairCount) * 100) / 100
-            : 1,
-      });
-    }
+    const couplings = this.buildCouplingMatrix(files);
+    const groups = this.clusterByCoupling(files, couplings, couplingThreshold);
 
     logger.debug(
       { fileCount: files.length, groupCount: groups.length },
@@ -178,6 +118,94 @@ export class CouplingAnalyzer {
     );
 
     return groups;
+  }
+
+  private buildCouplingMatrix(files: string[]): Map<string, number> {
+    const couplings = new Map<string, number>();
+    for (let i = 0; i < files.length; i++) {
+      for (let j = i + 1; j < files.length; j++) {
+        const a = files[i] as string;
+        const b = files[j] as string;
+        couplings.set(`${a}::${b}`, this.getCouplingScore(a, b));
+      }
+    }
+    return couplings;
+  }
+
+  private lookupCoupling(
+    couplings: Map<string, number>,
+    a: string,
+    b: string
+  ): number {
+    return couplings.get(`${a}::${b}`) ?? couplings.get(`${b}::${a}`) ?? 0;
+  }
+
+  private clusterByCoupling(
+    files: string[],
+    couplings: Map<string, number>,
+    threshold: number
+  ): CoupledGroup[] {
+    const assigned = new Set<string>();
+    const groups: CoupledGroup[] = [];
+
+    for (const file of files) {
+      if (assigned.has(file)) {
+        continue;
+      }
+      const group = this.buildGroup(
+        file,
+        files,
+        couplings,
+        threshold,
+        assigned
+      );
+      const avgCoupling = this.calcGroupAvgCoupling(group, couplings);
+      groups.push({ files: group, avgCoupling });
+    }
+
+    return groups;
+  }
+
+  private buildGroup(
+    seed: string,
+    files: string[],
+    couplings: Map<string, number>,
+    threshold: number,
+    assigned: Set<string>
+  ): string[] {
+    const group: string[] = [seed];
+    assigned.add(seed);
+    for (const other of files) {
+      if (assigned.has(other)) {
+        continue;
+      }
+      if (this.lookupCoupling(couplings, seed, other) >= threshold) {
+        group.push(other);
+        assigned.add(other);
+      }
+    }
+    return group;
+  }
+
+  private calcGroupAvgCoupling(
+    group: string[],
+    couplings: Map<string, number>
+  ): number {
+    let totalCoupling = 0;
+    let pairCount = 0;
+    for (let i = 0; i < group.length; i++) {
+      for (let j = i + 1; j < group.length; j++) {
+        totalCoupling += this.lookupCoupling(
+          couplings,
+          group[i] as string,
+          group[j] as string
+        );
+        pairCount++;
+      }
+    }
+    return pairCount > 0
+      ? Math.round((totalCoupling / pairCount) * 100) / 100
+      : 1;
   }
 
   /**

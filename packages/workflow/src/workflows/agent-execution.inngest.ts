@@ -33,6 +33,206 @@ const ORCHESTRATOR_URL =
 const MODEL_ROUTER_URL =
   process.env.MODEL_ROUTER_URL ?? "http://localhost:4004";
 
+interface CodingContext {
+  orchestratorUrl: string;
+  orgId: string;
+  projectId: string;
+  sessionId: string;
+  taskId: string;
+}
+
+async function generatePlan(
+  taskId: string,
+  taskDescription: string,
+  relevantFiles: string[],
+  agentRole: string | undefined
+): Promise<PlanStep[]> {
+  logger.info({ taskId }, "Phase: Planning");
+
+  try {
+    const response = await fetch(`${MODEL_ROUTER_URL}/route`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        slot: "default",
+        messages: [
+          {
+            role: "system",
+            content:
+              "You are a planning agent. Break the task into steps. Return JSON array with id, title, description, agentRole, estimatedTokens.",
+          },
+          {
+            role: "user",
+            content: `Task: ${taskDescription}\nRelevant files: ${relevantFiles.join(", ")}`,
+          },
+        ],
+        options: { maxTokens: 4096 },
+      }),
+    });
+
+    if (response.ok) {
+      const steps = parsePlanResponse(await response.json(), taskId, agentRole);
+      if (steps) {
+        return steps;
+      }
+    }
+  } catch (error) {
+    logger.warn(
+      { taskId, error: String(error) },
+      "LLM planning failed, using single-step plan"
+    );
+  }
+
+  return [
+    {
+      id: `${taskId}-step-1`,
+      title: "Implement changes",
+      description: taskDescription,
+      agentRole: agentRole ?? "coder",
+      estimatedTokens: 5000,
+    },
+  ] satisfies PlanStep[];
+}
+
+function parsePlanResponse(
+  data: unknown,
+  taskId: string,
+  agentRole: string | undefined
+): PlanStep[] | null {
+  const typed = data as {
+    content?: string;
+    choices?: Array<{ message?: { content?: string } }>;
+  };
+  const content = typed.content ?? typed.choices?.[0]?.message?.content ?? "";
+  const jsonMatch = content.match(JSON_ARRAY_RE);
+  if (!jsonMatch) {
+    return null;
+  }
+  const parsed = JSON.parse(jsonMatch[0]) as Array<{
+    id?: string;
+    title: string;
+    description: string;
+    agentRole?: string;
+    estimatedTokens?: number;
+    dependencies?: string[];
+  }>;
+  return parsed.map((s, i) => ({
+    id: s.id ?? `${taskId}-step-${i + 1}`,
+    title: s.title,
+    description: s.description,
+    agentRole: s.agentRole ?? agentRole ?? "coder",
+    estimatedTokens: s.estimatedTokens ?? 5000,
+    dependencies: s.dependencies,
+  }));
+}
+
+function selectReadySteps(
+  remainingSteps: PlanStep[],
+  completedStepIds: Set<string>
+): PlanStep[] {
+  const readySteps = remainingSteps.filter((s) => {
+    const deps = (s as PlanStep & { dependencies?: string[] }).dependencies;
+    return (
+      !deps ||
+      deps.length === 0 ||
+      deps.every((depId) => completedStepIds.has(depId))
+    );
+  });
+  return readySteps.length > 0 ? readySteps : [remainingSteps[0] as PlanStep];
+}
+
+async function executeSingleStep(
+  step: WorkflowContext<AgentExecutionEvent>["step"],
+  ctx: CodingContext,
+  planStep: PlanStep,
+  taskId: string,
+  sessionId: string
+): Promise<ExecutionResult> {
+  const result = await step.run(`coding-${planStep.id}`, () =>
+    runCodingStep(ctx, planStep)
+  );
+
+  await step.sendEvent(`coding-step-completed-${planStep.id}`, {
+    name: "prometheus/agent.step.completed",
+    data: {
+      taskId,
+      sessionId,
+      stepId: planStep.id,
+      phase: "coding",
+      success: result.success,
+      output: result.output,
+      filesChanged: result.filesChanged,
+      tokensUsed: result.tokensUsed,
+    },
+  });
+
+  return result;
+}
+
+function settledToResult(
+  settled: PromiseSettledResult<ExecutionResult> | undefined,
+  planStep: PlanStep
+): ExecutionResult {
+  if (settled && settled.status === "fulfilled") {
+    return settled.value;
+  }
+  const errorMsg =
+    settled && settled.status === "rejected"
+      ? String(settled.reason)
+      : "Unknown error";
+  return {
+    stepId: planStep.id,
+    success: false,
+    output: errorMsg,
+    filesChanged: [],
+    tokensUsed: { input: 0, output: 0 },
+    error: errorMsg,
+  };
+}
+
+async function executeParallelSteps(
+  step: WorkflowContext<AgentExecutionEvent>["step"],
+  ctx: CodingContext,
+  stepsToExecute: PlanStep[],
+  taskId: string,
+  sessionId: string
+): Promise<Array<{ stepId: string; result: ExecutionResult }>> {
+  logger.info(
+    { taskId, parallelCount: stepsToExecute.length },
+    "Executing steps in parallel"
+  );
+
+  const parallelResults = await Promise.allSettled(
+    stepsToExecute.map((planStep) =>
+      step.run(`coding-${planStep.id}`, () => runCodingStep(ctx, planStep))
+    )
+  );
+
+  const results: Array<{ stepId: string; result: ExecutionResult }> = [];
+  for (let idx = 0; idx < stepsToExecute.length; idx++) {
+    const planStep = stepsToExecute[idx] as PlanStep;
+    const result = settledToResult(parallelResults[idx], planStep);
+
+    await step.sendEvent(`coding-step-completed-${planStep.id}`, {
+      name: "prometheus/agent.step.completed",
+      data: {
+        taskId,
+        sessionId,
+        stepId: planStep.id,
+        phase: "coding",
+        success: result.success,
+        output: result.output,
+        filesChanged: result.filesChanged,
+        tokensUsed: result.tokensUsed,
+      },
+    });
+
+    results.push({ stepId: planStep.id, result });
+  }
+
+  return results;
+}
+
 export const agentExecutionWorkflow: ReturnType<typeof inngest.createFunction> =
   inngest.createFunction(
     {
@@ -121,74 +321,14 @@ export const agentExecutionWorkflow: ReturnType<typeof inngest.createFunction> =
       await step.sleep("post-architecture-backpressure", "1s");
 
       // ── Phase 3: Planning (LLM-generated) ───────────────────────────
-      const plan = await step.run("planning", async () => {
-        logger.info({ taskId }, "Phase: Planning");
-
-        try {
-          const response = await fetch(`${MODEL_ROUTER_URL}/route`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              slot: "default",
-              messages: [
-                {
-                  role: "system",
-                  content:
-                    "You are a planning agent. Break the task into steps. Return JSON array with id, title, description, agentRole, estimatedTokens.",
-                },
-                {
-                  role: "user",
-                  content: `Task: ${taskDescription}\nRelevant files: ${discoveryResult.relevantFiles.join(", ")}`,
-                },
-              ],
-              options: { maxTokens: 4096 },
-            }),
-          });
-
-          if (response.ok) {
-            const data = (await response.json()) as {
-              content?: string;
-              choices?: Array<{ message?: { content?: string } }>;
-            };
-            const content =
-              data.content ?? data.choices?.[0]?.message?.content ?? "";
-            const jsonMatch = content.match(JSON_ARRAY_RE);
-            if (jsonMatch) {
-              const parsed = JSON.parse(jsonMatch[0]) as Array<{
-                id?: string;
-                title: string;
-                description: string;
-                agentRole?: string;
-                estimatedTokens?: number;
-                dependencies?: string[];
-              }>;
-              return parsed.map((s, i) => ({
-                id: s.id ?? `${taskId}-step-${i + 1}`,
-                title: s.title,
-                description: s.description,
-                agentRole: s.agentRole ?? agentRole ?? "coder",
-                estimatedTokens: s.estimatedTokens ?? 5000,
-                dependencies: s.dependencies,
-              }));
-            }
-          }
-        } catch (error) {
-          logger.warn(
-            { taskId, error: String(error) },
-            "LLM planning failed, using single-step plan"
-          );
-        }
-
-        return [
-          {
-            id: `${taskId}-step-1`,
-            title: "Implement changes",
-            description: taskDescription,
-            agentRole: agentRole ?? "coder",
-            estimatedTokens: 5000,
-          },
-        ] satisfies PlanStep[];
-      });
+      const plan = await step.run("planning", () =>
+        generatePlan(
+          taskId,
+          taskDescription,
+          discoveryResult.relevantFiles,
+          agentRole
+        )
+      );
 
       await step.sendEvent("planning-completed", {
         name: "prometheus/agent.step.completed",
@@ -232,20 +372,19 @@ export const agentExecutionWorkflow: ReturnType<typeof inngest.createFunction> =
       const executions: ExecutionResult[] = [];
       const completedStepIds = new Set<string>();
       const remainingSteps = [...plan];
+      const codingCtx = {
+        taskId,
+        sessionId,
+        projectId,
+        orgId,
+        orchestratorUrl: ORCHESTRATOR_URL,
+      };
 
       while (remainingSteps.length > 0) {
-        // Find steps whose dependencies are satisfied
-        const readySteps = remainingSteps.filter((s) => {
-          const deps = (s as PlanStep & { dependencies?: string[] })
-            .dependencies;
-          if (!deps || deps.length === 0) {
-            return true;
-          }
-          return deps.every((depId) => completedStepIds.has(depId));
-        });
-
-        const stepsToExecute =
-          readySteps.length > 0 ? readySteps : [remainingSteps[0] as PlanStep];
+        const stepsToExecute = selectReadySteps(
+          remainingSteps,
+          completedStepIds
+        );
 
         // Remove selected from remaining
         const selectedIds = new Set(stepsToExecute.map((s) => s.id));
@@ -257,99 +396,28 @@ export const agentExecutionWorkflow: ReturnType<typeof inngest.createFunction> =
 
         if (stepsToExecute.length === 1) {
           const planStep = stepsToExecute[0] as PlanStep;
-          const result = await step.run(`coding-${planStep.id}`, () =>
-            runCodingStep(
-              {
-                taskId,
-                sessionId,
-                projectId,
-                orgId,
-                orchestratorUrl: ORCHESTRATOR_URL,
-              },
-              planStep
-            )
+          const result = await executeSingleStep(
+            step,
+            codingCtx,
+            planStep,
+            taskId,
+            sessionId
           );
-
-          await step.sendEvent(`coding-step-completed-${planStep.id}`, {
-            name: "prometheus/agent.step.completed",
-            data: {
-              taskId,
-              sessionId,
-              stepId: planStep.id,
-              phase: "coding",
-              success: result.success,
-              output: result.output,
-              filesChanged: result.filesChanged,
-              tokensUsed: result.tokensUsed,
-            },
-          });
-
           executions.push(result);
           completedStepIds.add(planStep.id);
           await step.sleep(`post-coding-${planStep.id}`, "500ms");
         } else {
-          // Parallel execution via Promise.allSettled
-          logger.info(
-            { taskId, parallelCount: stepsToExecute.length },
-            "Executing steps in parallel"
+          const results = await executeParallelSteps(
+            step,
+            codingCtx,
+            stepsToExecute,
+            taskId,
+            sessionId
           );
-
-          const parallelResults = await Promise.allSettled(
-            stepsToExecute.map((planStep) =>
-              step.run(`coding-${planStep.id}`, () =>
-                runCodingStep(
-                  {
-                    taskId,
-                    sessionId,
-                    projectId,
-                    orgId,
-                    orchestratorUrl: ORCHESTRATOR_URL,
-                  },
-                  planStep
-                )
-              )
-            )
-          );
-
-          for (let idx = 0; idx < stepsToExecute.length; idx++) {
-            const planStep = stepsToExecute[idx] as PlanStep;
-            const settled = parallelResults[idx];
-            const result: ExecutionResult =
-              settled && settled.status === "fulfilled"
-                ? settled.value
-                : {
-                    stepId: planStep.id,
-                    success: false,
-                    output:
-                      settled && settled.status === "rejected"
-                        ? String(settled.reason)
-                        : "Unknown error",
-                    filesChanged: [],
-                    tokensUsed: { input: 0, output: 0 },
-                    error:
-                      settled && settled.status === "rejected"
-                        ? String(settled.reason)
-                        : "Unknown error",
-                  };
-
-            await step.sendEvent(`coding-step-completed-${planStep.id}`, {
-              name: "prometheus/agent.step.completed",
-              data: {
-                taskId,
-                sessionId,
-                stepId: planStep.id,
-                phase: "coding",
-                success: result.success,
-                output: result.output,
-                filesChanged: result.filesChanged,
-                tokensUsed: result.tokensUsed,
-              },
-            });
-
-            executions.push(result);
-            completedStepIds.add(planStep.id);
+          for (const r of results) {
+            executions.push(r.result);
+            completedStepIds.add(r.stepId);
           }
-
           await step.sleep("post-parallel-coding", "500ms");
         }
       }

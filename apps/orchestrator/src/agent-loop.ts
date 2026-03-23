@@ -33,6 +33,21 @@ interface ProjectBrainContext {
   sprintState: string | null;
 }
 
+const ROLE_SLOT_MAP: Record<string, string> = {
+  orchestrator: "think",
+  discovery: "longContext",
+  architect: "think",
+  planner: "think",
+  frontend_coder: "default",
+  backend_coder: "default",
+  integration_coder: "fastLoop",
+  test_engineer: "fastLoop",
+  ci_loop: "fastLoop",
+  security_auditor: "think",
+  deploy_engineer: "default",
+  documentation_specialist: "longContext",
+};
+
 /**
  * AgentLoop is now a thin wrapper around the ExecutionEngine.
  * It manages session-level state (pause/resume/cancel), loads context
@@ -49,8 +64,8 @@ export class AgentLoop {
   private readonly iterations: LoopIteration[] = [];
   private readonly eventPublisher: EventPublisher;
   private readonly sessionMemory: SessionMemory;
-  private readonly executionTracker: ExecutionTracker;
   private readonly learningExtractor: LearningExtractor;
+  private readonly executionTracker: ExecutionTracker;
   private totalCreditsConsumed = 0;
   private lastConfidence: ConfidenceResult | null = null;
   private activeAgent: BaseAgent | null = null;
@@ -161,21 +176,6 @@ export class AgentLoop {
   ): Promise<AgentExecutionResult> {
     this.status = "running";
 
-    // Load context from project brain
-    const brainContext = await this.loadProjectBrainContext();
-
-    // Load prior session context
-    const priorContext = await this.sessionMemory
-      .loadPriorContext(this.sessionId, this.projectId)
-      .catch(() => ({ loaded: false, priorSessions: 0, context: "" }));
-
-    if (priorContext.loaded && priorContext.context) {
-      this.logger.info(
-        { priorSessions: priorContext.priorSessions },
-        "Loaded prior session context"
-      );
-    }
-
     const iteration: LoopIteration = {
       iteration: this.iterations.length + 1,
       agentRole,
@@ -184,51 +184,43 @@ export class AgentLoop {
       result: null,
     };
 
+    const ctx = await this.buildTaskContext(
+      taskDescription,
+      agentRole,
+      iteration,
+      options
+    );
+
+    try {
+      const result = await this.consumeExecutionEvents(ctx, agentRole);
+      return this.completeIteration(iteration, result, agentRole);
+    } catch (error) {
+      return this.failIteration(error, iteration, agentRole);
+    }
+  }
+
+  private async buildTaskContext(
+    taskDescription: string,
+    agentRole: string,
+    iteration: LoopIteration,
+    options?: ExecutionOptions
+  ): Promise<ReturnType<typeof createExecutionContext>> {
+    const brainContext = await this.loadProjectBrainContext();
+    const priorContext = await this.loadPriorContext();
+
     this.logger.info(
       { iteration: iteration.iteration, agentRole },
       "Starting agent execution"
     );
 
-    // Publish status event
-    await this.eventPublisher.publishSessionEvent(this.sessionId, {
-      type: QueueEvents.AGENT_STATUS,
-      data: {
-        agentRole,
-        status: "running",
-        iteration: iteration.iteration,
-      },
-      agentRole,
-      timestamp: new Date().toISOString(),
-    });
+    await this.publishStartEvent(agentRole, iteration.iteration);
 
-    // Determine slot from role
-    const slotMap: Record<string, string> = {
-      orchestrator: "think",
-      discovery: "longContext",
-      architect: "think",
-      planner: "think",
-      frontend_coder: "default",
-      backend_coder: "default",
-      integration_coder: "fastLoop",
-      test_engineer: "fastLoop",
-      ci_loop: "fastLoop",
-      security_auditor: "think",
-      deploy_engineer: "default",
-      documentation_specialist: "longContext",
-    };
+    const enrichedDescription = await this.enrichTaskDescription(
+      taskDescription,
+      agentRole
+    );
 
-    // Inject learned patterns from prior sessions into task context
-    const taskType = this.inferTaskType(taskDescription);
-    const learnedContext = await this.learningExtractor
-      .getLearnedContext(agentRole, taskType, this.projectId)
-      .catch(() => "");
-
-    const enrichedDescription = learnedContext
-      ? `${taskDescription}\n\n${learnedContext}`
-      : taskDescription;
-
-    // Create execution context
-    const ctx = createExecutionContext({
+    return createExecutionContext({
       sessionId: this.sessionId,
       projectId: this.projectId,
       orgId: this.orgId,
@@ -244,151 +236,85 @@ export class AgentLoop {
           ? priorContext.context
           : null,
       options: {
-        slot: slotMap[agentRole] ?? "default",
+        slot: ROLE_SLOT_MAP[agentRole] ?? "default",
         ...options,
       },
     });
+  }
 
-    try {
-      let result: AgentExecutionResult | null = null;
+  private async loadPriorContext(): Promise<{
+    loaded: boolean;
+    priorSessions: number;
+    context: string;
+  }> {
+    const priorContext = await this.sessionMemory
+      .loadPriorContext(this.sessionId, this.projectId)
+      .catch(() => ({ loaded: false, priorSessions: 0, context: "" }));
 
-      // Consume the execution engine async generator
-      for await (const event of ExecutionEngine.execute(ctx)) {
-        // Handle pause/stop — status may be changed externally via pause()/stop()
-        if (this.getStatus() === "paused") {
-          await this.waitForResume();
-        }
-        if (this.getStatus() === "stopped") {
-          break;
-        }
+    if (priorContext.loaded && priorContext.context) {
+      this.logger.info(
+        { priorSessions: priorContext.priorSessions },
+        "Loaded prior session context"
+      );
+    }
 
-        // Translate events to Redis pub/sub
-        await this.publishExecutionEvent(event, agentRole);
+    return priorContext;
+  }
 
-        // Track state from events
-        if (event.type === "confidence") {
-          this.lastConfidence = {
-            score: event.score,
-            action: event.action,
-            factors: event.factors.map((f) => ({
-              name: f.name,
-              value: f.value,
-              weight: 0,
-              contribution: 0,
-            })),
-            recommendedSlot: null,
-          };
-        }
-
-        if (event.type === "credit_update") {
-          this.totalCreditsConsumed = event.totalCreditsConsumed;
-        }
-
-        if (event.type === "complete") {
-          result = {
-            success: event.success,
-            output: event.output,
-            filesChanged: event.filesChanged,
-            tokensUsed: event.tokensUsed,
-            toolCalls: event.toolCalls,
-            steps: event.steps,
-            creditsConsumed: event.creditsConsumed,
-          };
-        }
-
-        if (event.type === "error" && !event.recoverable && !result) {
-          result = {
-            success: false,
-            output: "",
-            filesChanged: [],
-            tokensUsed: { input: 0, output: 0 },
-            toolCalls: 0,
-            steps: 0,
-            creditsConsumed: 0,
-            error: event.error,
-          };
-        }
-      }
-
-      // Fallback result if engine didn't yield a complete event
-      if (!result) {
-        result = {
-          success: false,
-          output: "",
-          filesChanged: [],
-          tokensUsed: { input: 0, output: 0 },
-          toolCalls: 0,
-          steps: 0,
-          creditsConsumed: 0,
-          error: "Execution completed without result",
-        };
-      }
-
-      iteration.completedAt = new Date();
-      iteration.result = result;
-      this.iterations.push(iteration);
-      this.status = "idle";
-      this.cleanup();
-
-      // Publish completion event
-      await this.eventPublisher.publishSessionEvent(this.sessionId, {
-        type: QueueEvents.AGENT_STATUS,
-        data: {
-          agentRole,
-          status: result.success ? "completed" : "failed",
-          tokensUsed: result.tokensUsed,
-          toolCalls: result.toolCalls,
-          filesChanged: result.filesChanged,
-        },
+  private async publishStartEvent(
+    agentRole: string,
+    iterationNum: number
+  ): Promise<void> {
+    await this.eventPublisher.publishSessionEvent(this.sessionId, {
+      type: QueueEvents.AGENT_STATUS,
+      data: {
         agentRole,
-        timestamp: new Date().toISOString(),
-      });
+        status: "running",
+        iteration: iterationNum,
+      },
+      agentRole,
+      timestamp: new Date().toISOString(),
+    });
+  }
 
-      // Save session summary
-      this.sessionMemory
-        .saveSessionSummary({
-          sessionId: this.sessionId,
-          projectId: this.projectId,
-          outcome: result.success ? "completed" : "failed",
-          filesChanged: result.filesChanged,
-          creditsConsumed: result.creditsConsumed,
-          duration: iteration.completedAt
-            ? iteration.completedAt.getTime() - iteration.startedAt.getTime()
-            : 0,
-          decisions: [],
-          blockers: result.error ? [result.error] : [],
-        })
-        .catch((err) => {
-          this.logger.warn({ err }, "Failed to save session summary");
-        });
+  private async enrichTaskDescription(
+    taskDescription: string,
+    agentRole: string
+  ): Promise<string> {
+    const taskType = this.inferTaskType(taskDescription);
+    const learnedContext = await this.learningExtractor
+      .getLearnedContext(agentRole, taskType, this.projectId)
+      .catch(() => "");
 
-      // Record execution outcome
-      this.executionTracker
-        .record({
-          projectId: this.projectId,
-          agentRole,
-          taskType: agentRole,
-          success: result.success,
-          duration: iteration.completedAt
-            ? iteration.completedAt.getTime() - iteration.startedAt.getTime()
-            : 0,
-          iterations: result.steps,
-          tokensUsed: result.tokensUsed.input + result.tokensUsed.output,
-          filesChanged: result.filesChanged.length,
-          errorType: result.error,
-        })
-        .catch(() => {
-          /* fire-and-forget */
-        });
+    return learnedContext
+      ? `${taskDescription}\n\n${learnedContext}`
+      : taskDescription;
+  }
 
-      return result;
-    } catch (error) {
-      const errorMessage =
-        error instanceof Error ? error.message : String(error);
-      this.logger.error({ error: errorMessage }, "Agent execution failed");
+  private async consumeExecutionEvents(
+    ctx: ReturnType<typeof createExecutionContext>,
+    agentRole: string
+  ): Promise<AgentExecutionResult> {
+    let result: AgentExecutionResult | null = null;
 
-      iteration.completedAt = new Date();
-      iteration.result = {
+    for await (const event of ExecutionEngine.execute(ctx)) {
+      if (this.getStatus() === "paused") {
+        await this.waitForResume();
+      }
+      if (this.getStatus() === "stopped") {
+        break;
+      }
+
+      await this.publishExecutionEvent(event, agentRole);
+
+      const eventResult = this.trackEventState(event, result);
+      if (eventResult !== undefined) {
+        result = eventResult;
+      }
+    }
+
+    return (
+      result ?? {
         success: false,
         output: "",
         filesChanged: [],
@@ -396,22 +322,167 @@ export class AgentLoop {
         toolCalls: 0,
         steps: 0,
         creditsConsumed: 0,
-        error: errorMessage,
-      };
-      this.iterations.push(iteration);
-      this.status = "idle";
-      this.cleanup();
+        error: "Execution completed without result",
+      }
+    );
+  }
 
-      // Publish error event
-      await this.eventPublisher.publishSessionEvent(this.sessionId, {
-        type: QueueEvents.ERROR,
-        data: { agentRole, error: errorMessage },
+  private async completeIteration(
+    iteration: LoopIteration,
+    result: AgentExecutionResult,
+    agentRole: string
+  ): Promise<AgentExecutionResult> {
+    iteration.completedAt = new Date();
+    iteration.result = result;
+    this.iterations.push(iteration);
+    this.status = "idle";
+    this.cleanup();
+
+    await this.finalizeExecution(iteration, result, agentRole);
+    return result;
+  }
+
+  private async failIteration(
+    error: unknown,
+    iteration: LoopIteration,
+    agentRole: string
+  ): Promise<AgentExecutionResult> {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    this.logger.error({ error: errorMessage }, "Agent execution failed");
+
+    iteration.completedAt = new Date();
+    iteration.result = {
+      success: false,
+      output: "",
+      filesChanged: [],
+      tokensUsed: { input: 0, output: 0 },
+      toolCalls: 0,
+      steps: 0,
+      creditsConsumed: 0,
+      error: errorMessage,
+    };
+    this.iterations.push(iteration);
+    this.status = "idle";
+    this.cleanup();
+
+    await this.eventPublisher.publishSessionEvent(this.sessionId, {
+      type: QueueEvents.ERROR,
+      data: { agentRole, error: errorMessage },
+      agentRole,
+      timestamp: new Date().toISOString(),
+    });
+
+    return iteration.result as NonNullable<typeof iteration.result>;
+  }
+
+  private async finalizeExecution(
+    iteration: LoopIteration,
+    result: AgentExecutionResult,
+    agentRole: string
+  ): Promise<void> {
+    await this.eventPublisher.publishSessionEvent(this.sessionId, {
+      type: QueueEvents.AGENT_STATUS,
+      data: {
         agentRole,
-        timestamp: new Date().toISOString(),
+        status: result.success ? "completed" : "failed",
+        tokensUsed: result.tokensUsed,
+        toolCalls: result.toolCalls,
+        filesChanged: result.filesChanged,
+      },
+      agentRole,
+      timestamp: new Date().toISOString(),
+    });
+
+    this.sessionMemory
+      .saveSessionSummary({
+        sessionId: this.sessionId,
+        projectId: this.projectId,
+        outcome: result.success ? "completed" : "failed",
+        filesChanged: result.filesChanged,
+        creditsConsumed: result.creditsConsumed,
+        duration: iteration.completedAt
+          ? iteration.completedAt.getTime() - iteration.startedAt.getTime()
+          : 0,
+        decisions: [],
+        blockers: result.error ? [result.error] : [],
+      })
+      .catch((err) => {
+        this.logger.warn({ err }, "Failed to save session summary");
       });
 
-      return iteration.result as NonNullable<typeof iteration.result>;
+    this.executionTracker
+      .record({
+        projectId: this.projectId,
+        agentRole,
+        taskType: agentRole,
+        success: result.success,
+        duration: iteration.completedAt
+          ? iteration.completedAt.getTime() - iteration.startedAt.getTime()
+          : 0,
+        iterations: result.steps,
+        tokensUsed: result.tokensUsed.input + result.tokensUsed.output,
+        filesChanged: result.filesChanged.length,
+        errorType: result.error,
+      })
+      .catch(() => {
+        /* fire-and-forget */
+      });
+  }
+
+  /**
+   * Track internal state changes from execution events.
+   * Returns a new result if the event produces one, otherwise undefined.
+   */
+  private trackEventState(
+    event: ExecutionEvent,
+    currentResult: AgentExecutionResult | null
+  ): AgentExecutionResult | null | undefined {
+    if (event.type === "confidence") {
+      this.lastConfidence = {
+        score: event.score,
+        action: event.action,
+        factors: event.factors.map((f) => ({
+          name: f.name,
+          value: f.value,
+          weight: 0,
+          contribution: 0,
+        })),
+        recommendedSlot: null,
+      };
+      return undefined;
     }
+
+    if (event.type === "credit_update") {
+      this.totalCreditsConsumed = event.totalCreditsConsumed;
+      return undefined;
+    }
+
+    if (event.type === "complete") {
+      return {
+        success: event.success,
+        output: event.output,
+        filesChanged: event.filesChanged,
+        tokensUsed: event.tokensUsed,
+        toolCalls: event.toolCalls,
+        steps: event.steps,
+        creditsConsumed: event.creditsConsumed,
+      };
+    }
+
+    if (event.type === "error" && !event.recoverable && !currentResult) {
+      return {
+        success: false,
+        output: "",
+        filesChanged: [],
+        tokensUsed: { input: 0, output: 0 },
+        toolCalls: 0,
+        steps: 0,
+        creditsConsumed: 0,
+        error: event.error,
+      };
+    }
+
+    return undefined;
   }
 
   /**

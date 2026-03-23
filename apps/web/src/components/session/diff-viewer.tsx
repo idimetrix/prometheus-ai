@@ -63,14 +63,9 @@ interface EditOp {
   type: "equal" | "insert" | "delete";
 }
 
-function computeEditOps(oldLines: string[], newLines: string[]): EditOp[] {
+function buildLcsDp(oldLines: string[], newLines: string[]): number[][] {
   const m = oldLines.length;
   const n = newLines.length;
-
-  if (m * n > 10_000_000) {
-    return simpleFallback(oldLines, newLines);
-  }
-
   const dp: number[][] = Array.from({ length: m + 1 }, () =>
     new Array(n + 1).fill(0)
   );
@@ -90,9 +85,17 @@ function computeEditOps(oldLines: string[], newLines: string[]): EditOp[] {
     }
   }
 
+  return dp;
+}
+
+function backtrackEditOps(
+  dp: number[][],
+  oldLines: string[],
+  newLines: string[]
+): EditOp[] {
   const ops: EditOp[] = [];
-  let i = m;
-  let j = n;
+  let i = oldLines.length;
+  let j = newLines.length;
 
   while (i > 0 || j > 0) {
     if (i > 0 && j > 0 && oldLines[i - 1] === newLines[j - 1]) {
@@ -112,6 +115,15 @@ function computeEditOps(oldLines: string[], newLines: string[]): EditOp[] {
   }
 
   return ops;
+}
+
+function computeEditOps(oldLines: string[], newLines: string[]): EditOp[] {
+  if (oldLines.length * newLines.length > 10_000_000) {
+    return simpleFallback(oldLines, newLines);
+  }
+
+  const dp = buildLcsDp(oldLines, newLines);
+  return backtrackEditOps(dp, oldLines, newLines);
 }
 
 function simpleFallback(oldLines: string[], newLines: string[]): EditOp[] {
@@ -136,11 +148,11 @@ function simpleFallback(oldLines: string[], newLines: string[]): EditOp[] {
   return ops;
 }
 
-function computeDiff(oldText: string, newText: string): DiffHunk[] {
-  const oldLines = oldText.split("\n");
-  const newLines = newText.split("\n");
-  const ops = computeEditOps(oldLines, newLines);
-
+function opsToLines(
+  ops: EditOp[],
+  oldLines: string[],
+  newLines: string[]
+): DiffLine[] {
   const allLines: DiffLine[] = [];
   let oldLineNum = 1;
   let newLineNum = 1;
@@ -174,8 +186,13 @@ function computeDiff(oldText: string, newText: string): DiffHunk[] {
     }
   }
 
-  // Build hunks with 3 lines of context
-  const contextSize = 3;
+  return allLines;
+}
+
+function collectChangeIndices(
+  allLines: DiffLine[],
+  contextSize: number
+): Set<number> {
   const changeIndices = new Set<number>();
   for (let idx = 0; idx < allLines.length; idx++) {
     const line = allLines[idx];
@@ -189,11 +206,13 @@ function computeDiff(oldText: string, newText: string): DiffHunk[] {
       }
     }
   }
+  return changeIndices;
+}
 
-  if (changeIndices.size === 0) {
-    return [];
-  }
-
+function groupIntoHunks(
+  allLines: DiffLine[],
+  changeIndices: Set<number>
+): DiffHunk[] {
   const sorted = [...changeIndices].sort((a, b) => a - b);
   const hunks: DiffHunk[] = [];
   let currentLines: DiffLine[] = [];
@@ -217,6 +236,22 @@ function computeDiff(oldText: string, newText: string): DiffHunk[] {
   }
 
   return hunks;
+}
+
+function computeDiff(oldText: string, newText: string): DiffHunk[] {
+  const oldLines = oldText.split("\n");
+  const newLines = newText.split("\n");
+  const ops = computeEditOps(oldLines, newLines);
+  const allLines = opsToLines(ops, oldLines, newLines);
+
+  const contextSize = 3;
+  const changeIndices = collectChangeIndices(allLines, contextSize);
+
+  if (changeIndices.size === 0) {
+    return [];
+  }
+
+  return groupIntoHunks(allLines, changeIndices);
 }
 
 function buildHunk(lines: DiffLine[]): DiffHunk {
@@ -369,6 +404,91 @@ function DecisionButton({
       >
         N
       </button>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Extracted line-level render helpers
+// ---------------------------------------------------------------------------
+
+function UnifiedDiffLine({
+  line,
+  hunkId,
+  decisions,
+  reviewMode,
+  handleDecision,
+}: {
+  line: DiffLine;
+  hunkId: string;
+  decisions: Record<string, LineDecision>;
+  reviewMode: boolean;
+  handleDecision: (lineKey: string, decision: LineDecision) => void;
+}) {
+  const lineKey = `${hunkId}-${line.type}-${line.oldLineNum ?? "n"}-${line.newLineNum ?? "n"}`;
+  const decision = decisions[lineKey] ?? "pending";
+  const isChangeLine = line.type === "addition" || line.type === "deletion";
+
+  return (
+    <div className={`flex leading-5 ${lineBgColor(line.type)}`}>
+      <span className="w-12 shrink-0 select-none pr-2 text-right text-zinc-700">
+        {line.oldLineNum ?? ""}
+      </span>
+      <span className="w-12 shrink-0 select-none pr-2 text-right text-zinc-700">
+        {line.newLineNum ?? ""}
+      </span>
+      <span
+        className={`w-4 shrink-0 select-none text-center ${linePrefixColor(line.type)}`}
+      >
+        {linePrefix(line.type)}
+      </span>
+      <span
+        className={`min-w-0 flex-1 whitespace-pre-wrap break-all pl-1 ${lineTextColor(line.type)}`}
+      >
+        {line.content}
+      </span>
+      {reviewMode && isChangeLine && (
+        <DecisionButton
+          decision={decision}
+          lineKey={lineKey}
+          onDecision={handleDecision}
+        />
+      )}
+    </div>
+  );
+}
+
+function SplitDiffLineRow({ line }: { line: DiffLine }) {
+  return (
+    <div className="flex">
+      <div
+        className={`flex w-1/2 border-zinc-800/50 border-r leading-5 ${
+          line.type === "deletion" ? "bg-red-500/10" : ""
+        }`}
+      >
+        <span className="w-10 shrink-0 select-none pr-2 text-right text-zinc-700">
+          {line.type === "addition" ? "" : (line.oldLineNum ?? "")}
+        </span>
+        <span
+          className={`min-w-0 flex-1 whitespace-pre-wrap break-all pl-1 ${splitLeftTextColor(line.type)}`}
+        >
+          {line.type === "addition" ? "" : line.content}
+        </span>
+      </div>
+      <div
+        className={`flex w-1/2 leading-5 ${
+          line.type === "addition" ? "bg-green-500/10" : ""
+        }`}
+      >
+        <span className="w-10 shrink-0 select-none pr-2 text-right text-zinc-700">
+          {line.type === "deletion" ? "" : (line.newLineNum ?? "")}
+        </span>
+        <span
+          className={`min-w-0 flex-1 whitespace-pre-wrap break-all pl-1 ${splitRightTextColor(line.type)}`}
+        >
+          {line.type === "deletion" ? "" : line.content}
+        </span>
+      </div>
     </div>
   );
 }
@@ -562,88 +682,22 @@ export function DiffViewer({
                     </div>
 
                     {viewMode === "unified"
-                      ? hunk.lines.map((line) => {
-                          const lineKey = `${hunkId}-${line.type}-${line.oldLineNum ?? "n"}-${line.newLineNum ?? "n"}`;
-                          const decision = decisions[lineKey] ?? "pending";
-                          const isChangeLine =
-                            line.type === "addition" ||
-                            line.type === "deletion";
-
-                          return (
-                            <div
-                              className={`flex leading-5 ${lineBgColor(line.type)}`}
-                              key={lineKey}
-                            >
-                              <span className="w-12 shrink-0 select-none pr-2 text-right text-zinc-700">
-                                {line.oldLineNum ?? ""}
-                              </span>
-                              <span className="w-12 shrink-0 select-none pr-2 text-right text-zinc-700">
-                                {line.newLineNum ?? ""}
-                              </span>
-                              <span
-                                className={`w-4 shrink-0 select-none text-center ${linePrefixColor(line.type)}`}
-                              >
-                                {linePrefix(line.type)}
-                              </span>
-                              <span
-                                className={`min-w-0 flex-1 whitespace-pre-wrap break-all pl-1 ${lineTextColor(line.type)}`}
-                              >
-                                {line.content}
-                              </span>
-                              {reviewMode && isChangeLine && (
-                                <DecisionButton
-                                  decision={decision}
-                                  lineKey={lineKey}
-                                  onDecision={handleDecision}
-                                />
-                              )}
-                            </div>
-                          );
-                        })
-                      : /* Split view */
-                        hunk.lines.map((line) => {
-                          const lineKey = `${hunkId}-split-${line.type}-${line.oldLineNum ?? "n"}-${line.newLineNum ?? "n"}`;
-                          return (
-                            <div className="flex" key={lineKey}>
-                              <div
-                                className={`flex w-1/2 border-zinc-800/50 border-r leading-5 ${
-                                  line.type === "deletion"
-                                    ? "bg-red-500/10"
-                                    : ""
-                                }`}
-                              >
-                                <span className="w-10 shrink-0 select-none pr-2 text-right text-zinc-700">
-                                  {line.type === "addition"
-                                    ? ""
-                                    : (line.oldLineNum ?? "")}
-                                </span>
-                                <span
-                                  className={`min-w-0 flex-1 whitespace-pre-wrap break-all pl-1 ${splitLeftTextColor(line.type)}`}
-                                >
-                                  {line.type === "addition" ? "" : line.content}
-                                </span>
-                              </div>
-                              <div
-                                className={`flex w-1/2 leading-5 ${
-                                  line.type === "addition"
-                                    ? "bg-green-500/10"
-                                    : ""
-                                }`}
-                              >
-                                <span className="w-10 shrink-0 select-none pr-2 text-right text-zinc-700">
-                                  {line.type === "deletion"
-                                    ? ""
-                                    : (line.newLineNum ?? "")}
-                                </span>
-                                <span
-                                  className={`min-w-0 flex-1 whitespace-pre-wrap break-all pl-1 ${splitRightTextColor(line.type)}`}
-                                >
-                                  {line.type === "deletion" ? "" : line.content}
-                                </span>
-                              </div>
-                            </div>
-                          );
-                        })}
+                      ? hunk.lines.map((line) => (
+                          <UnifiedDiffLine
+                            decisions={decisions}
+                            handleDecision={handleDecision}
+                            hunkId={hunkId}
+                            key={`${hunkId}-${line.type}-${line.oldLineNum ?? "n"}-${line.newLineNum ?? "n"}`}
+                            line={line}
+                            reviewMode={reviewMode}
+                          />
+                        ))
+                      : hunk.lines.map((line) => (
+                          <SplitDiffLineRow
+                            key={`${hunkId}-split-${line.type}-${line.oldLineNum ?? "n"}-${line.newLineNum ?? "n"}`}
+                            line={line}
+                          />
+                        ))}
                   </div>
                 );
               })}

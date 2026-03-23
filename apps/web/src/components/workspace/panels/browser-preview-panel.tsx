@@ -304,7 +304,6 @@ export function BrowserPreviewPanel() {
               </button>
             </div>
           ) : (
-            // biome-ignore lint/a11y/noNoninteractiveElementInteractions: onLoad/onError are lifecycle events, not user interactions
             <iframe
               className={`${device === "desktop" ? "" : "rounded-lg border border-zinc-700 shadow-xl"}`}
               onError={handleIframeError}
@@ -313,7 +312,7 @@ export function BrowserPreviewPanel() {
               sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-modals"
               src={url}
               style={iframeStyle}
-              title="Browser Preview"
+              title="Browser preview"
             />
           )}
         </div>

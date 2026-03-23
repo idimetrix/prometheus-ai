@@ -188,8 +188,7 @@ function DependenciesTab({ dependencies }: { dependencies: FileDependency[] }) {
           Graph
         </h5>
         <div className="rounded-md border border-zinc-800 bg-zinc-900/50 p-3">
-          {/* biome-ignore lint/a11y/noSvgWithoutTitle: dependency graph visualization */}
-          <svg className="w-full" height={120} role="img">
+          <svg aria-hidden="true" className="w-full" height={120}>
             {/* Imports on left */}
             {imports.slice(0, 4).map((dep, i) => {
               const y = 15 + i * 25;

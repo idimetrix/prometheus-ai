@@ -7,9 +7,6 @@
  */
 
 import {
-  createMockContext as _createMockContext,
-  createMockEventPublisher as _createMockEventPublisher,
-  createMockRedis as _createMockRedis,
   createTestOrg,
   createTestProject,
   createTestSession,
@@ -18,23 +15,22 @@ import {
 } from "@prometheus/test-utils";
 import { vi } from "vitest";
 
-export const createMockContext = _createMockContext;
-export const createMockEventPublisher = _createMockEventPublisher;
-export const createMockRedis = _createMockRedis;
 export {
+  createMockContext,
+  createMockEventPublisher,
+  createMockRedis,
   createTestOrg,
   createTestProject,
   createTestSession,
   createTestTask,
   createTestUser,
-};
+} from "@prometheus/test-utils";
 
 // ---------------------------------------------------------------------------
 // Shared mock logger used across all integration tests
 // ---------------------------------------------------------------------------
 function createMockLogger(): Record<string, unknown> {
-  // biome-ignore lint/suspicious/noEmptyBlockStatements: intentional no-op mock
-  const noop = () => {};
+  const noop = () => undefined;
   const logger: Record<string, unknown> = {
     info: noop,
     error: noop,

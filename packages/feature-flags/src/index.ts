@@ -13,7 +13,6 @@ function hashForRollout(userId: string, flagKey: string): number {
   let hash = 0;
   for (let i = 0; i < str.length; i++) {
     const char = str.charCodeAt(i);
-    // biome-ignore lint/suspicious/noBitwiseOperators: intentional bit manipulation for hash function
     hash = ((hash << 5) - hash + char) | 0;
   }
   return Math.abs(hash) % 100;

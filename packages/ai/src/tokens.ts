@@ -226,6 +226,70 @@ interface SessionCostData {
  * Analyze a set of sessions for cost efficiency and return
  * actionable recommendations.
  */
+function checkVerboseSystemPrompt(
+  session: SessionCostData,
+  totalTokens: number
+): { recommendation: string; savings: number } | null {
+  const systemMessages = session.messages.filter((m) => m.role === "system");
+  const systemTokens = systemMessages.reduce(
+    (sum, m) => sum + estimateTokens(m.content),
+    0
+  );
+  if (totalTokens > 0 && systemTokens / totalTokens > 0.8) {
+    return {
+      recommendation: `Session with model "${session.modelKey}" uses >80% of context for system prompt. Consider compressing system instructions.`,
+      savings: session.totalCostUsd * 0.3,
+    };
+  }
+  return null;
+}
+
+function checkDuplicateToolCalls(session: SessionCostData): {
+  recommendations: string[];
+  savings: number;
+} {
+  const recommendations: string[] = [];
+  let savings = 0;
+
+  if (!session.toolCalls || session.toolCalls.length <= 1) {
+    return { recommendations, savings };
+  }
+
+  const callSignatures = new Map<string, number>();
+  for (const call of session.toolCalls) {
+    const sig = `${call.name}:${call.args}`;
+    callSignatures.set(sig, (callSignatures.get(sig) ?? 0) + 1);
+  }
+  for (const [sig, count] of callSignatures) {
+    if (count > 1) {
+      const toolName = sig.split(":")[0];
+      recommendations.push(
+        `Tool "${toolName}" called ${count} times with identical arguments. Consider caching results.`
+      );
+      savings += session.totalCostUsd * 0.1 * (count - 1);
+    }
+  }
+  return { recommendations, savings };
+}
+
+function checkPremiumModelOveruse(
+  session: SessionCostData,
+  totalTokens: number
+): { recommendation: string; savings: number } | null {
+  const isSimpleTask = totalTokens < 2000;
+  const isPremiumModel =
+    session.modelKey.includes("opus") ||
+    session.modelKey.includes("gpt-4") ||
+    session.modelKey.includes("gemini-ultra");
+  if (isSimpleTask && isPremiumModel) {
+    return {
+      recommendation: `Premium model "${session.modelKey}" used for a simple task (<2000 tokens). Consider using a smaller model.`,
+      savings: session.totalCostUsd * 0.7,
+    };
+  }
+  return null;
+}
+
 export function analyzeCostEfficiency(
   sessions: SessionCostData[]
 ): CostOptimization {
@@ -235,48 +299,20 @@ export function analyzeCostEfficiency(
   for (const session of sessions) {
     const totalTokens = estimateMessageTokens(session.messages);
 
-    // Check for overly verbose system prompts
-    const systemMessages = session.messages.filter((m) => m.role === "system");
-    const systemTokens = systemMessages.reduce(
-      (sum, m) => sum + estimateTokens(m.content),
-      0
-    );
-    if (totalTokens > 0 && systemTokens / totalTokens > 0.8) {
-      recommendations.push(
-        `Session with model "${session.modelKey}" uses >80% of context for system prompt. Consider compressing system instructions.`
-      );
-      estimatedSavings += session.totalCostUsd * 0.3;
+    const verboseCheck = checkVerboseSystemPrompt(session, totalTokens);
+    if (verboseCheck) {
+      recommendations.push(verboseCheck.recommendation);
+      estimatedSavings += verboseCheck.savings;
     }
 
-    // Check for duplicate tool calls
-    if (session.toolCalls && session.toolCalls.length > 1) {
-      const callSignatures = new Map<string, number>();
-      for (const call of session.toolCalls) {
-        const sig = `${call.name}:${call.args}`;
-        callSignatures.set(sig, (callSignatures.get(sig) ?? 0) + 1);
-      }
-      for (const [sig, count] of callSignatures) {
-        if (count > 1) {
-          const toolName = sig.split(":")[0];
-          recommendations.push(
-            `Tool "${toolName}" called ${count} times with identical arguments. Consider caching results.`
-          );
-          estimatedSavings += session.totalCostUsd * 0.1 * (count - 1);
-        }
-      }
-    }
+    const duplicateCheck = checkDuplicateToolCalls(session);
+    recommendations.push(...duplicateCheck.recommendations);
+    estimatedSavings += duplicateCheck.savings;
 
-    // Check for premium model overuse on simple tasks
-    const isSimpleTask = totalTokens < 2000;
-    const isPremiumModel =
-      session.modelKey.includes("opus") ||
-      session.modelKey.includes("gpt-4") ||
-      session.modelKey.includes("gemini-ultra");
-    if (isSimpleTask && isPremiumModel) {
-      recommendations.push(
-        `Premium model "${session.modelKey}" used for a simple task (<2000 tokens). Consider using a smaller model.`
-      );
-      estimatedSavings += session.totalCostUsd * 0.7;
+    const premiumCheck = checkPremiumModelOveruse(session, totalTokens);
+    if (premiumCheck) {
+      recommendations.push(premiumCheck.recommendation);
+      estimatedSavings += premiumCheck.savings;
     }
   }
 

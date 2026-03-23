@@ -122,6 +122,65 @@ export class ParallelScheduler {
    * Backward pass: compute latest start (LS) and latest finish (LF).
    * Float = LS - ES. Tasks with float === 0 are on the critical path.
    */
+  private forwardPass(
+    sorted: string[],
+    taskMap: Map<string, SchedulableTask>,
+    timings: Map<string, TaskTiming>
+  ): void {
+    for (const taskId of sorted) {
+      const task = taskMap.get(taskId);
+      const timing = timings.get(taskId);
+      if (!(task && timing)) {
+        continue;
+      }
+
+      let maxPredEF = 0;
+      for (const depId of task.dependencies) {
+        const depTiming = timings.get(depId);
+        if (depTiming && depTiming.ef > maxPredEF) {
+          maxPredEF = depTiming.ef;
+        }
+      }
+
+      timing.es = maxPredEF;
+      timing.ef = timing.es + timing.weight;
+    }
+  }
+
+  private backwardPass(
+    sorted: string[],
+    tasks: SchedulableTask[],
+    timings: Map<string, TaskTiming>,
+    projectDuration: number
+  ): void {
+    for (const timing of timings.values()) {
+      timing.lf = projectDuration;
+      timing.ls = projectDuration - timing.weight;
+    }
+
+    const reverseSorted = [...sorted].reverse();
+    for (const taskId of reverseSorted) {
+      const timing = timings.get(taskId);
+      if (!timing) {
+        continue;
+      }
+
+      let minSuccLS = projectDuration;
+      for (const task of tasks) {
+        if (task.dependencies.includes(taskId)) {
+          const succTiming = timings.get(task.id);
+          if (succTiming && succTiming.ls < minSuccLS) {
+            minSuccLS = succTiming.ls;
+          }
+        }
+      }
+
+      timing.lf = minSuccLS;
+      timing.ls = timing.lf - timing.weight;
+      timing.float = timing.ls - timing.es;
+    }
+  }
+
   private computeCPM(
     tasks: SchedulableTask[],
     taskMap: Map<string, SchedulableTask>
@@ -141,29 +200,10 @@ export class ParallelScheduler {
       });
     }
 
-    // Topological sort
     const sorted = this.topologicalSort(tasks, taskMap);
 
-    // Forward pass — compute ES and EF
-    for (const taskId of sorted) {
-      const task = taskMap.get(taskId);
-      const timing = timings.get(taskId);
-      if (!(task && timing)) {
-        continue;
-      }
-
-      // ES = max(EF of all predecessors)
-      let maxPredEF = 0;
-      for (const depId of task.dependencies) {
-        const depTiming = timings.get(depId);
-        if (depTiming && depTiming.ef > maxPredEF) {
-          maxPredEF = depTiming.ef;
-        }
-      }
-
-      timing.es = maxPredEF;
-      timing.ef = timing.es + timing.weight;
-    }
+    // Forward pass
+    this.forwardPass(sorted, taskMap, timings);
 
     // Project duration = max EF across all tasks
     let projectDuration = 0;
@@ -173,37 +213,8 @@ export class ParallelScheduler {
       }
     }
 
-    // Backward pass — compute LF and LS
-    // Initialize all LF to project duration
-    for (const timing of timings.values()) {
-      timing.lf = projectDuration;
-      timing.ls = projectDuration - timing.weight;
-    }
-
-    // Process in reverse topological order
-    const reverseSorted = [...sorted].reverse();
-    for (const taskId of reverseSorted) {
-      const timing = timings.get(taskId);
-      if (!timing) {
-        continue;
-      }
-
-      // LF = min(LS of all successors)
-      // Find all tasks that depend on this one
-      let minSuccLS = projectDuration;
-      for (const task of tasks) {
-        if (task.dependencies.includes(taskId)) {
-          const succTiming = timings.get(task.id);
-          if (succTiming && succTiming.ls < minSuccLS) {
-            minSuccLS = succTiming.ls;
-          }
-        }
-      }
-
-      timing.lf = minSuccLS;
-      timing.ls = timing.lf - timing.weight;
-      timing.float = timing.ls - timing.es;
-    }
+    // Backward pass
+    this.backwardPass(sorted, tasks, timings, projectDuration);
 
     // Critical path: tasks with zero float
     const criticalPathIds = sorted.filter((taskId) => {

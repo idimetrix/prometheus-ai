@@ -233,97 +233,108 @@ function handleMessage(
   );
 
   switch (msgType) {
-    case MSG_SYNC_STEP1: {
-      // Client requests sync — respond with full state
-      const state = getMergedState(doc);
-      const response = encodeMessage(MSG_SYNC_STEP2, state);
-      if (ws.readyState === ws.OPEN) {
-        ws.send(response);
-      }
-
-      // Also send current awareness states
-      for (const [aClientId, aState] of doc.awareness) {
-        const idBytes = new Uint8Array(4);
-        new DataView(idBytes.buffer).setUint32(0, aClientId, true);
-        const combined = new Uint8Array(4 + aState.length);
-        combined.set(idBytes, 0);
-        combined.set(aState, 4);
-        const awarenessMsg = encodeMessage(MSG_AWARENESS_UPDATE, combined);
-        if (ws.readyState === ws.OPEN) {
-          ws.send(awarenessMsg);
-        }
-      }
+    case MSG_SYNC_STEP1:
+      handleSyncStep1(ws, doc);
       break;
-    }
-
     case MSG_SYNC_STEP2:
-    case MSG_SYNC_UPDATE: {
-      // Check document size limit
-      if (getDocSize(doc) + payload.length > MAX_DOC_SIZE_BYTES) {
-        logger.warn(
-          { docId, size: getDocSize(doc) + payload.length },
-          "Document size limit exceeded, rejecting update"
-        );
-        return;
-      }
-
-      // Store update
-      doc.updates.push(new Uint8Array(payload));
-      doc.dirty = true;
-
-      // Broadcast to all other clients in the document
-      const broadcastMsg = encodeMessage(MSG_SYNC_UPDATE, payload);
-      for (const client of doc.clients) {
-        if (client !== ws && client.readyState === client.OPEN) {
-          client.send(broadcastMsg);
-        }
-      }
+    case MSG_SYNC_UPDATE:
+      handleSyncUpdate(ws, docId, doc, payload);
       break;
-    }
-
-    case MSG_AWARENESS_UPDATE: {
-      // Store and broadcast awareness
-      doc.awareness.set(clientId, new Uint8Array(payload));
-
-      // Persist awareness to Redis
-      saveAwarenessToRedis(docId, clientId, payload).catch(() => {
-        // Non-critical — fire and forget
-      });
-
-      // Add client ID to the awareness broadcast
-      const idBytes = new Uint8Array(4);
-      new DataView(idBytes.buffer).setUint32(0, clientId, true);
-      const combined = new Uint8Array(4 + payload.length);
-      combined.set(idBytes, 0);
-      combined.set(payload, 4);
-      const awarenessMsg = encodeMessage(MSG_AWARENESS_UPDATE, combined);
-
-      for (const client of doc.clients) {
-        if (client !== ws && client.readyState === client.OPEN) {
-          client.send(awarenessMsg);
-        }
-      }
+    case MSG_AWARENESS_UPDATE:
+      handleAwarenessUpdate(ws, docId, doc, clientId, payload);
       break;
-    }
-
-    case MSG_AWARENESS_QUERY: {
-      // Client requests all awareness states
-      for (const [aClientId, aState] of doc.awareness) {
-        const idBuf = new Uint8Array(4);
-        new DataView(idBuf.buffer).setUint32(0, aClientId, true);
-        const comb = new Uint8Array(4 + aState.length);
-        comb.set(idBuf, 0);
-        comb.set(aState, 4);
-        const msg = encodeMessage(MSG_AWARENESS_UPDATE, comb);
-        if (ws.readyState === ws.OPEN) {
-          ws.send(msg);
-        }
-      }
+    case MSG_AWARENESS_QUERY:
+      handleAwarenessQuery(ws, doc);
       break;
-    }
-
     default:
       logger.debug({ docId, msgType }, "Unknown Yjs message type");
+  }
+}
+
+function handleSyncStep1(ws: WebSocket, doc: YjsDocument): void {
+  const state = getMergedState(doc);
+  const response = encodeMessage(MSG_SYNC_STEP2, state);
+  if (ws.readyState === ws.OPEN) {
+    ws.send(response);
+  }
+  sendAllAwareness(ws, doc);
+}
+
+function handleSyncUpdate(
+  ws: WebSocket,
+  docId: string,
+  doc: YjsDocument,
+  payload: Uint8Array
+): void {
+  if (getDocSize(doc) + payload.length > MAX_DOC_SIZE_BYTES) {
+    logger.warn(
+      { docId, size: getDocSize(doc) + payload.length },
+      "Document size limit exceeded, rejecting update"
+    );
+    return;
+  }
+
+  doc.updates.push(new Uint8Array(payload));
+  doc.dirty = true;
+
+  const broadcastMsg = encodeMessage(MSG_SYNC_UPDATE, payload);
+  broadcastToOthers(ws, doc, broadcastMsg);
+}
+
+function handleAwarenessUpdate(
+  ws: WebSocket,
+  docId: string,
+  doc: YjsDocument,
+  clientId: number,
+  payload: Uint8Array
+): void {
+  doc.awareness.set(clientId, new Uint8Array(payload));
+  saveAwarenessToRedis(docId, clientId, payload).catch(() => undefined);
+
+  const awarenessMsg = encodeMessage(
+    MSG_AWARENESS_UPDATE,
+    buildAwarenessPayload(clientId, payload)
+  );
+  broadcastToOthers(ws, doc, awarenessMsg);
+}
+
+function handleAwarenessQuery(ws: WebSocket, doc: YjsDocument): void {
+  sendAllAwareness(ws, doc);
+}
+
+function sendAllAwareness(ws: WebSocket, doc: YjsDocument): void {
+  for (const [aClientId, aState] of doc.awareness) {
+    const msg = encodeMessage(
+      MSG_AWARENESS_UPDATE,
+      buildAwarenessPayload(aClientId, aState)
+    );
+    if (ws.readyState === ws.OPEN) {
+      ws.send(msg);
+    }
+  }
+}
+
+function buildAwarenessPayload(
+  clientId: number,
+  state: Uint8Array
+): Uint8Array {
+  const idBytes = new Uint8Array(4);
+  new DataView(idBytes.buffer).setUint32(0, clientId, true);
+  const combined = new Uint8Array(4 + state.length);
+  combined.set(idBytes, 0);
+  combined.set(state, 4);
+  return combined;
+}
+
+function broadcastToOthers(
+  sender: WebSocket,
+  doc: YjsDocument,
+  msg: Uint8Array
+): void {
+  for (const client of doc.clients) {
+    if (client !== sender && client.readyState === client.OPEN) {
+      client.send(msg);
+    }
   }
 }
 

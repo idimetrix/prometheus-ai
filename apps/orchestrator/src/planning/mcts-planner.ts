@@ -130,10 +130,8 @@ function computeTaskHash(taskDescription: string): string {
 
   let hash = 5381;
   for (let i = 0; i < normalized.length; i++) {
-    // biome-ignore lint/suspicious/noBitwiseOperators: FNV-1a hash requires bitwise ops
     hash = ((hash << 5) + hash + normalized.charCodeAt(i)) | 0;
   }
-  // biome-ignore lint/suspicious/noBitwiseOperators: FNV-1a hash requires bitwise ops
   return `task_${(hash >>> 0).toString(36)}`;
 }
 
@@ -141,6 +139,34 @@ function computeTaskHash(taskDescription: string): string {
  * Compute Jaccard similarity between two task descriptions (0-1).
  * Returns 1.0 for identical word sets, 0.0 for completely different.
  */
+function isNegativeRule(ruleLower: string): boolean {
+  return (
+    ruleLower.includes("don't") ||
+    ruleLower.includes("never") ||
+    ruleLower.includes("avoid") ||
+    ruleLower.includes("no raw")
+  );
+}
+
+function scoreRuleViolation(ruleLower: string, planText: string): number {
+  if (isNegativeRule(ruleLower)) {
+    const avoidTerms = ruleLower
+      .replace(NEGATIVE_RULE_RE, "")
+      .trim()
+      .split(WHITESPACE_SPLIT_RE)
+      .filter((t) => t.length > 3);
+    const violated = avoidTerms.some((term) => planText.includes(term));
+    return violated ? 1 : 0;
+  }
+
+  const keyTerms = ruleLower
+    .split(WHITESPACE_SPLIT_RE)
+    .filter((t) => t.length > 3)
+    .slice(0, 3);
+  const mentioned = keyTerms.some((term) => planText.includes(term));
+  return !mentioned && keyTerms.length > 0 ? 0.5 : 0;
+}
+
 function computeTaskSimilarity(desc1: string, desc2: string): number {
   const words1 = new Set(
     desc1
@@ -192,6 +218,65 @@ function computeTaskSimilarity(desc1: string, desc2: string): number {
  * - Progressive deepening: starts shallow, deepens promising branches
  * - Convention-driven scoring: penalizes plans violating project conventions
  */
+
+function parseAcceptanceCriteriaLines(
+  block: string,
+  acRegex: RegExp,
+  bulletPrefixRegex: RegExp
+): string[] {
+  const acLines: string[] = [];
+  const acMatch = block.match(acRegex);
+  if (acMatch?.[1]) {
+    for (const line of acMatch[1].split("\n")) {
+      const cleaned = line.replace(bulletPrefixRegex, "").trim();
+      if (cleaned.length > 0) {
+        acLines.push(cleaned);
+      }
+    }
+  }
+  return acLines;
+}
+
+function parseTaskBlockFromOutput(
+  block: string,
+  id: string,
+  title: string,
+  agentRe: RegExp,
+  depsRe: RegExp,
+  effortRe: RegExp,
+  acRe: RegExp,
+  taskIdRe: RegExp,
+  bulletPrefixRe: RegExp,
+  roleMap: Record<string, string>
+): SprintPlan["tasks"][number] {
+  const agentMatch = block.match(agentRe);
+  const depsMatch = block.match(depsRe);
+  const effortMatch = block.match(effortRe);
+
+  const depsStr = depsMatch?.[1]?.trim() ?? "none";
+  const deps: string[] = [];
+  if (depsStr.toLowerCase() !== "none") {
+    const depIds = depsStr.match(taskIdRe);
+    if (depIds) {
+      deps.push(...depIds);
+    }
+  }
+
+  const acLines = parseAcceptanceCriteriaLines(block, acRe, bulletPrefixRe);
+
+  return {
+    id,
+    title,
+    description: title,
+    agentRole:
+      roleMap[agentMatch?.[1]?.toLowerCase() ?? "backend"] ?? "backend_coder",
+    dependencies: deps,
+    effort: (effortMatch?.[1]?.toUpperCase() ?? "M") as "S" | "M" | "L" | "XL",
+    acceptanceCriteria:
+      acLines.length > 0 ? acLines : [`${title} works correctly`],
+  };
+}
+
 export class MCTSPlanner {
   private readonly config: Required<MCTSConfig>;
   private llmCallCount = 0;
@@ -663,40 +748,7 @@ REASONING: <brief explanation>`,
 
     for (const rule of allRules) {
       totalChecks++;
-      const ruleLower = rule.toLowerCase();
-
-      // Check for negative rules ("don't", "never", "avoid")
-      const isNegativeRule =
-        ruleLower.includes("don't") ||
-        ruleLower.includes("never") ||
-        ruleLower.includes("avoid") ||
-        ruleLower.includes("no raw");
-
-      if (isNegativeRule) {
-        const avoidTerms = ruleLower
-          .replace(NEGATIVE_RULE_RE, "")
-          .trim()
-          .split(WHITESPACE_SPLIT_RE)
-          .filter((t) => t.length > 3);
-
-        for (const term of avoidTerms) {
-          if (planText.includes(term)) {
-            violations++;
-            break;
-          }
-        }
-      } else {
-        // Positive rule: check if the convention is referenced
-        const keyTerms = ruleLower
-          .split(WHITESPACE_SPLIT_RE)
-          .filter((t) => t.length > 3)
-          .slice(0, 3);
-
-        const mentioned = keyTerms.some((term) => planText.includes(term));
-        if (!mentioned && keyTerms.length > 0) {
-          violations += 0.5;
-        }
-      }
+      violations += scoreRuleViolation(rule.toLowerCase(), planText);
     }
 
     const complianceRate =
@@ -996,46 +1048,20 @@ TASK-1 -> TASK-3 -> TASK-5
       );
       const block = output.slice(startPos, endPos);
 
-      const agentMatch = block.match(AGENT_RE);
-      const depsMatch = block.match(DEPS_RE);
-      const effortMatch = block.match(EFFORT_RE);
-
-      const depsStr = depsMatch?.[1]?.trim() ?? "none";
-      const deps: string[] = [];
-      if (depsStr.toLowerCase() !== "none") {
-        const depIds = depsStr.match(TASK_ID_RE);
-        if (depIds) {
-          deps.push(...depIds);
-        }
-      }
-
-      const acLines: string[] = [];
-      const acMatch = block.match(AC_RE);
-      if (acMatch?.[1]) {
-        for (const line of acMatch[1].split("\n")) {
-          const cleaned = line.replace(LIST_BULLET_PREFIX_RE, "").trim();
-          if (cleaned.length > 0) {
-            acLines.push(cleaned);
-          }
-        }
-      }
-
-      tasks.push({
-        id,
-        title,
-        description: title,
-        agentRole:
-          ROLE_MAP[agentMatch?.[1]?.toLowerCase() ?? "backend"] ??
-          "backend_coder",
-        dependencies: deps,
-        effort: (effortMatch?.[1]?.toUpperCase() ?? "M") as
-          | "S"
-          | "M"
-          | "L"
-          | "XL",
-        acceptanceCriteria:
-          acLines.length > 0 ? acLines : [`${title} works correctly`],
-      });
+      tasks.push(
+        parseTaskBlockFromOutput(
+          block,
+          id,
+          title,
+          AGENT_RE,
+          DEPS_RE,
+          EFFORT_RE,
+          AC_RE,
+          TASK_ID_RE,
+          LIST_BULLET_PREFIX_RE,
+          ROLE_MAP
+        )
+      );
       match = TASK_HEADER_RE.exec(output);
     }
 

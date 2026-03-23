@@ -23,6 +23,41 @@ export interface AuditTrailProps {
 }
 
 // ---------------------------------------------------------------------------
+// Filter helpers
+// ---------------------------------------------------------------------------
+
+function matchesSearchQuery(entry: AuditEntry, query: string): boolean {
+  if (!query) {
+    return true;
+  }
+  const q = query.toLowerCase();
+  return (
+    entry.userName.toLowerCase().includes(q) ||
+    entry.action.toLowerCase().includes(q) ||
+    entry.resource.toLowerCase().includes(q) ||
+    (entry.details?.toLowerCase().includes(q) ?? false)
+  );
+}
+
+function matchesAction(entry: AuditEntry, actionFilter: string): boolean {
+  return actionFilter === "all" || entry.action === actionFilter;
+}
+
+function matchesDateRange(
+  entry: AuditEntry,
+  dateFrom: string,
+  dateTo: string
+): boolean {
+  if (dateFrom && entry.timestamp < dateFrom) {
+    return false;
+  }
+  if (dateTo && entry.timestamp > dateTo) {
+    return false;
+  }
+  return true;
+}
+
+// ---------------------------------------------------------------------------
 // AuditTrail
 // ---------------------------------------------------------------------------
 
@@ -37,37 +72,16 @@ export function AuditTrail({ entries = [], onExport }: AuditTrailProps) {
     return ["all", ...Array.from(types).sort()];
   }, [entries]);
 
-  const filteredEntries = useMemo(() => {
-    return entries.filter((entry) => {
-      // Search filter
-      if (searchQuery) {
-        const q = searchQuery.toLowerCase();
-        const matchesSearch =
-          entry.userName.toLowerCase().includes(q) ||
-          entry.action.toLowerCase().includes(q) ||
-          entry.resource.toLowerCase().includes(q) ||
-          (entry.details?.toLowerCase().includes(q) ?? false);
-        if (!matchesSearch) {
-          return false;
-        }
-      }
-
-      // Action filter
-      if (actionFilter !== "all" && entry.action !== actionFilter) {
-        return false;
-      }
-
-      // Date range filter
-      if (dateFrom && entry.timestamp < dateFrom) {
-        return false;
-      }
-      if (dateTo && entry.timestamp > dateTo) {
-        return false;
-      }
-
-      return true;
-    });
-  }, [entries, searchQuery, actionFilter, dateFrom, dateTo]);
+  const filteredEntries = useMemo(
+    () =>
+      entries.filter(
+        (entry) =>
+          matchesSearchQuery(entry, searchQuery) &&
+          matchesAction(entry, actionFilter) &&
+          matchesDateRange(entry, dateFrom, dateTo)
+      ),
+    [entries, searchQuery, actionFilter, dateFrom, dateTo]
+  );
 
   const handleExport = useCallback(
     (format: "csv" | "json") => {

@@ -67,11 +67,10 @@ function Sparkline({
   const areaPoints = `${firstX},${height} ${points} ${lastX},${height}`;
 
   return (
-    // biome-ignore lint/a11y/noSvgWithoutTitle: decorative sparkline
     <svg
+      aria-hidden="true"
       className="shrink-0"
       height={height}
-      role="img"
       viewBox={`0 0 ${width} ${height}`}
       width={width}
     >

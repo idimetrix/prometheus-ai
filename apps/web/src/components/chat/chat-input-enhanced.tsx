@@ -326,16 +326,15 @@ function DropZone({
   onDrop: (e: DragEvent) => void;
 }) {
   return (
-    // biome-ignore lint/a11y/noStaticElementInteractions: drag-drop requires handlers on container
-    // biome-ignore lint/a11y/noNoninteractiveElementInteractions: drag-drop zone
-    <div
+    <section
+      aria-label="File drop zone"
       className={className}
       onDragLeave={onDragLeave}
       onDragOver={onDragOver}
       onDrop={onDrop}
     >
       {children}
-    </div>
+    </section>
   );
 }
 
@@ -500,39 +499,54 @@ export function ChatInputEnhanced({
     [setMode]
   );
 
+  const handlePopupKeyDown = useCallback(
+    (e: KeyboardEvent<HTMLTextAreaElement>): boolean => {
+      const items = showMentionPopup ? mentionItems : filteredCommands;
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        setPopupSelectedIndex((prev) =>
+          prev < items.length - 1 ? prev + 1 : 0
+        );
+        return true;
+      }
+      if (e.key === "ArrowUp") {
+        e.preventDefault();
+        setPopupSelectedIndex((prev) =>
+          prev > 0 ? prev - 1 : items.length - 1
+        );
+        return true;
+      }
+      if (e.key === "Enter" || e.key === "Tab") {
+        e.preventDefault();
+        if (showMentionPopup && mentionItems[popupSelectedIndex]) {
+          handleMentionSelect(mentionItems[popupSelectedIndex]);
+        } else if (showSlashPopup && filteredCommands[popupSelectedIndex]) {
+          handleSlashSelect(filteredCommands[popupSelectedIndex]);
+        }
+        return true;
+      }
+      if (e.key === "Escape") {
+        setShowMentionPopup(false);
+        setShowSlashPopup(false);
+        return true;
+      }
+      return false;
+    },
+    [
+      showMentionPopup,
+      mentionItems,
+      filteredCommands,
+      popupSelectedIndex,
+      showSlashPopup,
+      handleMentionSelect,
+      handleSlashSelect,
+    ]
+  );
+
   const handleKeyDown = useCallback(
     (e: KeyboardEvent<HTMLTextAreaElement>) => {
-      // Popup navigation
-      if (showMentionPopup || showSlashPopup) {
-        const items = showMentionPopup ? mentionItems : filteredCommands;
-        if (e.key === "ArrowDown") {
-          e.preventDefault();
-          setPopupSelectedIndex((prev) =>
-            prev < items.length - 1 ? prev + 1 : 0
-          );
-          return;
-        }
-        if (e.key === "ArrowUp") {
-          e.preventDefault();
-          setPopupSelectedIndex((prev) =>
-            prev > 0 ? prev - 1 : items.length - 1
-          );
-          return;
-        }
-        if (e.key === "Enter" || e.key === "Tab") {
-          e.preventDefault();
-          if (showMentionPopup && mentionItems[popupSelectedIndex]) {
-            handleMentionSelect(mentionItems[popupSelectedIndex]);
-          } else if (showSlashPopup && filteredCommands[popupSelectedIndex]) {
-            handleSlashSelect(filteredCommands[popupSelectedIndex]);
-          }
-          return;
-        }
-        if (e.key === "Escape") {
-          setShowMentionPopup(false);
-          setShowSlashPopup(false);
-          return;
-        }
+      if ((showMentionPopup || showSlashPopup) && handlePopupKeyDown(e)) {
+        return;
       }
 
       // Send on Enter (no shift)
@@ -541,16 +555,7 @@ export function ChatInputEnhanced({
         handleSend();
       }
     },
-    [
-      showMentionPopup,
-      showSlashPopup,
-      mentionItems,
-      filteredCommands,
-      popupSelectedIndex,
-      handleSend,
-      handleMentionSelect,
-      handleSlashSelect,
-    ]
+    [showMentionPopup, showSlashPopup, handlePopupKeyDown, handleSend]
   );
 
   // Drag-and-drop handlers

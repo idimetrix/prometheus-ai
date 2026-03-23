@@ -97,43 +97,48 @@ export class PatternLearner {
     const toolNames = this.history.map((r) => r.toolName);
 
     for (let n = 1; n <= Math.min(MAX_NGRAM_SIZE, toolNames.length - 1); n++) {
-      for (let i = 0; i <= toolNames.length - n - 1; i++) {
-        const ngram = toolNames.slice(i, i + n);
-        const nextTool = toolNames[i + n];
-
-        if (!nextTool) {
-          continue;
-        }
-
-        const key = ngram.join("→");
-
-        if (!this.patterns.has(key)) {
-          this.patterns.set(key, new Map());
-        }
-
-        const transitions = this.patterns.get(key);
-        if (transitions) {
-          const existing = transitions.get(nextTool);
-          if (existing) {
-            existing.count++;
-            // Update args if available from the last record
-            const nextRecord = this.history[i + n];
-            if (nextRecord?.args) {
-              existing.args = nextRecord.args;
-            }
-          } else {
-            const nextRecord = this.history[i + n];
-            transitions.set(nextTool, {
-              count: 1,
-              args: nextRecord?.args ?? {},
-            });
-          }
-        }
-      }
+      this.recordNgramTransitions(toolNames, n);
     }
 
     // Prune low-frequency patterns to stay within limits
     this.prunePatterns();
+  }
+
+  private recordNgramTransitions(toolNames: string[], n: number): void {
+    for (let i = 0; i <= toolNames.length - n - 1; i++) {
+      const ngram = toolNames.slice(i, i + n);
+      const nextTool = toolNames[i + n];
+
+      if (!nextTool) {
+        continue;
+      }
+
+      const key = ngram.join("→");
+
+      if (!this.patterns.has(key)) {
+        this.patterns.set(key, new Map());
+      }
+
+      const transitions = this.patterns.get(key);
+      if (!transitions) {
+        continue;
+      }
+
+      const existing = transitions.get(nextTool);
+      const nextRecord = this.history[i + n];
+
+      if (existing) {
+        existing.count++;
+        if (nextRecord?.args) {
+          existing.args = nextRecord.args;
+        }
+      } else {
+        transitions.set(nextTool, {
+          count: 1,
+          args: nextRecord?.args ?? {},
+        });
+      }
+    }
   }
 
   /**

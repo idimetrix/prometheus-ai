@@ -257,16 +257,13 @@ export function VisualBuilder() {
   );
 
   const handleRun = useCallback(() => {
-    const pipeline = blocks.map((b) => ({
+    // TODO: Send pipeline to orchestrator API
+    const _pipeline = blocks.map((b) => ({
       id: b.id,
       kind: b.kind,
       title: b.title,
       config: b.config,
     }));
-    // In production this would be sent to the orchestrator.
-    // For now we just log the serialized pipeline.
-    // eslint-disable-next-line no-console
-    console.log("Workflow pipeline:", JSON.stringify(pipeline, null, 2));
   }, [blocks]);
 
   return (

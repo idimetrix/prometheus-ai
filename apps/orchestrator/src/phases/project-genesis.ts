@@ -1212,54 +1212,72 @@ export class ProjectGenesis {
     const errors: string[] = [];
     let typecheckPassed = true;
     let lintPassed = true;
-
-    // Validate that required files exist
-    const requiredFiles = ["package.json", "tsconfig.json"];
     const scaffoldPaths = new Set(scaffold.files.map((f) => f.path));
 
-    for (const required of requiredFiles) {
+    // Check required files exist
+    for (const required of ["package.json", "tsconfig.json"]) {
       if (!scaffoldPaths.has(required)) {
         errors.push(`Missing required file: ${required}`);
         typecheckPassed = false;
       }
     }
 
-    // Validate package.json is valid JSON
-    const pkgFile = scaffold.files.find((f) => f.path === "package.json");
-    if (pkgFile) {
-      try {
-        const parsed = JSON.parse(pkgFile.content) as Record<string, unknown>;
-        if (!parsed.name) {
-          errors.push("package.json missing 'name' field");
-          lintPassed = false;
-        }
-        if (!parsed.scripts) {
-          errors.push("package.json missing 'scripts' field");
-          lintPassed = false;
-        }
-      } catch {
-        errors.push("package.json contains invalid JSON");
-        typecheckPassed = false;
-        lintPassed = false;
-      }
+    // Validate JSON config files
+    const pkgResult = this.validateJsonFile(scaffold, "package.json", [
+      "name",
+      "scripts",
+    ]);
+    const tscResult = this.validateJsonFile(scaffold, "tsconfig.json", [
+      "compilerOptions",
+    ]);
+
+    errors.push(...pkgResult.errors, ...tscResult.errors);
+    if (!pkgResult.valid) {
+      lintPassed = false;
+    }
+    if (!tscResult.valid) {
+      typecheckPassed = false;
     }
 
-    // Validate tsconfig.json
-    const tscFile = scaffold.files.find((f) => f.path === "tsconfig.json");
-    if (tscFile) {
-      try {
-        const parsed = JSON.parse(tscFile.content) as Record<string, unknown>;
-        if (!parsed.compilerOptions) {
-          errors.push("tsconfig.json missing 'compilerOptions'");
-          typecheckPassed = false;
-        }
-      } catch {
-        errors.push("tsconfig.json contains invalid JSON");
-        typecheckPassed = false;
-      }
+    // Validate TypeScript bracket matching
+    const tsErrors = this.validateBracketMatching(scaffold);
+    if (tsErrors.length > 0) {
+      errors.push(...tsErrors);
+      typecheckPassed = false;
     }
 
-    // Validate TypeScript files for basic syntax
+    if (errors.length > 0) {
+      logger.warn({ errors }, "Validation found issues");
+    }
+
+    return { typecheckPassed, lintPassed, errors };
+  }
+
+  private validateJsonFile(
+    scaffold: ScaffoldResult,
+    fileName: string,
+    requiredFields: string[]
+  ): { valid: boolean; errors: string[] } {
+    const errors: string[] = [];
+    const file = scaffold.files.find((f) => f.path === fileName);
+    if (!file) {
+      return { valid: true, errors: [] };
+    }
+    try {
+      const parsed = JSON.parse(file.content) as Record<string, unknown>;
+      for (const field of requiredFields) {
+        if (!parsed[field]) {
+          errors.push(`${fileName} missing '${field}' field`);
+        }
+      }
+      return { valid: errors.length === 0, errors };
+    } catch {
+      return { valid: false, errors: [`${fileName} contains invalid JSON`] };
+    }
+  }
+
+  private validateBracketMatching(scaffold: ScaffoldResult): string[] {
+    const errors: string[] = [];
     const tsFiles = scaffold.files.filter(
       (f) => f.path.endsWith(".ts") || f.path.endsWith(".tsx")
     );
@@ -1270,21 +1288,13 @@ export class ProjectGenesis {
         errors.push(
           `${file.path}: mismatched braces (${openBraces} open, ${closeBraces} close)`
         );
-        typecheckPassed = false;
       }
-
       const openParens = (file.content.match(OPEN_PAREN_RE) ?? []).length;
       const closeParens = (file.content.match(CLOSE_PAREN_RE) ?? []).length;
       if (openParens !== closeParens) {
         errors.push(`${file.path}: mismatched parentheses`);
-        typecheckPassed = false;
       }
     }
-
-    if (errors.length > 0) {
-      logger.warn({ errors }, "Validation found issues");
-    }
-
-    return { typecheckPassed, lintPassed, errors };
+    return errors;
   }
 }

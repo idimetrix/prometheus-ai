@@ -44,35 +44,7 @@ export class SwarmCoordinator {
 
     while (pending.size > 0 && !this.abortController.signal.aborted) {
       // Find tasks whose dependencies are all resolved
-      const ready: SwarmTask[] = [];
-      for (const id of pending) {
-        const task = this.tasks.get(id);
-        if (!task) {
-          continue;
-        }
-        const depsResolved = task.dependencies.every(
-          (dep) =>
-            this.results.has(dep) &&
-            this.results.get(dep)?.status === "completed"
-        );
-        // Check if any dependency failed
-        const depFailed = task.dependencies.some(
-          (dep) =>
-            this.results.has(dep) && this.results.get(dep)?.status === "failed"
-        );
-        if (depFailed) {
-          pending.delete(id);
-          this.results.set(id, {
-            taskId: id,
-            status: "failed",
-            error: "Dependency failed",
-          });
-          continue;
-        }
-        if (depsResolved && running.size < this.maxConcurrency) {
-          ready.push(task);
-        }
-      }
+      const ready = this.findReadyTasks(pending, running);
 
       if (ready.length === 0 && running.size === 0) {
         // Deadlock or all done
@@ -135,6 +107,40 @@ export class SwarmCoordinator {
       ? "cancelled"
       : "completed";
     return Array.from(this.results.values());
+  }
+
+  private findReadyTasks(
+    pending: Set<string>,
+    running: Set<string>
+  ): SwarmTask[] {
+    const ready: SwarmTask[] = [];
+    for (const id of pending) {
+      const task = this.tasks.get(id);
+      if (!task) {
+        continue;
+      }
+      const depFailed = task.dependencies.some(
+        (dep) =>
+          this.results.has(dep) && this.results.get(dep)?.status === "failed"
+      );
+      if (depFailed) {
+        pending.delete(id);
+        this.results.set(id, {
+          taskId: id,
+          status: "failed",
+          error: "Dependency failed",
+        });
+        continue;
+      }
+      const depsResolved = task.dependencies.every(
+        (dep) =>
+          this.results.has(dep) && this.results.get(dep)?.status === "completed"
+      );
+      if (depsResolved && running.size < this.maxConcurrency) {
+        ready.push(task);
+      }
+    }
+    return ready;
   }
 
   getStatus() {

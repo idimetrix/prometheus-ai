@@ -13,6 +13,55 @@ interface ToolCall {
   toolName: string;
 }
 
+function isToolCallEvent(event: {
+  type: string;
+  data: Record<string, unknown>;
+}): boolean {
+  return (
+    event.type === "tool_call" ||
+    (event.type === "agent_output" && typeof event.data?.toolName === "string")
+  );
+}
+
+function createToolCall(event: {
+  id: string;
+  data: Record<string, unknown>;
+  timestamp: string;
+}): ToolCall {
+  const data = event.data ?? {};
+  return {
+    id: event.id,
+    toolName: String(data.toolName ?? "unknown"),
+    input:
+      (data.input as Record<string, unknown> | null) ??
+      (data.toolInput as Record<string, unknown> | null) ??
+      null,
+    output: null,
+    status: "pending",
+    timestamp: event.timestamp,
+    durationMs: null,
+  };
+}
+
+function resolveToolResult(
+  calls: ToolCall[],
+  data: Record<string, unknown>
+): void {
+  const matchName = String(data.toolName ?? "");
+  for (let i = calls.length - 1; i >= 0; i--) {
+    if (calls[i]?.toolName === matchName && calls[i]?.status === "pending") {
+      calls[i] = {
+        ...(calls[i] as (typeof calls)[0]),
+        output: data.output ? String(data.output) : null,
+        status: data.error ? "error" : "success",
+        durationMs:
+          typeof data.durationMs === "number" ? data.durationMs : null,
+      };
+      break;
+    }
+  }
+}
+
 function extractToolCalls(
   events: Array<{
     id: string;
@@ -24,44 +73,11 @@ function extractToolCalls(
   const calls: ToolCall[] = [];
 
   for (const event of events) {
-    const data = event.data ?? {};
-
-    if (
-      event.type === "tool_call" ||
-      (event.type === "agent_output" && typeof data.toolName === "string")
-    ) {
-      calls.push({
-        id: event.id,
-        toolName: String(data.toolName ?? "unknown"),
-        input:
-          (data.input as Record<string, unknown> | null) ??
-          (data.toolInput as Record<string, unknown> | null) ??
-          null,
-        output: null,
-        status: "pending",
-        timestamp: event.timestamp,
-        durationMs: null,
-      });
+    if (isToolCallEvent(event)) {
+      calls.push(createToolCall(event));
     }
-
     if (event.type === "tool_result") {
-      const matchName = String(data.toolName ?? "");
-      // Match to the last pending call with same tool name
-      for (let i = calls.length - 1; i >= 0; i--) {
-        if (
-          calls[i]?.toolName === matchName &&
-          calls[i]?.status === "pending"
-        ) {
-          calls[i] = {
-            ...(calls[i] as (typeof calls)[0]),
-            output: data.output ? String(data.output) : null,
-            status: data.error ? "error" : "success",
-            durationMs:
-              typeof data.durationMs === "number" ? data.durationMs : null,
-          };
-          break;
-        }
-      }
+      resolveToolResult(calls, event.data ?? {});
     }
   }
 

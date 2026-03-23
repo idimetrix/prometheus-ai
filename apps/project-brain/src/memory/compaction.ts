@@ -31,10 +31,6 @@ export class MemoryCompactor {
    * 2. Compact episodic sequences into rules
    */
   async compact(projectId: string): Promise<CompactionResult> {
-    let duplicatesMerged = 0;
-    let episodicCompacted = 0;
-
-    // Step 1: Find near-duplicate memories using vector similarity
     const memories = await db
       .select({
         id: agentMemories.id,
@@ -51,15 +47,37 @@ export class MemoryCompactor {
       return { duplicatesMerged: 0, episodicCompacted: 0, totalProcessed };
     }
 
-    // Find duplicates by comparing each memory against others using pgvector
+    const { toDelete, duplicatesMerged } = await this.findDuplicates(
+      projectId,
+      memories
+    );
+    await this.deleteDuplicates(toDelete);
+
+    const episodicMemories = memories.filter(
+      (m) => m.memoryType === "episodic" && !toDelete.has(m.id)
+    );
+    const episodicCompacted =
+      await this.compactEpisodicMemories(episodicMemories);
+
+    logger.info(
+      { projectId, totalProcessed, duplicatesMerged, episodicCompacted },
+      "Memory compaction completed"
+    );
+
+    return { duplicatesMerged, episodicCompacted, totalProcessed };
+  }
+
+  private async findDuplicates(
+    projectId: string,
+    memories: Array<{ id: string; content: string }>
+  ): Promise<{ toDelete: Set<string>; duplicatesMerged: number }> {
     const toDelete = new Set<string>();
+    let duplicatesMerged = 0;
 
     for (const mem of memories) {
       if (toDelete.has(mem.id)) {
         continue;
       }
-
-      // Find similar memories using vector search
       try {
         const similar = await db
           .select({
@@ -77,11 +95,9 @@ export class MemoryCompactor {
               sql`${agentMemories.embedding} IS NOT NULL`
             )
           )
-          .orderBy(
-            sql`${agentMemories.embedding} <=> (
+          .orderBy(sql`${agentMemories.embedding} <=> (
               SELECT embedding FROM agent_memories WHERE id = ${mem.id}
-            )`
-          )
+            )`)
           .limit(5);
 
         for (const dup of similar) {
@@ -90,59 +106,53 @@ export class MemoryCompactor {
             !toDelete.has(dup.id) &&
             !toDelete.has(mem.id)
           ) {
-            // Keep the original (older), mark duplicate for deletion
             toDelete.add(dup.id);
             duplicatesMerged++;
           }
         }
       } catch {
-        // Vector search not available, skip duplicate detection
         break;
       }
     }
 
-    // Delete duplicates
+    return { toDelete, duplicatesMerged };
+  }
+
+  private async deleteDuplicates(toDelete: Set<string>): Promise<void> {
     for (const id of toDelete) {
       await db.delete(agentMemories).where(eq(agentMemories.id, id));
     }
+  }
 
-    // Step 2: Compact episodic memories into generalized rules
-    const episodicMemories = memories.filter(
-      (m) => m.memoryType === "episodic" && !toDelete.has(m.id)
-    );
+  private async compactEpisodicMemories(
+    episodicMemories: Array<{ id: string; content: string }>
+  ): Promise<number> {
+    if (episodicMemories.length < 5) {
+      return 0;
+    }
 
-    if (episodicMemories.length >= 5) {
-      // Group similar episodic memories and create summary rules
-      const groups = this.groupByContentSimilarity(episodicMemories);
+    let episodicCompacted = 0;
+    const groups = this.groupByContentSimilarity(episodicMemories);
 
-      for (const group of groups) {
-        if (group.length >= 3) {
-          // Create a compacted rule from the group
-          const compactedContent = this.createCompactedRule(group);
+    for (const group of groups) {
+      if (group.length < 3) {
+        continue;
+      }
+      const compactedContent = this.createCompactedRule(group);
+      const keepId = (group[0] as (typeof group)[0]).id;
+      await db
+        .update(agentMemories)
+        .set({ content: compactedContent })
+        .where(eq(agentMemories.id, keepId));
 
-          // Update the first memory with compacted content
-          const keepId = (group[0] as (typeof group)[0]).id;
-          await db
-            .update(agentMemories)
-            .set({ content: compactedContent })
-            .where(eq(agentMemories.id, keepId));
-
-          // Delete the rest of the group
-          for (let i = 1; i < group.length; i++) {
-            const mem = group[i] as (typeof group)[0];
-            await db.delete(agentMemories).where(eq(agentMemories.id, mem.id));
-            episodicCompacted++;
-          }
-        }
+      for (let i = 1; i < group.length; i++) {
+        const mem = group[i] as (typeof group)[0];
+        await db.delete(agentMemories).where(eq(agentMemories.id, mem.id));
+        episodicCompacted++;
       }
     }
 
-    logger.info(
-      { projectId, totalProcessed, duplicatesMerged, episodicCompacted },
-      "Memory compaction completed"
-    );
-
-    return { duplicatesMerged, episodicCompacted, totalProcessed };
+    return episodicCompacted;
   }
 
   /**

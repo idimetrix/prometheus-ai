@@ -409,13 +409,10 @@ export default function SessionPage({
     sessionQuery.refetch();
   }
 
-  async function handleCancel() {
-    // biome-ignore lint/suspicious/noAlert: confirm dialog for destructive action
-    if (!window.confirm("Are you sure you want to cancel this session?")) {
-      return;
-    }
-    await cancelMutation.mutateAsync({ sessionId });
-    sessionQuery.refetch();
+  const [showCancelConfirm, setShowCancelConfirm] = useState(false);
+
+  function handleCancel() {
+    setShowCancelConfirm(true);
   }
 
   return (
@@ -533,6 +530,42 @@ export default function SessionPage({
           </button>
         </div>
       </div>
+
+      {/* Cancel confirmation dialog */}
+      <dialog
+        className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm"
+        open={showCancelConfirm}
+      >
+        <div className="max-w-md rounded-lg border border-zinc-800 bg-zinc-900 p-6">
+          <h3 className="font-semibold text-lg text-zinc-100">
+            Cancel Session?
+          </h3>
+          <p className="mt-2 text-sm text-zinc-400">
+            Are you sure you want to cancel this session? This action cannot be
+            undone.
+          </p>
+          <div className="mt-4 flex justify-end gap-3">
+            <button
+              className="rounded-md px-3 py-2 text-sm text-zinc-400 hover:text-zinc-200"
+              onClick={() => setShowCancelConfirm(false)}
+              type="button"
+            >
+              Keep Session
+            </button>
+            <button
+              className="rounded-md bg-red-600 px-3 py-2 text-sm text-white hover:bg-red-500"
+              onClick={async () => {
+                setShowCancelConfirm(false);
+                await cancelMutation.mutateAsync({ sessionId });
+                sessionQuery.refetch();
+              }}
+              type="button"
+            >
+              Cancel Session
+            </button>
+          </div>
+        </div>
+      </dialog>
     </div>
   );
 }

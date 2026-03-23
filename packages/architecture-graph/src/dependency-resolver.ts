@@ -144,8 +144,7 @@ export class DependencyResolver {
   // Topological sort (Kahn's algorithm)
   // -------------------------------------------------------------------------
 
-  private topologicalSort(): string[] {
-    // Compute in-degrees
+  private computeInDegrees(): Map<string, number> {
     const inDegree = new Map<string, number>();
     for (const id of this.adjacency.keys()) {
       if (!inDegree.has(id)) {
@@ -157,8 +156,12 @@ export class DependencyResolver {
         inDegree.set(dep, (inDegree.get(dep) ?? 0) + 1);
       }
     }
+    return inDegree;
+  }
 
-    // Start with nodes that have no incoming edges
+  private topologicalSort(): string[] {
+    const inDegree = this.computeInDegrees();
+
     const queue: string[] = [];
     for (const [id, degree] of inDegree) {
       if (degree === 0) {
@@ -170,20 +173,28 @@ export class DependencyResolver {
     while (queue.length > 0) {
       const current = queue.shift() as string;
       order.push(current);
-
-      const deps = this.adjacency.get(current);
-      if (deps) {
-        for (const dep of deps) {
-          const newDegree = (inDegree.get(dep) ?? 1) - 1;
-          inDegree.set(dep, newDegree);
-          if (newDegree === 0) {
-            queue.push(dep);
-          }
-        }
-      }
+      this.decrementDependents(current, inDegree, queue);
     }
 
     return order;
+  }
+
+  private decrementDependents(
+    nodeId: string,
+    inDegree: Map<string, number>,
+    queue: string[]
+  ): void {
+    const deps = this.adjacency.get(nodeId);
+    if (!deps) {
+      return;
+    }
+    for (const dep of deps) {
+      const newDegree = (inDegree.get(dep) ?? 1) - 1;
+      inDegree.set(dep, newDegree);
+      if (newDegree === 0) {
+        queue.push(dep);
+      }
+    }
   }
 
   // -------------------------------------------------------------------------

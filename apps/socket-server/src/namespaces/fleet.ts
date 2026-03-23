@@ -204,72 +204,87 @@ export function setupFleetNamespace(namespace: Namespace) {
   });
 
   subscriber.on("message", (channel: string, message: string) => {
-    if (channel === "fleet:events") {
-      try {
-        const event = JSON.parse(message);
-        if (event.orgId) {
-          namespace
-            .to(`org:${event.orgId}:fleet`)
-            .emit(event.type ?? "fleet_event", event.data ?? event);
-        }
-      } catch (error) {
-        logger.error({ channel, error }, "Failed to parse fleet event");
-      }
-    }
-
-    if (channel === "indexing:progress") {
-      try {
-        const event = JSON.parse(message);
-        if (event.orgId) {
-          namespace
-            .to(`org:${event.orgId}:fleet`)
-            .emit("indexing_progress", event);
-        }
-      } catch (error) {
-        logger.error(
-          { channel, error },
-          "Failed to parse indexing progress event"
-        );
-      }
-    }
-
-    // Multiplex parallel worker events tagged with agentId
-    if (channel === "fleet:worker_events") {
-      try {
-        const event = JSON.parse(message) as {
-          sessionId?: string;
-          orgId?: string;
-          agentId?: string;
-          type?: string;
-          data?: Record<string, unknown>;
-        };
-
-        // Emit to session-specific room for worker tracking
-        if (event.sessionId) {
-          const room = `session:${event.sessionId}:workers`;
-          const eventType = event.type ?? "worker_event";
-
-          // Tag event with agentId for client-side demuxing
-          namespace.to(room).emit(eventType, {
-            agentId: event.agentId,
-            sessionId: event.sessionId,
-            ...(event.data ?? event),
-            timestamp: new Date().toISOString(),
-          });
-        }
-
-        // Also emit to org fleet room
-        if (event.orgId) {
-          namespace
-            .to(`org:${event.orgId}:fleet`)
-            .emit(event.type ?? "worker_event", {
-              agentId: event.agentId,
-              ...(event.data ?? event),
-            });
-        }
-      } catch (error) {
-        logger.error({ channel, error }, "Failed to parse worker event");
-      }
+    const handler = channelHandlers[channel];
+    if (handler) {
+      handler(namespace, message, channel);
     }
   });
 }
+
+function handleFleetEvents(
+  namespace: Namespace,
+  message: string,
+  channel: string
+): void {
+  try {
+    const event = JSON.parse(message);
+    if (event.orgId) {
+      namespace
+        .to(`org:${event.orgId}:fleet`)
+        .emit(event.type ?? "fleet_event", event.data ?? event);
+    }
+  } catch (error) {
+    logger.error({ channel, error }, "Failed to parse fleet event");
+  }
+}
+
+function handleIndexingProgress(
+  namespace: Namespace,
+  message: string,
+  channel: string
+): void {
+  try {
+    const event = JSON.parse(message);
+    if (event.orgId) {
+      namespace.to(`org:${event.orgId}:fleet`).emit("indexing_progress", event);
+    }
+  } catch (error) {
+    logger.error({ channel, error }, "Failed to parse indexing progress event");
+  }
+}
+
+function handleWorkerEvents(
+  namespace: Namespace,
+  message: string,
+  channel: string
+): void {
+  try {
+    const event = JSON.parse(message) as {
+      sessionId?: string;
+      orgId?: string;
+      agentId?: string;
+      type?: string;
+      data?: Record<string, unknown>;
+    };
+
+    if (event.sessionId) {
+      const room = `session:${event.sessionId}:workers`;
+      namespace.to(room).emit(event.type ?? "worker_event", {
+        agentId: event.agentId,
+        sessionId: event.sessionId,
+        ...(event.data ?? event),
+        timestamp: new Date().toISOString(),
+      });
+    }
+
+    if (event.orgId) {
+      namespace
+        .to(`org:${event.orgId}:fleet`)
+        .emit(event.type ?? "worker_event", {
+          agentId: event.agentId,
+          ...(event.data ?? event),
+        });
+    }
+  } catch (error) {
+    logger.error({ channel, error }, "Failed to parse worker event");
+  }
+}
+
+const channelHandlers: Record<
+  string,
+  (ns: Namespace, msg: string, ch: string) => void
+> = {
+  "fleet:events": handleFleetEvents,
+  "indexing:progress": handleIndexingProgress,
+  "fleet:worker_events": handleWorkerEvents,
+};

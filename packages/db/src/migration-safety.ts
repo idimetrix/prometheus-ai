@@ -220,27 +220,20 @@ export function validateMigrationSQL(
  * - No removing NOT NULL without a default
  * - No changing column types without a migration path
  */
-export async function checkBackwardCompatibility(
+async function checkDropColumnCompat(
   db: Database,
-  migrationSQL: string
-): Promise<MigrationValidationResult> {
-  const errors: string[] = [];
-  const warnings: string[] = [];
-
-  // Extract DROP COLUMN operations
-  const dropColumnPattern =
+  migrationSQL: string,
+  errors: string[],
+  warnings: string[]
+): Promise<void> {
+  const pattern =
     /ALTER\s+TABLE\s+(?:"?(\w+)"?)\s+DROP\s+COLUMN\s+(?:IF\s+EXISTS\s+)?(?:"?(\w+)"?)/gi;
-  let dropColMatch: RegExpExecArray | null = null;
+  let match: RegExpExecArray | null = pattern.exec(migrationSQL);
 
-  while (true) {
-    dropColMatch = dropColumnPattern.exec(migrationSQL);
-    if (!dropColMatch) {
-      break;
-    }
-    const tableName = dropColMatch[1];
-    const columnName = dropColMatch[2];
+  while (match) {
+    const tableName = match[1];
+    const columnName = match[2];
     if (tableName && columnName) {
-      // Check if the column exists in the current schema
       try {
         const result = await db.execute(sql`
           SELECT COUNT(*) as row_count
@@ -263,18 +256,21 @@ export async function checkBackwardCompatibility(
         );
       }
     }
+    match = pattern.exec(migrationSQL);
   }
+}
 
-  // Check for DROP TABLE operations
-  const dropTablePattern = /DROP\s+TABLE\s+(?:IF\s+EXISTS\s+)?(?:"?(\w+)"?)/gi;
-  let dropTableMatch: RegExpExecArray | null = null;
+async function checkDropTableCompat(
+  db: Database,
+  migrationSQL: string,
+  errors: string[],
+  warnings: string[]
+): Promise<void> {
+  const pattern = /DROP\s+TABLE\s+(?:IF\s+EXISTS\s+)?(?:"?(\w+)"?)/gi;
+  let match: RegExpExecArray | null = pattern.exec(migrationSQL);
 
-  while (true) {
-    dropTableMatch = dropTablePattern.exec(migrationSQL);
-    if (!dropTableMatch) {
-      break;
-    }
-    const tableName = dropTableMatch[1];
+  while (match) {
+    const tableName = match[1];
     if (tableName) {
       try {
         const result = await db.execute(sql`
@@ -297,7 +293,19 @@ export async function checkBackwardCompatibility(
         );
       }
     }
+    match = pattern.exec(migrationSQL);
   }
+}
+
+export async function checkBackwardCompatibility(
+  db: Database,
+  migrationSQL: string
+): Promise<MigrationValidationResult> {
+  const errors: string[] = [];
+  const warnings: string[] = [];
+
+  await checkDropColumnCompat(db, migrationSQL, errors, warnings);
+  await checkDropTableCompat(db, migrationSQL, errors, warnings);
 
   return {
     valid: errors.length === 0,

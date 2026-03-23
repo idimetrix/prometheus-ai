@@ -117,37 +117,12 @@ export class CallGraphBuilder {
     const visited = new Set<string>();
     visited.add(startKey);
 
-    let frontier = new Set<string>();
-    const initial = this.forward.get(startKey);
-    if (initial) {
-      for (const k of initial) {
-        frontier.add(k);
-      }
-    }
+    let frontier = new Set(this.forward.get(startKey) ?? []);
 
     for (let d = 0; d < depth && frontier.size > 0; d++) {
-      const nextFrontier = new Set<string>();
-
-      for (const key of frontier) {
-        if (visited.has(key)) {
-          continue;
-        }
-        visited.add(key);
-
-        const callees = this.forward.get(key);
-        if (callees) {
-          for (const callee of callees) {
-            if (!visited.has(callee)) {
-              nextFrontier.add(callee);
-            }
-          }
-        }
-      }
-
-      frontier = nextFrontier;
+      frontier = this.expandFrontier(frontier, visited);
     }
 
-    // Remove the start node from results
     visited.delete(startKey);
 
     logger.debug(
@@ -156,6 +131,29 @@ export class CallGraphBuilder {
     );
 
     return this.resolveKeys(visited);
+  }
+
+  private expandFrontier(
+    frontier: Set<string>,
+    visited: Set<string>
+  ): Set<string> {
+    const nextFrontier = new Set<string>();
+    for (const key of frontier) {
+      if (visited.has(key)) {
+        continue;
+      }
+      visited.add(key);
+      const callees = this.forward.get(key);
+      if (!callees) {
+        continue;
+      }
+      for (const callee of callees) {
+        if (!visited.has(callee)) {
+          nextFrontier.add(callee);
+        }
+      }
+    }
+    return nextFrontier;
   }
 
   /**

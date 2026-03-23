@@ -7,6 +7,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createIntegrationFixtures } from "./setup";
 
+const LOCALHOST_URL_RE = /^http:\/\/localhost:\d+$/;
+const LOG_TIMESTAMP_RE = /^\[.+\]/;
+
 const { mockLogger } = vi.hoisted(() => {
   const logger: Record<string, unknown> = {
     info: vi.fn(),
@@ -67,7 +70,7 @@ interface DeploymentRecord {
 
 function createMockVercelProvider() {
   return {
-    async deploy(config: DeploymentConfig): Promise<DeploymentResult> {
+    deploy(config: DeploymentConfig): DeploymentResult {
       if (!process.env.VERCEL_TOKEN) {
         return {
           success: false,
@@ -82,9 +85,7 @@ function createMockVercelProvider() {
         buildLogs: `https://vercel.com/deployments/dpl_${config.deploymentId}`,
       };
     },
-    async teardown(
-      providerDeploymentId: string
-    ): Promise<{ success: boolean }> {
+    teardown(providerDeploymentId: string): { success: boolean } {
       if (!process.env.VERCEL_TOKEN) {
         return { success: false };
       }
@@ -95,7 +96,7 @@ function createMockVercelProvider() {
 
 function createMockNetlifyProvider() {
   return {
-    async deploy(config: DeploymentConfig): Promise<DeploymentResult> {
+    deploy(config: DeploymentConfig): DeploymentResult {
       if (!process.env.NETLIFY_TOKEN) {
         return {
           success: false,
@@ -110,9 +111,7 @@ function createMockNetlifyProvider() {
         buildLogs: `https://app.netlify.com/sites/preview/deploys/ntl_${config.deploymentId}`,
       };
     },
-    async teardown(
-      providerDeploymentId: string
-    ): Promise<{ success: boolean }> {
+    teardown(providerDeploymentId: string): { success: boolean } {
       if (!process.env.NETLIFY_TOKEN) {
         return { success: false };
       }
@@ -123,7 +122,7 @@ function createMockNetlifyProvider() {
 
 function createMockDockerProvider() {
   return {
-    async deploy(config: DeploymentConfig): Promise<DeploymentResult> {
+    deploy(config: DeploymentConfig): DeploymentResult {
       const port = 3100 + Math.floor(Math.random() * 900);
       return {
         success: true,
@@ -132,9 +131,7 @@ function createMockDockerProvider() {
         buildLogs: `Container ctr_${config.deploymentId} running on port ${port}`,
       };
     },
-    async teardown(
-      providerDeploymentId: string
-    ): Promise<{ success: boolean }> {
+    teardown(providerDeploymentId: string): { success: boolean } {
       return { success: providerDeploymentId.startsWith("ctr_") };
     },
   };
@@ -301,7 +298,7 @@ describe("Deployment Providers", () => {
       });
 
       expect(result.success).toBe(true);
-      expect(result.url).toMatch(/^http:\/\/localhost:\d+$/);
+      expect(result.url).toMatch(LOCALHOST_URL_RE);
       expect(result.providerDeploymentId).toBe("ctr_dep_005");
       expect(result.buildLogs).toContain("Container");
     });
@@ -488,7 +485,7 @@ describe("Deployment Providers", () => {
       record = transitionStatus(record, "building");
 
       for (const log of record.logs) {
-        expect(log).toMatch(/^\[.+\]/);
+        expect(log).toMatch(LOG_TIMESTAMP_RE);
       }
     });
 

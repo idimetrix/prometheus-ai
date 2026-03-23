@@ -203,54 +203,96 @@ export class DependencyVisualizer {
       if (visited.has(startNode)) {
         continue;
       }
-
-      const stack: Array<{ node: string; iterator: Iterator<string> }> = [];
-      stack.push({
-        node: startNode,
-        iterator: (adjacency.get(startNode) ?? new Set()).values(),
-      });
-      visited.add(startNode);
-      inStack.add(startNode);
-      pathMap.set(startNode, [startNode]);
-
-      while (stack.length > 0) {
-        const current = stack.at(-1);
-        if (!current) {
-          break;
-        }
-
-        const next = current.iterator.next();
-
-        if (next.done) {
-          inStack.delete(current.node);
-          stack.pop();
-          continue;
-        }
-
-        const neighbor = next.value;
-        if (inStack.has(neighbor)) {
-          // Found a cycle - extract it
-          const currentPath = pathMap.get(current.node) ?? [];
-          const cycleStart = currentPath.indexOf(neighbor);
-          if (cycleStart >= 0) {
-            cycles.push(currentPath.slice(cycleStart));
-          } else {
-            cycles.push([...currentPath, neighbor]);
-          }
-        } else if (!visited.has(neighbor)) {
-          visited.add(neighbor);
-          inStack.add(neighbor);
-          const parentPath = pathMap.get(current.node) ?? [];
-          pathMap.set(neighbor, [...parentPath, neighbor]);
-          stack.push({
-            node: neighbor,
-            iterator: (adjacency.get(neighbor) ?? new Set()).values(),
-          });
-        }
-      }
+      this.dfsForCycles(
+        startNode,
+        adjacency,
+        visited,
+        inStack,
+        pathMap,
+        cycles
+      );
     }
 
     return cycles;
+  }
+
+  private dfsForCycles(
+    startNode: string,
+    adjacency: Map<string, Set<string>>,
+    visited: Set<string>,
+    inStack: Set<string>,
+    pathMap: Map<string, string[]>,
+    cycles: string[][]
+  ): void {
+    const stack: Array<{ node: string; iterator: Iterator<string> }> = [];
+    stack.push({
+      node: startNode,
+      iterator: (adjacency.get(startNode) ?? new Set()).values(),
+    });
+    visited.add(startNode);
+    inStack.add(startNode);
+    pathMap.set(startNode, [startNode]);
+
+    while (stack.length > 0) {
+      const current = stack.at(-1);
+      if (!current) {
+        break;
+      }
+
+      const next = current.iterator.next();
+      if (next.done) {
+        inStack.delete(current.node);
+        stack.pop();
+        continue;
+      }
+
+      const neighbor = next.value;
+      this.processNeighbor(
+        neighbor,
+        current.node,
+        adjacency,
+        visited,
+        inStack,
+        pathMap,
+        stack,
+        cycles
+      );
+    }
+  }
+
+  private processNeighbor(
+    neighbor: string,
+    currentNode: string,
+    adjacency: Map<string, Set<string>>,
+    visited: Set<string>,
+    inStack: Set<string>,
+    pathMap: Map<string, string[]>,
+    stack: Array<{ node: string; iterator: Iterator<string> }>,
+    cycles: string[][]
+  ): void {
+    if (inStack.has(neighbor)) {
+      const currentPath = pathMap.get(currentNode) ?? [];
+      const cycleStart = currentPath.indexOf(neighbor);
+      if (cycleStart >= 0) {
+        cycles.push(currentPath.slice(cycleStart));
+      } else {
+        cycles.push([...currentPath, neighbor]);
+      }
+      return;
+    }
+
+    if (visited.has(neighbor)) {
+      return;
+    }
+
+    visited.add(neighbor);
+    inStack.add(neighbor);
+    const parentPath = pathMap.get(currentNode) ?? [];
+    pathMap.set(neighbor, [...parentPath, neighbor]);
+    stack.push({
+      node: neighbor,
+      iterator: (adjacency.get(neighbor) ?? new Set()).values(),
+    });
   }
 }
 

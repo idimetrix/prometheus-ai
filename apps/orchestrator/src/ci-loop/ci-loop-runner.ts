@@ -122,60 +122,12 @@ Run the command and return the complete output.`,
       }
 
       // Process each failure
-      const fixableFailures: FailureAnalysis[] = [];
-
-      for (const failure of failures) {
-        const count = (failureHistory.get(failure.testName) ?? 0) + 1;
-        failureHistory.set(failure.testName, count);
-
-        if (count >= 3) {
-          if (!stuckFailures.has(failure.testName)) {
-            stuckFailures.add(failure.testName);
-            logger.warn(
-              {
-                testName: failure.testName,
-                attempts: count,
-                failureType: failure.failureType,
-              },
-              "Stuck failure detected, running root cause analysis"
-            );
-
-            // Run Five-Why root cause analysis
-            try {
-              const fiveWhy = new FiveWhyDebugger();
-              const previousAttempts = Array.from(
-                { length: count },
-                (_, i) =>
-                  `Attempt ${i + 1}: Fixed ${failure.failureType} error in ${failure.affectedFiles.join(", ") || "unknown files"}`
-              );
-              const rootCause = await fiveWhy.analyze(
-                agentLoop,
-                failure,
-                previousAttempts
-              );
-
-              // If root cause analysis suggests a different fix approach,
-              // add the failure back as fixable with the new strategy
-              if (rootCause?.suggestedFix) {
-                fixableFailures.push({
-                  ...failure,
-                  suggestedFix: rootCause.suggestedFix,
-                  rootCause: rootCause.rootCause ?? failure.rootCause,
-                });
-              }
-            } catch (err) {
-              const msg = err instanceof Error ? err.message : String(err);
-              logger.warn(
-                { testName: failure.testName, error: msg },
-                "Five-Why analysis failed"
-              );
-            }
-          }
-          continue;
-        }
-
-        fixableFailures.push(failure);
-      }
+      const fixableFailures = await this.categorizeFailures(
+        failures,
+        failureHistory,
+        stuckFailures,
+        agentLoop
+      );
 
       // If all remaining failures are stuck, we can't make progress
       if (fixableFailures.length === 0 && failures.length > 0) {
@@ -295,6 +247,92 @@ Run the command and return the complete output.`,
     }
 
     return resolved;
+  }
+
+  /**
+   * Categorize failures into fixable vs stuck, running root cause analysis
+   * on stuck failures.
+   */
+  private async categorizeFailures(
+    failures: FailureAnalysis[],
+    failureHistory: Map<string, number>,
+    stuckFailures: Set<string>,
+    agentLoop: AgentLoop
+  ): Promise<FailureAnalysis[]> {
+    const fixable: FailureAnalysis[] = [];
+
+    for (const failure of failures) {
+      const count = (failureHistory.get(failure.testName) ?? 0) + 1;
+      failureHistory.set(failure.testName, count);
+
+      if (count < 3) {
+        fixable.push(failure);
+        continue;
+      }
+
+      if (stuckFailures.has(failure.testName)) {
+        continue;
+      }
+
+      stuckFailures.add(failure.testName);
+      logger.warn(
+        {
+          testName: failure.testName,
+          attempts: count,
+          failureType: failure.failureType,
+        },
+        "Stuck failure detected, running root cause analysis"
+      );
+
+      const enhancedFailure = await this.runRootCauseAnalysis(
+        agentLoop,
+        failure,
+        count
+      );
+      if (enhancedFailure) {
+        fixable.push(enhancedFailure);
+      }
+    }
+
+    return fixable;
+  }
+
+  /**
+   * Run Five-Why root cause analysis on a stuck failure.
+   */
+  private async runRootCauseAnalysis(
+    agentLoop: AgentLoop,
+    failure: FailureAnalysis,
+    attemptCount: number
+  ): Promise<FailureAnalysis | null> {
+    try {
+      const fiveWhy = new FiveWhyDebugger();
+      const previousAttempts = Array.from(
+        { length: attemptCount },
+        (_, i) =>
+          `Attempt ${i + 1}: Fixed ${failure.failureType} error in ${failure.affectedFiles.join(", ") || "unknown files"}`
+      );
+      const rootCause = await fiveWhy.analyze(
+        agentLoop,
+        failure,
+        previousAttempts
+      );
+
+      if (rootCause?.suggestedFix) {
+        return {
+          ...failure,
+          suggestedFix: rootCause.suggestedFix,
+          rootCause: rootCause.rootCause ?? failure.rootCause,
+        };
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      logger.warn(
+        { testName: failure.testName, error: msg },
+        "Five-Why analysis failed"
+      );
+    }
+    return null;
   }
 
   /**

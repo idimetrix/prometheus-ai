@@ -91,46 +91,9 @@ export class DiffReviewer {
     let currentHunk: DiffHunk | null = null;
 
     for (const line of lines) {
-      // File header
-      const fileMatch = line.match(DIFF_FILE_HEADER_RE);
-      if (fileMatch) {
-        if (currentHunk) {
-          hunks.push(currentHunk);
-        }
-        currentFile = fileMatch[1] ?? "";
-        currentHunk = null;
-        continue;
-      }
-
-      // Hunk header
-      const hunkMatch = line.match(DIFF_HUNK_HEADER_RE);
-      if (hunkMatch) {
-        if (currentHunk) {
-          hunks.push(currentHunk);
-        }
-        currentHunk = {
-          filePath: currentFile,
-          startLine: Number.parseInt(hunkMatch[1] ?? "0", 10),
-          endLine: 0,
-          added: [],
-          removed: [],
-          context: [],
-        };
-        continue;
-      }
-
-      if (!currentHunk) {
-        continue;
-      }
-
-      // Diff content
-      if (line.startsWith("+") && !line.startsWith("+++")) {
-        currentHunk.added.push(line.slice(1));
-      } else if (line.startsWith("-") && !line.startsWith("---")) {
-        currentHunk.removed.push(line.slice(1));
-      } else if (line.startsWith(" ")) {
-        currentHunk.context.push(line.slice(1));
-      }
+      const result = this.parseDiffLine(line, currentFile, currentHunk, hunks);
+      currentFile = result.currentFile;
+      currentHunk = result.currentHunk;
     }
 
     if (currentHunk) {
@@ -138,6 +101,55 @@ export class DiffReviewer {
     }
 
     return hunks;
+  }
+
+  private parseDiffLine(
+    line: string,
+    currentFile: string,
+    currentHunk: DiffHunk | null,
+    hunks: DiffHunk[]
+  ): { currentFile: string; currentHunk: DiffHunk | null } {
+    const fileMatch = line.match(DIFF_FILE_HEADER_RE);
+    if (fileMatch) {
+      if (currentHunk) {
+        hunks.push(currentHunk);
+      }
+      return { currentFile: fileMatch[1] ?? "", currentHunk: null };
+    }
+
+    const hunkMatch = line.match(DIFF_HUNK_HEADER_RE);
+    if (hunkMatch) {
+      if (currentHunk) {
+        hunks.push(currentHunk);
+      }
+      return {
+        currentFile,
+        currentHunk: {
+          filePath: currentFile,
+          startLine: Number.parseInt(hunkMatch[1] ?? "0", 10),
+          endLine: 0,
+          added: [],
+          removed: [],
+          context: [],
+        },
+      };
+    }
+
+    if (currentHunk) {
+      this.classifyDiffContent(line, currentHunk);
+    }
+
+    return { currentFile, currentHunk };
+  }
+
+  private classifyDiffContent(line: string, hunk: DiffHunk): void {
+    if (line.startsWith("+") && !line.startsWith("+++")) {
+      hunk.added.push(line.slice(1));
+    } else if (line.startsWith("-") && !line.startsWith("---")) {
+      hunk.removed.push(line.slice(1));
+    } else if (line.startsWith(" ")) {
+      hunk.context.push(line.slice(1));
+    }
   }
 
   private async llmReview(

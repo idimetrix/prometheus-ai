@@ -42,10 +42,8 @@ function ipToNumber(ip: string): number | null {
     if (Number.isNaN(num) || num < 0 || num > 255) {
       return null;
     }
-    // biome-ignore lint/suspicious/noBitwiseOperators: intentional bitwise operation for IP address octet packing
     result = (result << 8) | num;
   }
-  // biome-ignore lint/suspicious/noBitwiseOperators: intentional bitwise operation to convert to unsigned 32-bit integer
   return result >>> 0;
 }
 
@@ -62,9 +60,7 @@ function parseCidr(cidr: string): CidrRange | null {
   if (Number.isNaN(prefixLen) || prefixLen < 0 || prefixLen > 32) {
     return null;
   }
-  // biome-ignore lint/suspicious/noBitwiseOperators: intentional bitwise operation for CIDR subnet mask calculation
   const mask = prefixLen === 0 ? 0 : (~0 << (32 - prefixLen)) >>> 0;
-  // biome-ignore lint/suspicious/noBitwiseOperators: intentional bitwise operation for applying subnet mask to network address
   return { network: (network & mask) >>> 0, mask };
 }
 
@@ -73,7 +69,6 @@ function isIpInCidr(ip: string, range: CidrRange): boolean {
   if (num === null) {
     return false;
   }
-  // biome-ignore lint/suspicious/noBitwiseOperators: intentional bitwise operation for IP-in-CIDR range check
   return (num & range.mask) >>> 0 === range.network;
 }
 

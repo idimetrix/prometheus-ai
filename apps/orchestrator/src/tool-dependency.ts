@@ -68,24 +68,7 @@ export function classifyToolDependencies(
   const sequentialCalls: ToolCallInfo[] = [];
 
   for (const tc of toolCalls) {
-    if (SEQUENTIAL_TOOLS.has(tc.name)) {
-      sequentialCalls.push(tc);
-    } else if (READ_ONLY_TOOLS.has(tc.name)) {
-      parallelReads.push(tc);
-    } else if (WRITE_TOOLS.has(tc.name)) {
-      const filePath = getFilePath(tc.args);
-      if (filePath) {
-        const existing = writesByPath.get(filePath) ?? [];
-        existing.push(tc);
-        writesByPath.set(filePath, existing);
-      } else {
-        // No path identified, treat as sequential
-        sequentialCalls.push(tc);
-      }
-    } else {
-      // Unknown tools default to parallel (conservative: sequential)
-      parallelReads.push(tc);
-    }
+    classifyToolCall(tc, parallelReads, writesByPath, sequentialCalls);
   }
 
   // Group 1: All read-only calls can run in parallel
@@ -96,15 +79,9 @@ export function classifyToolDependencies(
   // Group 2: Write calls — parallel if different files, sequential if same file
   const parallelWrites: ToolCallInfo[] = [];
   for (const [_path, writes] of writesByPath) {
-    if (writes.length === 1) {
-      parallelWrites.push(writes[0] as ToolCallInfo);
-    } else {
-      // Multiple writes to same file: first one goes with parallel batch,
-      // rest go sequential
-      parallelWrites.push(writes[0] as ToolCallInfo);
-      for (let i = 1; i < writes.length; i++) {
-        sequentialCalls.push(writes[i] as ToolCallInfo);
-      }
+    parallelWrites.push(writes[0] as ToolCallInfo);
+    for (let i = 1; i < writes.length; i++) {
+      sequentialCalls.push(writes[i] as ToolCallInfo);
     }
   }
 
@@ -118,6 +95,35 @@ export function classifyToolDependencies(
   }
 
   return groups;
+}
+
+function classifyToolCall(
+  tc: ToolCallInfo,
+  parallelReads: ToolCallInfo[],
+  writesByPath: Map<string, ToolCallInfo[]>,
+  sequentialCalls: ToolCallInfo[]
+): void {
+  if (SEQUENTIAL_TOOLS.has(tc.name)) {
+    sequentialCalls.push(tc);
+    return;
+  }
+  if (READ_ONLY_TOOLS.has(tc.name)) {
+    parallelReads.push(tc);
+    return;
+  }
+  if (WRITE_TOOLS.has(tc.name)) {
+    const filePath = getFilePath(tc.args);
+    if (filePath) {
+      const existing = writesByPath.get(filePath) ?? [];
+      existing.push(tc);
+      writesByPath.set(filePath, existing);
+    } else {
+      sequentialCalls.push(tc);
+    }
+    return;
+  }
+  // Unknown tools default to parallel
+  parallelReads.push(tc);
 }
 
 function getFilePath(args: Record<string, unknown>): string | undefined {

@@ -115,14 +115,12 @@ export function NotificationItem({
   const config = TYPE_CONFIG[notification.type];
 
   return (
-    // biome-ignore lint/a11y/useKeyWithClickEvents: notification click-to-mark-read
-    // biome-ignore lint/a11y/noStaticElementInteractions: notification item
-    // biome-ignore lint/a11y/noNoninteractiveElementInteractions: notification item
-    <div
+    <button
       className={`flex gap-2.5 rounded-lg px-3 py-2.5 transition-colors ${
         notification.read ? "opacity-60" : "bg-zinc-800/30 hover:bg-zinc-800/50"
       }`}
       onClick={() => !notification.read && onMarkRead?.(notification.id)}
+      type="button"
     >
       <div className={`mt-0.5 shrink-0 ${config.color}`}>{config.icon}</div>
       <div className="min-w-0 flex-1">
@@ -168,6 +166,6 @@ export function NotificationItem({
           </svg>
         </button>
       )}
-    </div>
+    </button>
   );
 }

@@ -27,6 +27,56 @@ interface FileChange {
   timestamp: string;
 }
 
+const FILE_EVENT_TYPES = new Set(["file_change", "file_diff", "code_change"]);
+
+function extractFilePath(data: Record<string, unknown>): string | undefined {
+  if (typeof data.path === "string") {
+    return data.path;
+  }
+  if (
+    typeof data.file === "object" &&
+    data.file !== null &&
+    "path" in (data.file as Record<string, unknown>)
+  ) {
+    return String((data.file as Record<string, unknown>).path);
+  }
+  return undefined;
+}
+
+function extractFileChange(event: {
+  id: string;
+  type: string;
+  data: Record<string, unknown>;
+  timestamp: string;
+}): FileChange | null {
+  if (!FILE_EVENT_TYPES.has(event.type)) {
+    return null;
+  }
+
+  const path = extractFilePath(event.data);
+  if (!path) {
+    return null;
+  }
+
+  let operation = "create";
+  if (typeof event.data.operation === "string") {
+    operation = event.data.operation;
+  } else if (event.type === "code_change") {
+    operation = "modify";
+  }
+
+  const role =
+    typeof event.data.role === "string" ? event.data.role : undefined;
+
+  return {
+    id: event.id,
+    timestamp: event.timestamp,
+    path,
+    operation,
+    role,
+  };
+}
+
 export function FileTimeline() {
   const events = useSessionStore((s) => s.events);
 
@@ -34,43 +84,9 @@ export function FileTimeline() {
     const changes: FileChange[] = [];
 
     for (const event of events) {
-      if (
-        event.type === "file_change" ||
-        event.type === "file_diff" ||
-        event.type === "code_change"
-      ) {
-        let path: string | undefined;
-        if (typeof event.data.path === "string") {
-          path = event.data.path;
-        } else if (
-          typeof event.data.file === "object" &&
-          event.data.file !== null &&
-          "path" in (event.data.file as Record<string, unknown>)
-        ) {
-          path = String((event.data.file as Record<string, unknown>).path);
-        }
-
-        if (!path) {
-          continue;
-        }
-
-        let operation = "create";
-        if (typeof event.data.operation === "string") {
-          operation = event.data.operation;
-        } else if (event.type === "code_change") {
-          operation = "modify";
-        }
-
-        const role =
-          typeof event.data.role === "string" ? event.data.role : undefined;
-
-        changes.push({
-          id: event.id,
-          timestamp: event.timestamp,
-          path,
-          operation,
-          role,
-        });
+      const change = extractFileChange(event);
+      if (change) {
+        changes.push(change);
       }
     }
 

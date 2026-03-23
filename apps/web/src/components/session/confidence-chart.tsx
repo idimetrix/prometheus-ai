@@ -104,9 +104,8 @@ export function ConfidenceChart({ confidenceHistory }: ConfidenceChartProps) {
         )}
       </div>
 
-      {/* biome-ignore lint/a11y/noNoninteractiveElementInteractions: SVG chart needs mouse interaction for hover tooltips */}
       <svg
-        aria-label="Confidence over iterations chart"
+        aria-label="Confidence score chart"
         className="w-full"
         onMouseLeave={() => setHoveredIdx(null)}
         preserveAspectRatio="xMidYMid meet"
@@ -206,7 +205,6 @@ export function ConfidenceChart({ confidenceHistory }: ConfidenceChartProps) {
 
         {/* Points with color coding */}
         {points.map((p, i) => (
-          // biome-ignore lint/a11y/noStaticElementInteractions: SVG circle used for chart hover interaction
           <circle
             className="cursor-pointer"
             cx={p.x}

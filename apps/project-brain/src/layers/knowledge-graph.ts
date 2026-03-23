@@ -767,6 +767,43 @@ export class KnowledgeGraphLayer {
     };
     await this.addNode(projectId, fileNode);
 
+    await this.analyzeExports(projectId, filePath, fileNode, exports);
+    await this.analyzeFunctions(projectId, filePath, fileNode, functions);
+    await this.analyzeClasses(projectId, filePath, fileNode, classes);
+    await this.analyzeArrowFunctions(projectId, filePath, fileNode, content);
+    await this.analyzeInterfaceTypes(projectId, filePath, fileNode, content);
+    const methodCallsSeen = await this.analyzeMethodCalls(
+      projectId,
+      fileNode,
+      content
+    );
+    await this.analyzeFunctionCalls(projectId, fileNode, content, functions);
+    const typesSeen = await this.analyzeTypeUsages(
+      projectId,
+      fileNode,
+      content
+    );
+    await this.analyzeImportEdges(projectId, fileNode, imports);
+
+    logger.debug(
+      {
+        projectId,
+        filePath,
+        functions: functions.length,
+        classes: classes.length,
+        methodCalls: methodCallsSeen.size,
+        typeUsages: typesSeen.size,
+      },
+      "File analyzed for knowledge graph"
+    );
+  }
+
+  private async analyzeExports(
+    projectId: string,
+    filePath: string,
+    fileNode: GraphNode,
+    exports: Array<{ name: string; kind: string }>
+  ): Promise<void> {
     for (const exp of exports) {
       const exportNode: GraphNode = {
         id: `export:${filePath}:${exp.name}`,
@@ -782,7 +819,14 @@ export class KnowledgeGraphLayer {
         type: "exports",
       });
     }
+  }
 
+  private async analyzeFunctions(
+    projectId: string,
+    filePath: string,
+    fileNode: GraphNode,
+    functions: Array<{ name: string; isAsync: boolean; isExported: boolean }>
+  ): Promise<void> {
     for (const fn of functions) {
       const fnNode: GraphNode = {
         id: `fn:${filePath}:${fn.name}`,
@@ -798,7 +842,19 @@ export class KnowledgeGraphLayer {
         type: "contains",
       });
     }
+  }
 
+  private async analyzeClasses(
+    projectId: string,
+    filePath: string,
+    fileNode: GraphNode,
+    classes: Array<{
+      name: string;
+      extends?: string;
+      implements?: string[];
+      isAbstract: boolean;
+    }>
+  ): Promise<void> {
     for (const cls of classes) {
       const clsNode: GraphNode = {
         id: `class:${filePath}:${cls.name}`,
@@ -821,7 +877,6 @@ export class KnowledgeGraphLayer {
           type: "extends",
         });
       }
-
       if (cls.implements) {
         for (const iface of cls.implements) {
           await this.addEdge(projectId, {
@@ -832,77 +887,106 @@ export class KnowledgeGraphLayer {
         }
       }
     }
+  }
 
-    // Extract and persist arrow functions
+  private async analyzeArrowFunctions(
+    projectId: string,
+    filePath: string,
+    fileNode: GraphNode,
+    content: string
+  ): Promise<void> {
     for (const match of content.matchAll(ARROW_FN_RE)) {
-      if (match[1]) {
-        await this.addNode(projectId, {
-          id: `fn:${filePath}:${match[1]}`,
-          type: "function",
-          name: match[1],
-          filePath,
-          metadata: {
-            arrowFunction: true,
-            exported: match[0].startsWith("export"),
-          },
-        });
-        await this.addEdge(projectId, {
-          source: fileNode.id,
-          target: `fn:${filePath}:${match[1]}`,
-          type: "contains",
-        });
+      if (!match[1]) {
+        continue;
       }
+      await this.addNode(projectId, {
+        id: `fn:${filePath}:${match[1]}`,
+        type: "function",
+        name: match[1],
+        filePath,
+        metadata: {
+          arrowFunction: true,
+          exported: match[0].startsWith("export"),
+        },
+      });
+      await this.addEdge(projectId, {
+        source: fileNode.id,
+        target: `fn:${filePath}:${match[1]}`,
+        type: "contains",
+      });
     }
+  }
 
-    // Extract and persist interface/type definitions
+  private async analyzeInterfaceTypes(
+    projectId: string,
+    filePath: string,
+    fileNode: GraphNode,
+    content: string
+  ): Promise<void> {
     for (const match of content.matchAll(INTERFACE_TYPE_RE)) {
-      if (match[1]) {
-        const kind = match[0].includes("interface") ? "interface" : "type";
-        await this.addNode(projectId, {
-          id: `type:${filePath}:${match[1]}`,
-          type: "module",
-          name: match[1],
-          filePath,
-          metadata: { kind },
-        });
+      if (!match[1]) {
+        continue;
+      }
+      const kind = match[0].includes("interface") ? "interface" : "type";
+      await this.addNode(projectId, {
+        id: `type:${filePath}:${match[1]}`,
+        type: "module",
+        name: match[1],
+        filePath,
+        metadata: { kind },
+      });
+      await this.addEdge(projectId, {
+        source: fileNode.id,
+        target: `type:${filePath}:${match[1]}`,
+        type: "contains",
+      });
+      if (!match[2]) {
+        continue;
+      }
+      for (const ext of match[2]
+        .split(",")
+        .map((s) => s.trim())
+        .filter((s) => s.length > 0)) {
         await this.addEdge(projectId, {
-          source: fileNode.id,
-          target: `type:${filePath}:${match[1]}`,
-          type: "contains",
+          source: `type:${filePath}:${match[1]}`,
+          target: `type:unknown:${ext}`,
+          type: "extends",
         });
-        if (match[2]) {
-          for (const ext of match[2]
-            .split(",")
-            .map((s) => s.trim())
-            .filter((s) => s.length > 0)) {
-            await this.addEdge(projectId, {
-              source: `type:${filePath}:${match[1]}`,
-              target: `type:unknown:${ext}`,
-              type: "extends",
-            });
-          }
-        }
       }
     }
+  }
 
-    // Extract method calls (e.g., ClassName.method()) and create "calls" edges
+  private async analyzeMethodCalls(
+    projectId: string,
+    fileNode: GraphNode,
+    content: string
+  ): Promise<Set<string>> {
     const methodCallsSeen = new Set<string>();
     for (const match of content.matchAll(METHOD_CALL_RE)) {
-      if (match[1] && match[2]) {
-        const key = `${match[1]}.${match[2]}`;
-        if (!methodCallsSeen.has(key)) {
-          methodCallsSeen.add(key);
-          await this.addEdge(projectId, {
-            source: fileNode.id,
-            target: `fn:unknown:${key}`,
-            type: "calls",
-            metadata: { className: match[1], methodName: match[2] },
-          });
-        }
+      if (!(match[1] && match[2])) {
+        continue;
       }
+      const key = `${match[1]}.${match[2]}`;
+      if (methodCallsSeen.has(key)) {
+        continue;
+      }
+      methodCallsSeen.add(key);
+      await this.addEdge(projectId, {
+        source: fileNode.id,
+        target: `fn:unknown:${key}`,
+        type: "calls",
+        metadata: { className: match[1], methodName: match[2] },
+      });
     }
+    return methodCallsSeen;
+  }
 
-    // Extract standalone function calls and create "calls" edges
+  private async analyzeFunctionCalls(
+    projectId: string,
+    fileNode: GraphNode,
+    content: string,
+    functions: Array<{ name: string }>
+  ): Promise<void> {
     const fnNames = new Set(functions.map((f) => f.name));
     const callKeywords = new Set([
       "if",
@@ -924,22 +1008,30 @@ export class KnowledgeGraphLayer {
     ]);
     const fnCallsSeen = new Set<string>();
     for (const match of content.matchAll(FUNCTION_CALL_RE)) {
-      if (
-        match[1] &&
-        !callKeywords.has(match[1]) &&
-        !fnNames.has(match[1]) &&
-        !fnCallsSeen.has(match[1])
-      ) {
-        fnCallsSeen.add(match[1]);
-        await this.addEdge(projectId, {
-          source: fileNode.id,
-          target: `fn:unknown:${match[1]}`,
-          type: "calls",
-        });
+      if (!match[1]) {
+        continue;
       }
+      if (
+        callKeywords.has(match[1]) ||
+        fnNames.has(match[1]) ||
+        fnCallsSeen.has(match[1])
+      ) {
+        continue;
+      }
+      fnCallsSeen.add(match[1]);
+      await this.addEdge(projectId, {
+        source: fileNode.id,
+        target: `fn:unknown:${match[1]}`,
+        type: "calls",
+      });
     }
+  }
 
-    // Extract type usages and create "uses_type" edges
+  private async analyzeTypeUsages(
+    projectId: string,
+    fileNode: GraphNode,
+    content: string
+  ): Promise<Set<string>> {
     const builtinTypes = new Set([
       "String",
       "Number",
@@ -961,16 +1053,29 @@ export class KnowledgeGraphLayer {
     ]);
     const typesSeen = new Set<string>();
     for (const match of content.matchAll(TYPE_USAGE_RE)) {
-      if (match[1] && !builtinTypes.has(match[1]) && !typesSeen.has(match[1])) {
-        typesSeen.add(match[1]);
-        await this.addEdge(projectId, {
-          source: fileNode.id,
-          target: `type:unknown:${match[1]}`,
-          type: "uses_type",
-        });
+      if (!match[1] || builtinTypes.has(match[1]) || typesSeen.has(match[1])) {
+        continue;
       }
+      typesSeen.add(match[1]);
+      await this.addEdge(projectId, {
+        source: fileNode.id,
+        target: `type:unknown:${match[1]}`,
+        type: "uses_type",
+      });
     }
+    return typesSeen;
+  }
 
+  private async analyzeImportEdges(
+    projectId: string,
+    fileNode: GraphNode,
+    imports: Array<{
+      source: string;
+      specifiers: string[];
+      isDefault: boolean;
+      isNamespace: boolean;
+    }>
+  ): Promise<void> {
     for (const imp of imports) {
       await this.addEdge(projectId, {
         source: fileNode.id,
@@ -983,18 +1088,6 @@ export class KnowledgeGraphLayer {
         },
       });
     }
-
-    logger.debug(
-      {
-        projectId,
-        filePath,
-        functions: functions.length,
-        classes: classes.length,
-        methodCalls: methodCallsSeen.size,
-        typeUsages: typesSeen.size,
-      },
-      "File analyzed for knowledge graph"
-    );
   }
 
   // ─── Cognee Pipeline Integration ──────────────────────────────────
@@ -1203,73 +1296,95 @@ const FN_DECL_RE =
 const CLASS_DECL_RE =
   /(?:export\s+)?(abstract\s+)?class\s+(\w+)(?:\s+extends\s+(\w+))?(?:\s+implements\s+([\w,\s]+))?/g;
 
-function extractImports(content: string): Array<{
-  source: string;
-  specifiers: string[];
+interface ImportEntry {
   isDefault: boolean;
   isNamespace: boolean;
-}> {
-  const imports: Array<{
-    source: string;
-    specifiers: string[];
-    isDefault: boolean;
-    isNamespace: boolean;
-  }> = [];
+  source: string;
+  specifiers: string[];
+}
+
+function extractImports(content: string): ImportEntry[] {
+  const imports: ImportEntry[] = [];
   const seen = new Set<string>();
 
-  for (const match of content.matchAll(NAMED_IMPORT_RE)) {
-    if (match[1] && match[2]) {
-      const key = `named:${match[2]}`;
-      if (seen.has(key)) {
-        continue;
-      }
-      seen.add(key);
-      const specifiers = match[1]
-        .split(",")
-        .map((s) => s.trim().split(" as ")[0]?.trim())
-        .filter((s): s is string => Boolean(s));
-      imports.push({
-        source: match[2],
-        specifiers,
-        isDefault: false,
-        isNamespace: false,
-      });
-    }
-  }
-
-  for (const match of content.matchAll(DEFAULT_IMPORT_RE)) {
-    if (match[1] && match[2] && !match[1].startsWith("{")) {
-      const key = `default:${match[2]}`;
-      if (seen.has(key)) {
-        continue;
-      }
-      seen.add(key);
-      imports.push({
-        source: match[2],
-        specifiers: [match[1]],
-        isDefault: true,
-        isNamespace: false,
-      });
-    }
-  }
-
-  for (const match of content.matchAll(NS_IMPORT_RE)) {
-    if (match[1] && match[2]) {
-      const key = `ns:${match[2]}`;
-      if (seen.has(key)) {
-        continue;
-      }
-      seen.add(key);
-      imports.push({
-        source: match[2],
-        specifiers: [match[1]],
-        isDefault: false,
-        isNamespace: true,
-      });
-    }
-  }
+  collectNamedImports(content, seen, imports);
+  collectDefaultImports(content, seen, imports);
+  collectNamespaceImports(content, seen, imports);
 
   return imports;
+}
+
+function collectNamedImports(
+  content: string,
+  seen: Set<string>,
+  imports: ImportEntry[]
+): void {
+  for (const match of content.matchAll(NAMED_IMPORT_RE)) {
+    if (!(match[1] && match[2])) {
+      continue;
+    }
+    const key = `named:${match[2]}`;
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    const specifiers = match[1]
+      .split(",")
+      .map((s) => s.trim().split(" as ")[0]?.trim())
+      .filter((s): s is string => Boolean(s));
+    imports.push({
+      source: match[2],
+      specifiers,
+      isDefault: false,
+      isNamespace: false,
+    });
+  }
+}
+
+function collectDefaultImports(
+  content: string,
+  seen: Set<string>,
+  imports: ImportEntry[]
+): void {
+  for (const match of content.matchAll(DEFAULT_IMPORT_RE)) {
+    if (!(match[1] && match[2]) || match[1].startsWith("{")) {
+      continue;
+    }
+    const key = `default:${match[2]}`;
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    imports.push({
+      source: match[2],
+      specifiers: [match[1]],
+      isDefault: true,
+      isNamespace: false,
+    });
+  }
+}
+
+function collectNamespaceImports(
+  content: string,
+  seen: Set<string>,
+  imports: ImportEntry[]
+): void {
+  for (const match of content.matchAll(NS_IMPORT_RE)) {
+    if (!(match[1] && match[2])) {
+      continue;
+    }
+    const key = `ns:${match[2]}`;
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    imports.push({
+      source: match[2],
+      specifiers: [match[1]],
+      isDefault: false,
+      isNamespace: true,
+    });
+  }
 }
 
 function extractExports(

@@ -237,7 +237,7 @@ export class PoolManager {
     preferredProvider?: "docker" | "firecracker" | "dev" | "gvisor" | "e2b",
     options?: { sessionId?: string; template?: PoolTemplate }
   ): Promise<SandboxInstance> {
-    const providerName =
+    const providerName: PooledInstance["providerName"] =
       preferredProvider ??
       this.resolveProviderFromTrustLevel(config.trustLevel) ??
       this.getDefaultProviderName();
@@ -249,36 +249,83 @@ export class PoolManager {
     const sessionId = options?.sessionId;
     const template = options?.template;
 
-    // Track template usage
-    if (template) {
-      const stats = this.templateUsageStats.get(template);
-      if (stats) {
-        stats.acquireCount++;
-        stats.lastAcquiredAt = new Date();
-      }
-    }
-
-    // Record current usage for predictive scaling
+    this.trackTemplateUsage(template);
     this.recordHourlyUsage();
 
-    // 1. Try affinity-based reuse: find a sandbox that was recently used
-    //    by the same session and is still in the affinity hold period
-    if (this.affinityEnabled && sessionId) {
-      const affinityMatch = this.findAffinitySandbox(
-        providerName,
-        sessionId,
-        template
-      );
-      if (affinityMatch) {
-        logger.info(
-          { sandboxId: affinityMatch.instance.id, sessionId },
-          "Sandbox reused via session affinity"
-        );
-        return this.markAcquired(affinityMatch, config.projectId, sessionId);
+    // 1. Try affinity-based reuse
+    const affinityResult = this.tryAffinityReuse(
+      providerName,
+      sessionId,
+      template,
+      config.projectId
+    );
+    if (affinityResult) {
+      return affinityResult;
+    }
+
+    // 2. Try idle sandbox with matching template
+    const idleMatch = this.findIdleSandbox(providerName, template);
+    if (idleMatch) {
+      return this.markAcquired(idleMatch, config.projectId, sessionId);
+    }
+
+    // 3. Fallback: any idle sandbox from same provider
+    if (template) {
+      const fallbackMatch = this.findIdleSandbox(providerName, undefined);
+      if (fallbackMatch) {
+        return this.markAcquired(fallbackMatch, config.projectId, sessionId);
       }
     }
 
-    // 2. Try to find an idle sandbox from the preferred provider with matching template
+    // 4. Create on demand
+    return await this.createOnDemand(
+      provider,
+      providerName,
+      config,
+      sessionId,
+      template
+    );
+  }
+
+  private trackTemplateUsage(template?: PoolTemplate): void {
+    if (!template) {
+      return;
+    }
+    const stats = this.templateUsageStats.get(template);
+    if (stats) {
+      stats.acquireCount++;
+      stats.lastAcquiredAt = new Date();
+    }
+  }
+
+  private tryAffinityReuse(
+    providerName: string,
+    sessionId: string | undefined,
+    template: PoolTemplate | undefined,
+    projectId: string
+  ): SandboxInstance | null {
+    if (!(this.affinityEnabled && sessionId)) {
+      return null;
+    }
+    const affinityMatch = this.findAffinitySandbox(
+      providerName,
+      sessionId,
+      template
+    );
+    if (!affinityMatch) {
+      return null;
+    }
+    logger.info(
+      { sandboxId: affinityMatch.instance.id, sessionId },
+      "Sandbox reused via session affinity"
+    );
+    return this.markAcquired(affinityMatch, projectId, sessionId);
+  }
+
+  private findIdleSandbox(
+    providerName: string,
+    template: PoolTemplate | undefined
+  ): PooledInstance | null {
     for (const [, pooled] of this.pool) {
       if (
         pooled.providerName === providerName &&
@@ -287,25 +334,19 @@ export class PoolManager {
         pooled.affinitySessionId === null &&
         (template === undefined || pooled.template === template)
       ) {
-        return this.markAcquired(pooled, config.projectId, sessionId);
+        return pooled;
       }
     }
+    return null;
+  }
 
-    // 3. Fallback: try any idle sandbox from the same provider (no template match)
-    if (template) {
-      for (const [, pooled] of this.pool) {
-        if (
-          pooled.providerName === providerName &&
-          pooled.acquiredAt === null &&
-          pooled.instance.status === "running" &&
-          pooled.affinitySessionId === null
-        ) {
-          return this.markAcquired(pooled, config.projectId, sessionId);
-        }
-      }
-    }
-
-    // 4. No idle sandbox available — create on demand if under capacity
+  private async createOnDemand(
+    provider: SandboxProvider,
+    providerName: PooledInstance["providerName"],
+    config: SandboxConfig,
+    sessionId: string | undefined,
+    template: PoolTemplate | undefined
+  ): Promise<SandboxInstance> {
     if (this.pool.size >= this.maxPoolSize) {
       throw new Error("Pool at maximum capacity. No sandboxes available.");
     }
@@ -340,7 +381,6 @@ export class PoolManager {
       "Sandbox created on demand"
     );
 
-    // Replenish warm pool asynchronously
     this.replenishPool(provider, template).catch(() => {
       /* fire-and-forget */
     });

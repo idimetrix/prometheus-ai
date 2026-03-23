@@ -123,103 +123,26 @@ function chunkFromSymbols(
     })
     .join("\n");
 
-  for (const fn of symbols.functions) {
-    const chunkContent = extractLines(lines, fn.line, fn.endLine);
-    if (chunkContent.length > 0) {
-      chunks.push({
-        filePath,
-        symbolType: isReactComponent(fn.name, chunkContent)
-          ? "component"
-          : "function",
-        symbolName: fn.name,
-        startLine: fn.line,
-        endLine: fn.endLine,
-        content: chunkContent,
-        importContext,
-      });
-    }
-  }
-
-  for (const cls of symbols.classes) {
-    const chunkContent = extractLines(lines, cls.line, cls.endLine);
-    if (chunkContent.length > 0) {
-      if (chunkContent.length > MAX_CHUNK_CHARS && cls.methods.length > 0) {
-        const headerEnd = cls.methods[0]?.line ?? cls.endLine;
-        chunks.push({
-          filePath,
-          symbolType: "class",
-          symbolName: cls.name,
-          startLine: cls.line,
-          endLine: Math.min(headerEnd, cls.line + 20),
-          content: extractLines(
-            lines,
-            cls.line,
-            Math.min(headerEnd, cls.line + 20)
-          ),
-          importContext,
-        });
-
-        for (const method of cls.methods) {
-          const methodContent = extractLines(
-            lines,
-            method.line,
-            method.endLine
-          );
-          if (methodContent.length > 0) {
-            chunks.push({
-              filePath,
-              symbolType: "function",
-              symbolName: `${cls.name}.${method.name}`,
-              startLine: method.line,
-              endLine: method.endLine,
-              content: methodContent,
-              importContext,
-            });
-          }
-        }
-      } else {
-        chunks.push({
-          filePath,
-          symbolType: "class",
-          symbolName: cls.name,
-          startLine: cls.line,
-          endLine: cls.endLine,
-          content: chunkContent,
-          importContext,
-        });
-      }
-    }
-  }
-
-  for (const iface of symbols.interfaces) {
-    const chunkContent = extractLines(lines, iface.line, iface.line + 30);
-    if (chunkContent.length > 0) {
-      chunks.push({
-        filePath,
-        symbolType: "interface",
-        symbolName: iface.name,
-        startLine: iface.line,
-        endLine: iface.line + 30,
-        content: chunkContent,
-        importContext,
-      });
-    }
-  }
-
-  for (const ta of symbols.typeAliases) {
-    const chunkContent = extractLines(lines, ta.line, ta.line + 20);
-    if (chunkContent.length > 0) {
-      chunks.push({
-        filePath,
-        symbolType: "type",
-        symbolName: ta.name,
-        startLine: ta.line,
-        endLine: ta.line + 20,
-        content: chunkContent,
-        importContext,
-      });
-    }
-  }
+  chunkFunctions(filePath, lines, symbols.functions, importContext, chunks);
+  chunkClasses(filePath, lines, symbols.classes, importContext, chunks);
+  chunkSimpleSymbols(
+    filePath,
+    lines,
+    symbols.interfaces,
+    "interface",
+    30,
+    importContext,
+    chunks
+  );
+  chunkSimpleSymbols(
+    filePath,
+    lines,
+    symbols.typeAliases,
+    "type",
+    20,
+    importContext,
+    chunks
+  );
 
   if (chunks.length === 0) {
     chunks.push({
@@ -234,6 +157,119 @@ function chunkFromSymbols(
   }
 
   return chunks;
+}
+
+function chunkFunctions(
+  filePath: string,
+  lines: string[],
+  functions: SymbolTable["functions"],
+  importContext: string,
+  chunks: StructuredChunk[]
+): void {
+  for (const fn of functions) {
+    const chunkContent = extractLines(lines, fn.line, fn.endLine);
+    if (chunkContent.length === 0) {
+      continue;
+    }
+    chunks.push({
+      filePath,
+      symbolType: isReactComponent(fn.name, chunkContent)
+        ? "component"
+        : "function",
+      symbolName: fn.name,
+      startLine: fn.line,
+      endLine: fn.endLine,
+      content: chunkContent,
+      importContext,
+    });
+  }
+}
+
+function chunkClasses(
+  filePath: string,
+  lines: string[],
+  classes: SymbolTable["classes"],
+  importContext: string,
+  chunks: StructuredChunk[]
+): void {
+  for (const cls of classes) {
+    const chunkContent = extractLines(lines, cls.line, cls.endLine);
+    if (chunkContent.length === 0) {
+      continue;
+    }
+
+    const isLargeClass =
+      chunkContent.length > MAX_CHUNK_CHARS && cls.methods.length > 0;
+    if (!isLargeClass) {
+      chunks.push({
+        filePath,
+        symbolType: "class",
+        symbolName: cls.name,
+        startLine: cls.line,
+        endLine: cls.endLine,
+        content: chunkContent,
+        importContext,
+      });
+      continue;
+    }
+
+    const headerEnd = cls.methods[0]?.line ?? cls.endLine;
+    chunks.push({
+      filePath,
+      symbolType: "class",
+      symbolName: cls.name,
+      startLine: cls.line,
+      endLine: Math.min(headerEnd, cls.line + 20),
+      content: extractLines(
+        lines,
+        cls.line,
+        Math.min(headerEnd, cls.line + 20)
+      ),
+      importContext,
+    });
+
+    for (const method of cls.methods) {
+      const methodContent = extractLines(lines, method.line, method.endLine);
+      if (methodContent.length === 0) {
+        continue;
+      }
+      chunks.push({
+        filePath,
+        symbolType: "function",
+        symbolName: `${cls.name}.${method.name}`,
+        startLine: method.line,
+        endLine: method.endLine,
+        content: methodContent,
+        importContext,
+      });
+    }
+  }
+}
+
+function chunkSimpleSymbols(
+  filePath: string,
+  lines: string[],
+  symbols: Array<{ name: string; line: number }>,
+  symbolType: StructuredChunk["symbolType"],
+  lineSpan: number,
+  importContext: string,
+  chunks: StructuredChunk[]
+): void {
+  for (const sym of symbols) {
+    const chunkContent = extractLines(lines, sym.line, sym.line + lineSpan);
+    if (chunkContent.length === 0) {
+      continue;
+    }
+    chunks.push({
+      filePath,
+      symbolType,
+      symbolName: sym.name,
+      startLine: sym.line,
+      endLine: sym.line + lineSpan,
+      content: chunkContent,
+      importContext,
+    });
+  }
 }
 
 function extractLines(

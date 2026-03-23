@@ -21,71 +21,94 @@ interface ActionEntry {
   timestamp: string;
 }
 
+function classifyAgentOutput(data: Record<string, unknown>): {
+  phase: StepPhase;
+  summary: string;
+  detail: string | null;
+} {
+  if (typeof data.content === "string" && data.content.startsWith("[THINK]")) {
+    return {
+      phase: "thinking",
+      summary: "Agent thinking",
+      detail: data.content.replace("[THINK] ", ""),
+    };
+  }
+  if (typeof data.toolName === "string") {
+    return {
+      phase: "executing",
+      summary: `Running tool: ${data.toolName}`,
+      detail: data.toolInput ? JSON.stringify(data.toolInput, null, 2) : null,
+    };
+  }
+  return {
+    phase: "result",
+    summary: "Agent output",
+    detail: String(data.content ?? ""),
+  };
+}
+
+const EVENT_TYPE_MAP: Record<
+  string,
+  (data: Record<string, unknown>) => {
+    phase: StepPhase;
+    summary: string;
+    detail: string | null;
+  }
+> = {
+  reasoning: (data) => ({
+    phase: "thinking",
+    summary: "Reasoning",
+    detail: String(data.content ?? data.thought ?? ""),
+  }),
+  agent_output: classifyAgentOutput,
+  tool_call: (data) => ({
+    phase: "tool_select",
+    summary: `Selected tool: ${String(data.toolName ?? "unknown")}`,
+    detail: data.input ? JSON.stringify(data.input, null, 2) : null,
+  }),
+  tool_result: (data) => ({
+    phase: "result",
+    summary: `Tool result: ${String(data.toolName ?? "unknown")}`,
+    detail: data.output ? String(data.output).slice(0, 500) : null,
+  }),
+  task_status: (data) => ({
+    phase: "result",
+    summary: `Task status: ${String(data.status ?? "unknown")}`,
+    detail: null,
+  }),
+  file_diff: (data) => ({
+    phase: "result",
+    summary: `File changed: ${String(data.filePath ?? "unknown")}`,
+    detail: data.diff ? String(data.diff).slice(0, 300) : null,
+  }),
+  code_change: (data) => ({
+    phase: "result",
+    summary: `File changed: ${String(data.filePath ?? "unknown")}`,
+    detail: data.diff ? String(data.diff).slice(0, 300) : null,
+  }),
+  plan_update: () => ({
+    phase: "result",
+    summary: "Plan updated",
+    detail: null,
+  }),
+  error: (data) => ({
+    phase: "error",
+    summary: "Error",
+    detail: String(data.message ?? data.error ?? ""),
+  }),
+};
+
 function classifyEvent(event: SessionEvent): ActionEntry {
   const data = event.data ?? {};
-  let phase: StepPhase = "unknown";
-  let summary = event.type;
-  let detail: string | null = null;
+  const classifier = EVENT_TYPE_MAP[event.type];
 
-  switch (event.type) {
-    case "reasoning":
-      phase = "thinking";
-      summary = "Reasoning";
-      detail = String(data.content ?? data.thought ?? "");
-      break;
-    case "agent_output":
-      if (
-        typeof data.content === "string" &&
-        data.content.startsWith("[THINK]")
-      ) {
-        phase = "thinking";
-        summary = "Agent thinking";
-        detail = data.content.replace("[THINK] ", "");
-      } else if (typeof data.toolName === "string") {
-        phase = "executing";
-        summary = `Running tool: ${data.toolName}`;
-        detail = data.toolInput
-          ? JSON.stringify(data.toolInput, null, 2)
-          : null;
-      } else {
-        phase = "result";
-        summary = "Agent output";
-        detail = String(data.content ?? "");
-      }
-      break;
-    case "tool_call":
-      phase = "tool_select";
-      summary = `Selected tool: ${String(data.toolName ?? "unknown")}`;
-      detail = data.input ? JSON.stringify(data.input, null, 2) : null;
-      break;
-    case "tool_result":
-      phase = "result";
-      summary = `Tool result: ${String(data.toolName ?? "unknown")}`;
-      detail = data.output ? String(data.output).slice(0, 500) : null;
-      break;
-    case "task_status":
-      phase = "result";
-      summary = `Task status: ${String(data.status ?? "unknown")}`;
-      break;
-    case "file_diff":
-    case "code_change":
-      phase = "result";
-      summary = `File changed: ${String(data.filePath ?? "unknown")}`;
-      detail = data.diff ? String(data.diff).slice(0, 300) : null;
-      break;
-    case "plan_update":
-      phase = "result";
-      summary = "Plan updated";
-      break;
-    case "error":
-      phase = "error";
-      summary = "Error";
-      detail = String(data.message ?? data.error ?? "");
-      break;
-    default:
-      summary = event.type.replace(/_/g, " ");
-      detail = JSON.stringify(data).slice(0, 200);
-  }
+  const { phase, summary, detail } = classifier
+    ? classifier(data)
+    : {
+        phase: "unknown" as StepPhase,
+        summary: event.type.replace(/_/g, " "),
+        detail: JSON.stringify(data).slice(0, 200),
+      };
 
   return {
     id: event.id,

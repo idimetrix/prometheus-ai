@@ -7,6 +7,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createIntegrationFixtures, createMockServiceClient } from "./setup";
 
+const ISO_TIMESTAMP_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/;
+const NUMERIC_STRING_RE = /^\d+$/;
+const SEMVER_RE = /^\d+\.\d+\.\d+$/;
+const WEBHOOKS_PREFIX_RE = /^\/webhooks\//;
+const TRPC_MOUNT_RE = /^\/trpc/;
+
 const { mockLogger } = vi.hoisted(() => {
   const logger: Record<string, unknown> = {
     info: vi.fn(),
@@ -239,7 +245,7 @@ describe("API Route Coverage", () => {
 
     it("includes ISO timestamp", () => {
       const health = simulateHealthCheck(true, true);
-      expect(health.timestamp).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/);
+      expect(health.timestamp).toMatch(ISO_TIMESTAMP_RE);
     });
 
     it("tRPC health check returns status and version", () => {
@@ -346,9 +352,9 @@ describe("API Route Coverage", () => {
     it("uses numeric string values for all headers", () => {
       const headers = simulateRateLimitHeaders(100, 50, 1_700_000_000);
 
-      expect(headers["X-RateLimit-Limit"]).toMatch(/^\d+$/);
-      expect(headers["X-RateLimit-Remaining"]).toMatch(/^\d+$/);
-      expect(headers["X-RateLimit-Reset"]).toMatch(/^\d+$/);
+      expect(headers["X-RateLimit-Limit"]).toMatch(NUMERIC_STRING_RE);
+      expect(headers["X-RateLimit-Remaining"]).toMatch(NUMERIC_STRING_RE);
+      expect(headers["X-RateLimit-Reset"]).toMatch(NUMERIC_STRING_RE);
     });
 
     it("rate limit is enforced when remaining hits zero", () => {
@@ -360,7 +366,7 @@ describe("API Route Coverage", () => {
   describe("Version and request ID headers", () => {
     it("API version is included in health response", () => {
       const health = simulateHealthCheck(true, true);
-      expect(health.version).toMatch(/^\d+\.\d+\.\d+$/);
+      expect(health.version).toMatch(SEMVER_RE);
     });
 
     it("CORS config exposes required headers", () => {
@@ -421,7 +427,7 @@ describe("API Route Coverage", () => {
 
       expect(webhookRoutes).toHaveLength(6);
       for (const route of webhookRoutes) {
-        expect(route).toMatch(/^\/webhooks\//);
+        expect(route).toMatch(WEBHOOKS_PREFIX_RE);
       }
     });
 
@@ -454,7 +460,7 @@ describe("API Route Coverage", () => {
 
     it("tRPC routes are mounted at /trpc/*", () => {
       const trpcMount = "/trpc/*";
-      expect(trpcMount).toMatch(/^\/trpc/);
+      expect(trpcMount).toMatch(TRPC_MOUNT_RE);
     });
   });
 });

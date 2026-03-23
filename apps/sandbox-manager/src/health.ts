@@ -81,87 +81,26 @@ export function createHealthChecker(
 ) {
   return async (): Promise<HealthStatus> => {
     const poolStats = pool.getStats();
-
-    // Check Docker connectivity
-    let dockerAvailable = false;
-    try {
-      dockerAvailable = await containerManager.checkDockerConnectivity();
-    } catch {
-      dockerAvailable = false;
-    }
-
-    // System memory info
-    const totalMem = totalmem();
-    const freeMem = freemem();
-    const usedMem = totalMem - freeMem;
-    const memoryUsagePercent = Math.round((usedMem / totalMem) * 100);
-
-    // OOM detection at 90%/95% thresholds
-    const memoryWarning = memoryUsagePercent >= OOM_WARNING_THRESHOLD;
-    const memoryCritical = memoryUsagePercent >= OOM_CRITICAL_THRESHOLD;
-
-    if (memoryCritical) {
-      oomCount++;
-      lastOomAt = new Date().toISOString();
-      logger.error(
-        { memoryUsagePercent, oomCount },
-        "OOM critical threshold reached"
-      );
-    } else if (memoryWarning) {
-      logger.warn({ memoryUsagePercent }, "OOM warning threshold reached");
-    }
-
-    // Disk usage for sandbox directory
-    let diskUsagePercent: number | null = null;
-    let diskFreeMb: number | null = null;
-    try {
-      const diskInfo = await getDiskUsage();
-      diskUsagePercent = diskInfo.usagePercent;
-      diskFreeMb = diskInfo.freeMb;
-    } catch {
-      logger.debug("Could not determine disk usage");
-    }
-
-    // Zombie container cleanup: detect containers stuck in creating/stopping
+    const dockerAvailable = await checkDocker(containerManager);
+    const memInfo = getMemoryInfo();
+    handleOomDetection(memInfo);
+    const diskInfo = await checkDisk();
     const zombieResult = detectAndCleanZombies(containerManager);
     totalZombiesDetected += zombieResult.detected;
     totalZombiesCleaned += zombieResult.cleaned;
 
-    // Determine overall health status
-    let status: "healthy" | "degraded" | "unhealthy" = "healthy";
+    const status = determineHealthStatus(
+      memInfo,
+      diskInfo,
+      dockerAvailable,
+      poolStats
+    );
+    const redisOk = await checkRedis();
 
-    if (
-      memoryCritical ||
-      (diskUsagePercent !== null && diskUsagePercent > 95)
-    ) {
-      status = "unhealthy";
-    } else if (
-      memoryWarning ||
-      (diskUsagePercent !== null && diskUsagePercent > 85) ||
-      (process.env.NODE_ENV === "production" && !dockerAvailable)
-    ) {
-      status = "degraded";
-    }
-
-    if (poolStats.total >= poolStats.maxCapacity && poolStats.idle === 0) {
-      status = status === "unhealthy" ? "unhealthy" : "degraded";
-    }
-
-    // Check Redis connectivity
-    let redisOk = false;
-    try {
-      const { redis } = await import("@prometheus/queue");
-      const pong = await redis.ping();
-      redisOk = pong === "PONG";
-    } catch {
-      redisOk = false;
-    }
-
-    // Record heartbeat (bounded history)
     const timestamp = new Date().toISOString();
     heartbeatHistory.push({
       status,
-      memoryUsagePercent,
+      memoryUsagePercent: memInfo.usagePercent,
       timestamp,
     });
     if (heartbeatHistory.length > MAX_HEARTBEAT_HISTORY) {
@@ -170,10 +109,7 @@ export function createHealthChecker(
 
     return {
       status,
-      checks: {
-        docker: dockerAvailable,
-        redis: redisOk,
-      },
+      checks: { docker: dockerAvailable, redis: redisOk },
       version: "0.1.0",
       mode: containerManager.getMode(),
       uptime: Math.floor((Date.now() - startTime) / 1000),
@@ -189,18 +125,18 @@ export function createHealthChecker(
         activeContainers: containerManager.getActiveCount(),
       },
       system: {
-        memoryUsedMb: Math.round(usedMem / 1024 / 1024),
-        memoryTotalMb: Math.round(totalMem / 1024 / 1024),
-        memoryUsagePercent,
+        memoryUsedMb: Math.round(memInfo.usedMem / 1024 / 1024),
+        memoryTotalMb: Math.round(memInfo.totalMem / 1024 / 1024),
+        memoryUsagePercent: memInfo.usagePercent,
         loadAverage: loadavg().map((v) => Math.round(v * 100) / 100),
-        diskUsagePercent,
-        diskFreeMb,
+        diskUsagePercent: diskInfo.usagePercent,
+        diskFreeMb: diskInfo.freeMb,
       },
       oom: {
         oomCount,
         lastOomAt,
-        memoryWarning,
-        memoryCritical,
+        memoryWarning: memInfo.warning,
+        memoryCritical: memInfo.critical,
       },
       zombies: {
         zombiesDetected: totalZombiesDetected,
@@ -209,6 +145,111 @@ export function createHealthChecker(
       timestamp,
     };
   };
+}
+
+async function checkDocker(
+  containerManager: ContainerManager
+): Promise<boolean> {
+  try {
+    return await containerManager.checkDockerConnectivity();
+  } catch {
+    return false;
+  }
+}
+
+function getMemoryInfo(): {
+  totalMem: number;
+  usedMem: number;
+  usagePercent: number;
+  warning: boolean;
+  critical: boolean;
+} {
+  const totalMem = totalmem();
+  const usedMem = totalMem - freemem();
+  const usagePercent = Math.round((usedMem / totalMem) * 100);
+  return {
+    totalMem,
+    usedMem,
+    usagePercent,
+    warning: usagePercent >= OOM_WARNING_THRESHOLD,
+    critical: usagePercent >= OOM_CRITICAL_THRESHOLD,
+  };
+}
+
+function handleOomDetection(memInfo: {
+  usagePercent: number;
+  warning: boolean;
+  critical: boolean;
+}): void {
+  if (memInfo.critical) {
+    oomCount++;
+    lastOomAt = new Date().toISOString();
+    logger.error(
+      { memoryUsagePercent: memInfo.usagePercent, oomCount },
+      "OOM critical threshold reached"
+    );
+  } else if (memInfo.warning) {
+    logger.warn(
+      { memoryUsagePercent: memInfo.usagePercent },
+      "OOM warning threshold reached"
+    );
+  }
+}
+
+async function checkDisk(): Promise<{
+  usagePercent: number | null;
+  freeMb: number | null;
+}> {
+  try {
+    const diskInfo = await getDiskUsage();
+    return { usagePercent: diskInfo.usagePercent, freeMb: diskInfo.freeMb };
+  } catch {
+    logger.debug("Could not determine disk usage");
+    return { usagePercent: null, freeMb: null };
+  }
+}
+
+function determineHealthStatus(
+  memInfo: { warning: boolean; critical: boolean },
+  diskInfo: { usagePercent: number | null },
+  dockerAvailable: boolean,
+  poolStats: { total: number; maxCapacity: number; idle: number }
+): "healthy" | "degraded" | "unhealthy" {
+  if (
+    memInfo.critical ||
+    (diskInfo.usagePercent !== null && diskInfo.usagePercent > 95)
+  ) {
+    return "unhealthy";
+  }
+
+  let status: "healthy" | "degraded" | "unhealthy" = "healthy";
+  if (
+    memInfo.warning ||
+    (diskInfo.usagePercent !== null && diskInfo.usagePercent > 85) ||
+    (process.env.NODE_ENV === "production" && !dockerAvailable)
+  ) {
+    status = "degraded";
+  }
+
+  if (
+    poolStats.total >= poolStats.maxCapacity &&
+    poolStats.idle === 0 &&
+    status === "healthy"
+  ) {
+    status = "degraded";
+  }
+
+  return status;
+}
+
+async function checkRedis(): Promise<boolean> {
+  try {
+    const { redis } = await import("@prometheus/queue");
+    const pong = await redis.ping();
+    return pong === "PONG";
+  } catch {
+    return false;
+  }
 }
 
 /**

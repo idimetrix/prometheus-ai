@@ -90,19 +90,7 @@ export function planEnforcementMiddleware(
 ): MiddlewareHandler {
   const { requiredFeatures = [], quotaMetrics = [], getUsage } = options;
 
-  return async (c: Context, next) => {
-    const orgId = c.get("orgId") as string | undefined;
-    const planTier = (c.get("planTier") as PlanSlug | undefined) ?? "hobby";
-
-    // No org context — skip enforcement (public endpoints, health, etc.)
-    if (!orgId) {
-      await next();
-      return;
-    }
-
-    // ------------------------------------------------------------------
-    // Feature flag checks
-    // ------------------------------------------------------------------
+  const checkFeatureFlags = (planTier: PlanSlug, orgId: string, c: Context) => {
     for (const feature of requiredFeatures) {
       if (!isFeatureAvailable(planTier, feature)) {
         const minPlan = minimumPlanForFeature(feature);
@@ -121,41 +109,70 @@ export function planEnforcementMiddleware(
         );
       }
     }
+    return null;
+  };
 
-    // ------------------------------------------------------------------
-    // Quota metric checks
-    // ------------------------------------------------------------------
-    if (quotaMetrics.length > 0 && getUsage) {
-      const _quotas = getQuotasForPlan(planTier);
-      const violations: PlanViolation[] = [];
+  const checkQuotaMetrics = async (
+    planTier: PlanSlug,
+    orgId: string,
+    c: Context
+  ) => {
+    if (quotaMetrics.length === 0 || !getUsage) {
+      return null;
+    }
 
-      for (const metric of quotaMetrics) {
-        const currentValue = await getUsage(c, orgId, metric);
-        const result = checkQuota(planTier, metric, currentValue);
+    const _quotas = getQuotasForPlan(planTier);
+    const violations: PlanViolation[] = [];
 
-        if (!result.allowed) {
-          violations.push({
-            metric,
-            current: result.current,
-            limit: result.limit,
-            upgradeUrl: upgradeUrl(orgId),
-          });
-        }
+    for (const metric of quotaMetrics) {
+      const currentValue = await getUsage(c, orgId, metric);
+      const result = checkQuota(planTier, metric, currentValue);
+
+      if (!result.allowed) {
+        violations.push({
+          metric,
+          current: result.current,
+          limit: result.limit,
+          upgradeUrl: upgradeUrl(orgId),
+        });
       }
+    }
 
-      if (violations.length > 0) {
-        const first = violations[0] as PlanViolation;
-        logger.warn({ orgId, planTier, violations }, "Plan quota exceeded");
-        return c.json(
-          {
-            error: "Plan limit exceeded",
-            message: `You have reached the ${first.metric} limit for your ${planTier} plan (${first.current}/${first.limit}).`,
-            violations,
-            upgradeUrl: upgradeUrl(orgId),
-          },
-          402
-        );
-      }
+    if (violations.length === 0) {
+      return null;
+    }
+
+    const first = violations[0] as PlanViolation;
+    logger.warn({ orgId, planTier, violations }, "Plan quota exceeded");
+    return c.json(
+      {
+        error: "Plan limit exceeded",
+        message: `You have reached the ${first.metric} limit for your ${planTier} plan (${first.current}/${first.limit}).`,
+        violations,
+        upgradeUrl: upgradeUrl(orgId),
+      },
+      402
+    );
+  };
+
+  return async (c: Context, next) => {
+    const orgId = c.get("orgId") as string | undefined;
+    const planTier = (c.get("planTier") as PlanSlug | undefined) ?? "hobby";
+
+    // No org context — skip enforcement (public endpoints, health, etc.)
+    if (!orgId) {
+      await next();
+      return;
+    }
+
+    const featureResponse = checkFeatureFlags(planTier, orgId, c);
+    if (featureResponse) {
+      return featureResponse;
+    }
+
+    const quotaResponse = await checkQuotaMetrics(planTier, orgId, c);
+    if (quotaResponse) {
+      return quotaResponse;
     }
 
     await next();

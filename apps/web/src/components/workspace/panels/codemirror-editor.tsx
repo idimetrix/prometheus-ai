@@ -613,147 +613,132 @@ export function CodeMirrorEditor({
 
     let cancelled = false;
 
-    const setup = async () => {
-      const extensions: Extension[] = [
-        lineNumbers(),
-        foldGutter(),
-        bracketMatching(),
-        indentOnInput(),
-        highlightSelectionMatches(),
-        history(),
-        syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
-        oneDark,
-        keymap.of([...defaultKeymap, ...historyKeymap, ...searchKeymap]),
-        EditorView.theme({
-          "&": {
-            height: "100%",
-            fontSize: "13px",
+    const buildBaseExtensions = (): Extension[] => [
+      lineNumbers(),
+      foldGutter(),
+      bracketMatching(),
+      indentOnInput(),
+      highlightSelectionMatches(),
+      history(),
+      syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
+      oneDark,
+      keymap.of([...defaultKeymap, ...historyKeymap, ...searchKeymap]),
+      EditorView.theme({
+        "&": { height: "100%", fontSize: "13px" },
+        ".cm-scroller": {
+          overflow: "auto",
+          fontFamily:
+            "ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace",
+        },
+        ".cm-gutters": {
+          backgroundColor: "rgb(9, 9, 11)",
+          borderRight: "1px solid rgb(39, 39, 42)",
+        },
+      }),
+      keymap.of([
+        {
+          key: "Mod-s",
+          run: () => {
+            if (viewRef.current) {
+              const content = viewRef.current.state.doc.toString();
+              onSaveRef.current?.(content);
+              savedContentRef.current = content;
+              setIsDirty(false);
+            }
+            return true;
           },
-          ".cm-scroller": {
-            overflow: "auto",
-            fontFamily:
-              "ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace",
-          },
-          ".cm-gutters": {
-            backgroundColor: "rgb(9, 9, 11)",
-            borderRight: "1px solid rgb(39, 39, 42)",
-          },
-        }),
-      ];
-
-      // Cmd+S / Ctrl+S save shortcut
-      extensions.push(
-        keymap.of([
-          {
-            key: "Mod-s",
-            run: () => {
-              if (viewRef.current) {
-                const content = viewRef.current.state.doc.toString();
-                onSaveRef.current?.(content);
-                savedContentRef.current = content;
-                setIsDirty(false);
-              }
-              return true;
-            },
-            preventDefault: true,
-          },
-        ])
-      );
-
-      // Change listener for onChange callback and dirty tracking
-      extensions.push(
-        EditorView.updateListener.of((update: ViewUpdate) => {
-          if (update.docChanged) {
-            const content = update.state.doc.toString();
-            onChangeRef.current?.(content);
-            setIsDirty(content !== savedContentRef.current);
-          }
-        })
-      );
-
-      // Vim mode (dynamic import)
-      if (vimMode) {
-        const vimExt = await loadVimMode();
-        if (vimExt && !cancelled) {
-          extensions.unshift(vimExt);
+          preventDefault: true,
+        },
+      ]),
+      EditorView.updateListener.of((update: ViewUpdate) => {
+        if (update.docChanged) {
+          const content = update.state.doc.toString();
+          onChangeRef.current?.(content);
+          setIsDirty(content !== savedContentRef.current);
         }
-      }
+      }),
+    ];
 
-      if (cancelled) {
-        return;
-      }
-
-      // Minimap
+    const addOptionalExtensions = (extensions: Extension[]): void => {
       if (showMinimap) {
         extensions.push(minimapExtension());
       }
-
-      // Git gutter
       if (gitChanges.length > 0) {
         extensions.push(...gitGutterExtension(gitChanges));
       }
-
-      // Diagnostics / lint gutter
       extensions.push(...createDiagnosticsExtension(diagnostics));
-
-      // Autocomplete
       if (autocomplete) {
         extensions.push(createAutocompleteExtension(autocomplete));
       }
-
-      // AI Inline Suggestions
       if (aiSuggestions) {
         extensions.push(createAiInlineSuggestionExtension(aiSuggestions));
       }
-
       if (readOnly) {
         extensions.push(EditorState.readOnly.of(true));
         extensions.push(EditorView.editable.of(false));
       }
-
-      // Extra extensions from props
       if (extraExtensions.length > 0) {
         extensions.push(...extraExtensions);
       }
+    };
 
-      const langPromise = getLanguageExtension(extension);
-      if (langPromise) {
-        try {
-          const langExt = await langPromise;
-          if (!cancelled) {
-            extensions.push(langExt);
-          }
-        } catch {
-          // Language extension failed to load, continue without it
-        }
+    const loadOptionalVim = async (extensions: Extension[]) => {
+      if (!vimMode) {
+        return;
       }
+      const vimExt = await loadVimMode();
+      if (vimExt && !cancelled) {
+        extensions.unshift(vimExt);
+      }
+    };
 
+    const loadLanguage = async (extensions: Extension[]) => {
+      const langPromise = getLanguageExtension(extension);
+      if (!langPromise) {
+        return;
+      }
+      try {
+        const langExt = await langPromise;
+        if (!cancelled) {
+          extensions.push(langExt);
+        }
+      } catch {
+        // Language extension failed to load, continue without it
+      }
+    };
+
+    const applyDiagnostics = (view: EditorView) => {
+      if (diagnostics.length === 0) {
+        return;
+      }
+      const cmDiagnostics = diagnostics.map((d) => ({
+        from: d.from,
+        to: d.to,
+        message: d.message,
+        severity: d.severity,
+      }));
+      view.dispatch(setDiagnostics(view.state, cmDiagnostics));
+    };
+
+    const setup = async () => {
+      const extensions = buildBaseExtensions();
+
+      await loadOptionalVim(extensions);
       if (cancelled) {
         return;
       }
 
-      const state = EditorState.create({
-        doc: value,
-        extensions,
-      });
+      addOptionalExtensions(extensions);
+      await loadLanguage(extensions);
+      if (cancelled) {
+        return;
+      }
 
+      const state = EditorState.create({ doc: value, extensions });
       if (containerRef.current) {
-        const view = new EditorView({
-          state,
-          parent: containerRef.current,
-        });
+        const view = new EditorView({ state, parent: containerRef.current });
         viewRef.current = view;
-
-        // Apply diagnostics if provided
-        if (diagnostics.length > 0) {
-          const cmDiagnostics = diagnostics.map((d) => ({
-            from: d.from,
-            to: d.to,
-            message: d.message,
-            severity: d.severity,
-          }));
-          view.dispatch(setDiagnostics(view.state, cmDiagnostics));
-        }
+        applyDiagnostics(view);
       }
     };
 

@@ -95,79 +95,10 @@ export class FailureAnalyzer {
 
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i] ?? "";
-
-      // TypeScript / type errors
-      if (line.includes("error TS") || line.match(TS_FILE_ERROR_RE)) {
-        const analysis = this.analyzeTypeError(line, lines, i);
-        if (analysis && !seen.has(analysis.testName)) {
-          seen.add(analysis.testName);
-          failures.push(analysis);
-        }
-        continue;
-      }
-
-      // Import / module resolution errors
-      if (
-        line.includes("Cannot find module") ||
-        line.includes("Module not found") ||
-        line.includes("SyntaxError: Cannot use import")
-      ) {
-        const analysis = this.analyzeImportError(line, lines, i);
-        if (analysis && !seen.has(analysis.testName)) {
-          seen.add(analysis.testName);
-          failures.push(analysis);
-        }
-        continue;
-      }
-
-      // Vitest / Jest FAIL lines
-      if (line.match(FAIL_LINE_RE)) {
-        const analysis = this.analyzeTestFailure(line, lines, i);
-        if (analysis && !seen.has(analysis.testName)) {
-          seen.add(analysis.testName);
-          failures.push(analysis);
-        }
-        continue;
-      }
-
-      // Assertion errors
-      if (
-        line.includes("AssertionError") ||
-        line.includes("AssertionError") ||
-        line.match(EXPECT_ASSERTION_RE)
-      ) {
-        const analysis = this.analyzeAssertionError(line, lines, i);
-        if (analysis && !seen.has(analysis.testName)) {
-          seen.add(analysis.testName);
-          failures.push(analysis);
-        }
-        continue;
-      }
-
-      // Runtime errors (TypeError, ReferenceError, etc.)
-      if (
-        line.match(RUNTIME_ERROR_RE) ||
-        (line.match(GENERIC_ERROR_RE) && !line.includes("error TS"))
-      ) {
-        const analysis = this.analyzeRuntimeError(line, lines, i);
-        if (analysis && !seen.has(analysis.testName)) {
-          seen.add(analysis.testName);
-          failures.push(analysis);
-        }
-        continue;
-      }
-
-      // Timeout errors
-      if (
-        line.includes("Timeout") ||
-        line.includes("exceeded") ||
-        line.includes("timed out")
-      ) {
-        const analysis = this.analyzeTimeoutError(line, lines, i);
-        if (analysis && !seen.has(analysis.testName)) {
-          seen.add(analysis.testName);
-          failures.push(analysis);
-        }
+      const analysis = this.classifyLine(line, lines, i);
+      if (analysis && !seen.has(analysis.testName)) {
+        seen.add(analysis.testName);
+        failures.push(analysis);
       }
     }
 
@@ -197,6 +128,43 @@ export class FailureAnalyzer {
     );
 
     return failures;
+  }
+
+  private classifyLine(
+    line: string,
+    lines: string[],
+    i: number
+  ): FailureAnalysis | null {
+    if (line.includes("error TS") || line.match(TS_FILE_ERROR_RE)) {
+      return this.analyzeTypeError(line, lines, i);
+    }
+    if (
+      line.includes("Cannot find module") ||
+      line.includes("Module not found") ||
+      line.includes("SyntaxError: Cannot use import")
+    ) {
+      return this.analyzeImportError(line, lines, i);
+    }
+    if (line.match(FAIL_LINE_RE)) {
+      return this.analyzeTestFailure(line, lines, i);
+    }
+    if (line.includes("AssertionError") || line.match(EXPECT_ASSERTION_RE)) {
+      return this.analyzeAssertionError(line, lines, i);
+    }
+    if (
+      line.match(RUNTIME_ERROR_RE) ||
+      (line.match(GENERIC_ERROR_RE) && !line.includes("error TS"))
+    ) {
+      return this.analyzeRuntimeError(line, lines, i);
+    }
+    if (
+      line.includes("Timeout") ||
+      line.includes("exceeded") ||
+      line.includes("timed out")
+    ) {
+      return this.analyzeTimeoutError(line, lines, i);
+    }
+    return null;
   }
 
   categorizeFailure(failure: FailureAnalysis): FailureCategory {

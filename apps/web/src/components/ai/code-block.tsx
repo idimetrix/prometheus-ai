@@ -91,6 +91,7 @@ export function AICodeBlock({
   const [copied, setCopied] = useState(false);
   const resolvedLanguage = language ?? detectLanguage(code);
   const lines = code.split("\n");
+  const numberedLines = lines.map((text, idx) => ({ text, num: idx + 1 }));
 
   const handleCopy = useCallback(async () => {
     try {
@@ -135,22 +136,20 @@ export function AICodeBlock({
       <div className="overflow-auto" style={{ maxHeight }}>
         <pre className="p-3 font-mono text-xs leading-5">
           {diffMode
-            ? lines.map((line, i) => (
-                // biome-ignore lint/suspicious/noArrayIndexKey: line index is the stable identity for code lines
-                <DiffLine key={`${i}-${line.slice(0, 20)}`} line={line} />
+            ? numberedLines.map(({ text, num }) => (
+                <DiffLine key={`L${num}-${text.slice(0, 40)}`} line={text} />
               ))
-            : lines.map((line, i) => (
+            : numberedLines.map(({ text, num }) => (
                 <div
                   className="text-zinc-300"
-                  // biome-ignore lint/suspicious/noArrayIndexKey: line index is the stable identity for code lines
-                  key={`${i}-${line.slice(0, 20)}`}
+                  key={`L${num}-${text.slice(0, 40)}`}
                 >
                   {showLineNumbers && (
                     <span className="mr-4 inline-block w-8 select-none text-right text-zinc-600">
-                      {i + 1}
+                      {num}
                     </span>
                   )}
-                  {line || " "}
+                  {text || " "}
                 </div>
               ))}
         </pre>

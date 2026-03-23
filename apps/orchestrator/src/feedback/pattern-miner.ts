@@ -46,17 +46,8 @@ export class PatternMiner {
   /**
    * Mine patterns from execution records for a project.
    */
-  mine(records: ExecutionRecord[]): MinedPatterns {
-    if (records.length === 0) {
-      return {
-        toolEffectiveness: [],
-        optimalIterations: [],
-        blockerPatterns: [],
-      };
-    }
-
-    // Group by task type
-    const byTaskType = new Map<
+  private computeToolEffectiveness(
+    byTaskType: Map<
       string,
       Array<{
         success: boolean;
@@ -65,17 +56,8 @@ export class PatternMiner {
         agentRole: string;
         errorType?: string;
       }>
-    >();
-
-    for (const record of records) {
-      const key = record.taskType;
-      if (!byTaskType.has(key)) {
-        byTaskType.set(key, []);
-      }
-      byTaskType.get(key)?.push(record);
-    }
-
-    // Compute tool effectiveness
+    >
+  ): ToolEffectiveness[] {
     const toolEffectiveness: ToolEffectiveness[] = [];
     for (const [taskType, entries] of byTaskType) {
       const byRole = new Map<
@@ -107,8 +89,21 @@ export class PatternMiner {
         });
       }
     }
+    return toolEffectiveness;
+  }
 
-    // Compute optimal iterations
+  private computeOptimalIterations(
+    byTaskType: Map<
+      string,
+      Array<{
+        success: boolean;
+        duration: number;
+        iterations: number;
+        agentRole: string;
+        errorType?: string;
+      }>
+    >
+  ): OptimalIterations[] {
     const optimalIterations: OptimalIterations[] = [];
     for (const [taskType, entries] of byTaskType) {
       const successfulIterations = entries
@@ -116,25 +111,28 @@ export class PatternMiner {
         .map((e) => e.iterations)
         .sort((a, b) => a - b);
 
-      if (successfulIterations.length > 0) {
-        const median =
-          successfulIterations[Math.floor(successfulIterations.length / 2)] ??
-          0;
-        const avg =
-          successfulIterations.reduce((a, b) => a + b, 0) /
-          successfulIterations.length;
-        const max = successfulIterations.at(-1) ?? 0;
-
-        optimalIterations.push({
-          taskType,
-          averageIterations: Math.round(avg),
-          medianIterations: median,
-          maxIterations: max,
-        });
+      if (successfulIterations.length === 0) {
+        continue;
       }
-    }
 
-    // Compute blocker patterns
+      const median =
+        successfulIterations[Math.floor(successfulIterations.length / 2)] ?? 0;
+      const avg =
+        successfulIterations.reduce((a, b) => a + b, 0) /
+        successfulIterations.length;
+      const max = successfulIterations.at(-1) ?? 0;
+
+      optimalIterations.push({
+        taskType,
+        averageIterations: Math.round(avg),
+        medianIterations: median,
+        maxIterations: max,
+      });
+    }
+    return optimalIterations;
+  }
+
+  private computeBlockerPatterns(records: ExecutionRecord[]): BlockerPattern[] {
     const errorCounts = new Map<string, number>();
     for (const record of records) {
       if (record.errorType) {
@@ -145,13 +143,47 @@ export class PatternMiner {
       }
     }
 
-    const blockerPatterns: BlockerPattern[] = Array.from(errorCounts.entries())
+    return Array.from(errorCounts.entries())
       .map(([errorType, frequency]) => ({
         errorType,
         frequency,
         resolutions: [],
       }))
       .sort((a, b) => b.frequency - a.frequency);
+  }
+
+  mine(records: ExecutionRecord[]): MinedPatterns {
+    if (records.length === 0) {
+      return {
+        toolEffectiveness: [],
+        optimalIterations: [],
+        blockerPatterns: [],
+      };
+    }
+
+    // Group by task type
+    const byTaskType = new Map<
+      string,
+      Array<{
+        success: boolean;
+        duration: number;
+        iterations: number;
+        agentRole: string;
+        errorType?: string;
+      }>
+    >();
+
+    for (const record of records) {
+      const key = record.taskType;
+      if (!byTaskType.has(key)) {
+        byTaskType.set(key, []);
+      }
+      byTaskType.get(key)?.push(record);
+    }
+
+    const toolEffectiveness = this.computeToolEffectiveness(byTaskType);
+    const optimalIterations = this.computeOptimalIterations(byTaskType);
+    const blockerPatterns = this.computeBlockerPatterns(records);
 
     logger.info(
       {

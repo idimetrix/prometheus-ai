@@ -57,6 +57,78 @@ function extractJiraCredentials(
   return { baseUrl: baseUrl.replace(TRAILING_SLASHES_RE, ""), email, token };
 }
 
+function buildFieldsToUpdate(
+  summary?: string,
+  description?: string,
+  assigneeAccountId?: string,
+  labels?: string[]
+): Record<string, unknown> {
+  const fields: Record<string, unknown> = {};
+  if (summary) {
+    fields.summary = summary;
+  }
+  if (assigneeAccountId) {
+    fields.assignee = { accountId: assigneeAccountId };
+  }
+  if (labels) {
+    fields.labels = labels;
+  }
+  if (description) {
+    fields.description = {
+      type: "doc",
+      version: 1,
+      content: [
+        { type: "paragraph", content: [{ type: "text", text: description }] },
+      ],
+    };
+  }
+  return fields;
+}
+
+async function applyTransition(
+  issueKey: string,
+  transitionId: string | undefined,
+  creds: { baseUrl: string; email: string; token: string }
+): Promise<MCPToolResult | null> {
+  if (!transitionId) {
+    return null;
+  }
+  const { status } = await jiraFetch(`/issue/${issueKey}/transitions`, creds, {
+    method: "POST",
+    body: { transition: { id: transitionId } },
+  });
+  if (status !== 204 && status !== 200) {
+    return { success: false, error: `Failed to transition issue (${status})` };
+  }
+  return null;
+}
+
+async function applyComment(
+  issueKey: string,
+  comment: string | undefined,
+  creds: { baseUrl: string; email: string; token: string }
+): Promise<MCPToolResult | null> {
+  if (!comment) {
+    return null;
+  }
+  const { status } = await jiraFetch(`/issue/${issueKey}/comment`, creds, {
+    method: "POST",
+    body: {
+      body: {
+        type: "doc",
+        version: 1,
+        content: [
+          { type: "paragraph", content: [{ type: "text", text: comment }] },
+        ],
+      },
+    },
+  });
+  if (status !== 201 && status !== 200) {
+    return { success: false, error: `Failed to add comment (${status})` };
+  }
+  return null;
+}
+
 export function registerJiraAdapter(registry: ToolRegistry): void {
   // ---- list_projects ----
   registry.register(
@@ -446,28 +518,12 @@ export function registerJiraAdapter(registry: ToolRegistry): void {
       };
 
       // Update fields if provided
-      const fieldsToUpdate: Record<string, unknown> = {};
-      if (summary) {
-        fieldsToUpdate.summary = summary;
-      }
-      if (assigneeAccountId) {
-        fieldsToUpdate.assignee = { accountId: assigneeAccountId };
-      }
-      if (labels) {
-        fieldsToUpdate.labels = labels;
-      }
-      if (description) {
-        fieldsToUpdate.description = {
-          type: "doc",
-          version: 1,
-          content: [
-            {
-              type: "paragraph",
-              content: [{ type: "text", text: description }],
-            },
-          ],
-        };
-      }
+      const fieldsToUpdate = buildFieldsToUpdate(
+        summary,
+        description,
+        assigneeAccountId,
+        labels
+      );
 
       if (Object.keys(fieldsToUpdate).length > 0) {
         const { status } = await jiraFetch(`/issue/${issueKey}`, creds, {
@@ -483,47 +539,19 @@ export function registerJiraAdapter(registry: ToolRegistry): void {
       }
 
       // Perform transition if requested
-      if (transitionId) {
-        const { status } = await jiraFetch(
-          `/issue/${issueKey}/transitions`,
-          creds,
-          {
-            method: "POST",
-            body: { transition: { id: transitionId } },
-          }
-        );
-        if (status !== 204 && status !== 200) {
-          return {
-            success: false,
-            error: `Failed to transition issue (${status})`,
-          };
-        }
+      const transitionError = await applyTransition(
+        issueKey,
+        transitionId,
+        creds
+      );
+      if (transitionError) {
+        return transitionError;
       }
 
       // Add comment if provided
-      if (comment) {
-        const { status } = await jiraFetch(
-          `/issue/${issueKey}/comment`,
-          creds,
-          {
-            method: "POST",
-            body: {
-              body: {
-                type: "doc",
-                version: 1,
-                content: [
-                  {
-                    type: "paragraph",
-                    content: [{ type: "text", text: comment }],
-                  },
-                ],
-              },
-            },
-          }
-        );
-        if (status !== 201 && status !== 200) {
-          return { success: false, error: `Failed to add comment (${status})` };
-        }
+      const commentError = await applyComment(issueKey, comment, creds);
+      if (commentError) {
+        return commentError;
       }
 
       return {

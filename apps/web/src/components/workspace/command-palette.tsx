@@ -130,47 +130,38 @@ const NL_PHRASE_MAP: Array<{ actionId: string; phrases: string[] }> = [
  * score between 0 and 1, where 1 is a perfect phrase match. The scoring
  * considers exact phrase matches, partial matches, and keyword overlap.
  */
-function nlMatchScore(query: string, action: CommandAction): number {
-  const lower = query.toLowerCase().trim();
-  if (!lower) {
-    return 0;
-  }
-
-  // Check phrase map for this action
+function phraseMatchScore(lower: string, action: CommandAction): number | null {
   const mapping = NL_PHRASE_MAP.find((m) => m.actionId === action.id);
-  if (mapping) {
-    for (const phrase of mapping.phrases) {
-      // Exact match or query contains the phrase
-      if (lower === phrase || lower.includes(phrase)) {
-        return 1;
-      }
-      // Phrase contains the query (partial input)
-      if (phrase.includes(lower)) {
-        return 0.8;
-      }
+  if (!mapping) {
+    return null;
+  }
+  for (const phrase of mapping.phrases) {
+    if (lower === phrase || lower.includes(phrase)) {
+      return 1;
+    }
+    if (phrase.includes(lower)) {
+      return 0.8;
     }
   }
+  return null;
+}
 
-  // Check keyword matches from the action's keywords array
-  if (action.keywords) {
-    for (const kw of action.keywords) {
-      if (lower.includes(kw.toLowerCase())) {
-        return 0.6;
-      }
+function keywordMatchScore(
+  lower: string,
+  action: CommandAction
+): number | null {
+  if (!action.keywords) {
+    return null;
+  }
+  for (const kw of action.keywords) {
+    if (lower.includes(kw.toLowerCase())) {
+      return 0.6;
     }
   }
+  return null;
+}
 
-  // Fall back to label/description substring matching
-  const labelMatch = action.label.toLowerCase().includes(lower);
-  const descMatch = action.description?.toLowerCase().includes(lower);
-  if (labelMatch) {
-    return 0.5;
-  }
-  if (descMatch) {
-    return 0.3;
-  }
-
-  // Token overlap: check how many words from the query appear in the label
+function tokenOverlapScore(lower: string, action: CommandAction): number {
   const queryTokens = lower.split(WHITESPACE_RE);
   const labelTokens = action.label.toLowerCase().split(WHITESPACE_RE);
   const descTokens = (action.description ?? "")
@@ -181,8 +172,33 @@ function nlMatchScore(query: string, action: CommandAction): number {
   if (matchCount > 0) {
     return (matchCount / queryTokens.length) * 0.4;
   }
-
   return 0;
+}
+
+function nlMatchScore(query: string, action: CommandAction): number {
+  const lower = query.toLowerCase().trim();
+  if (!lower) {
+    return 0;
+  }
+
+  const phrase = phraseMatchScore(lower, action);
+  if (phrase !== null) {
+    return phrase;
+  }
+
+  const keyword = keywordMatchScore(lower, action);
+  if (keyword !== null) {
+    return keyword;
+  }
+
+  if (action.label.toLowerCase().includes(lower)) {
+    return 0.5;
+  }
+  if (action.description?.toLowerCase().includes(lower)) {
+    return 0.3;
+  }
+
+  return tokenOverlapScore(lower, action);
 }
 
 export function WorkspaceCommandPalette() {
@@ -395,15 +411,19 @@ export function WorkspaceCommandPalette() {
 
   return (
     <div className="fixed inset-0 z-50 flex items-start justify-center pt-[15vh]">
-      {/* biome-ignore lint/a11y/useKeyWithClickEvents: backdrop click-to-close */}
-      {/* biome-ignore lint/a11y/noStaticElementInteractions: backdrop overlay */}
-      {/* biome-ignore lint/a11y/noNoninteractiveElementInteractions: backdrop overlay */}
       <div
         className="fixed inset-0 bg-black/60 backdrop-blur-sm"
         onClick={() => {
           setCommandPaletteOpen(false);
           setQuery("");
         }}
+        onKeyDown={(e) => {
+          if (e.key === "Escape") {
+            setCommandPaletteOpen(false);
+            setQuery("");
+          }
+        }}
+        role="presentation"
       />
 
       <div className="relative w-full max-w-lg rounded-xl border border-zinc-800 bg-zinc-900 shadow-2xl">

@@ -16,6 +16,7 @@ export {
   getCorrelationStore,
   withCorrelationId,
 } from "./correlation";
+export { createDeferred, type Deferred } from "./deferred";
 export { decrypt, encrypt } from "./encryption";
 export {
   apiEnvSchema,

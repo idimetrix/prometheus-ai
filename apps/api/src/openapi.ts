@@ -37,11 +37,52 @@ interface ProcedureMeta {
  * `_def.record` (nested sub-routers). The actual shape depends on the tRPC
  * version — we handle both v10 and v11 layouts defensively.
  */
-function extractProcedures(routerDef: unknown): ProcedureMeta[] {
+function extractFlatProcedures(
+  flatProcedures: Record<string, { _def?: { type?: string } }>
+): ProcedureMeta[] {
   const procedures: ProcedureMeta[] = [];
+  for (const [fullPath, proc] of Object.entries(flatProcedures)) {
+    const parts = fullPath.split(".");
+    const router = parts.slice(0, -1).join(".") || "root";
+    const procedure = parts.at(-1) ?? fullPath;
+    const type =
+      (proc?._def?.type as ProcedureMeta["type"]) ?? inferType(procedure);
+    procedures.push({ type, path: fullPath, router, procedure });
+  }
+  return procedures;
+}
+
+function extractNestedProcedures(
+  record: Record<string, unknown>
+): ProcedureMeta[] {
+  const procedures: ProcedureMeta[] = [];
+  for (const [routerName, sub] of Object.entries(record)) {
+    const subDef = (sub as { _def?: Record<string, unknown> })?._def;
+    const subRecord =
+      (subDef?.procedures as Record<string, unknown>) ??
+      (subDef?.record as Record<string, unknown>);
+
+    if (subRecord && typeof subRecord === "object") {
+      for (const [procName, proc] of Object.entries(subRecord)) {
+        const type =
+          ((proc as { _def?: { type?: string } })?._def
+            ?.type as ProcedureMeta["type"]) ?? inferType(procName);
+        procedures.push({
+          type,
+          path: `${routerName}.${procName}`,
+          router: routerName,
+          procedure: procName,
+        });
+      }
+    }
+  }
+  return procedures;
+}
+
+function extractProcedures(routerDef: unknown): ProcedureMeta[] {
   const def = (routerDef as { _def?: Record<string, unknown> })?._def;
   if (!def) {
-    return procedures;
+    return [];
   }
 
   // v10: flat `procedures` map keyed by "router.procedure"
@@ -50,44 +91,16 @@ function extractProcedures(routerDef: unknown): ProcedureMeta[] {
     | undefined;
 
   if (flatProcedures && typeof flatProcedures === "object") {
-    for (const [fullPath, proc] of Object.entries(flatProcedures)) {
-      const parts = fullPath.split(".");
-      const router = parts.slice(0, -1).join(".") || "root";
-      const procedure = parts.at(-1) ?? fullPath;
-      const type =
-        (proc?._def?.type as ProcedureMeta["type"]) ?? inferType(procedure);
-      procedures.push({ type, path: fullPath, router, procedure });
-    }
-    return procedures;
+    return extractFlatProcedures(flatProcedures);
   }
 
   // v11 / alternative: nested `record` map
   const record = def.record as Record<string, unknown> | undefined;
   if (record && typeof record === "object") {
-    for (const [routerName, sub] of Object.entries(record)) {
-      const subDef = (sub as { _def?: Record<string, unknown> })?._def;
-      const subRecord =
-        (subDef?.procedures as Record<string, unknown>) ??
-        (subDef?.record as Record<string, unknown>);
-
-      if (subRecord && typeof subRecord === "object") {
-        for (const [procName, proc] of Object.entries(subRecord)) {
-          const type =
-            ((proc as { _def?: { type?: string } })?._def
-              ?.type as ProcedureMeta["type"]) ?? inferType(procName);
-          procedures.push({
-            type,
-            path: `${routerName}.${procName}`,
-            router: routerName,
-            procedure: procName,
-          });
-        }
-      }
-    }
-    return procedures;
+    return extractNestedProcedures(record);
   }
 
-  return procedures;
+  return [];
 }
 
 /**

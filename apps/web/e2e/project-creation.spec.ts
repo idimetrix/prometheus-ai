@@ -1,5 +1,12 @@
 import { expect, test } from "@playwright/test";
 
+const FRONTEND_RE = /frontend/i;
+const BACKEND_RE = /backend/i;
+const CREATE_BUTTON_RE = /create/i;
+const SESSION_OR_PROJECT_URL_RE = /\/(sessions|projects)\//;
+const SESSION_OR_PROJECT_PATH_RE = /\/(sessions|projects)\//;
+const SESSIONS_HEADING_RE = /Sessions/i;
+
 /**
  * E2E test: Project creation pipeline.
  *
@@ -44,8 +51,8 @@ test.describe("Project Creation Pipeline", () => {
     await page.getByText("Next").click();
 
     // Should show technology categories
-    await expect(page.getByText(/frontend/i)).toBeVisible();
-    await expect(page.getByText(/backend/i)).toBeVisible();
+    await expect(page.getByText(FRONTEND_RE)).toBeVisible();
+    await expect(page.getByText(BACKEND_RE)).toBeVisible();
   });
 
   test("should create project and redirect", async ({ page }) => {
@@ -73,20 +80,20 @@ test.describe("Project Creation Pipeline", () => {
     await nameInput.fill("Test API Project");
 
     // Click create button
-    const createBtn = page.getByRole("button", { name: /create/i });
+    const createBtn = page.getByRole("button", { name: CREATE_BUTTON_RE });
     if (await createBtn.isVisible()) {
       await createBtn.click();
 
       // Should redirect to session or project page
-      await page.waitForURL(/\/(sessions|projects)\//, { timeout: 10_000 });
+      await page.waitForURL(SESSION_OR_PROJECT_URL_RE, { timeout: 10_000 });
       const url = page.url();
-      expect(url).toMatch(/\/(sessions|projects)\//);
+      expect(url).toMatch(SESSION_OR_PROJECT_PATH_RE);
     }
   });
 
   test("should show session view with agent activity", async ({ page }) => {
     // Navigate to an existing session page
     await page.goto("/dashboard/sessions");
-    await expect(page.getByText(/Sessions/i)).toBeVisible();
+    await expect(page.getByText(SESSIONS_HEADING_RE)).toBeVisible();
   });
 });

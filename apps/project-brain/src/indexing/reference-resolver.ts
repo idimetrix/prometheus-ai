@@ -396,47 +396,66 @@ export class ReferenceResolver {
     sourceFilePath: string,
     fileIndex: Map<string, string>
   ): string | null {
-    // 1. Try path aliases (e.g., @prometheus/db -> packages/db/src)
     if (PATH_ALIAS_RE.test(importPath)) {
-      for (const [alias, target] of this.pathAliases) {
-        if (importPath.startsWith(alias)) {
-          const resolved = importPath.replace(alias, target);
-          const nodeId = this.findFile(resolved, fileIndex);
-          if (nodeId) {
-            return nodeId;
-          }
-        }
+      const aliasResult = this.resolveViaAlias(importPath, fileIndex);
+      if (aliasResult) {
+        return aliasResult;
       }
-      // Try common monorepo patterns
-      const pkgMatch = importPath.match(PKG_MATCH_RE);
-      if (pkgMatch) {
-        const pkgName = pkgMatch[1];
-        const subPath = pkgMatch[2] ?? "src/index";
-        const candidates = [
-          `packages/${pkgName}/src/${subPath}`,
-          `packages/${pkgName}/src/index`,
-          `packages/${pkgName}/${subPath}`,
-        ];
-        for (const candidate of candidates) {
-          const nodeId = this.findFile(candidate, fileIndex);
-          if (nodeId) {
-            return nodeId;
-          }
-        }
+
+      const monoResult = this.resolveViaMonorepo(importPath, fileIndex);
+      if (monoResult) {
+        return monoResult;
       }
     }
 
-    // 2. Relative imports
     if (RELATIVE_RE.test(importPath) || PARENT_RE.test(importPath)) {
       const sourceDir = sourceFilePath.split("/").slice(0, -1).join("/");
       const resolved = resolvePath(sourceDir, importPath);
+      return this.findFile(resolved, fileIndex);
+    }
+
+    return null;
+  }
+
+  private resolveViaAlias(
+    importPath: string,
+    fileIndex: Map<string, string>
+  ): string | null {
+    for (const [alias, target] of this.pathAliases) {
+      if (!importPath.startsWith(alias)) {
+        continue;
+      }
+      const resolved = importPath.replace(alias, target);
       const nodeId = this.findFile(resolved, fileIndex);
       if (nodeId) {
         return nodeId;
       }
     }
+    return null;
+  }
 
-    // 3. Node modules -- don't resolve (external dependency)
+  private resolveViaMonorepo(
+    importPath: string,
+    fileIndex: Map<string, string>
+  ): string | null {
+    const pkgMatch = importPath.match(PKG_MATCH_RE);
+    if (!pkgMatch) {
+      return null;
+    }
+
+    const pkgName = pkgMatch[1];
+    const subPath = pkgMatch[2] ?? "src/index";
+    const candidates = [
+      `packages/${pkgName}/src/${subPath}`,
+      `packages/${pkgName}/src/index`,
+      `packages/${pkgName}/${subPath}`,
+    ];
+    for (const candidate of candidates) {
+      const nodeId = this.findFile(candidate, fileIndex);
+      if (nodeId) {
+        return nodeId;
+      }
+    }
     return null;
   }
 

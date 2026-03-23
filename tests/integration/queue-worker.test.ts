@@ -66,7 +66,7 @@ describe("Queue Worker job processing", () => {
       expect(await agentQueue.getWaitingCount()).toBe(1);
 
       // Worker processes the task
-      agentQueue.onProcess(async (job) => {
+      agentQueue.onProcess((job) => {
         expect(job.data.taskId).toBe(fixtures.task.id);
         expect(job.data.agentRole).toBe("backend_coder");
         return { status: "completed", filesChanged: 3 };
@@ -91,7 +91,7 @@ describe("Queue Worker job processing", () => {
         { jobId: "task_fail" }
       );
 
-      agentQueue.onProcess(async () => {
+      agentQueue.onProcess(() => {
         throw new Error("Model API returned 500");
       });
 
@@ -115,7 +115,7 @@ describe("Queue Worker job processing", () => {
         );
       }
 
-      agentQueue.onProcess(async (job) => {
+      agentQueue.onProcess((job) => {
         processedOrder.push(job.data.taskId as string);
         return { status: "completed" };
       });
@@ -138,7 +138,7 @@ describe("Queue Worker job processing", () => {
       );
 
       // First attempt fails
-      agentQueue.onProcess(async () => {
+      agentQueue.onProcess(() => {
         throw new Error("Transient error");
       });
       await agentQueue.processNext();
@@ -166,7 +166,7 @@ describe("Queue Worker job processing", () => {
       );
 
       // Simulate 3 failed attempts
-      agentQueue.onProcess(async () => {
+      agentQueue.onProcess(() => {
         throw new Error("Persistent failure");
       });
 
@@ -208,7 +208,7 @@ describe("Queue Worker job processing", () => {
         { jobId: "rollup_march" }
       );
 
-      billingQueue.onProcess(async (job) => {
+      billingQueue.onProcess((job) => {
         expect(job.data.orgId).toBe(fixtures.org.id);
         return {
           tasksCompleted: 150,
@@ -232,7 +232,7 @@ describe("Queue Worker job processing", () => {
         { jobId: "grant_1" }
       );
 
-      billingQueue.onProcess(async (job) => {
+      billingQueue.onProcess((job) => {
         return { granted: job.data.amount, newBalance: 1500 };
       });
 
@@ -256,7 +256,7 @@ describe("Queue Worker job processing", () => {
         { jobId: "ent_1", priority: 10 }
       );
 
-      enterpriseQueue.onProcess(async (job) => {
+      enterpriseQueue.onProcess((job) => {
         expect(job.data.planTier).toBe("enterprise");
         return { status: "completed" };
       });
@@ -279,7 +279,7 @@ describe("Queue Worker job processing", () => {
         { jobId: "cleanup_1" }
       );
 
-      cleanupQueue.onProcess(async () => {
+      cleanupQueue.onProcess(() => {
         return { sandboxesCleaned: 5, diskFreedMb: 2048 };
       });
 

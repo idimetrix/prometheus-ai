@@ -101,8 +101,10 @@ export class DAGDecomposer {
    * Validate that the task list forms a valid DAG using Kahn's algorithm.
    * Returns true if no circular dependencies exist.
    */
-  private validateTopologicalSort(tasks: SchedulableTask[]): boolean {
-    const taskIds = new Set(tasks.map((t) => t.id));
+  private buildDependencyGraph(
+    tasks: SchedulableTask[],
+    taskIds: Set<string>
+  ): { inDegree: Map<string, number>; adjacency: Map<string, string[]> } {
     const inDegree = new Map<string, number>();
     const adjacency = new Map<string, string[]>();
 
@@ -126,6 +128,13 @@ export class DAGDecomposer {
         inDegree.set(task.id, (inDegree.get(task.id) ?? 0) + 1);
       }
     }
+
+    return { inDegree, adjacency };
+  }
+
+  private validateTopologicalSort(tasks: SchedulableTask[]): boolean {
+    const taskIds = new Set(tasks.map((t) => t.id));
+    const { inDegree, adjacency } = this.buildDependencyGraph(tasks, taskIds);
 
     // Kahn's algorithm
     const queue: string[] = [];

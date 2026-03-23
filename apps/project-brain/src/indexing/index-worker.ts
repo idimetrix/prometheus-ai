@@ -37,56 +37,9 @@ export function startIndexWorker(): Worker<IndexProjectData> {
       );
 
       if (fullReindex) {
-        // Full reindex: read files and pass to the indexer
-        const fs = await import("node:fs/promises");
-        const files: Array<{
-          path: string;
-          content: string;
-          hash: string;
-        }> = [];
-
-        for (const filePath of filePaths) {
-          try {
-            const content = await fs.readFile(filePath, "utf-8");
-            const crypto = await import("node:crypto");
-            const hash = crypto
-              .createHash("sha256")
-              .update(content)
-              .digest("hex");
-            files.push({ path: filePath, content, hash });
-          } catch (err) {
-            const msg = err instanceof Error ? err.message : String(err);
-            logger.warn(
-              { projectId, filePath, error: msg },
-              "Failed to read file for full reindex"
-            );
-          }
-        }
-
-        await fileIndexer.fullReindex(projectId, files);
+        await processFullReindex(fileIndexer, projectId, filePaths);
       } else {
-        // Incremental index: read changed files and index them
-        const fs = await import("node:fs/promises");
-        const crypto = await import("node:crypto");
-
-        for (const filePath of filePaths) {
-          try {
-            const content = await fs.readFile(filePath, "utf-8");
-            const hash = crypto
-              .createHash("sha256")
-              .update(content)
-              .digest("hex");
-            await fileIndexer.indexChanges(projectId, [
-              { path: filePath, content, hash, action: "modified" },
-            ]);
-          } catch (err) {
-            const msg = err instanceof Error ? err.message : String(err);
-            logger.warn(
-              { projectId, filePath, error: msg },
-              "Failed to index file"
-            );
-          }
-        }
+        await processIncrementalIndex(fileIndexer, projectId, filePaths);
       }
 
       const progress = Math.round(
@@ -122,4 +75,61 @@ export function startIndexWorker(): Worker<IndexProjectData> {
 
   logger.info("Index worker started");
   return worker;
+}
+
+async function readFileWithHash(
+  filePath: string
+): Promise<{ path: string; content: string; hash: string } | null> {
+  try {
+    const fs = await import("node:fs/promises");
+    const crypto = await import("node:crypto");
+    const content = await fs.readFile(filePath, "utf-8");
+    const hash = crypto.createHash("sha256").update(content).digest("hex");
+    return { path: filePath, content, hash };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    logger.warn({ filePath, error: msg }, "Failed to read file");
+    return null;
+  }
+}
+
+async function processFullReindex(
+  fileIndexer: FileIndexer,
+  projectId: string,
+  filePaths: string[]
+): Promise<void> {
+  const files: Array<{ path: string; content: string; hash: string }> = [];
+  for (const filePath of filePaths) {
+    const result = await readFileWithHash(filePath);
+    if (result) {
+      files.push(result);
+    }
+  }
+  await fileIndexer.fullReindex(projectId, files);
+}
+
+async function processIncrementalIndex(
+  fileIndexer: FileIndexer,
+  projectId: string,
+  filePaths: string[]
+): Promise<void> {
+  for (const filePath of filePaths) {
+    const result = await readFileWithHash(filePath);
+    if (!result) {
+      continue;
+    }
+    try {
+      await fileIndexer.indexChanges(projectId, [
+        {
+          path: result.path,
+          content: result.content,
+          hash: result.hash,
+          action: "modified",
+        },
+      ]);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      logger.warn({ projectId, filePath, error: msg }, "Failed to index file");
+    }
+  }
 }

@@ -291,11 +291,18 @@ export function DependencyGraph({
           {layoutNodes.map((node) => {
             const r = getNodeRadius(node);
             return (
-              // biome-ignore lint/a11y/noStaticElementInteractions: SVG group requires click handler
               <g
                 className="cursor-pointer"
                 key={node.id}
                 onClick={() => handleNodeClick(node.id)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    handleNodeClick(node.id);
+                  }
+                }}
+                role="button"
+                tabIndex={0}
               >
                 <circle
                   cx={node.x}

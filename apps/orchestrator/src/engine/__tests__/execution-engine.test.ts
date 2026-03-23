@@ -479,7 +479,7 @@ function eventsOfType<K extends keyof EventTypeMap>(
 
 describe("ExecutionEngine", () => {
   beforeEach(() => {
-    vi.clearAllMocks();
+    vi.resetAllMocks();
     mockToolExecute.mockResolvedValue({
       success: true,
       output: "tool output",

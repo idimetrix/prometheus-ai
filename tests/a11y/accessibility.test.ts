@@ -8,6 +8,35 @@
 import { describe, expect, it } from "vitest";
 
 // ---------------------------------------------------------------------------
+// Top-level regex constants
+// ---------------------------------------------------------------------------
+
+const INLINE_COLOR_STYLE_RE =
+  /style="[^"]*color:\s*(#[0-9a-fA-F]{3,8}|rgba?\([^)]+\)|hsl\([^)]+\))[^"]*"/g;
+const TEXT_COLOR_RE = /(?<![a-z-])color:/;
+const BACKGROUND_COLOR_RE = /background(?:-color)?:/;
+const BUTTON_ELEMENT_RE = /<button(?=[^>]*>)([^>]*)>([\s\S]*?)<\/button>/gi;
+const ARIA_LABEL_RE = /aria-label(ledby)?=/;
+const STRIP_TAGS_RE = /<[^>]+>/g;
+const TITLE_ATTR_RE = /title=/;
+const ROLE_ATTR_RE = /role="(\w+)"/g;
+const HEADING_LEVEL_RE = /<h([1-6])\b/gi;
+const INPUT_NEEDS_LABEL_RE =
+  /<input(?=[^>]*type=["'](?!hidden|submit|button|reset|image))[^>]*>/gi;
+const INPUT_ID_RE = /id=["']([^"']+)["']/;
+const PLACEHOLDER_ATTR_RE = /placeholder=/;
+const TABINDEX_RE = /tabindex=["'](\d+)["']/g;
+const CLICKABLE_DIV_SPAN_RE = /<(div|span)\b[^>]*on[Cc]lick[^>]*>/gi;
+const KEYBOARD_HANDLER_RE = /on[Kk]ey[Dd]own|on[Kk]ey[Uu]p|on[Kk]ey[Pp]ress/;
+const ROLE_PRESENT_RE = /role=/;
+const TABINDEX_PRESENT_RE = /tabindex=/;
+const IMG_ELEMENT_RE = /<img\b[^>]*>/gi;
+const ALT_ATTR_RE = /alt=/;
+const PRESENTATION_ROLE_RE = /role=["']presentation["']|role=["']none["']/;
+const BLANK_LINK_RE = /<a\b[^>]*target=["']_blank["'][^>]*>/gi;
+const NOOPENER_RE = /rel=["'][^"']*noopener[^"']*["']/;
+
+// ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
 
@@ -57,15 +86,14 @@ function checkColorContrast(html: string): AccessibilityViolation[] {
   const violations: AccessibilityViolation[] = [];
 
   // Detect text elements with potentially low-contrast inline color styles
-  const colorPattern =
-    /style="[^"]*color:\s*(#[0-9a-fA-F]{3,8}|rgba?\([^)]+\)|hsl\([^)]+\))[^"]*"/g;
-  const matches = html.matchAll(colorPattern);
+  INLINE_COLOR_STYLE_RE.lastIndex = 0;
+  const matches = html.matchAll(INLINE_COLOR_STYLE_RE);
 
   for (const match of matches) {
     const styleValue = match[0];
     // Flag elements that set color but not background (or vice versa)
-    const hasColor = /(?<![a-z-])color:/.test(styleValue);
-    const hasBgColor = /background(?:-color)?:/.test(styleValue);
+    const hasColor = TEXT_COLOR_RE.test(styleValue);
+    const hasBgColor = BACKGROUND_COLOR_RE.test(styleValue);
 
     if (hasColor && !hasBgColor) {
       violations.push({
@@ -88,14 +116,14 @@ function checkAriaAttributes(html: string): AccessibilityViolation[] {
   const violations: AccessibilityViolation[] = [];
 
   // Buttons without accessible labels
-  const buttonPattern = /<button(?=[^>]*>)([^>]*)>([\s\S]*?)<\/button>/gi;
-  for (const match of html.matchAll(buttonPattern)) {
+  BUTTON_ELEMENT_RE.lastIndex = 0;
+  for (const match of html.matchAll(BUTTON_ELEMENT_RE)) {
     const attrs = match[1] ?? "";
     const content = match[2] ?? "";
 
-    const hasAriaLabel = /aria-label(ledby)?=/.test(attrs);
-    const hasTextContent = content.replace(/<[^>]+>/g, "").trim().length > 0;
-    const hasTitle = /title=/.test(attrs);
+    const hasAriaLabel = ARIA_LABEL_RE.test(attrs);
+    const hasTextContent = content.replace(STRIP_TAGS_RE, "").trim().length > 0;
+    const hasTitle = TITLE_ATTR_RE.test(attrs);
 
     if (!(hasAriaLabel || hasTextContent || hasTitle)) {
       violations.push({
@@ -109,8 +137,8 @@ function checkAriaAttributes(html: string): AccessibilityViolation[] {
   }
 
   // Elements with role but missing required ARIA attributes
-  const rolePattern = /role="(\w+)"/g;
-  for (const match of html.matchAll(rolePattern)) {
+  ROLE_ATTR_RE.lastIndex = 0;
+  for (const match of html.matchAll(ROLE_ATTR_RE)) {
     const role = match[1];
     const surroundingContext = html.slice(
       Math.max(0, (match.index ?? 0) - 50),
@@ -137,11 +165,11 @@ function checkAriaAttributes(html: string): AccessibilityViolation[] {
 function checkHeadingHierarchy(html: string): AccessibilityViolation[] {
   const violations: AccessibilityViolation[] = [];
 
-  const headingPattern = /<h([1-6])\b/gi;
+  HEADING_LEVEL_RE.lastIndex = 0;
   let lastLevel = 0;
   let h1Count = 0;
 
-  for (const match of html.matchAll(headingPattern)) {
+  for (const match of html.matchAll(HEADING_LEVEL_RE)) {
     const level = Number.parseInt(match[1] ?? "0", 10);
 
     if (level === 1) {
@@ -180,15 +208,14 @@ function checkFormLabels(html: string): AccessibilityViolation[] {
   const violations: AccessibilityViolation[] = [];
 
   // Inputs that need labels
-  const inputPattern =
-    /<input(?=[^>]*type=["'](?!hidden|submit|button|reset|image))[^>]*>/gi;
+  INPUT_NEEDS_LABEL_RE.lastIndex = 0;
 
-  for (const match of html.matchAll(inputPattern)) {
+  for (const match of html.matchAll(INPUT_NEEDS_LABEL_RE)) {
     const inputHtml = match[0];
-    const hasAriaLabel = /aria-label(ledby)?=/.test(inputHtml);
-    const hasId = /id=["']([^"']+)["']/.exec(inputHtml);
-    const hasTitle = /title=/.test(inputHtml);
-    const hasPlaceholder = /placeholder=/.test(inputHtml);
+    const hasAriaLabel = ARIA_LABEL_RE.test(inputHtml);
+    const hasId = INPUT_ID_RE.exec(inputHtml);
+    const hasTitle = TITLE_ATTR_RE.test(inputHtml);
+    const hasPlaceholder = PLACEHOLDER_ATTR_RE.test(inputHtml);
 
     if (hasId) {
       const inputId = hasId[1];
@@ -224,8 +251,8 @@ function checkFocusManagement(html: string): AccessibilityViolation[] {
   const violations: AccessibilityViolation[] = [];
 
   // Detect positive tabindex values (should generally be 0 or -1)
-  const tabindexPattern = /tabindex=["'](\d+)["']/g;
-  for (const match of html.matchAll(tabindexPattern)) {
+  TABINDEX_RE.lastIndex = 0;
+  for (const match of html.matchAll(TABINDEX_RE)) {
     const value = Number.parseInt(match[1] ?? "0", 10);
     if (value > 0) {
       violations.push({
@@ -247,14 +274,13 @@ function checkKeyboardNavigation(html: string): AccessibilityViolation[] {
   const violations: AccessibilityViolation[] = [];
 
   // Divs/spans with onClick but no keyboard handlers or role
-  const clickablePattern = /<(div|span)\b[^>]*on[Cc]lick[^>]*>/gi;
+  CLICKABLE_DIV_SPAN_RE.lastIndex = 0;
 
-  for (const match of html.matchAll(clickablePattern)) {
+  for (const match of html.matchAll(CLICKABLE_DIV_SPAN_RE)) {
     const element = match[0];
-    const hasKeyboardHandler =
-      /on[Kk]ey[Dd]own|on[Kk]ey[Uu]p|on[Kk]ey[Pp]ress/.test(element);
-    const hasRole = /role=/.test(element);
-    const hasTabindex = /tabindex=/.test(element);
+    const hasKeyboardHandler = KEYBOARD_HANDLER_RE.test(element);
+    const hasRole = ROLE_PRESENT_RE.test(element);
+    const hasTabindex = TABINDEX_PRESENT_RE.test(element);
 
     if (!(hasKeyboardHandler && hasRole && hasTabindex)) {
       violations.push({
@@ -276,11 +302,11 @@ function checkKeyboardNavigation(html: string): AccessibilityViolation[] {
 function checkImageAlts(html: string): AccessibilityViolation[] {
   const violations: AccessibilityViolation[] = [];
 
-  const imgPattern = /<img\b[^>]*>/gi;
-  for (const match of html.matchAll(imgPattern)) {
+  IMG_ELEMENT_RE.lastIndex = 0;
+  for (const match of html.matchAll(IMG_ELEMENT_RE)) {
     const imgHtml = match[0];
-    const hasAlt = /alt=/.test(imgHtml);
-    const hasRole = /role=["']presentation["']|role=["']none["']/.test(imgHtml);
+    const hasAlt = ALT_ATTR_RE.test(imgHtml);
+    const hasRole = PRESENTATION_ROLE_RE.test(imgHtml);
 
     if (!(hasAlt || hasRole)) {
       violations.push({
@@ -302,10 +328,10 @@ function checkImageAlts(html: string): AccessibilityViolation[] {
 function checkLinkTargets(html: string): AccessibilityViolation[] {
   const violations: AccessibilityViolation[] = [];
 
-  const blankLinkPattern = /<a\b[^>]*target=["']_blank["'][^>]*>/gi;
-  for (const match of html.matchAll(blankLinkPattern)) {
+  BLANK_LINK_RE.lastIndex = 0;
+  for (const match of html.matchAll(BLANK_LINK_RE)) {
     const linkHtml = match[0];
-    const hasNoopener = /rel=["'][^"']*noopener[^"']*["']/.test(linkHtml);
+    const hasNoopener = NOOPENER_RE.test(linkHtml);
 
     if (!hasNoopener) {
       violations.push({

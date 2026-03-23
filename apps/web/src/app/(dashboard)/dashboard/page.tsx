@@ -79,6 +79,120 @@ function ProjectCardSkeleton() {
 
 /* --- Main Dashboard Page ------------------------------------------------- */
 
+function DashboardHeader() {
+  return (
+    <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+      <div>
+        <h1 className="font-bold text-xl text-zinc-100 sm:text-2xl">
+          Dashboard
+        </h1>
+        <p className="mt-1 text-sm text-zinc-500">
+          Welcome to PROMETHEUS. Your AI engineering platform.
+        </p>
+      </div>
+      <div className="flex flex-wrap gap-2 sm:gap-3">
+        <Button asChild className="min-h-[44px]">
+          <Link href="/dashboard/projects/new">
+            <Plus className="h-4 w-4" />
+            <span className="hidden sm:inline">New Project</span>
+            <span className="sm:hidden">New</span>
+          </Link>
+        </Button>
+        <Button asChild className="min-h-[44px]" variant="outline">
+          <Link href="/new">
+            <Zap className="h-4 w-4" />
+            <span className="hidden sm:inline">New Task</span>
+            <span className="sm:hidden">Task</span>
+          </Link>
+        </Button>
+        <Button
+          asChild
+          className="hidden min-h-[44px] sm:inline-flex"
+          variant="outline"
+        >
+          <Link href="/dashboard/analytics">
+            <BarChart3 className="h-4 w-4" />
+            View Analytics
+          </Link>
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+function StatsGrid({
+  activeAgents,
+  balance,
+  overview,
+  creditBalance,
+}: {
+  activeAgents: number;
+  balance: { available: number; reserved: number } | undefined;
+  overview:
+    | {
+        successRate: number;
+        tasksCompleted: number;
+        sessionsCreated: number;
+        activeProjects: number;
+      }
+    | undefined;
+  creditBalance: number;
+}) {
+  const creditsSubtitle = balance?.reserved
+    ? `${balance.reserved} reserved`
+    : "Available to use";
+  const creditsTrend =
+    balance?.available && balance.available > 0 ? "flat" : "down";
+  const tasksSubtitle = overview?.successRate
+    ? `${(overview.successRate * 100).toFixed(0)}% success rate`
+    : "No tasks yet";
+  const projectsSubtitle = overview?.sessionsCreated
+    ? `${overview.sessionsCreated} sessions`
+    : "Create one to start";
+
+  return (
+    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      <MetricCard
+        icon={Cpu}
+        iconBg="bg-green-500/10"
+        iconColor="text-green-500"
+        label="Active Agents"
+        subtitle="Running right now"
+        trend={[0, 1, 2, 1, 3, 2, activeAgents]}
+        trendDirection={activeAgents > 0 ? "up" : "flat"}
+        value={activeAgents}
+      />
+      <MetricCard
+        icon={Coins}
+        iconBg="bg-yellow-500/10"
+        iconColor="text-yellow-500"
+        label="Credits Remaining"
+        subtitle={creditsSubtitle}
+        trendDirection={creditsTrend}
+        value={balance?.available?.toLocaleString() ?? creditBalance}
+      />
+      <MetricCard
+        icon={CheckCircle}
+        iconBg="bg-blue-500/10"
+        iconColor="text-blue-500"
+        label="Tasks Today"
+        subtitle={tasksSubtitle}
+        trendDirection={(overview?.tasksCompleted ?? 0) > 0 ? "up" : "flat"}
+        value={overview?.tasksCompleted ?? 0}
+      />
+      <MetricCard
+        icon={FolderOpen}
+        iconBg="bg-violet-500/10"
+        iconColor="text-violet-500"
+        label="Active Projects"
+        subtitle={projectsSubtitle}
+        trendDirection={(overview?.activeProjects ?? 0) > 0 ? "up" : "flat"}
+        value={overview?.activeProjects ?? 0}
+      />
+    </div>
+  );
+}
+
 export default function DashboardPage() {
   const { creditBalance, activeAgents, setStats } = useDashboardStore();
 
@@ -119,42 +233,7 @@ export default function DashboardPage() {
   return (
     <div className="space-y-8">
       {/* Header */}
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <h1 className="font-bold text-xl text-zinc-100 sm:text-2xl">
-            Dashboard
-          </h1>
-          <p className="mt-1 text-sm text-zinc-500">
-            Welcome to PROMETHEUS. Your AI engineering platform.
-          </p>
-        </div>
-        <div className="flex flex-wrap gap-2 sm:gap-3">
-          <Button asChild className="min-h-[44px]">
-            <Link href="/dashboard/projects/new">
-              <Plus className="h-4 w-4" />
-              <span className="hidden sm:inline">New Project</span>
-              <span className="sm:hidden">New</span>
-            </Link>
-          </Button>
-          <Button asChild className="min-h-[44px]" variant="outline">
-            <Link href="/new">
-              <Zap className="h-4 w-4" />
-              <span className="hidden sm:inline">New Task</span>
-              <span className="sm:hidden">Task</span>
-            </Link>
-          </Button>
-          <Button
-            asChild
-            className="hidden min-h-[44px] sm:inline-flex"
-            variant="outline"
-          >
-            <Link href="/dashboard/analytics">
-              <BarChart3 className="h-4 w-4" />
-              View Analytics
-            </Link>
-          </Button>
-        </div>
-      </div>
+      <DashboardHeader />
 
       {/* Quick stats */}
       {isLoading ? (
@@ -165,59 +244,12 @@ export default function DashboardPage() {
           <StatCardSkeleton />
         </div>
       ) : (
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          <MetricCard
-            icon={Cpu}
-            iconBg="bg-green-500/10"
-            iconColor="text-green-500"
-            label="Active Agents"
-            subtitle="Running right now"
-            trend={[0, 1, 2, 1, 3, 2, activeAgents]}
-            trendDirection={activeAgents > 0 ? "up" : "flat"}
-            value={activeAgents}
-          />
-          <MetricCard
-            icon={Coins}
-            iconBg="bg-yellow-500/10"
-            iconColor="text-yellow-500"
-            label="Credits Remaining"
-            subtitle={
-              balance?.reserved
-                ? `${balance.reserved} reserved`
-                : "Available to use"
-            }
-            trendDirection={
-              balance?.available && balance.available > 0 ? "flat" : "down"
-            }
-            value={balance?.available?.toLocaleString() ?? creditBalance}
-          />
-          <MetricCard
-            icon={CheckCircle}
-            iconBg="bg-blue-500/10"
-            iconColor="text-blue-500"
-            label="Tasks Today"
-            subtitle={
-              overview?.successRate
-                ? `${(overview.successRate * 100).toFixed(0)}% success rate`
-                : "No tasks yet"
-            }
-            trendDirection={(overview?.tasksCompleted ?? 0) > 0 ? "up" : "flat"}
-            value={overview?.tasksCompleted ?? 0}
-          />
-          <MetricCard
-            icon={FolderOpen}
-            iconBg="bg-violet-500/10"
-            iconColor="text-violet-500"
-            label="Active Projects"
-            subtitle={
-              overview?.sessionsCreated
-                ? `${overview.sessionsCreated} sessions`
-                : "Create one to start"
-            }
-            trendDirection={(overview?.activeProjects ?? 0) > 0 ? "up" : "flat"}
-            value={overview?.activeProjects ?? 0}
-          />
-        </div>
+        <StatsGrid
+          activeAgents={activeAgents}
+          balance={balance}
+          creditBalance={creditBalance}
+          overview={overview}
+        />
       )}
 
       {/* Active Sessions Summary */}

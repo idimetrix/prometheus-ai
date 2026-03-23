@@ -160,6 +160,38 @@ export function logAuditEvent(entry: AuditEntry): void {
   persistAuditEntry(entry);
 }
 
+// ─── Audit Resolution Helpers ─────────────────────────────────────────────────
+
+function resolveAuditAction(
+  procedure: string | undefined,
+  isSensitiveRead: boolean,
+  statusCode: number
+): AuditActionType {
+  if (statusCode === 401) {
+    return AuditAction.AUTH_FAILED;
+  }
+  if (statusCode === 403) {
+    return AuditAction.SECURITY_PERMISSION_DENIED;
+  }
+  if (procedure && PROCEDURE_ACTION_MAP[procedure]) {
+    return PROCEDURE_ACTION_MAP[procedure];
+  }
+  if (isSensitiveRead) {
+    return AuditAction.DATA_ACCESS;
+  }
+  return AuditAction.DATA_ACCESS;
+}
+
+function resolveAuditResult(statusCode: number): AuditEntry["result"] {
+  if (statusCode >= 200 && statusCode < 300) {
+    return "success";
+  }
+  if (statusCode === 403 || statusCode === 401) {
+    return "denied";
+  }
+  return "failure";
+}
+
 // ─── SOC 2 Audit Logger Middleware ────────────────────────────────────────────
 
 /**
@@ -215,33 +247,8 @@ export function soc2AuditMiddleware(): (
     const clientIp =
       c.req.header("x-forwarded-for")?.split(",")[0]?.trim() ?? null;
 
-    // Determine action from procedure mapping or method
-    let action: AuditActionType;
-    if (procedure && PROCEDURE_ACTION_MAP[procedure]) {
-      action = PROCEDURE_ACTION_MAP[procedure];
-    } else if (isSensitiveRead) {
-      action = AuditAction.DATA_ACCESS;
-    } else {
-      // Generic mutation action
-      action = AuditAction.DATA_ACCESS;
-    }
-
-    // Determine result
-    let result: AuditEntry["result"];
-    if (statusCode >= 200 && statusCode < 300) {
-      result = "success";
-    } else if (statusCode === 403 || statusCode === 401) {
-      result = "denied";
-    } else {
-      result = "failure";
-    }
-
-    // Handle auth failures specifically
-    if (statusCode === 401) {
-      action = AuditAction.AUTH_FAILED;
-    } else if (statusCode === 403) {
-      action = AuditAction.SECURITY_PERMISSION_DENIED;
-    }
+    const action = resolveAuditAction(procedure, isSensitiveRead, statusCode);
+    const result = resolveAuditResult(statusCode);
 
     const entry: AuditEntry = {
       action,

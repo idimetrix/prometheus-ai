@@ -9,72 +9,99 @@ interface DetectedProjectInfo {
   testFramework: string | null;
 }
 
+function detectPackageManager(directory: string): string {
+  if (existsSync(join(directory, "pnpm-lock.yaml"))) {
+    return "pnpm";
+  }
+  if (existsSync(join(directory, "yarn.lock"))) {
+    return "yarn";
+  }
+  return "npm";
+}
+
+function detectFramework(directory: string): string | null {
+  const frameworkFiles: Array<{ files: string[]; framework: string }> = [
+    {
+      files: ["next.config.js", "next.config.mjs", "next.config.ts"],
+      framework: "nextjs",
+    },
+    { files: ["nuxt.config.ts"], framework: "nuxt" },
+    { files: ["svelte.config.js"], framework: "svelte" },
+    { files: ["angular.json"], framework: "angular" },
+  ];
+  for (const entry of frameworkFiles) {
+    if (entry.files.some((f) => existsSync(join(directory, f)))) {
+      return entry.framework;
+    }
+  }
+  return null;
+}
+
+function detectTestFramework(directory: string): string | null {
+  const testFiles: Array<{ files: string[]; framework: string }> = [
+    { files: ["vitest.config.ts", "vitest.config.js"], framework: "vitest" },
+    { files: ["jest.config.ts", "jest.config.js"], framework: "jest" },
+  ];
+  for (const entry of testFiles) {
+    if (entry.files.some((f) => existsSync(join(directory, f)))) {
+      return entry.framework;
+    }
+  }
+  return null;
+}
+
+function detectNonJsProject(directory: string): DetectedProjectInfo | null {
+  const detectors: Array<{
+    file: string;
+    language: string;
+    packageManager: string | (() => string);
+  }> = [
+    { file: "Cargo.toml", language: "rust", packageManager: "cargo" },
+    { file: "go.mod", language: "go", packageManager: "go" },
+    {
+      file: "pyproject.toml",
+      language: "python",
+      packageManager: () =>
+        existsSync(join(directory, "poetry.lock")) ? "poetry" : "pip",
+    },
+    { file: "requirements.txt", language: "python", packageManager: "pip" },
+    { file: "Gemfile", language: "ruby", packageManager: "bundler" },
+  ];
+
+  for (const d of detectors) {
+    if (existsSync(join(directory, d.file))) {
+      return {
+        language: d.language,
+        framework: null,
+        packageManager:
+          typeof d.packageManager === "function"
+            ? d.packageManager()
+            : d.packageManager,
+        testFramework: null,
+      };
+    }
+  }
+  return null;
+}
+
 function detectProject(directory: string): DetectedProjectInfo {
-  const info: DetectedProjectInfo = {
-    language: "unknown",
-    framework: null,
-    packageManager: null,
-    testFramework: null,
-  };
-
-  // Detect by config files
   if (existsSync(join(directory, "package.json"))) {
-    info.language = "typescript";
-    if (existsSync(join(directory, "pnpm-lock.yaml"))) {
-      info.packageManager = "pnpm";
-    } else if (existsSync(join(directory, "yarn.lock"))) {
-      info.packageManager = "yarn";
-    } else {
-      info.packageManager = "npm";
-    }
-
-    // Detect framework
-    if (
-      existsSync(join(directory, "next.config.js")) ||
-      existsSync(join(directory, "next.config.mjs")) ||
-      existsSync(join(directory, "next.config.ts"))
-    ) {
-      info.framework = "nextjs";
-    } else if (existsSync(join(directory, "nuxt.config.ts"))) {
-      info.framework = "nuxt";
-    } else if (existsSync(join(directory, "svelte.config.js"))) {
-      info.framework = "svelte";
-    } else if (existsSync(join(directory, "angular.json"))) {
-      info.framework = "angular";
-    }
-
-    // Detect test framework
-    if (
-      existsSync(join(directory, "vitest.config.ts")) ||
-      existsSync(join(directory, "vitest.config.js"))
-    ) {
-      info.testFramework = "vitest";
-    } else if (
-      existsSync(join(directory, "jest.config.ts")) ||
-      existsSync(join(directory, "jest.config.js"))
-    ) {
-      info.testFramework = "jest";
-    }
-  } else if (existsSync(join(directory, "Cargo.toml"))) {
-    info.language = "rust";
-    info.packageManager = "cargo";
-  } else if (existsSync(join(directory, "go.mod"))) {
-    info.language = "go";
-    info.packageManager = "go";
-  } else if (existsSync(join(directory, "pyproject.toml"))) {
-    info.language = "python";
-    info.packageManager = existsSync(join(directory, "poetry.lock"))
-      ? "poetry"
-      : "pip";
-  } else if (existsSync(join(directory, "requirements.txt"))) {
-    info.language = "python";
-    info.packageManager = "pip";
-  } else if (existsSync(join(directory, "Gemfile"))) {
-    info.language = "ruby";
-    info.packageManager = "bundler";
+    return {
+      language: "typescript",
+      packageManager: detectPackageManager(directory),
+      framework: detectFramework(directory),
+      testFramework: detectTestFramework(directory),
+    };
   }
 
-  return info;
+  return (
+    detectNonJsProject(directory) ?? {
+      language: "unknown",
+      framework: null,
+      packageManager: null,
+      testFramework: null,
+    }
+  );
 }
 
 export const initCommand = new Command("init")

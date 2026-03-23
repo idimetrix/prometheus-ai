@@ -8,6 +8,9 @@ import { createHmac } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createIntegrationFixtures, createMockJobQueue } from "./setup";
 
+const SHA256_HEX_SIGNATURE_RE = /^sha256=[0-9a-f]{64}$/;
+const BEARER_TOKEN_RE = /^Bearer\s+/i;
+
 const { mockLogger } = vi.hoisted(() => {
   const logger: Record<string, unknown> = {
     info: vi.fn(),
@@ -110,7 +113,7 @@ describe("Webhook Handlers", () => {
     it("generates valid HMAC-SHA256 signatures", () => {
       const body = '{"action":"opened"}';
       const sig = generateGitHubSignature(body, GITHUB_SECRET);
-      expect(sig).toMatch(/^sha256=[0-9a-f]{64}$/);
+      expect(sig).toMatch(SHA256_HEX_SIGNATURE_RE);
     });
 
     it("produces different signatures for different bodies", () => {
@@ -309,13 +312,13 @@ describe("Webhook Handlers", () => {
 
     it("verifies Jira request with Bearer token", () => {
       const authHeader = `Bearer ${JIRA_SECRET}`;
-      const token = authHeader.replace(/^Bearer\s+/i, "").trim();
+      const token = authHeader.replace(BEARER_TOKEN_RE, "").trim();
       expect(token).toBe(JIRA_SECRET);
     });
 
     it("rejects invalid Jira authorization", () => {
       const authHeader = "Bearer wrong-token";
-      const token = authHeader.replace(/^Bearer\s+/i, "").trim();
+      const token = authHeader.replace(BEARER_TOKEN_RE, "").trim();
       expect(token).not.toBe(JIRA_SECRET);
     });
   });

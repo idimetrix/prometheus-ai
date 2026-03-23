@@ -7,6 +7,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createIntegrationFixtures, createMockServiceClient } from "./setup";
 
+const SANDBOX_ID_PREFIX_RE = /^sbx_/;
+
 const { mockLogger } = vi.hoisted(() => {
   const logger: Record<string, unknown> = {
     info: vi.fn(),
@@ -64,7 +66,7 @@ describe("Orchestrator ↔ Sandbox Manager communication", () => {
         status: string;
         provider: string;
       };
-      expect(body.id).toMatch(/^sbx_/);
+      expect(body.id).toMatch(SANDBOX_ID_PREFIX_RE);
       expect(body.status).toBe("ready");
       expect(body.provider).toBe("docker");
     });

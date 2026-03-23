@@ -62,56 +62,9 @@ export class MigrationGenerator {
     const beforeMap = new Map(before.map((t) => [t.tableName, t]));
     const afterMap = new Map(after.map((t) => [t.tableName, t]));
 
-    // Detect new tables
-    for (const [name, table] of afterMap) {
-      if (!beforeMap.has(name)) {
-        upStatements.push(this.generateCreateTable(table));
-        downStatements.push(`DROP TABLE IF EXISTS "${name}";`);
-      }
-    }
-
-    // Detect removed tables
-    for (const [name, table] of beforeMap) {
-      if (!afterMap.has(name)) {
-        upStatements.push(`DROP TABLE IF EXISTS "${name}";`);
-        downStatements.push(this.generateCreateTable(table));
-      }
-    }
-
-    // Detect column changes in existing tables
-    for (const [name, afterTable] of afterMap) {
-      const beforeTable = beforeMap.get(name);
-      if (!beforeTable) {
-        continue;
-      }
-
-      const beforeCols = new Map(beforeTable.columns.map((c) => [c.name, c]));
-      const afterCols = new Map(afterTable.columns.map((c) => [c.name, c]));
-
-      // New columns
-      for (const [colName, col] of afterCols) {
-        if (!beforeCols.has(colName)) {
-          upStatements.push(
-            `ALTER TABLE "${name}" ADD COLUMN "${colName}" ${col.type}${col.nullable ? "" : " NOT NULL"}${col.defaultValue ? ` DEFAULT ${col.defaultValue}` : ""};`
-          );
-          downStatements.push(
-            `ALTER TABLE "${name}" DROP COLUMN IF EXISTS "${colName}";`
-          );
-        }
-      }
-
-      // Removed columns
-      for (const [colName, col] of beforeCols) {
-        if (!afterCols.has(colName)) {
-          upStatements.push(
-            `ALTER TABLE "${name}" DROP COLUMN IF EXISTS "${colName}";`
-          );
-          downStatements.push(
-            `ALTER TABLE "${name}" ADD COLUMN "${colName}" ${col.type}${col.nullable ? "" : " NOT NULL"}${col.defaultValue ? ` DEFAULT ${col.defaultValue}` : ""};`
-          );
-        }
-      }
-    }
+    this.detectNewTables(afterMap, beforeMap, upStatements, downStatements);
+    this.detectRemovedTables(beforeMap, afterMap, upStatements, downStatements);
+    this.detectColumnChanges(afterMap, beforeMap, upStatements, downStatements);
 
     const timestamp = new Date()
       .toISOString()
@@ -124,6 +77,75 @@ export class MigrationGenerator {
       downSql: downStatements.join("\n"),
       estimatedDowntime: this.estimateDowntime(upStatements.join("\n")),
     };
+  }
+
+  private detectNewTables(
+    afterMap: Map<string, SchemaSnapshot>,
+    beforeMap: Map<string, SchemaSnapshot>,
+    upStatements: string[],
+    downStatements: string[]
+  ): void {
+    for (const [name, table] of afterMap) {
+      if (!beforeMap.has(name)) {
+        upStatements.push(this.generateCreateTable(table));
+        downStatements.push(`DROP TABLE IF EXISTS "${name}";`);
+      }
+    }
+  }
+
+  private detectRemovedTables(
+    beforeMap: Map<string, SchemaSnapshot>,
+    afterMap: Map<string, SchemaSnapshot>,
+    upStatements: string[],
+    downStatements: string[]
+  ): void {
+    for (const [name, table] of beforeMap) {
+      if (!afterMap.has(name)) {
+        upStatements.push(`DROP TABLE IF EXISTS "${name}";`);
+        downStatements.push(this.generateCreateTable(table));
+      }
+    }
+  }
+
+  private detectColumnChanges(
+    afterMap: Map<string, SchemaSnapshot>,
+    beforeMap: Map<string, SchemaSnapshot>,
+    upStatements: string[],
+    downStatements: string[]
+  ): void {
+    for (const [name, afterTable] of afterMap) {
+      const beforeTable = beforeMap.get(name);
+      if (!beforeTable) {
+        continue;
+      }
+      const beforeCols = new Map(beforeTable.columns.map((c) => [c.name, c]));
+      const afterCols = new Map(afterTable.columns.map((c) => [c.name, c]));
+
+      for (const [colName, col] of afterCols) {
+        if (!beforeCols.has(colName)) {
+          upStatements.push(this.generateAddColumn(name, colName, col));
+          downStatements.push(
+            `ALTER TABLE "${name}" DROP COLUMN IF EXISTS "${colName}";`
+          );
+        }
+      }
+      for (const [colName, col] of beforeCols) {
+        if (!afterCols.has(colName)) {
+          upStatements.push(
+            `ALTER TABLE "${name}" DROP COLUMN IF EXISTS "${colName}";`
+          );
+          downStatements.push(this.generateAddColumn(name, colName, col));
+        }
+      }
+    }
+  }
+
+  private generateAddColumn(
+    tableName: string,
+    colName: string,
+    col: { type: string; nullable: boolean; defaultValue?: string }
+  ): string {
+    return `ALTER TABLE "${tableName}" ADD COLUMN "${colName}" ${col.type}${col.nullable ? "" : " NOT NULL"}${col.defaultValue ? ` DEFAULT ${col.defaultValue}` : ""};`;
   }
 
   /**

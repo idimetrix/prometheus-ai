@@ -247,64 +247,26 @@ export class CascadeRouter {
       };
     }
 
-    // Signal 1: Structural completeness
-    let structuralScore = 0;
-    if (content.length > 50) {
-      structuralScore += 0.3;
-    }
-    if (content.length > 200) {
-      structuralScore += 0.3;
-    }
     const codeBlocks = (content.match(/```/g) ?? []).length / 2;
-    if (codeBlocks >= 1) {
-      structuralScore += 0.2;
-    }
     const hasStructuredOutput =
       content.includes("##") ||
       content.includes("- ") ||
       content.includes("1.");
-    if (hasStructuredOutput) {
-      structuralScore += 0.2;
-    }
 
-    // Signal 2: Content quality
-    let contentScore = 0.5;
-    if (codeBlocks >= 1) {
-      contentScore += 0.2;
-    }
-    if (hasStructuredOutput) {
-      contentScore += 0.15;
-    }
-    if (content.length < 20) {
-      contentScore -= 0.3;
-    }
-
-    // Signal 3: Hedging/refusal detection
-    let confidenceScore = 1.0;
-    if (HEDGING_PATTERNS.test(content)) {
-      confidenceScore -= 0.3;
-    }
-    if (REFUSAL_PATTERNS.test(content)) {
-      confidenceScore -= 0.5;
-    }
-    if (PLACEHOLDER_PATTERN.test(content)) {
-      confidenceScore -= 0.2;
-    }
-
-    // Signal 4: Completeness
-    let completenessScore = 1.0;
-    const lastLine = content.trim().split("\n").pop() ?? "";
-    if (lastLine.length > 20 && !ABRUPT_ENDING_PATTERN.test(lastLine)) {
-      completenessScore -= 0.2;
-    }
-
-    // Signal 5: Consistency
-    let consistencyScore = 1.0;
-    if (CONTRADICTION_PATTERN.test(content)) {
-      consistencyScore -= 0.15;
-    }
-
-    // ─── Multi-Signal Quality Checks ──────────────────────────────
+    const structuralScore = computeStructuralScore(
+      content,
+      codeBlocks,
+      hasStructuredOutput
+    );
+    const contentScore = computeContentScore(
+      content,
+      codeBlocks,
+      hasStructuredOutput,
+      language
+    );
+    const confidenceScore = computeConfidenceScore(content);
+    const completenessScore = computeCompletenessScore(content);
+    const consistencyScore = CONTRADICTION_PATTERN.test(content) ? 0.85 : 1.0;
 
     const syntaxValid = checkSyntaxValidity(content);
     const typeCheckable = checkTypeAnnotations(content, language);
@@ -314,34 +276,21 @@ export class CascadeRouter {
     );
     const conventionCompliant = checkConventionCompliance(content, language);
 
-    // Bonus/penalties from multi-signal checks
-    if (syntaxValid) {
-      contentScore += 0.05;
-    } else {
-      contentScore -= 0.1;
-    }
+    const adjustedContentScore = applyMultiSignalBonuses(
+      contentScore,
+      syntaxValid,
+      typeCheckable,
+      hasTests,
+      conventionCompliant
+    );
+    const adjustedConfidenceScore = securityClean
+      ? confidenceScore
+      : confidenceScore - 0.15;
 
-    if (typeCheckable) {
-      contentScore += 0.05;
-    }
-
-    if (hasTests) {
-      contentScore += 0.05;
-    }
-
-    if (!securityClean) {
-      confidenceScore -= 0.15;
-    }
-
-    if (conventionCompliant) {
-      contentScore += 0.05;
-    }
-
-    // Weighted combination
     const signals = {
       structural: Math.max(0, Math.min(1, structuralScore)),
-      content: Math.max(0, Math.min(1, contentScore)),
-      confidence: Math.max(0, confidenceScore),
+      content: Math.max(0, Math.min(1, adjustedContentScore)),
+      confidence: Math.max(0, adjustedConfidenceScore),
       completeness: Math.max(0, completenessScore),
       consistency: Math.max(0, consistencyScore),
     };
@@ -396,6 +345,91 @@ export class CascadeRouter {
   }
 }
 
+// ─── Quality Assessment Helpers ────────────────────────────────────────────────
+
+function computeStructuralScore(
+  content: string,
+  codeBlocks: number,
+  hasStructuredOutput: boolean
+): number {
+  let score = 0;
+  if (content.length > 50) {
+    score += 0.3;
+  }
+  if (content.length > 200) {
+    score += 0.3;
+  }
+  if (codeBlocks >= 1) {
+    score += 0.2;
+  }
+  if (hasStructuredOutput) {
+    score += 0.2;
+  }
+  return score;
+}
+
+function computeContentScore(
+  content: string,
+  codeBlocks: number,
+  hasStructuredOutput: boolean,
+  _language?: string
+): number {
+  let score = 0.5;
+  if (codeBlocks >= 1) {
+    score += 0.2;
+  }
+  if (hasStructuredOutput) {
+    score += 0.15;
+  }
+  if (content.length < 20) {
+    score -= 0.3;
+  }
+  return score;
+}
+
+function computeConfidenceScore(content: string): number {
+  let score = 1.0;
+  if (HEDGING_PATTERNS.test(content)) {
+    score -= 0.3;
+  }
+  if (REFUSAL_PATTERNS.test(content)) {
+    score -= 0.5;
+  }
+  if (PLACEHOLDER_PATTERN.test(content)) {
+    score -= 0.2;
+  }
+  return score;
+}
+
+function computeCompletenessScore(content: string): number {
+  const lastLine = content.trim().split("\n").pop() ?? "";
+  if (lastLine.length > 20 && !ABRUPT_ENDING_PATTERN.test(lastLine)) {
+    return 0.8;
+  }
+  return 1.0;
+}
+
+function applyMultiSignalBonuses(
+  contentScore: number,
+  syntaxValid: boolean,
+  typeCheckable: boolean,
+  hasTests: boolean,
+  conventionCompliant: boolean
+): number {
+  let score = contentScore;
+  score += syntaxValid ? 0.05 : -0.1;
+  if (typeCheckable) {
+    score += 0.05;
+  }
+  if (hasTests) {
+    score += 0.05;
+  }
+  if (conventionCompliant) {
+    score += 0.05;
+  }
+  return score;
+}
+
 // ─── Helper Functions ─────────────────────────────────────────────────────────
 
 /**
@@ -434,9 +468,51 @@ function detectLanguageFromMessages(
   return undefined;
 }
 
+const QUOTE_CHARS = new Set(['"', "'", "`"]);
+const CLOSE_BRACKETS = new Set([")", "]", "}"]);
+
 /**
- * Check bracket matching in code blocks within the response.
+ * Check bracket matching in a single code block.
+ * Skips content inside string literals.
  */
+function checkBlockBracketMatching(code: string): boolean {
+  const stack: string[] = [];
+  let inString = false;
+  let stringChar = "";
+
+  for (let i = 0; i < code.length; i++) {
+    const char = code[i] as string;
+    const isUnescapedQuote =
+      QUOTE_CHARS.has(char) && (i === 0 || code[i - 1] !== "\\");
+
+    if (isUnescapedQuote) {
+      if (inString && char === stringChar) {
+        inString = false;
+      } else if (!inString) {
+        inString = true;
+        stringChar = char;
+      }
+      continue;
+    }
+
+    if (inString) {
+      continue;
+    }
+
+    const closing = SYNTAX_BRACKET_PAIRS[char];
+    if (closing) {
+      stack.push(closing);
+    } else if (
+      CLOSE_BRACKETS.has(char) &&
+      (stack.length === 0 || stack.pop() !== char)
+    ) {
+      return false;
+    }
+  }
+
+  return stack.length === 0;
+}
+
 function checkSyntaxValidity(content: string): boolean {
   const codeBlocks = content.match(CODE_BLOCK_REGEX);
   if (!codeBlocks || codeBlocks.length === 0) {
@@ -447,42 +523,8 @@ function checkSyntaxValidity(content: string): boolean {
     const code = block
       .replace(CODE_BLOCK_OPEN_STRIP, "")
       .replace(CODE_BLOCK_CLOSE_STRIP, "");
-    const stack: string[] = [];
-    let inString = false;
-    let stringChar = "";
 
-    for (let i = 0; i < code.length; i++) {
-      const char = code[i] as string;
-
-      if (
-        (char === '"' || char === "'" || char === "`") &&
-        (i === 0 || code[i - 1] !== "\\")
-      ) {
-        if (inString && char === stringChar) {
-          inString = false;
-        } else if (!inString) {
-          inString = true;
-          stringChar = char;
-        }
-        continue;
-      }
-
-      if (inString) {
-        continue;
-      }
-
-      const closing = SYNTAX_BRACKET_PAIRS[char];
-      if (closing) {
-        stack.push(closing);
-      } else if (
-        (char === ")" || char === "]" || char === "}") &&
-        (stack.length === 0 || stack.pop() !== char)
-      ) {
-        return false;
-      }
-    }
-
-    if (stack.length > 0) {
+    if (!checkBlockBracketMatching(code)) {
       return false;
     }
   }

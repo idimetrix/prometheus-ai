@@ -107,6 +107,70 @@ export class GraphBuilder {
    * uses Coulomb repulsion between all node pairs and Hooke attraction along
    * edges, with velocity damping for convergence.
    */
+  private applyGraphRepulsion(
+    nodeIds: string[],
+    positions: Map<string, { x: number; y: number }>,
+    velocities: Map<string, { vx: number; vy: number }>,
+    repulsion: number
+  ): void {
+    for (let i = 0; i < nodeIds.length; i++) {
+      for (let j = i + 1; j < nodeIds.length; j++) {
+        const idI = nodeIds[i] ?? "";
+        const idJ = nodeIds[j] ?? "";
+        const a = positions.get(idI);
+        const b = positions.get(idJ);
+        if (!(a && b)) {
+          continue;
+        }
+        const dx = b.x - a.x;
+        const dy = b.y - a.y;
+        const distSq = Math.max(dx * dx + dy * dy, 1);
+        const dist = Math.sqrt(distSq);
+        const force = repulsion / distSq;
+        const fx = (force * dx) / dist;
+        const fy = (force * dy) / dist;
+
+        const va = velocities.get(idI);
+        const vb = velocities.get(idJ);
+        if (va) {
+          va.vx -= fx;
+          va.vy -= fy;
+        }
+        if (vb) {
+          vb.vx += fx;
+          vb.vy += fy;
+        }
+      }
+    }
+  }
+
+  private applyGraphAttraction(
+    positions: Map<string, { x: number; y: number }>,
+    velocities: Map<string, { vx: number; vy: number }>,
+    attraction: number
+  ): void {
+    for (const edge of this.edges) {
+      const a = positions.get(edge.source);
+      const b = positions.get(edge.target);
+      if (!(a && b)) {
+        continue;
+      }
+      const fx = attraction * (b.x - a.x);
+      const fy = attraction * (b.y - a.y);
+
+      const va = velocities.get(edge.source);
+      const vb = velocities.get(edge.target);
+      if (va) {
+        va.vx += fx;
+        va.vy += fy;
+      }
+      if (vb) {
+        vb.vx -= fx;
+        vb.vy -= fy;
+      }
+    }
+  }
+
   computeLayout(options?: ForceLayoutOptions): GraphLayout {
     const repulsion = options?.repulsion ?? DEFAULT_REPULSION;
     const attraction = options?.attraction ?? DEFAULT_ATTRACTION;
@@ -117,7 +181,6 @@ export class GraphBuilder {
     const positions = new Map<string, { x: number; y: number }>();
     const velocities = new Map<string, { vx: number; vy: number }>();
 
-    // Initialize positions in a circle
     const angleStep = (2 * Math.PI) / Math.max(nodeIds.length, 1);
     const radius = Math.max(100, nodeIds.length * 20);
 
@@ -130,73 +193,16 @@ export class GraphBuilder {
       velocities.set(id, { vx: 0, vy: 0 });
     }
 
-    // Run simulation
     for (let iter = 0; iter < iterations; iter++) {
-      // Repulsion between all pairs
-      for (let i = 0; i < nodeIds.length; i++) {
-        for (let j = i + 1; j < nodeIds.length; j++) {
-          const idI = nodeIds[i] ?? "";
-          const idJ = nodeIds[j] ?? "";
-          const a = positions.get(idI);
-          const b = positions.get(idJ);
-          if (!(a && b)) {
-            continue;
-          }
+      this.applyGraphRepulsion(nodeIds, positions, velocities, repulsion);
+      this.applyGraphAttraction(positions, velocities, attraction);
 
-          const dx = b.x - a.x;
-          const dy = b.y - a.y;
-          const distSq = Math.max(dx * dx + dy * dy, 1);
-          const dist = Math.sqrt(distSq);
-          const force = repulsion / distSq;
-          const fx = (force * dx) / dist;
-          const fy = (force * dy) / dist;
-
-          const va = velocities.get(idI);
-          const vb = velocities.get(idJ);
-          if (va) {
-            va.vx -= fx;
-            va.vy -= fy;
-          }
-          if (vb) {
-            vb.vx += fx;
-            vb.vy += fy;
-          }
-        }
-      }
-
-      // Attraction along edges
-      for (const edge of this.edges) {
-        const a = positions.get(edge.source);
-        const b = positions.get(edge.target);
-        if (!(a && b)) {
-          continue;
-        }
-
-        const dx = b.x - a.x;
-        const dy = b.y - a.y;
-        const fx = attraction * dx;
-        const fy = attraction * dy;
-
-        const va = velocities.get(edge.source);
-        const vb = velocities.get(edge.target);
-        if (va) {
-          va.vx += fx;
-          va.vy += fy;
-        }
-        if (vb) {
-          vb.vx -= fx;
-          vb.vy -= fy;
-        }
-      }
-
-      // Apply velocities with damping
       for (const id of nodeIds) {
         const pos = positions.get(id);
         const vel = velocities.get(id);
         if (!(pos && vel)) {
           continue;
         }
-
         vel.vx *= damping;
         vel.vy *= damping;
         pos.x += vel.vx;
@@ -204,7 +210,6 @@ export class GraphBuilder {
       }
     }
 
-    // Build result
     const layout: GraphLayout = {};
     for (const id of nodeIds) {
       const pos = positions.get(id);

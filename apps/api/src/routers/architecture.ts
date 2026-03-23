@@ -27,6 +27,120 @@ async function verifyProjectAccess(
   return project;
 }
 
+/**
+ * BFS traversal to find direct and transitive dependents of given nodes.
+ */
+async function traverseDependents(
+  db: Database,
+  projectId: string,
+  startNodeIds: string[],
+  maxDepth: number,
+  edgesTable: typeof graphEdges,
+  nodesTable: typeof graphNodes
+): Promise<{
+  directDependents: Array<{
+    nodeId: string;
+    name: string;
+    type: string;
+    filePath: string;
+    edgeType: string;
+  }>;
+  transitiveDependents: Array<{
+    nodeId: string;
+    name: string;
+    type: string;
+    filePath: string;
+    depth: number;
+  }>;
+  visitedCount: number;
+}> {
+  const visited = new Set<string>(startNodeIds);
+  let currentLevel = startNodeIds;
+  const directDependents: Array<{
+    nodeId: string;
+    name: string;
+    type: string;
+    filePath: string;
+    edgeType: string;
+  }> = [];
+  const transitiveDependents: Array<{
+    nodeId: string;
+    name: string;
+    type: string;
+    filePath: string;
+    depth: number;
+  }> = [];
+
+  for (let depth = 1; depth <= maxDepth; depth++) {
+    if (currentLevel.length === 0) {
+      break;
+    }
+
+    const edges = await db
+      .select()
+      .from(edgesTable)
+      .where(
+        and(
+          eq(edgesTable.projectId, projectId),
+          inArray(edgesTable.targetId, currentLevel)
+        )
+      );
+
+    const nextLevelIds: string[] = [];
+    for (const edge of edges) {
+      if (visited.has(edge.sourceId)) {
+        continue;
+      }
+      visited.add(edge.sourceId);
+      nextLevelIds.push(edge.sourceId);
+    }
+
+    if (nextLevelIds.length === 0) {
+      break;
+    }
+
+    const dependentNodes = await db
+      .select()
+      .from(nodesTable)
+      .where(
+        and(
+          inArray(nodesTable.id, nextLevelIds),
+          eq(nodesTable.projectId, projectId)
+        )
+      );
+
+    const dependentNodeMap = new Map(dependentNodes.map((n) => [n.id, n]));
+
+    for (const edge of edges) {
+      const node = dependentNodeMap.get(edge.sourceId);
+      if (!node) {
+        continue;
+      }
+      if (depth === 1) {
+        directDependents.push({
+          nodeId: node.id,
+          name: node.name,
+          type: node.nodeType,
+          filePath: node.filePath,
+          edgeType: edge.edgeType,
+        });
+      } else {
+        transitiveDependents.push({
+          nodeId: node.id,
+          name: node.name,
+          type: node.nodeType,
+          filePath: node.filePath,
+          depth,
+        });
+      }
+    }
+
+    currentLevel = nextLevelIds;
+  }
+
+  return { directDependents, transitiveDependents, visitedCount: visited.size };
+}
+
 // ─── Type definitions for edge/node types ────────────────────────────────────
 
 const nodeTypeEnum = z.enum([
@@ -299,119 +413,39 @@ export const architectureRouter = router({
       const fileNodeIds = fileNodes.map((n) => n.id);
 
       // BFS traversal to find transitively affected nodes
-      const visited = new Set<string>(fileNodeIds);
-      let currentLevel = fileNodeIds;
-      const directDependents: Array<{
-        nodeId: string;
-        name: string;
-        type: string;
-        filePath: string;
-        edgeType: string;
-      }> = [];
-      const transitiveDependents: Array<{
-        nodeId: string;
-        name: string;
-        type: string;
-        filePath: string;
-        depth: number;
-      }> = [];
-
-      for (let depth = 1; depth <= input.depth; depth++) {
-        if (currentLevel.length === 0) {
-          break;
-        }
-
-        // Find all edges where current level nodes are targets (i.e., things that depend on them)
-        const edges = await ctx.db
-          .select()
-          .from(graphEdges)
-          .where(
-            and(
-              eq(graphEdges.projectId, input.projectId),
-              inArray(graphEdges.targetId, currentLevel)
-            )
-          );
-
-        const nextLevelIds: string[] = [];
-
-        for (const edge of edges) {
-          if (visited.has(edge.sourceId)) {
-            continue;
-          }
-          visited.add(edge.sourceId);
-          nextLevelIds.push(edge.sourceId);
-        }
-
-        if (nextLevelIds.length === 0) {
-          break;
-        }
-
-        // Fetch the dependent nodes
-        const dependentNodes = await ctx.db
-          .select()
-          .from(graphNodes)
-          .where(
-            and(
-              inArray(graphNodes.id, nextLevelIds),
-              eq(graphNodes.projectId, input.projectId)
-            )
-          );
-
-        const dependentNodeMap = new Map(dependentNodes.map((n) => [n.id, n]));
-
-        for (const edge of edges) {
-          const node = dependentNodeMap.get(edge.sourceId);
-          if (!node) {
-            continue;
-          }
-
-          if (depth === 1) {
-            directDependents.push({
-              nodeId: node.id,
-              name: node.name,
-              type: node.nodeType,
-              filePath: node.filePath,
-              edgeType: edge.edgeType,
-            });
-          } else {
-            transitiveDependents.push({
-              nodeId: node.id,
-              name: node.name,
-              type: node.nodeType,
-              filePath: node.filePath,
-              depth,
-            });
-          }
-        }
-
-        currentLevel = nextLevelIds;
-      }
+      const bfsResult = await traverseDependents(
+        ctx.db,
+        input.projectId,
+        fileNodeIds,
+        input.depth,
+        graphEdges,
+        graphNodes
+      );
 
       // Compute affected files (unique)
       const affectedFilesSet = new Set<string>();
-      for (const d of directDependents) {
+      for (const d of bfsResult.directDependents) {
         affectedFilesSet.add(d.filePath);
       }
-      for (const d of transitiveDependents) {
+      for (const d of bfsResult.transitiveDependents) {
         affectedFilesSet.add(d.filePath);
       }
-      // Remove the source file itself
       affectedFilesSet.delete(input.filePath);
 
       const totalAffected =
-        directDependents.length + transitiveDependents.length;
-      // Impact score: normalized 0-100 based on number of dependents
+        bfsResult.directDependents.length +
+        bfsResult.transitiveDependents.length;
       const impactScore = Math.min(
         100,
-        Math.round((totalAffected / Math.max(visited.size, 1)) * 100)
+        Math.round((totalAffected / Math.max(bfsResult.visitedCount, 1)) * 100)
       );
 
       logger.info(
         {
           projectId: input.projectId,
           filePath: input.filePath,
-          directCount: directDependents.length,
-          transitiveCount: transitiveDependents.length,
+          directCount: bfsResult.directDependents.length,
+          transitiveCount: bfsResult.transitiveDependents.length,
           impactScore,
         },
         "Impact analysis complete"
@@ -419,8 +453,8 @@ export const architectureRouter = router({
 
       return {
         filePath: input.filePath,
-        directDependents,
-        transitiveDependents,
+        directDependents: bfsResult.directDependents,
+        transitiveDependents: bfsResult.transitiveDependents,
         impactScore,
         affectedFiles: Array.from(affectedFilesSet),
       };

@@ -45,6 +45,35 @@ function notifyListeners(): void {
   }
 }
 
+function matchesShortcut(e: KeyboardEvent, def: KeyboardShortcutDef): boolean {
+  if (e.key !== def.key) {
+    return false;
+  }
+  const metaMatch = def.meta ? e.metaKey || e.ctrlKey : true;
+  const ctrlMatch = def.ctrl ? e.ctrlKey : true;
+  const shiftMatch = def.shift
+    ? e.shiftKey
+    : !e.shiftKey || def.key === "Escape" || def.key === "?";
+  const altMatch = def.alt ? e.altKey : true;
+  return metaMatch && ctrlMatch && shiftMatch && altMatch;
+}
+
+function shouldSkipShortcut(def: KeyboardShortcutDef): boolean {
+  if (def.global) {
+    return false;
+  }
+  if (!isInputElement(document.activeElement)) {
+    return false;
+  }
+  if (def.key === "Escape") {
+    return false;
+  }
+  if (def.meta || def.ctrl) {
+    return false;
+  }
+  return true;
+}
+
 function isInputElement(el: Element | null): boolean {
   if (!el) {
     return false;
@@ -243,35 +272,15 @@ export function useKeyboardShortcuts(
       if (def.disabled) {
         continue;
       }
-
-      const metaMatch = def.meta ? e.metaKey || e.ctrlKey : true;
-      const ctrlMatch = def.ctrl ? e.ctrlKey : true;
-      const shiftMatch = def.shift
-        ? e.shiftKey
-        : !e.shiftKey || def.key === "Escape" || def.key === "?";
-      const altMatch = def.alt ? e.altKey : true;
-
-      if (
-        e.key === def.key &&
-        metaMatch &&
-        ctrlMatch &&
-        shiftMatch &&
-        altMatch
-      ) {
-        // Skip non-global shortcuts when input is focused
-        if (
-          !def.global &&
-          isInputElement(document.activeElement) &&
-          def.key !== "Escape" &&
-          !(def.meta || def.ctrl)
-        ) {
-          continue;
-        }
-
-        e.preventDefault();
-        def.handler(e);
-        return;
+      if (!matchesShortcut(e, def)) {
+        continue;
       }
+      if (shouldSkipShortcut(def)) {
+        continue;
+      }
+      e.preventDefault();
+      def.handler(e);
+      return;
     }
   }, []);
 

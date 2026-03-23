@@ -81,73 +81,99 @@ export class AutoDocGenerator {
     const interfaces = this.extractInterfaces(content);
     const jsdocComments = this.extractJSDoc(content);
 
-    const sections: string[] = [];
-    sections.push(`# ${this.getFileName(filePath)}`);
-    sections.push("");
-    sections.push(`**Path:** \`${filePath}\``);
-    sections.push(`**Language:** ${language}`);
-    sections.push("");
+    const sections: string[] = [
+      `# ${this.getFileName(filePath)}`,
+      "",
+      `**Path:** \`${filePath}\``,
+      `**Language:** ${language}`,
+      "",
+    ];
 
-    if (jsdocComments.length > 0) {
-      sections.push("## Description");
-      sections.push(jsdocComments[0] ?? "");
-      sections.push("");
-    }
-
-    if (exports.length > 0) {
-      sections.push("## Exports");
-      for (const exp of exports) {
-        sections.push(`- \`${exp}\``);
-      }
-      sections.push("");
-    }
-
-    if (classes.length > 0) {
-      sections.push("## Classes");
-      for (const cls of classes) {
-        sections.push(`### ${cls.name}`);
-        if (cls.extends) {
-          sections.push(`Extends: \`${cls.extends}\``);
-        }
-        if (cls.implements) {
-          sections.push(`Implements: \`${cls.implements}\``);
-        }
-        sections.push("");
-      }
-    }
-
-    if (functions.length > 0) {
-      sections.push("## Functions");
-      for (const fn of functions) {
-        sections.push(`### \`${fn.name}(${fn.params})\``);
-        if (fn.returnType) {
-          sections.push(`Returns: \`${fn.returnType.trim()}\``);
-        }
-        sections.push("");
-      }
-    }
-
-    if (interfaces.length > 0) {
-      sections.push("## Interfaces");
-      for (const iface of interfaces) {
-        sections.push(`### ${iface.name}`);
-        if (iface.extends) {
-          sections.push(`Extends: \`${iface.extends}\``);
-        }
-        sections.push("");
-      }
-    }
+    this.appendDescriptionSection(sections, jsdocComments);
+    this.appendExportsSection(sections, exports);
+    this.appendClassesSection(sections, classes);
+    this.appendFunctionsSection(sections, functions);
+    this.appendInterfacesSection(sections, interfaces);
 
     const docContent = sections.join("\n");
     const summary = this.generateSummary(exports, functions, classes);
 
-    return {
-      filePath,
-      language,
-      content: docContent,
-      exports,
-      summary,
-    };
+    return { filePath, language, content: docContent, exports, summary };
+  }
+
+  private appendDescriptionSection(
+    sections: string[],
+    jsdocComments: string[]
+  ): void {
+    if (jsdocComments.length === 0) {
+      return;
+    }
+    sections.push("## Description", jsdocComments[0] ?? "", "");
+  }
+
+  private appendExportsSection(sections: string[], exports: string[]): void {
+    if (exports.length === 0) {
+      return;
+    }
+    sections.push("## Exports");
+    for (const exp of exports) {
+      sections.push(`- \`${exp}\``);
+    }
+    sections.push("");
+  }
+
+  private appendClassesSection(
+    sections: string[],
+    classes: Array<{ name: string; extends?: string; implements?: string }>
+  ): void {
+    if (classes.length === 0) {
+      return;
+    }
+    sections.push("## Classes");
+    for (const cls of classes) {
+      sections.push(`### ${cls.name}`);
+      if (cls.extends) {
+        sections.push(`Extends: \`${cls.extends}\``);
+      }
+      if (cls.implements) {
+        sections.push(`Implements: \`${cls.implements}\``);
+      }
+      sections.push("");
+    }
+  }
+
+  private appendFunctionsSection(
+    sections: string[],
+    functions: Array<{ name: string; params: string; returnType?: string }>
+  ): void {
+    if (functions.length === 0) {
+      return;
+    }
+    sections.push("## Functions");
+    for (const fn of functions) {
+      sections.push(`### \`${fn.name}(${fn.params})\``);
+      if (fn.returnType) {
+        sections.push(`Returns: \`${fn.returnType.trim()}\``);
+      }
+      sections.push("");
+    }
+  }
+
+  private appendInterfacesSection(
+    sections: string[],
+    interfaces: Array<{ name: string; extends?: string }>
+  ): void {
+    if (interfaces.length === 0) {
+      return;
+    }
+    sections.push("## Interfaces");
+    for (const iface of interfaces) {
+      sections.push(`### ${iface.name}`);
+      if (iface.extends) {
+        sections.push(`Extends: \`${iface.extends}\``);
+      }
+      sections.push("");
+    }
   }
 
   /**

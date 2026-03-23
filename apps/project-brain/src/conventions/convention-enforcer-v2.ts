@@ -158,52 +158,57 @@ export class ConventionEnforcerV2 {
     filePath: string,
     content: string
   ): ComplianceViolation[] {
+    if (rule.id !== "gen-god-function") {
+      return [];
+    }
+
     const violations: ComplianceViolation[] = [];
+    const functionStartRe =
+      /(?:function\s+\w+|(?:const|let)\s+\w+\s*=\s*(?:async\s*)?\([^)]*\)\s*=>)\s*\{/g;
+    let match: RegExpExecArray | null = functionStartRe.exec(content);
 
-    if (rule.id === "gen-god-function") {
-      const functionStartRe =
-        /(?:function\s+\w+|(?:const|let)\s+\w+\s*=\s*(?:async\s*)?\([^)]*\)\s*=>)\s*\{/g;
-      let match: RegExpExecArray | null = functionStartRe.exec(content);
+    while (match !== null) {
+      const startLine = content.slice(0, match.index).split("\n").length;
+      const lineCount = this.countFunctionLines(content.slice(match.index));
 
-      while (match !== null) {
-        const startLine = content.slice(0, match.index).split("\n").length;
-        // Count lines until the matching closing brace
-        const remaining = content.slice(match.index);
-        let braceDepth = 0;
-        let lineCount = 0;
-        let foundOpen = false;
-
-        for (const char of remaining) {
-          if (char === "{") {
-            braceDepth++;
-            foundOpen = true;
-          }
-          if (char === "}") {
-            braceDepth--;
-          }
-          if (char === "\n") {
-            lineCount++;
-          }
-          if (foundOpen && braceDepth === 0) {
-            break;
-          }
-        }
-
-        if (lineCount > 100) {
-          violations.push({
-            rule: rule.id,
-            severity: rule.severity,
-            file: filePath,
-            line: startLine,
-            suggestion: `Function has ${lineCount} lines (>100). Consider breaking into smaller functions.`,
-          });
-        }
-
-        match = functionStartRe.exec(content);
+      if (lineCount > 100) {
+        violations.push({
+          rule: rule.id,
+          severity: rule.severity,
+          file: filePath,
+          line: startLine,
+          suggestion: `Function has ${lineCount} lines (>100). Consider breaking into smaller functions.`,
+        });
       }
+
+      match = functionStartRe.exec(content);
     }
 
     return violations;
+  }
+
+  private countFunctionLines(remaining: string): number {
+    let braceDepth = 0;
+    let lineCount = 0;
+    let foundOpen = false;
+
+    for (const char of remaining) {
+      if (char === "{") {
+        braceDepth++;
+        foundOpen = true;
+      }
+      if (char === "}") {
+        braceDepth--;
+      }
+      if (char === "\n") {
+        lineCount++;
+      }
+      if (foundOpen && braceDepth === 0) {
+        break;
+      }
+    }
+
+    return lineCount;
   }
 
   /**

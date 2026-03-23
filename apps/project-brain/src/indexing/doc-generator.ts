@@ -301,27 +301,7 @@ export class DocGenerator {
    * Generate architecture overview from the knowledge graph.
    */
   async generateArchitectureDocs(projectId: string): Promise<GeneratedDoc> {
-    let graphData: {
-      nodes: Array<{ name: string; type: string; path: string }>;
-      edges: Array<{ from: string; to: string; type: string }>;
-    } = { nodes: [], edges: [] };
-
-    try {
-      const response = await fetch(
-        `${this.projectBrainUrl}/api/graph/overview?projectId=${encodeURIComponent(projectId)}`,
-        { signal: AbortSignal.timeout(30_000) }
-      );
-
-      if (response.ok) {
-        graphData = (await response.json()) as typeof graphData;
-      }
-    } catch (error: unknown) {
-      const msg = error instanceof Error ? error.message : String(error);
-      logger.warn(
-        { projectId, error: msg },
-        "Could not fetch knowledge graph for architecture docs"
-      );
-    }
+    const graphData = await this.fetchGraphData(projectId);
 
     const lines: string[] = [
       "# Architecture Overview",
@@ -330,52 +310,9 @@ export class DocGenerator {
       "",
     ];
 
-    // Group nodes by type
-    const nodesByType = new Map<
-      string,
-      Array<{ name: string; path: string }>
-    >();
-    for (const node of graphData.nodes) {
-      const existing = nodesByType.get(node.type) ?? [];
-      existing.push({ name: node.name, path: node.path });
-      nodesByType.set(node.type, existing);
-    }
-
-    if (nodesByType.size > 0) {
-      lines.push("## Components");
-      lines.push("");
-
-      for (const [type, nodes] of nodesByType) {
-        lines.push(`### ${type}`);
-        lines.push("");
-        for (const node of nodes) {
-          lines.push(`- **${node.name}** (\`${node.path}\`)`);
-        }
-        lines.push("");
-      }
-    }
-
-    // Document dependency relationships
-    if (graphData.edges.length > 0) {
-      lines.push("## Dependencies");
-      lines.push("");
-
-      const depGroups = new Map<string, string[]>();
-      for (const edge of graphData.edges) {
-        const existing = depGroups.get(edge.from) ?? [];
-        existing.push(`${edge.to} (${edge.type})`);
-        depGroups.set(edge.from, existing);
-      }
-
-      for (const [source, targets] of depGroups) {
-        lines.push(`- **${source}** depends on:`);
-        for (const target of targets) {
-          lines.push(`  - ${target}`);
-        }
-      }
-
-      lines.push("");
-    }
+    const nodesByType = this.groupNodesByType(graphData.nodes);
+    this.appendComponentsSection(lines, nodesByType);
+    this.appendDependenciesSection(lines, graphData.edges);
 
     if (nodesByType.size === 0 && graphData.edges.length === 0) {
       lines.push(
@@ -402,6 +339,86 @@ export class DocGenerator {
       filePaths,
       generatedAt: new Date().toISOString(),
     };
+  }
+
+  private async fetchGraphData(projectId: string): Promise<{
+    nodes: Array<{ name: string; type: string; path: string }>;
+    edges: Array<{ from: string; to: string; type: string }>;
+  }> {
+    try {
+      const response = await fetch(
+        `${this.projectBrainUrl}/api/graph/overview?projectId=${encodeURIComponent(projectId)}`,
+        { signal: AbortSignal.timeout(30_000) }
+      );
+      if (response.ok) {
+        return (await response.json()) as {
+          nodes: Array<{ name: string; type: string; path: string }>;
+          edges: Array<{ from: string; to: string; type: string }>;
+        };
+      }
+    } catch (error: unknown) {
+      const msg = error instanceof Error ? error.message : String(error);
+      logger.warn(
+        { projectId, error: msg },
+        "Could not fetch knowledge graph for architecture docs"
+      );
+    }
+    return { nodes: [], edges: [] };
+  }
+
+  private groupNodesByType(
+    nodes: Array<{ name: string; type: string; path: string }>
+  ): Map<string, Array<{ name: string; path: string }>> {
+    const nodesByType = new Map<
+      string,
+      Array<{ name: string; path: string }>
+    >();
+    for (const node of nodes) {
+      const existing = nodesByType.get(node.type) ?? [];
+      existing.push({ name: node.name, path: node.path });
+      nodesByType.set(node.type, existing);
+    }
+    return nodesByType;
+  }
+
+  private appendComponentsSection(
+    lines: string[],
+    nodesByType: Map<string, Array<{ name: string; path: string }>>
+  ): void {
+    if (nodesByType.size === 0) {
+      return;
+    }
+    lines.push("## Components", "");
+    for (const [type, nodes] of nodesByType) {
+      lines.push(`### ${type}`, "");
+      for (const node of nodes) {
+        lines.push(`- **${node.name}** (\`${node.path}\`)`);
+      }
+      lines.push("");
+    }
+  }
+
+  private appendDependenciesSection(
+    lines: string[],
+    edges: Array<{ from: string; to: string; type: string }>
+  ): void {
+    if (edges.length === 0) {
+      return;
+    }
+    lines.push("## Dependencies", "");
+    const depGroups = new Map<string, string[]>();
+    for (const edge of edges) {
+      const existing = depGroups.get(edge.from) ?? [];
+      existing.push(`${edge.to} (${edge.type})`);
+      depGroups.set(edge.from, existing);
+    }
+    for (const [source, targets] of depGroups) {
+      lines.push(`- **${source}** depends on:`);
+      for (const target of targets) {
+        lines.push(`  - ${target}`);
+      }
+    }
+    lines.push("");
   }
 
   // ── Private extraction helpers ──

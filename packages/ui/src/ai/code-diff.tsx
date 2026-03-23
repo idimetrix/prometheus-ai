@@ -64,72 +64,88 @@ interface DiffLine {
 
 const _HUNK_HEADER_RE = /@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/;
 
+function isHeaderLine(line: string): boolean {
+  return (
+    line.startsWith("---") ||
+    line.startsWith("+++") ||
+    line.startsWith("diff ") ||
+    line.startsWith("index ")
+  );
+}
+
+function parseDiffLine(
+  line: string,
+  lineNums: { oldLine: number; newLine: number }
+): DiffLine | null {
+  if (line.startsWith("@@")) {
+    const hunkMatch = line.match(_HUNK_HEADER_RE);
+    if (hunkMatch) {
+      lineNums.oldLine = Number.parseInt(hunkMatch[1] ?? "0", 10);
+      lineNums.newLine = Number.parseInt(hunkMatch[2] ?? "0", 10);
+    }
+    return { type: "hunk", content: line, oldLineNum: null, newLineNum: null };
+  }
+
+  if (isHeaderLine(line)) {
+    return {
+      type: "header",
+      content: line,
+      oldLineNum: null,
+      newLineNum: null,
+    };
+  }
+
+  if (line.startsWith("+")) {
+    const dl: DiffLine = {
+      type: "addition",
+      content: line.slice(1),
+      oldLineNum: null,
+      newLineNum: lineNums.newLine,
+    };
+    lineNums.newLine++;
+    return dl;
+  }
+
+  if (line.startsWith("-")) {
+    const dl: DiffLine = {
+      type: "deletion",
+      content: line.slice(1),
+      oldLineNum: lineNums.oldLine,
+      newLineNum: null,
+    };
+    lineNums.oldLine++;
+    return dl;
+  }
+
+  const content = line.startsWith(" ") ? line.slice(1) : line;
+  if (line.trim() === "" && lineNums.oldLine === 0 && lineNums.newLine === 0) {
+    return null;
+  }
+
+  const dl: DiffLine = {
+    type: "context",
+    content,
+    oldLineNum: lineNums.oldLine || null,
+    newLineNum: lineNums.newLine || null,
+  };
+  if (lineNums.oldLine) {
+    lineNums.oldLine++;
+  }
+  if (lineNums.newLine) {
+    lineNums.newLine++;
+  }
+  return dl;
+}
+
 function parseDiffLines(diff: string): DiffLine[] {
   const raw = diff.split("\n");
   const result: DiffLine[] = [];
-  let oldLine = 0;
-  let newLine = 0;
+  const lineNums = { oldLine: 0, newLine: 0 };
 
   for (const line of raw) {
-    if (line.startsWith("@@")) {
-      // Parse hunk header: @@ -oldStart,oldCount +newStart,newCount @@
-      const hunkMatch = line.match(_HUNK_HEADER_RE);
-      if (hunkMatch) {
-        oldLine = Number.parseInt(hunkMatch[1] ?? "0", 10);
-        newLine = Number.parseInt(hunkMatch[2] ?? "0", 10);
-      }
-      result.push({
-        type: "hunk",
-        content: line,
-        oldLineNum: null,
-        newLineNum: null,
-      });
-    } else if (
-      line.startsWith("---") ||
-      line.startsWith("+++") ||
-      line.startsWith("diff ") ||
-      line.startsWith("index ")
-    ) {
-      result.push({
-        type: "header",
-        content: line,
-        oldLineNum: null,
-        newLineNum: null,
-      });
-    } else if (line.startsWith("+")) {
-      result.push({
-        type: "addition",
-        content: line.slice(1),
-        oldLineNum: null,
-        newLineNum: newLine,
-      });
-      newLine++;
-    } else if (line.startsWith("-")) {
-      result.push({
-        type: "deletion",
-        content: line.slice(1),
-        oldLineNum: oldLine,
-        newLineNum: null,
-      });
-      oldLine++;
-    } else {
-      // Context line (may have a leading space)
-      const content = line.startsWith(" ") ? line.slice(1) : line;
-      if (line.trim() === "" && oldLine === 0 && newLine === 0) {
-        continue; // Skip empty lines before any hunk
-      }
-      result.push({
-        type: "context",
-        content,
-        oldLineNum: oldLine || null,
-        newLineNum: newLine || null,
-      });
-      if (oldLine) {
-        oldLine++;
-      }
-      if (newLine) {
-        newLine++;
-      }
+    const parsed = parseDiffLine(line, lineNums);
+    if (parsed) {
+      result.push(parsed);
     }
   }
 

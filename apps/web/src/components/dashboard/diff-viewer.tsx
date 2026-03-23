@@ -131,9 +131,11 @@ function HunkBlock({
 
       {/* Lines */}
       <div>
-        {hunk.lines.map((line, i) => (
-          // biome-ignore lint/suspicious/noArrayIndexKey: diff lines lack unique id, hunk.id+index is stable
-          <DiffLineRow key={`${hunk.id}-${i}`} line={line} />
+        {hunk.lines.map((line) => (
+          <DiffLineRow
+            key={`${hunk.id}-${line.type}-${line.lineNumber ?? ""}-${line.content.slice(0, 30)}`}
+            line={line}
+          />
         ))}
       </div>
 

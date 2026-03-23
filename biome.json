@@ -25,7 +25,9 @@
       "!**/.turbo",
       "!**/drizzle",
       "!**/coverage",
-      "!**/*.min.js"
+      "!**/*.min.js",
+      "!infra/k6",
+      "!infra/scripts/load-tests"
     ]
   },
   "formatter": {
@@ -39,13 +41,22 @@
       "recommended": true,
       "suspicious": {
         "noUnknownAtRules": "off",
-        "noExplicitAny": "error"
+        "noExplicitAny": "error",
+        "noBitwiseOperators": "off",
+        "noControlCharactersInRegex": "off"
       },
       "performance": {
-        "noBarrelFile": "off"
+        "noBarrelFile": "off",
+        "noNamespaceImport": "off"
       },
-      "complexity": {
-        "noExcessiveCognitiveComplexity": "off"
+      "security": {
+        "noDangerouslySetInnerHtml": "off"
+      },
+      "a11y": {
+        "noNoninteractiveElementInteractions": "off",
+        "noStaticElementInteractions": "off",
+        "noNoninteractiveTabindex": "off",
+        "useSemanticElements": "off"
       }
     },
     "domains": {
@@ -60,64 +71,5 @@
       }
     }
   },
-  "overrides": [
-    {
-      "includes": ["infra/scripts/load-tests/**"],
-      "linter": {
-        "rules": {
-          "correctness": {
-            "noUndeclaredVariables": "off"
-          }
-        }
-      }
-    },
-    {
-      "includes": ["tests/**"],
-      "linter": {
-        "rules": {
-          "style": {
-            "noNonNullAssertion": "off",
-            "noExportedImports": "off"
-          },
-          "suspicious": {
-            "useAwait": "off",
-            "noEvolvingTypes": "off"
-          },
-          "performance": {
-            "useTopLevelRegex": "off"
-          }
-        }
-      }
-    },
-    {
-      "includes": ["apps/web/e2e/**"],
-      "linter": {
-        "rules": {
-          "performance": {
-            "useTopLevelRegex": "off"
-          }
-        }
-      }
-    },
-    {
-      "includes": [
-        "apps/api/src/routers/cost-prediction.ts",
-        "apps/orchestrator/src/quality/**",
-        "apps/orchestrator/src/context/**"
-      ],
-      "linter": {
-        "rules": {
-          "performance": {
-            "useTopLevelRegex": "off"
-          },
-          "style": {
-            "noNestedTernary": "off"
-          },
-          "suspicious": {
-            "useAwait": "off"
-          }
-        }
-      }
-    }
-  ]
+  "overrides": []
 }

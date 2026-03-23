@@ -550,8 +550,6 @@ Instructions:
     this.logger.info("Processing in TASK mode");
     const results: AgentExecutionResult[] = [];
 
-    // If a specific agent role was provided, skip the planning phases
-    // and go directly to execution
     if (specificRole) {
       const routing = await this.routeTask(
         taskDescription,
@@ -564,8 +562,82 @@ Instructions:
       return { results };
     }
 
-    // Full pipeline
+    // Full pipeline: Discovery + Architecture + Planning
+    const { discoveryResult, architectureResult } =
+      await this.runDiscoveryAndArchitecture(
+        agentLoop,
+        taskDescription,
+        results
+      );
 
+    const { sprintPlan, mctsResult } = await this.runPlanningPhase(
+      agentLoop,
+      architectureResult,
+      taskDescription,
+      results
+    );
+
+    const { specFirst, specResult } = await this.runSpecFirstPhase(
+      agentLoop,
+      architectureResult,
+      sprintPlan,
+      results
+    );
+
+    // Coding with backtracking
+    const { executionResults, finalPlan } =
+      await this.runCodingWithBacktracking(
+        agentLoop,
+        sprintPlan,
+        architectureResult,
+        mctsResult,
+        taskDescription,
+        results
+      );
+
+    // Post-coding verification phases
+    await this.runPostCodingVerification(
+      agentLoop,
+      executionResults,
+      taskDescription,
+      results
+    );
+
+    // Testing + spec validation
+    await this.runTestingPhase(
+      agentLoop,
+      architectureResult,
+      finalPlan,
+      specFirst,
+      specResult,
+      results
+    );
+
+    // CI + property testing + security + deploy
+    const allChangedFiles = executionResults.flatMap((r) => r.filesChanged);
+    const ciResult = await this.runCIAndFinalPhases(
+      agentLoop,
+      allChangedFiles,
+      results
+    );
+
+    return {
+      results,
+      discoveryResult,
+      architectureResult,
+      sprintPlan: finalPlan,
+      ciResult,
+    };
+  }
+
+  private async runDiscoveryAndArchitecture(
+    agentLoop: import("./agent-loop").AgentLoop,
+    taskDescription: string,
+    results: AgentExecutionResult[]
+  ): Promise<{
+    discoveryResult: DiscoveryResult;
+    architectureResult: ArchitectureResult;
+  }> {
     // Phase 1: Discovery
     await this.publishPhaseUpdate("discovery", "running");
     const discoveryPhase = new DiscoveryPhase();
@@ -602,7 +674,7 @@ Instructions:
     });
     await this.publishPhaseUpdate("architecture", "completed");
 
-    // Phase 2.5: Auto-ensemble for architecture using MoA with 3 models
+    // Phase 2.5: MoA architecture review
     const moaArchitecture = new MixtureOfAgents();
     const moaResult = await moaArchitecture
       .generate(
@@ -614,19 +686,23 @@ Instructions:
       architectureResult.blueprint += `\n\n## Architecture Review (Multi-Model Consensus)\n${moaResult.synthesized.slice(0, 2000)}`;
     }
 
-    // Phase 3: MCTS Planning (with full tree retention for backtracking)
+    return { discoveryResult, architectureResult };
+  }
+
+  private async runPlanningPhase(
+    agentLoop: import("./agent-loop").AgentLoop,
+    architectureResult: ArchitectureResult,
+    taskDescription: string,
+    results: AgentExecutionResult[]
+  ): Promise<{ sprintPlan: SprintPlan; mctsResult: MCTSPlanResult }> {
     await this.publishPhaseUpdate("planning", "running");
-    const mctsPlanner = new MCTSPlanner({
-      expansionWidth: 3,
-      maxLLMCalls: 8,
-    });
+    const mctsPlanner = new MCTSPlanner({ expansionWidth: 3, maxLLMCalls: 8 });
     const mctsResult = await mctsPlanner.plan(
       agentLoop,
       architectureResult.blueprint,
       taskDescription
     );
-    let sprintPlan = mctsResult.selectedPlan;
-    const currentMCTSResult: MCTSPlanResult = mctsResult;
+    const sprintPlan = mctsResult.selectedPlan;
 
     this.logger.info(
       {
@@ -648,7 +724,18 @@ Instructions:
     });
     await this.publishPhaseUpdate("planning", "completed");
 
-    // Phase 3.5: SpecFirst — Generate specifications AND test skeletons before coding (TDD)
+    return { sprintPlan, mctsResult };
+  }
+
+  private async runSpecFirstPhase(
+    agentLoop: import("./agent-loop").AgentLoop,
+    architectureResult: ArchitectureResult,
+    sprintPlan: SprintPlan,
+    _results: AgentExecutionResult[]
+  ): Promise<{
+    specFirst: SpecFirst;
+    specResult: Awaited<ReturnType<SpecFirst["generateSpecs"]>>;
+  }> {
     await this.publishPhaseUpdate("spec_first", "running");
     const specFirst = new SpecFirst();
     const specResult = await specFirst.generateSpecs(
@@ -657,7 +744,6 @@ Instructions:
       JSON.stringify(sprintPlan)
     );
     if (specResult.specs) {
-      // Inject spec context into the blueprint for coding agents
       const specSummary = [
         specResult.specs.interfaces &&
           `### Interfaces\n${specResult.specs.interfaces}`,
@@ -676,7 +762,6 @@ Instructions:
         architectureResult.blueprint += `\n\n## Generated Specifications\n${specSummary}`;
       }
 
-      // TDD: Write test skeletons to disk before coding
       if (specResult.specs.testStubs) {
         await agentLoop.executeTask(
           `Write these test skeleton files to disk. Create the test files with test.todo() blocks based on these stubs:\n\n${specResult.specs.testStubs}\n\nUse vitest syntax. Each test should be a \`test.todo()\` placeholder that will be implemented later.`,
@@ -686,11 +771,25 @@ Instructions:
     }
     await this.publishPhaseUpdate("spec_first", "completed");
 
-    // Phase 4: Execute sprint tasks with backtracking support
+    return { specFirst, specResult };
+  }
+
+  private async runCodingWithBacktracking(
+    agentLoop: import("./agent-loop").AgentLoop,
+    initialPlan: SprintPlan,
+    architectureResult: ArchitectureResult,
+    mctsResult: MCTSPlanResult,
+    taskDescription: string,
+    results: AgentExecutionResult[]
+  ): Promise<{
+    executionResults: AgentExecutionResult[];
+    finalPlan: SprintPlan;
+  }> {
     const planReviser = new PlanReviser(3);
     let executionAttempt = 0;
     const maxExecutionAttempts = 2;
     let executionResults: AgentExecutionResult[] = [];
+    let sprintPlan = initialPlan;
 
     while (executionAttempt < maxExecutionAttempts) {
       executionAttempt++;
@@ -705,7 +804,6 @@ Instructions:
         architectureResult.blueprint
       );
 
-      // Check if execution succeeded or if we should backtrack
       const failedTasks = executionResults.filter((r) => !r.success);
       const qualityGatePassed =
         failedTasks.length === 0 ||
@@ -715,65 +813,93 @@ Instructions:
         break;
       }
 
-      // Backtrack: revise the plan using MCTS tree
-      this.logger.warn(
-        {
-          failedCount: failedTasks.length,
-          attempt: executionAttempt,
-        },
-        "Execution quality below threshold, attempting plan revision"
-      );
-
-      const revision = await planReviser.revise(
+      const revision = await this.attemptPlanRevision(
         agentLoop,
-        currentMCTSResult,
-        {
-          failedPhase: "coding",
-          failedTaskId:
-            sprintPlan.tasks.find(
-              (_, i) => executionResults[i] && !executionResults[i]?.success
-            )?.id ?? "unknown",
-          errorMessage: failedTasks
-            .map((r) => r.error)
-            .filter(Boolean)
-            .join("; "),
-          partialResults: sprintPlan.tasks.map((t, i) => ({
-            taskId: t.id,
-            success: executionResults[i]?.success ?? false,
-            output: executionResults[i]?.output ?? "",
-          })),
-          creditsConsumed: executionResults.reduce(
-            (sum, r) => sum + r.creditsConsumed,
-            0
-          ),
-          filesChanged: executionResults.flatMap((r) => r.filesChanged),
-        },
-        architectureResult.blueprint,
+        planReviser,
+        mctsResult,
+        sprintPlan,
+        executionResults,
+        architectureResult,
         taskDescription
       );
-
       if (!revision) {
-        this.logger.warn(
-          "Plan revision failed, continuing with current results"
-        );
         break;
       }
-
-      sprintPlan = revision.revisedPlan;
-      this.logger.info(
-        {
-          newStrategy: revision.strategy,
-          confidence: revision.confidence,
-          reusableWork: revision.reusableWork.length,
-        },
-        "Plan revised via MCTS backtracking"
-      );
+      sprintPlan = revision;
     }
 
     results.push(...executionResults);
     await this.publishPhaseUpdate("coding", "completed");
 
-    // Phase 4.25: Cross-file consistency validation
+    return { executionResults, finalPlan: sprintPlan };
+  }
+
+  private async attemptPlanRevision(
+    agentLoop: import("./agent-loop").AgentLoop,
+    planReviser: PlanReviser,
+    mctsResult: MCTSPlanResult,
+    sprintPlan: SprintPlan,
+    executionResults: AgentExecutionResult[],
+    architectureResult: ArchitectureResult,
+    taskDescription: string
+  ): Promise<SprintPlan | null> {
+    const failedTasks = executionResults.filter((r) => !r.success);
+    this.logger.warn(
+      { failedCount: failedTasks.length },
+      "Execution quality below threshold, attempting plan revision"
+    );
+
+    const revision = await planReviser.revise(
+      agentLoop,
+      mctsResult,
+      {
+        failedPhase: "coding",
+        failedTaskId:
+          sprintPlan.tasks.find(
+            (_, i) => executionResults[i] && !executionResults[i]?.success
+          )?.id ?? "unknown",
+        errorMessage: failedTasks
+          .map((r) => r.error)
+          .filter(Boolean)
+          .join("; "),
+        partialResults: sprintPlan.tasks.map((t, i) => ({
+          taskId: t.id,
+          success: executionResults[i]?.success ?? false,
+          output: executionResults[i]?.output ?? "",
+        })),
+        creditsConsumed: executionResults.reduce(
+          (sum, r) => sum + r.creditsConsumed,
+          0
+        ),
+        filesChanged: executionResults.flatMap((r) => r.filesChanged),
+      },
+      architectureResult.blueprint,
+      taskDescription
+    );
+
+    if (!revision) {
+      this.logger.warn("Plan revision failed, continuing with current results");
+      return null;
+    }
+
+    this.logger.info(
+      {
+        newStrategy: revision.strategy,
+        confidence: revision.confidence,
+        reusableWork: revision.reusableWork.length,
+      },
+      "Plan revised via MCTS backtracking"
+    );
+    return revision.revisedPlan;
+  }
+
+  private async runPostCodingVerification(
+    agentLoop: import("./agent-loop").AgentLoop,
+    executionResults: AgentExecutionResult[],
+    taskDescription: string,
+    results: AgentExecutionResult[]
+  ): Promise<void> {
+    // Cross-file consistency validation
     const allChangedFilesPre = executionResults.flatMap((r) => r.filesChanged);
     if (allChangedFilesPre.length > 0) {
       try {
@@ -798,43 +924,65 @@ Instructions:
       }
     }
 
-    // Phase 4.5: Typecheck verification gate
+    // Typecheck verification gate
     const typecheckResult = await agentLoop.executeTask(
       "Run `pnpm typecheck` and report ALL TypeScript errors found. If there are errors, fix them. Repeat until typecheck passes (max 10 attempts).",
       "ci_loop"
     );
     results.push(typecheckResult);
 
-    // Phase 4.6: Visual verification for frontend changes
+    // Visual verification for frontend changes
     const allChangedFiles = executionResults.flatMap((r) => r.filesChanged);
     const hasFrontendChanges = allChangedFiles.some(
       (f) => f.endsWith(".tsx") || f.endsWith(".jsx") || f.endsWith(".css")
     );
     if (hasFrontendChanges) {
-      await this.publishPhaseUpdate("visual_verify", "running");
-      const visualVerifier = new VisualVerifier();
-      const visualResult = await visualVerifier.verify(
+      await this.runVisualVerification(
         agentLoop,
-        this.currentSessionId ?? "",
         allChangedFiles,
-        taskDescription
-      );
-      results.push({
-        success: visualResult.passed,
-        output: `Visual Verification: ${visualResult.summary} (score: ${visualResult.score.toFixed(2)}, ${visualResult.pagesChecked} pages checked)`,
-        filesChanged: [],
-        tokensUsed: { input: 0, output: 0 },
-        toolCalls: 0,
-        steps: 0,
-        creditsConsumed: 0,
-      });
-      await this.publishPhaseUpdate(
-        "visual_verify",
-        visualResult.passed ? "completed" : "failed"
+        taskDescription,
+        results
       );
     }
+  }
 
-    // Phase 5: Testing
+  private async runVisualVerification(
+    agentLoop: import("./agent-loop").AgentLoop,
+    allChangedFiles: string[],
+    taskDescription: string,
+    results: AgentExecutionResult[]
+  ): Promise<void> {
+    await this.publishPhaseUpdate("visual_verify", "running");
+    const visualVerifier = new VisualVerifier();
+    const visualResult = await visualVerifier.verify(
+      agentLoop,
+      this.currentSessionId ?? "",
+      allChangedFiles,
+      taskDescription
+    );
+    results.push({
+      success: visualResult.passed,
+      output: `Visual Verification: ${visualResult.summary} (score: ${visualResult.score.toFixed(2)}, ${visualResult.pagesChecked} pages checked)`,
+      filesChanged: [],
+      tokensUsed: { input: 0, output: 0 },
+      toolCalls: 0,
+      steps: 0,
+      creditsConsumed: 0,
+    });
+    await this.publishPhaseUpdate(
+      "visual_verify",
+      visualResult.passed ? "completed" : "failed"
+    );
+  }
+
+  private async runTestingPhase(
+    agentLoop: import("./agent-loop").AgentLoop,
+    architectureResult: ArchitectureResult,
+    sprintPlan: SprintPlan,
+    specFirst: SpecFirst,
+    specResult: Awaited<ReturnType<SpecFirst["generateSpecs"]>>,
+    results: AgentExecutionResult[]
+  ): Promise<void> {
     await this.publishPhaseUpdate("testing", "running");
     const testResult = await agentLoop.executeTask(
       `Write comprehensive tests for the implementation based on the sprint plan and blueprint.\n\nBlueprint:\n${architectureResult.blueprint}\n\nSprint Plan:\n${JSON.stringify(sprintPlan, null, 2)}`,
@@ -843,7 +991,6 @@ Instructions:
     results.push(testResult);
     await this.publishPhaseUpdate("testing", "completed");
 
-    // Phase 5.5: SpecFirst validation — verify implementation matches specs
     if (specResult.specs) {
       await this.publishPhaseUpdate("spec_validation", "running");
       const validationResult = await specFirst.validateImplementation(
@@ -854,7 +1001,6 @@ Instructions:
         this.logger.warn(
           "Spec validation found mismatches, feeding back to coding agent"
         );
-        // Re-run the coding agent to fix spec mismatches
         const fixResult = await agentLoop.executeTask(
           `Fix the following spec validation issues:\n\n${validationResult.output}\n\nEnsure the implementation matches the generated specifications.`,
           "backend_coder"
@@ -863,8 +1009,14 @@ Instructions:
       }
       await this.publishPhaseUpdate("spec_validation", "completed");
     }
+  }
 
-    // Phase 6: CI Loop
+  private async runCIAndFinalPhases(
+    agentLoop: import("./agent-loop").AgentLoop,
+    allChangedFiles: string[],
+    results: AgentExecutionResult[]
+  ): Promise<CILoopResult> {
+    // CI Loop
     await this.publishPhaseUpdate("ci_loop", "running");
     const ciRunner = new CILoopRunner(20);
     const ciResult = await ciRunner.run(agentLoop);
@@ -882,43 +1034,17 @@ Instructions:
       ciResult.passed ? "completed" : "failed"
     );
 
-    // Phase 6.5: Property-based testing hardening (only if CI passed)
+    // Property-based testing
     if (ciResult.passed && allChangedFiles.length > 0) {
-      await this.publishPhaseUpdate("property_testing", "running");
-      const propertyTesting = new PropertyTesting();
-      const propertyResult = await propertyTesting.generate(
+      await this.runPropertyTesting(
         agentLoop,
-        allChangedFiles.filter(
-          (f) => f.endsWith(".ts") && !f.includes(".test.")
-        )
+        ciRunner,
+        allChangedFiles,
+        results
       );
-      results.push({
-        success: propertyResult.failed === 0,
-        output: `Property Testing: ${propertyResult.generated} files, ${propertyResult.passed} passed, ${propertyResult.failed} failed`,
-        filesChanged: [],
-        tokensUsed: { input: 0, output: 0 },
-        toolCalls: 0,
-        steps: 0,
-        creditsConsumed: 0,
-      });
-      await this.publishPhaseUpdate("property_testing", "completed");
-
-      // If property tests failed, re-run CI loop to fix them
-      if (propertyResult.failed > 0) {
-        const propFixResult = await ciRunner.run(agentLoop);
-        results.push({
-          success: propFixResult.passed,
-          output: `Property Test Fix Loop: ${propFixResult.passed ? "PASSED" : "FAILED"} after ${propFixResult.iterations} iterations`,
-          filesChanged: [],
-          tokensUsed: { input: 0, output: 0 },
-          toolCalls: 0,
-          steps: 0,
-          creditsConsumed: 0,
-        });
-      }
     }
 
-    // Phase 7: Security audit
+    // Security audit
     await this.publishPhaseUpdate("security", "running");
     const securityResult = await agentLoop.executeTask(
       "Perform a security audit on the implemented code. Check for:\n- OWASP Top 10 vulnerabilities\n- Input validation issues\n- Authentication/authorization gaps\n- SQL injection risks\n- XSS vulnerabilities\n- Insecure dependencies",
@@ -927,7 +1053,7 @@ Instructions:
     results.push(securityResult);
     await this.publishPhaseUpdate("security", "completed");
 
-    // Phase 8: Deploy preparation
+    // Deploy preparation
     await this.publishPhaseUpdate("deploy", "running");
     const deployResult = await agentLoop.executeTask(
       "Prepare deployment configuration for the implemented features:\n- Verify Dockerfiles\n- Update k8s manifests if needed\n- Ensure CI/CD pipeline configuration\n- Create migration scripts if needed",
@@ -936,13 +1062,44 @@ Instructions:
     results.push(deployResult);
     await this.publishPhaseUpdate("deploy", "completed");
 
-    return {
-      results,
-      discoveryResult,
-      architectureResult,
-      sprintPlan,
-      ciResult,
-    };
+    return ciResult;
+  }
+
+  private async runPropertyTesting(
+    agentLoop: import("./agent-loop").AgentLoop,
+    ciRunner: CILoopRunner,
+    allChangedFiles: string[],
+    results: AgentExecutionResult[]
+  ): Promise<void> {
+    await this.publishPhaseUpdate("property_testing", "running");
+    const propertyTesting = new PropertyTesting();
+    const propertyResult = await propertyTesting.generate(
+      agentLoop,
+      allChangedFiles.filter((f) => f.endsWith(".ts") && !f.includes(".test."))
+    );
+    results.push({
+      success: propertyResult.failed === 0,
+      output: `Property Testing: ${propertyResult.generated} files, ${propertyResult.passed} passed, ${propertyResult.failed} failed`,
+      filesChanged: [],
+      tokensUsed: { input: 0, output: 0 },
+      toolCalls: 0,
+      steps: 0,
+      creditsConsumed: 0,
+    });
+    await this.publishPhaseUpdate("property_testing", "completed");
+
+    if (propertyResult.failed > 0) {
+      const propFixResult = await ciRunner.run(agentLoop);
+      results.push({
+        success: propFixResult.passed,
+        output: `Property Test Fix Loop: ${propFixResult.passed ? "PASSED" : "FAILED"} after ${propFixResult.iterations} iterations`,
+        filesChanged: [],
+        tokensUsed: { input: 0, output: 0 },
+        toolCalls: 0,
+        steps: 0,
+        creditsConsumed: 0,
+      });
+    }
   }
 
   /**
@@ -1121,6 +1278,49 @@ Instructions:
     agentLoop?: import("./agent-loop").AgentLoop
   ): Promise<TaskRoutingResult> {
     // Stage 1: Try embedding-based classification first
+    const embeddingResult =
+      await this.tryEmbeddingClassification(taskDescription);
+    if (embeddingResult) {
+      return embeddingResult;
+    }
+
+    // Stage 2: Regex pre-filter
+    const candidates = this.regexRouteTask(taskDescription);
+
+    if (
+      candidates.length === 1 &&
+      (candidates[0] as TaskRoutingResult).confidence >= 0.85
+    ) {
+      return candidates[0] as TaskRoutingResult;
+    }
+
+    // Stage 3: LLM disambiguation for ambiguous cases
+    if (candidates.length > 1 && agentLoop) {
+      const llmResult = await this.llmDisambiguate(
+        taskDescription,
+        candidates,
+        agentLoop
+      );
+      if (llmResult) {
+        return llmResult;
+      }
+    }
+
+    // Fallback: return best regex match or orchestrator
+    if (candidates.length > 0) {
+      return candidates[0] as TaskRoutingResult;
+    }
+
+    return {
+      agentRole: "orchestrator",
+      confidence: 0.5,
+      reasoning: "Task is complex or ambiguous, needs orchestration",
+    };
+  }
+
+  private async tryEmbeddingClassification(
+    taskDescription: string
+  ): Promise<TaskRoutingResult | null> {
     try {
       const classification = await classifyTask(taskDescription);
 
@@ -1142,7 +1342,6 @@ Instructions:
         };
       }
 
-      // Ambiguous embedding result — fall through to regex + LLM disambiguation
       if (classification.role === "ambiguous") {
         this.logger.info(
           "Embedding classification ambiguous, falling through to regex + LLM"
@@ -1155,8 +1354,10 @@ Instructions:
         "Embedding classification unavailable, falling back to regex routing"
       );
     }
+    return null;
+  }
 
-    // Stage 2: Regex pre-filter — collect all matches with scores
+  private regexRouteTask(taskDescription: string): TaskRoutingResult[] {
     const description = taskDescription.toLowerCase();
     const candidates: TaskRoutingResult[] = [];
 
@@ -1232,22 +1433,20 @@ Instructions:
       }
     }
 
-    // If exactly one match with high confidence, return it
-    if (
-      candidates.length === 1 &&
-      (candidates[0] as TaskRoutingResult).confidence >= 0.85
-    ) {
-      return candidates[0] as TaskRoutingResult;
-    }
+    return candidates;
+  }
 
-    // Stage 3: LLM disambiguation for ambiguous cases
-    if (candidates.length > 1 && agentLoop) {
-      const candidateList = candidates
-        .slice(0, 3)
-        .map((c, i) => `${i + 1}. ${c.agentRole} (${c.reasoning})`)
-        .join("\n");
+  private async llmDisambiguate(
+    taskDescription: string,
+    candidates: TaskRoutingResult[],
+    agentLoop: import("./agent-loop").AgentLoop
+  ): Promise<TaskRoutingResult | null> {
+    const candidateList = candidates
+      .slice(0, 3)
+      .map((c, i) => `${i + 1}. ${c.agentRole} (${c.reasoning})`)
+      .join("\n");
 
-      const disambiguationPrompt = `You are a task router. Given the following task description, determine which agent role is the BEST fit.
+    const disambiguationPrompt = `You are a task router. Given the following task description, determine which agent role is the BEST fit.
 
 Task: "${taskDescription}"
 
@@ -1256,40 +1455,27 @@ ${candidateList}
 
 Respond with ONLY the role name (e.g., "backend_coder") and a one-line reason. Format: ROLE: <role_name>\nREASON: <reason>`;
 
-      try {
-        const result = await agentLoop.executeTask(
-          disambiguationPrompt,
-          "orchestrator"
-        );
-        const roleMatch = result.output.match(LLM_ROUTE_ROLE_RE);
-        if (roleMatch) {
-          const selectedRole = roleMatch[1];
-          const candidate = candidates.find(
-            (c) => c.agentRole === selectedRole
-          );
-          if (candidate) {
-            return {
-              ...candidate,
-              confidence: 0.95,
-              reasoning: `LLM-selected: ${candidate.reasoning}`,
-            };
-          }
+    try {
+      const result = await agentLoop.executeTask(
+        disambiguationPrompt,
+        "orchestrator"
+      );
+      const roleMatch = result.output.match(LLM_ROUTE_ROLE_RE);
+      if (roleMatch) {
+        const selectedRole = roleMatch[1];
+        const candidate = candidates.find((c) => c.agentRole === selectedRole);
+        if (candidate) {
+          return {
+            ...candidate,
+            confidence: 0.95,
+            reasoning: `LLM-selected: ${candidate.reasoning}`,
+          };
         }
-      } catch {
-        this.logger.warn("LLM disambiguation failed, using regex result");
       }
+    } catch {
+      this.logger.warn("LLM disambiguation failed, using regex result");
     }
-
-    // Fallback: return best regex match or orchestrator
-    if (candidates.length > 0) {
-      return candidates[0] as TaskRoutingResult;
-    }
-
-    return {
-      agentRole: "orchestrator",
-      confidence: 0.5,
-      reasoning: "Task is complex or ambiguous, needs orchestration",
-    };
+    return null;
   }
 
   private async publishPhaseUpdate(

@@ -45,6 +45,84 @@ export interface VisualMatchResult {
  * Converts design specifications (Figma JSON, design tokens, component specs)
  * into framework-specific component code (React/Vue/Svelte).
  */
+// ─── Figma Node Extraction Helpers ──────────────────────────────────────────
+
+function extractColorsFromNode(
+  node: Record<string, unknown>,
+  safeName: string,
+  colors: Record<string, string>
+): void {
+  const fills = node.fills as Record<string, unknown>[] | undefined;
+  if (!Array.isArray(fills)) {
+    return;
+  }
+  for (const fill of fills) {
+    if (fill.type === "SOLID" && fill.color) {
+      const c = fill.color as Record<string, number>;
+      const hex = `#${Math.round((c.r ?? 0) * 255)
+        .toString(16)
+        .padStart(2, "0")}${Math.round((c.g ?? 0) * 255)
+        .toString(16)
+        .padStart(2, "0")}${Math.round((c.b ?? 0) * 255)
+        .toString(16)
+        .padStart(2, "0")}`;
+      colors[safeName] = hex;
+    }
+  }
+}
+
+function extractFontSizeFromNode(
+  node: Record<string, unknown>,
+  safeName: string,
+  fontSizes: Record<string, string>
+): void {
+  const style = node.style as Record<string, unknown> | undefined;
+  if (style?.fontSize) {
+    fontSizes[safeName] = `${style.fontSize}px`;
+  }
+}
+
+function extractSpacingFromNode(
+  node: Record<string, unknown>,
+  safeName: string,
+  spacing: Record<string, string>
+): void {
+  const padding = node.paddingLeft ?? node.paddingTop;
+  if (typeof padding === "number" && padding > 0) {
+    spacing[safeName] = `${padding}px`;
+  }
+}
+
+function extractBorderRadiusFromNode(
+  node: Record<string, unknown>,
+  safeName: string,
+  borderRadius: Record<string, string>
+): void {
+  const radius = node.cornerRadius;
+  if (typeof radius === "number" && radius > 0) {
+    borderRadius[safeName] = `${radius}px`;
+  }
+}
+
+function extractShadowsFromNode(
+  node: Record<string, unknown>,
+  safeName: string,
+  shadows: Record<string, string>
+): void {
+  const effects = node.effects as Record<string, unknown>[] | undefined;
+  if (!Array.isArray(effects)) {
+    return;
+  }
+  for (const effect of effects) {
+    if (effect.type === "DROP_SHADOW") {
+      const offset = effect.offset as Record<string, number> | undefined;
+      const r = effect.radius ?? 0;
+      shadows[safeName] =
+        `${offset?.x ?? 0}px ${offset?.y ?? 0}px ${r}px rgba(0,0,0,0.15)`;
+    }
+  }
+}
+
 export class DesignToCodePipeline {
   /**
    * Parse a design specification string into a tree of component specs.
@@ -184,54 +262,11 @@ export class DesignToCodePipeline {
       const name = (node.name as string) ?? `token-${depth}`;
       const safeName = name.replaceAll(/[^a-zA-Z0-9-]/g, "-").toLowerCase();
 
-      // Colors from fills
-      const fills = node.fills as Record<string, unknown>[] | undefined;
-      if (Array.isArray(fills)) {
-        for (const fill of fills) {
-          if (fill.type === "SOLID" && fill.color) {
-            const c = fill.color as Record<string, number>;
-            const hex = `#${Math.round((c.r ?? 0) * 255)
-              .toString(16)
-              .padStart(2, "0")}${Math.round((c.g ?? 0) * 255)
-              .toString(16)
-              .padStart(2, "0")}${Math.round((c.b ?? 0) * 255)
-              .toString(16)
-              .padStart(2, "0")}`;
-            colors[safeName] = hex;
-          }
-        }
-      }
-
-      // Font size from style
-      const style = node.style as Record<string, unknown> | undefined;
-      if (style?.fontSize) {
-        fontSizes[safeName] = `${style.fontSize}px`;
-      }
-
-      // Spacing from padding
-      const padding = node.paddingLeft ?? node.paddingTop;
-      if (typeof padding === "number" && padding > 0) {
-        spacing[safeName] = `${padding}px`;
-      }
-
-      // Border radius
-      const radius = node.cornerRadius;
-      if (typeof radius === "number" && radius > 0) {
-        borderRadius[safeName] = `${radius}px`;
-      }
-
-      // Shadows from effects
-      const effects = node.effects as Record<string, unknown>[] | undefined;
-      if (Array.isArray(effects)) {
-        for (const effect of effects) {
-          if (effect.type === "DROP_SHADOW") {
-            const offset = effect.offset as Record<string, number> | undefined;
-            const r = effect.radius ?? 0;
-            shadows[safeName] =
-              `${offset?.x ?? 0}px ${offset?.y ?? 0}px ${r}px rgba(0,0,0,0.15)`;
-          }
-        }
-      }
+      extractColorsFromNode(node, safeName, colors);
+      extractFontSizeFromNode(node, safeName, fontSizes);
+      extractSpacingFromNode(node, safeName, spacing);
+      extractBorderRadiusFromNode(node, safeName, borderRadius);
+      extractShadowsFromNode(node, safeName, shadows);
 
       // Recurse into children
       const children = node.children as Record<string, unknown>[] | undefined;

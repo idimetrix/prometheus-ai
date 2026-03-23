@@ -289,13 +289,27 @@ export class PrometheusClient {
     const controller = new AbortController();
     const url = `${this.apiUrl}/api/sessions/${sessionId}/events`;
 
+    const parseSSELines = (
+      lines: string[],
+      state: { event: string; data: string }
+    ): void => {
+      for (const line of lines) {
+        if (line.startsWith("event: ")) {
+          state.event = line.slice(7).trim();
+        } else if (line.startsWith("data: ")) {
+          state.data = line.slice(6);
+        } else if (line === "" && state.data) {
+          onMessage({ event: state.event, data: state.data });
+          state.event = "message";
+          state.data = "";
+        }
+      }
+    };
+
     const connect = async () => {
       try {
         const response = await fetch(url, {
-          headers: {
-            ...this.headers,
-            Accept: "text/event-stream",
-          },
+          headers: { ...this.headers, Accept: "text/event-stream" },
           signal: controller.signal,
         });
 
@@ -306,31 +320,17 @@ export class PrometheusClient {
         const reader = response.body.getReader();
         const decoder = new TextDecoder();
         let buffer = "";
+        const state = { event: "message", data: "" };
 
         for (;;) {
           const { done, value } = await reader.read();
           if (done) {
             break;
           }
-
           buffer += decoder.decode(value, { stream: true });
           const lines = buffer.split("\n");
           buffer = lines.pop() ?? "";
-
-          let currentEvent = "message";
-          let currentData = "";
-
-          for (const line of lines) {
-            if (line.startsWith("event: ")) {
-              currentEvent = line.slice(7).trim();
-            } else if (line.startsWith("data: ")) {
-              currentData = line.slice(6);
-            } else if (line === "" && currentData) {
-              onMessage({ event: currentEvent, data: currentData });
-              currentEvent = "message";
-              currentData = "";
-            }
-          }
+          parseSSELines(lines, state);
         }
       } catch (error) {
         if (controller.signal.aborted) {

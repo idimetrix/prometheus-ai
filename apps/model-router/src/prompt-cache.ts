@@ -53,10 +53,8 @@ const CHARS_PER_TOKEN = 4;
 function hashPrompt(prompt: string): string {
   let hash = 5381;
   for (let i = 0; i < prompt.length; i++) {
-    // biome-ignore lint/suspicious/noBitwiseOperators: FNV-1a hash requires bitwise ops
     hash = ((hash << 5) + hash + prompt.charCodeAt(i)) | 0;
   }
-  // biome-ignore lint/suspicious/noBitwiseOperators: FNV-1a hash requires bitwise ops
   return `prompt_${(hash >>> 0).toString(36)}`;
 }
 

@@ -141,11 +141,10 @@ function MessageBubble({
       </div>
 
       {/* Code blocks */}
-      {message.codeBlocks?.map((block, index) => (
+      {message.codeBlocks?.map((block) => (
         <pre
           className="mt-2 overflow-x-auto rounded bg-zinc-900 p-3 font-mono text-xs text-zinc-300"
-          // biome-ignore lint/suspicious/noArrayIndexKey: code blocks have no unique id, message.id + index is stable
-          key={`code-${message.id}-${index}`}
+          key={`code-${message.id}-${block.language}-${block.code.slice(0, 30)}`}
         >
           <div className="mb-1 text-[10px] text-zinc-500 uppercase">
             {block.language}

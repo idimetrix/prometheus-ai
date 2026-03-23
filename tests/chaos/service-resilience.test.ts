@@ -170,11 +170,11 @@ describe("Chaos: Service Resilience", () => {
       let activeConnections = 0;
 
       // Simulate a connection pool
-      const acquireConnection = async (): Promise<{
+      const acquireConnection = (): Promise<{
         release: () => void;
       }> => {
         if (activeConnections >= maxPoolSize) {
-          throw new Error("Connection pool exhausted");
+          return Promise.reject(new Error("Connection pool exhausted"));
         }
         activeConnections++;
         return {
@@ -241,7 +241,7 @@ describe("Chaos: Service Resilience", () => {
       );
 
       // Worker processes first job then crashes
-      queue.onProcess(async (job) => {
+      queue.onProcess((job) => {
         if (!workerCrashed) {
           workerCrashed = true;
           throw new Error("Worker process crashed: SIGKILL");
@@ -276,7 +276,7 @@ describe("Chaos: Service Resilience", () => {
       const maxRetries = 3;
 
       // Processor always fails
-      queue.onProcess(async () => {
+      queue.onProcess(() => {
         throw new Error("Permanent failure: invalid task payload");
       });
 

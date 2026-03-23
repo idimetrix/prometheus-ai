@@ -75,125 +75,169 @@ function visitNode(
   symbols: SymbolTable,
   sourceFile: ts.SourceFile
 ): void {
-  // ─── Function declarations ───────────────────────────────────
-  if (ts.isFunctionDeclaration(node) && node.name) {
-    const fn = extractFunction(node, sourceFile);
-    if (fn) {
-      symbols.functions.push(fn);
-    }
-  }
+  visitFunctionDecl(node, symbols, sourceFile);
+  visitVariableStatement(node, symbols, sourceFile);
+  visitClassDecl(node, symbols, sourceFile);
+  visitImportDecl(node, symbols, sourceFile);
+  visitExportDecl(node, symbols, sourceFile);
+  visitInterfaceDecl(node, symbols, sourceFile);
+  visitTypeAliasDecl(node, symbols, sourceFile);
 
-  // ─── Arrow / function expression assigned to const ───────────
-  if (ts.isVariableStatement(node)) {
-    const isExported = hasExportModifier(node);
-    for (const decl of node.declarationList.declarations) {
-      if (ts.isIdentifier(decl.name) && decl.initializer) {
-        if (
-          ts.isArrowFunction(decl.initializer) ||
-          ts.isFunctionExpression(decl.initializer)
-        ) {
-          const fn = extractArrowFunction(
-            decl,
-            decl.initializer,
-            isExported,
-            sourceFile
-          );
-          if (fn) {
-            symbols.functions.push(fn);
-          }
-        } else {
-          // Regular variable
-          symbols.variables.push({
-            name: decl.name.text,
-            exported: isExported,
-            kind: (() => {
-              if (!ts.isVariableDeclarationList(node.declarationList)) {
-                return "const";
-              }
-              // biome-ignore lint/suspicious/noBitwiseOperators: TypeScript AST uses bitwise flags
-              if (node.declarationList.flags & ts.NodeFlags.Const) {
-                return "const";
-              }
-              // biome-ignore lint/suspicious/noBitwiseOperators: TypeScript AST uses bitwise flags
-              if (node.declarationList.flags & ts.NodeFlags.Let) {
-                return "let";
-              }
-              return "var";
-            })(),
-            type: decl.type ? decl.type.getText(sourceFile) : undefined,
-            line: getLineNumber(decl, sourceFile),
-          });
-        }
+  ts.forEachChild(node, (child) => visitNode(child, symbols, sourceFile));
+}
+
+function visitFunctionDecl(
+  node: ts.Node,
+  symbols: SymbolTable,
+  sourceFile: ts.SourceFile
+): void {
+  if (!(ts.isFunctionDeclaration(node) && node.name)) {
+    return;
+  }
+  const fn = extractFunction(node, sourceFile);
+  if (fn) {
+    symbols.functions.push(fn);
+  }
+}
+
+function visitVariableStatement(
+  node: ts.Node,
+  symbols: SymbolTable,
+  sourceFile: ts.SourceFile
+): void {
+  if (!ts.isVariableStatement(node)) {
+    return;
+  }
+  const isExported = hasExportModifier(node);
+  for (const decl of node.declarationList.declarations) {
+    if (!(ts.isIdentifier(decl.name) && decl.initializer)) {
+      continue;
+    }
+    if (
+      ts.isArrowFunction(decl.initializer) ||
+      ts.isFunctionExpression(decl.initializer)
+    ) {
+      const fn = extractArrowFunction(
+        decl,
+        decl.initializer,
+        isExported,
+        sourceFile
+      );
+      if (fn) {
+        symbols.functions.push(fn);
       }
+    } else {
+      symbols.variables.push({
+        name: decl.name.text,
+        exported: isExported,
+        kind: getVariableKind(node),
+        type: decl.type ? decl.type.getText(sourceFile) : undefined,
+        line: getLineNumber(decl, sourceFile),
+      });
     }
   }
+}
 
-  // ─── Class declarations ──────────────────────────────────────
-  if (ts.isClassDeclaration(node) && node.name) {
-    const cls = extractClass(node, sourceFile);
-    if (cls) {
-      symbols.classes.push(cls);
-    }
+function getVariableKind(node: ts.VariableStatement): string {
+  if (!ts.isVariableDeclarationList(node.declarationList)) {
+    return "const";
   }
-
-  // ─── Import declarations ─────────────────────────────────────
-  if (ts.isImportDeclaration(node)) {
-    const imp = extractImport(node, sourceFile);
-    if (imp) {
-      symbols.imports.push(imp);
-    }
+  if (node.declarationList.flags & ts.NodeFlags.Const) {
+    return "const";
   }
+  if (node.declarationList.flags & ts.NodeFlags.Let) {
+    return "let";
+  }
+  return "var";
+}
 
-  // ─── Export declarations ─────────────────────────────────────
+function visitClassDecl(
+  node: ts.Node,
+  symbols: SymbolTable,
+  sourceFile: ts.SourceFile
+): void {
+  if (!(ts.isClassDeclaration(node) && node.name)) {
+    return;
+  }
+  const cls = extractClass(node, sourceFile);
+  if (cls) {
+    symbols.classes.push(cls);
+  }
+}
+
+function visitImportDecl(
+  node: ts.Node,
+  symbols: SymbolTable,
+  sourceFile: ts.SourceFile
+): void {
+  if (!ts.isImportDeclaration(node)) {
+    return;
+  }
+  const imp = extractImport(node, sourceFile);
+  if (imp) {
+    symbols.imports.push(imp);
+  }
+}
+
+function visitExportDecl(
+  node: ts.Node,
+  symbols: SymbolTable,
+  sourceFile: ts.SourceFile
+): void {
   if (ts.isExportDeclaration(node)) {
-    const exps = extractExportDeclaration(node, sourceFile);
-    symbols.exports.push(...exps);
+    symbols.exports.push(...extractExportDeclaration(node, sourceFile));
   }
 
-  // Named exports on declarations (export function, export class, etc.)
   if (hasExportModifier(node)) {
     const name = getDeclarationName(node);
     if (name) {
-      const kind = getDeclarationKind(node);
       symbols.exports.push({
         name,
-        kind,
+        kind: getDeclarationKind(node),
         isDefault: hasDefaultModifier(node),
         line: getLineNumber(node, sourceFile),
       });
     }
   }
 
-  // Export default expression
   if (ts.isExportAssignment(node)) {
-    const name = node.expression.getText(sourceFile);
     symbols.exports.push({
-      name,
+      name: node.expression.getText(sourceFile),
       kind: "default",
       isDefault: true,
       line: getLineNumber(node, sourceFile),
     });
   }
+}
 
-  // ─── Interface declarations ──────────────────────────────────
-  if (ts.isInterfaceDeclaration(node)) {
-    const iface = extractInterface(node, sourceFile);
-    if (iface) {
-      symbols.interfaces.push(iface);
-    }
+function visitInterfaceDecl(
+  node: ts.Node,
+  symbols: SymbolTable,
+  sourceFile: ts.SourceFile
+): void {
+  if (!ts.isInterfaceDeclaration(node)) {
+    return;
   }
-
-  // ─── Type alias declarations ─────────────────────────────────
-  if (ts.isTypeAliasDeclaration(node)) {
-    symbols.typeAliases.push({
-      name: node.name.text,
-      exported: hasExportModifier(node),
-      type: node.type.getText(sourceFile),
-      line: getLineNumber(node, sourceFile),
-    });
+  const iface = extractInterface(node, sourceFile);
+  if (iface) {
+    symbols.interfaces.push(iface);
   }
+}
 
-  ts.forEachChild(node, (child) => visitNode(child, symbols, sourceFile));
+function visitTypeAliasDecl(
+  node: ts.Node,
+  symbols: SymbolTable,
+  sourceFile: ts.SourceFile
+): void {
+  if (!ts.isTypeAliasDeclaration(node)) {
+    return;
+  }
+  symbols.typeAliases.push({
+    name: node.name.text,
+    exported: hasExportModifier(node),
+    type: node.type.getText(sourceFile),
+    line: getLineNumber(node, sourceFile),
+  });
 }
 
 // ─── Extractors ──────────────────────────────────────────────────
@@ -259,60 +303,12 @@ function extractClass(
     return null;
   }
 
-  const methods: ParsedFunction[] = [];
-  const properties: Array<{
-    name: string;
-    type?: string;
-    visibility?: string;
-  }> = [];
-
-  for (const member of node.members) {
-    if (ts.isMethodDeclaration(member) && member.name) {
-      const name = member.name.getText(sourceFile);
-      methods.push({
-        name,
-        params: member.parameters.map((p) => ({
-          name: p.name.getText(sourceFile),
-          type: p.type ? p.type.getText(sourceFile) : undefined,
-          optional: !!p.questionToken,
-        })),
-        returnType: member.type ? member.type.getText(sourceFile) : undefined,
-        exported: false,
-        isAsync: !!member.modifiers?.some(
-          (m) => m.kind === ts.SyntaxKind.AsyncKeyword
-        ),
-        isGenerator: false,
-        line: getLineNumber(member, sourceFile),
-        endLine: getEndLineNumber(member, sourceFile),
-        visibility: getVisibility(member),
-      });
-    }
-
-    if (ts.isPropertyDeclaration(member) && member.name) {
-      properties.push({
-        name: member.name.getText(sourceFile),
-        type: member.type ? member.type.getText(sourceFile) : undefined,
-        visibility: getVisibility(member),
-      });
-    }
-  }
-
-  // Extract heritage clauses (extends, implements)
-  let extendsClause: string | undefined;
-  const implementsList: string[] = [];
-
-  if (node.heritageClauses) {
-    for (const clause of node.heritageClauses) {
-      if (clause.token === ts.SyntaxKind.ExtendsKeyword) {
-        extendsClause = clause.types[0]?.expression.getText(sourceFile);
-      }
-      if (clause.token === ts.SyntaxKind.ImplementsKeyword) {
-        for (const type of clause.types) {
-          implementsList.push(type.expression.getText(sourceFile));
-        }
-      }
-    }
-  }
+  const methods = extractClassMethods(node, sourceFile);
+  const properties = extractClassProperties(node, sourceFile);
+  const { extendsClause, implementsList } = extractHeritageClauses(
+    node,
+    sourceFile
+  );
 
   return {
     name: node.name.text,
@@ -327,6 +323,81 @@ function extractClass(
     line: getLineNumber(node, sourceFile),
     endLine: getEndLineNumber(node, sourceFile),
   };
+}
+
+function extractClassMethods(
+  node: ts.ClassDeclaration,
+  sourceFile: ts.SourceFile
+): ParsedFunction[] {
+  const methods: ParsedFunction[] = [];
+  for (const member of node.members) {
+    if (!(ts.isMethodDeclaration(member) && member.name)) {
+      continue;
+    }
+    methods.push({
+      name: member.name.getText(sourceFile),
+      params: member.parameters.map((p) => ({
+        name: p.name.getText(sourceFile),
+        type: p.type ? p.type.getText(sourceFile) : undefined,
+        optional: !!p.questionToken,
+      })),
+      returnType: member.type ? member.type.getText(sourceFile) : undefined,
+      exported: false,
+      isAsync: !!member.modifiers?.some(
+        (m) => m.kind === ts.SyntaxKind.AsyncKeyword
+      ),
+      isGenerator: false,
+      line: getLineNumber(member, sourceFile),
+      endLine: getEndLineNumber(member, sourceFile),
+      visibility: getVisibility(member),
+    });
+  }
+  return methods;
+}
+
+function extractClassProperties(
+  node: ts.ClassDeclaration,
+  sourceFile: ts.SourceFile
+): Array<{ name: string; type?: string; visibility?: string }> {
+  const properties: Array<{
+    name: string;
+    type?: string;
+    visibility?: string;
+  }> = [];
+  for (const member of node.members) {
+    if (!(ts.isPropertyDeclaration(member) && member.name)) {
+      continue;
+    }
+    properties.push({
+      name: member.name.getText(sourceFile),
+      type: member.type ? member.type.getText(sourceFile) : undefined,
+      visibility: getVisibility(member),
+    });
+  }
+  return properties;
+}
+
+function extractHeritageClauses(
+  node: ts.ClassDeclaration,
+  sourceFile: ts.SourceFile
+): { extendsClause?: string; implementsList: string[] } {
+  let extendsClause: string | undefined;
+  const implementsList: string[] = [];
+  if (!node.heritageClauses) {
+    return { extendsClause, implementsList };
+  }
+
+  for (const clause of node.heritageClauses) {
+    if (clause.token === ts.SyntaxKind.ExtendsKeyword) {
+      extendsClause = clause.types[0]?.expression.getText(sourceFile);
+    }
+    if (clause.token === ts.SyntaxKind.ImplementsKeyword) {
+      for (const type of clause.types) {
+        implementsList.push(type.expression.getText(sourceFile));
+      }
+    }
+  }
+  return { extendsClause, implementsList };
 }
 
 function extractImport(

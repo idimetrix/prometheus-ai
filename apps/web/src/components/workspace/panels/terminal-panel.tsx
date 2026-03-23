@@ -22,7 +22,6 @@ const TERMINAL_TABS: Array<{ id: TerminalTab; label: string }> = [
 ];
 
 // Strip ANSI escape codes for safe rendering in fallback views
-// biome-ignore lint/suspicious/noControlCharactersInRegex: ANSI escape sequences require control characters
 const ANSI_REGEX = /\x1b\[[0-9;]*[A-Za-z]|\x1b\].*?\x07|\x1b\[.*?[@-~]/g;
 
 function stripAnsi(text: string): string {

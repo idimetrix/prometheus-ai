@@ -483,64 +483,9 @@ export class ModelRouterService {
       !isStreamingRequest &&
       (request.slot === "default" || request.slot === "fastLoop")
     ) {
-      try {
-        const cascadeMessages = request.messages.map((m) => ({
-          role: m.role as CascadeMessage["role"],
-          content: m.content,
-        }));
-        const cascadeResult = await this.cascade.execute(cascadeMessages);
-        this.logger.info(
-          {
-            slot: request.slot,
-            tier: cascadeResult.tier,
-            model: cascadeResult.model,
-            quality: cascadeResult.quality.toFixed(3),
-            savingsUsd: cascadeResult.savingsUsd.toFixed(6),
-          },
-          "Cascade routing completed"
-        );
-
-        const result: RouteResponse = {
-          id: generateId("cmpl"),
-          model: cascadeResult.model,
-          provider: MODEL_REGISTRY[cascadeResult.model]?.provider ?? "unknown",
-          slot: request.slot,
-          choices: [
-            {
-              message: {
-                role: "assistant",
-                content: cascadeResult.content,
-              },
-              finish_reason: "stop",
-            },
-          ],
-          usage: {
-            prompt_tokens: 0,
-            completion_tokens: 0,
-            total_tokens: 0,
-            cost_usd: cascadeResult.costUsd,
-          },
-          routing: {
-            primaryModel: slotConfig.primary,
-            modelUsed: cascadeResult.model,
-            wasFallback: cascadeResult.escalated,
-            attemptsCount: 1,
-          },
-        };
-
-        await this.cache.set(
-          request.slot,
-          request.messages as Array<{ role: string; content: string }>,
-          request.options?.tools as unknown[] | undefined,
-          result
-        );
-        return result;
-      } catch (error) {
-        const msg = error instanceof Error ? error.message : String(error);
-        this.logger.warn(
-          { slot: request.slot, error: msg },
-          "Cascade routing failed, falling back to standard routing"
-        );
+      const cascadeResult = await this.tryCascadeRouting(request, slotConfig);
+      if (cascadeResult) {
+        return cascadeResult;
       }
     }
 
@@ -548,47 +493,7 @@ export class ModelRouterService {
     const candidates = [slotConfig.primary, ...slotConfig.fallbacks];
 
     // Adaptive model reordering based on historical performance
-    if (request.optimizeForCost) {
-      // Cost-optimized: prefer cheapest model meeting quality threshold
-      const costRanked = this.scorer.getCostOptimizedRanking(
-        request.slot,
-        0.5,
-        request.options?.taskId
-      );
-      if (costRanked.length >= 1) {
-        const costKeys = new Set(costRanked.map((r) => r.modelKey));
-        const reordered = [
-          ...costRanked
-            .map((r) => r.modelKey)
-            .filter((k) => candidates.includes(k)),
-          ...candidates.filter((k) => !costKeys.has(k)),
-        ];
-        candidates.length = 0;
-        candidates.push(...reordered);
-        this.logger.debug(
-          { slot: request.slot, reordered: candidates },
-          "Cost-optimized model reordering"
-        );
-      }
-    } else {
-      const ranked = this.scorer.getRankedModels(request.slot);
-      if (ranked.length >= 2) {
-        // Reorder candidates based on scoring data
-        const rankedKeys = new Set(ranked.map((r) => r.modelKey));
-        const reordered = [
-          ...ranked
-            .map((r) => r.modelKey)
-            .filter((k) => candidates.includes(k)),
-          ...candidates.filter((k) => !rankedKeys.has(k)),
-        ];
-        candidates.length = 0;
-        candidates.push(...reordered);
-        this.logger.debug(
-          { slot: request.slot, reordered: candidates },
-          "Adaptive model reordering"
-        );
-      }
-    }
+    this.reorderCandidates(candidates, request);
 
     let attempts = 0;
 
@@ -653,6 +558,110 @@ export class ModelRouterService {
 
     throw new Error(
       `All models exhausted for slot "${request.slot}". Tried: ${candidates.join(", ")}`
+    );
+  }
+
+  /**
+   * Reorder candidates array in-place based on historical performance.
+   */
+  /**
+   * Attempt cascade routing for cost optimization. Returns null if cascade
+   * is not applicable or fails.
+   */
+  private async tryCascadeRouting(
+    request: RouteRequest,
+    slotConfig: SlotConfig
+  ): Promise<RouteResponse | null> {
+    try {
+      const cascadeMessages = request.messages.map((m) => ({
+        role: m.role as CascadeMessage["role"],
+        content: m.content,
+      }));
+      const cascadeResult = await this.cascade.execute(cascadeMessages);
+      this.logger.info(
+        {
+          slot: request.slot,
+          tier: cascadeResult.tier,
+          model: cascadeResult.model,
+          quality: cascadeResult.quality.toFixed(3),
+          savingsUsd: cascadeResult.savingsUsd.toFixed(6),
+        },
+        "Cascade routing completed"
+      );
+
+      const result: RouteResponse = {
+        id: generateId("cmpl"),
+        model: cascadeResult.model,
+        provider: MODEL_REGISTRY[cascadeResult.model]?.provider ?? "unknown",
+        slot: request.slot,
+        choices: [
+          {
+            message: {
+              role: "assistant",
+              content: cascadeResult.content,
+            },
+            finish_reason: "stop",
+          },
+        ],
+        usage: {
+          prompt_tokens: 0,
+          completion_tokens: 0,
+          total_tokens: 0,
+          cost_usd: cascadeResult.costUsd,
+        },
+        routing: {
+          primaryModel: slotConfig.primary,
+          modelUsed: cascadeResult.model,
+          wasFallback: cascadeResult.escalated,
+          attemptsCount: 1,
+        },
+      };
+
+      await this.cache.set(
+        request.slot,
+        request.messages as Array<{ role: string; content: string }>,
+        request.options?.tools as unknown[] | undefined,
+        result
+      );
+      return result;
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      this.logger.warn(
+        { slot: request.slot, error: msg },
+        "Cascade routing failed, falling back to standard routing"
+      );
+      return null;
+    }
+  }
+
+  private reorderCandidates(candidates: string[], request: RouteRequest): void {
+    const rankedModels = request.optimizeForCost
+      ? this.scorer.getCostOptimizedRanking(
+          request.slot,
+          0.5,
+          request.options?.taskId
+        )
+      : this.scorer.getRankedModels(request.slot);
+
+    const minRequired = request.optimizeForCost ? 1 : 2;
+    if (rankedModels.length < minRequired) {
+      return;
+    }
+
+    const rankedKeys = new Set(rankedModels.map((r) => r.modelKey));
+    const reordered = [
+      ...rankedModels
+        .map((r) => r.modelKey)
+        .filter((k) => candidates.includes(k)),
+      ...candidates.filter((k) => !rankedKeys.has(k)),
+    ];
+    candidates.length = 0;
+    candidates.push(...reordered);
+    this.logger.debug(
+      { slot: request.slot, reordered: candidates },
+      request.optimizeForCost
+        ? "Cost-optimized model reordering"
+        : "Adaptive model reordering"
     );
   }
 
@@ -951,65 +960,16 @@ export class ModelRouterService {
             }
           }
         } finally {
-          const totalTokens = promptTokens + completionTokens;
-          const costUsd =
-            promptTokens * (config?.costPerInputToken ?? 0) +
-            completionTokens * (config?.costPerOutputToken ?? 0);
-
-          // Record token usage asynchronously
-          self.rateLimiter
-            .recordTokenUsage(
-              config?.provider ?? modelKey,
-              modelKey,
-              promptTokens,
-              completionTokens
-            )
-            .catch(() => {
-              /* fire-and-forget */
-            });
-
-          // Fire-and-forget model usage logging
-          self
-            .logModelUsage({
-              orgId: request.options?.orgId,
-              sessionId: request.options?.taskId,
-              modelKey,
-              provider: config?.provider ?? modelKey,
-              slot: request.slot,
-              promptTokens,
-              completionTokens,
-              totalTokens,
-              costUsd,
-            })
-            .catch(() => {
-              /* fire-and-forget */
-            });
-
-          self.logger.info(
-            {
-              model: modelKey,
-              promptTokens,
-              completionTokens,
-              costUsd: costUsd.toFixed(6),
-              stream: true,
-            },
-            "Streaming completion finished"
+          self.finalizeStream(
+            config,
+            modelKey,
+            request,
+            slotConfig,
+            attemptNumber,
+            promptTokens,
+            completionTokens,
+            resolveDone
           );
-
-          resolveDone?.({
-            usage: {
-              prompt_tokens: promptTokens,
-              completion_tokens: completionTokens,
-              total_tokens: totalTokens,
-              cost_usd: costUsd,
-            },
-            routing: {
-              primaryModel: slotConfig.primary,
-              modelUsed: modelKey,
-              wasFallback: modelKey !== slotConfig.primary,
-              attemptsCount: attemptNumber,
-            },
-          });
         }
       }
 
@@ -1029,6 +989,98 @@ export class ModelRouterService {
       );
       return null;
     }
+  }
+
+  /**
+   * Finalize a streaming response: record token usage, log model usage,
+   * and resolve the done promise.
+   */
+  private finalizeStream(
+    config:
+      | {
+          provider: string;
+          costPerInputToken: number;
+          costPerOutputToken: number;
+        }
+      | undefined,
+    modelKey: string,
+    request: RouteRequest,
+    slotConfig: SlotConfig,
+    attemptNumber: number,
+    promptTokens: number,
+    completionTokens: number,
+    resolveDone:
+      | ((value: {
+          usage: {
+            prompt_tokens: number;
+            completion_tokens: number;
+            total_tokens: number;
+            cost_usd: number;
+          };
+          routing: {
+            primaryModel: string;
+            modelUsed: string;
+            wasFallback: boolean;
+            attemptsCount: number;
+          };
+        }) => void)
+      | undefined
+  ): void {
+    const totalTokens = promptTokens + completionTokens;
+    const costUsd =
+      promptTokens * (config?.costPerInputToken ?? 0) +
+      completionTokens * (config?.costPerOutputToken ?? 0);
+
+    this.rateLimiter
+      .recordTokenUsage(
+        config?.provider ?? modelKey,
+        modelKey,
+        promptTokens,
+        completionTokens
+      )
+      .catch(() => {
+        /* fire-and-forget */
+      });
+
+    this.logModelUsage({
+      orgId: request.options?.orgId,
+      sessionId: request.options?.taskId,
+      modelKey,
+      provider: config?.provider ?? modelKey,
+      slot: request.slot,
+      promptTokens,
+      completionTokens,
+      totalTokens,
+      costUsd,
+    }).catch(() => {
+      /* fire-and-forget */
+    });
+
+    this.logger.info(
+      {
+        model: modelKey,
+        promptTokens,
+        completionTokens,
+        costUsd: costUsd.toFixed(6),
+        stream: true,
+      },
+      "Streaming completion finished"
+    );
+
+    resolveDone?.({
+      usage: {
+        prompt_tokens: promptTokens,
+        completion_tokens: completionTokens,
+        total_tokens: totalTokens,
+        cost_usd: costUsd,
+      },
+      routing: {
+        primaryModel: slotConfig.primary,
+        modelUsed: modelKey,
+        wasFallback: modelKey !== slotConfig.primary,
+        attemptsCount: attemptNumber,
+      },
+    });
   }
 
   /**

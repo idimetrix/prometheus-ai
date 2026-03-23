@@ -1,5 +1,6 @@
 import { createLogger } from "@prometheus/logger";
 import { createRedisConnection } from "@prometheus/queue";
+import { createDeferred } from "@prometheus/utils";
 import type IORedis from "ioredis";
 
 const logger = createLogger("model-router:request-coalescer");
@@ -84,20 +85,12 @@ export class RequestCoalescer {
       return this.waitForDistributedResult<T>(key);
     }
 
-    let resolveFn: (value: T) => void;
-    let rejectFn: (error: unknown) => void;
-
-    const promise = new Promise<T>((resolve, reject) => {
-      resolveFn = resolve;
-      rejectFn = reject;
-    });
+    const deferred = createDeferred<T>();
 
     const entry: PendingRequest<T> = {
-      promise,
-      // biome-ignore lint/style/noNonNullAssertion: assigned in Promise constructor
-      resolve: resolveFn!,
-      // biome-ignore lint/style/noNonNullAssertion: assigned in Promise constructor
-      reject: rejectFn!,
+      promise: deferred.promise,
+      resolve: deferred.resolve,
+      reject: deferred.reject,
       createdAt: Date.now(),
     };
 
@@ -258,10 +251,8 @@ function hashNormalizedPrompt(prompt: string): string {
   const normalized = normalizePrompt(prompt);
   let hash = 5381;
   for (let i = 0; i < normalized.length; i++) {
-    // biome-ignore lint/suspicious/noBitwiseOperators: DJB2 hash requires bitwise ops
     hash = ((hash << 5) + hash + normalized.charCodeAt(i)) | 0;
   }
-  // biome-ignore lint/suspicious/noBitwiseOperators: DJB2 hash requires bitwise ops
   return `nreq_${(hash >>> 0).toString(36)}`;
 }
 
@@ -431,20 +422,12 @@ export class EmbeddingCoalescer {
    * with the embedding vector once the batch is flushed.
    */
   embed(input: string): Promise<number[]> {
-    let resolveFn: (value: number[]) => void;
-    let rejectFn: (error: unknown) => void;
-
-    const promise = new Promise<number[]>((resolve, reject) => {
-      resolveFn = resolve;
-      rejectFn = reject;
-    });
+    const deferred = createDeferred<number[]>();
 
     this.batch.push({
       input,
-      // biome-ignore lint/style/noNonNullAssertion: assigned in Promise constructor
-      resolve: resolveFn!,
-      // biome-ignore lint/style/noNonNullAssertion: assigned in Promise constructor
-      reject: rejectFn!,
+      resolve: deferred.resolve,
+      reject: deferred.reject,
     });
 
     // Flush immediately when max batch size reached
@@ -457,7 +440,7 @@ export class EmbeddingCoalescer {
       }, this.windowMs);
     }
 
-    return promise;
+    return deferred.promise;
   }
 
   /**

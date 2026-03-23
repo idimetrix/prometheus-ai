@@ -153,18 +153,51 @@ export class ProgressiveSummarizer {
     const openQuestions: string[] = [];
 
     for (const msg of messages) {
-      const content = msg.content;
-      for (const fp of this.extractFilePaths(content)) {
-        filesChanged.add(fp);
-      }
-      for (const err of this.extractErrorMessages(content)) {
-        if (!errorsFound.includes(err)) {
-          errorsFound.push(err);
-        }
-      }
-      const lowerContent = content.toLowerCase();
+      this.collectPhaseData(
+        msg,
+        filesChanged,
+        errorsFound,
+        decisions,
+        actionsCompleted,
+        openQuestions
+      );
+    }
 
-      for (const pattern of [
+    this.appendSection(parts, "\nActions completed:", actionsCompleted, 8);
+    this.appendSection(parts, "\nDecisions made:", decisions, 5);
+    if (filesChanged.size > 0) {
+      parts.push(
+        `\nFiles involved (${filesChanged.size}): ${Array.from(filesChanged).slice(0, 15).join(", ")}`
+      );
+    }
+    this.appendSection(parts, "\nErrors encountered:", errorsFound, 3);
+    this.appendSection(parts, "\nOpen questions:", openQuestions, 3);
+    return parts.join("\n");
+  }
+
+  private collectPhaseData(
+    msg: Message,
+    filesChanged: Set<string>,
+    errorsFound: string[],
+    decisions: string[],
+    actionsCompleted: string[],
+    openQuestions: string[]
+  ): void {
+    const content = msg.content;
+    for (const fp of this.extractFilePaths(content)) {
+      filesChanged.add(fp);
+    }
+    for (const err of this.extractErrorMessages(content)) {
+      if (!errorsFound.includes(err)) {
+        errorsFound.push(err);
+      }
+    }
+
+    const lowerContent = content.toLowerCase();
+    this.collectMatchingSentences(
+      content,
+      lowerContent,
+      [
         "decided",
         "chose",
         "will use",
@@ -172,16 +205,13 @@ export class ProgressiveSummarizer {
         "selected",
         "approach:",
         "solution:",
-      ]) {
-        if (lowerContent.includes(pattern)) {
-          const sentence = this.extractSentenceContaining(content, pattern);
-          if (sentence && !decisions.includes(sentence)) {
-            decisions.push(sentence);
-          }
-        }
-      }
-
-      for (const pattern of [
+      ],
+      decisions
+    );
+    this.collectMatchingSentences(
+      content,
+      lowerContent,
+      [
         "created",
         "updated",
         "fixed",
@@ -190,60 +220,55 @@ export class ProgressiveSummarizer {
         "removed",
         "refactored",
         "configured",
-      ]) {
-        if (lowerContent.includes(pattern)) {
-          const sentence = this.extractSentenceContaining(content, pattern);
-          if (sentence && !actionsCompleted.includes(sentence)) {
-            actionsCompleted.push(sentence);
-          }
-        }
-      }
+      ],
+      actionsCompleted
+    );
 
-      if (
-        content.includes("?") &&
-        (msg.role === "user" || msg.role === "human")
-      ) {
-        for (const q of content
-          .split(QUESTION_SPLIT_RE)
-          .filter((s) => s.includes("?"))
-          .map((s) => s.trim())) {
-          if (q.length > 10 && !openQuestions.includes(q)) {
-            openQuestions.push(q);
-          }
+    if (
+      content.includes("?") &&
+      (msg.role === "user" || msg.role === "human")
+    ) {
+      for (const q of content
+        .split(QUESTION_SPLIT_RE)
+        .filter((s) => s.includes("?"))
+        .map((s) => s.trim())) {
+        if (q.length > 10 && !openQuestions.includes(q)) {
+          openQuestions.push(q);
         }
       }
     }
+  }
 
-    if (actionsCompleted.length > 0) {
-      parts.push("\nActions completed:");
-      for (const a of actionsCompleted.slice(0, 8)) {
-        parts.push(`- ${a}`);
+  private collectMatchingSentences(
+    content: string,
+    lowerContent: string,
+    patterns: string[],
+    target: string[]
+  ): void {
+    for (const pattern of patterns) {
+      if (!lowerContent.includes(pattern)) {
+        continue;
+      }
+      const sentence = this.extractSentenceContaining(content, pattern);
+      if (sentence && !target.includes(sentence)) {
+        target.push(sentence);
       }
     }
-    if (decisions.length > 0) {
-      parts.push("\nDecisions made:");
-      for (const d of decisions.slice(0, 5)) {
-        parts.push(`- ${d}`);
-      }
+  }
+
+  private appendSection(
+    parts: string[],
+    heading: string,
+    items: string[],
+    limit: number
+  ): void {
+    if (items.length === 0) {
+      return;
     }
-    if (filesChanged.size > 0) {
-      parts.push(
-        `\nFiles involved (${filesChanged.size}): ${Array.from(filesChanged).slice(0, 15).join(", ")}`
-      );
+    parts.push(heading);
+    for (const item of items.slice(0, limit)) {
+      parts.push(`- ${item}`);
     }
-    if (errorsFound.length > 0) {
-      parts.push("\nErrors encountered:");
-      for (const e of errorsFound.slice(0, 3)) {
-        parts.push(`- ${e}`);
-      }
-    }
-    if (openQuestions.length > 0) {
-      parts.push("\nOpen questions:");
-      for (const q of openQuestions.slice(0, 3)) {
-        parts.push(`- ${q}`);
-      }
-    }
-    return parts.join("\n");
   }
 
   private compressSession(rawContent: string, messages: Message[]): string {

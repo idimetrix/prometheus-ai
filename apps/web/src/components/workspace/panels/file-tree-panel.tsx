@@ -30,6 +30,47 @@ interface FileNodeData {
   status?: string;
 }
 
+function ensureFolderPath(
+  items: Record<string, TreeItem<FileNodeData>>,
+  rootChildren: TreeItemIndex[],
+  folderChildrenMap: Record<string, TreeItemIndex[]>,
+  parts: string[]
+): string {
+  let currentPath = "";
+
+  for (let i = 0; i < parts.length - 1; i++) {
+    const segment = parts[i];
+    if (!segment) {
+      continue;
+    }
+    const parentPath = currentPath;
+    currentPath = currentPath ? `${currentPath}/${segment}` : segment;
+
+    if (items[currentPath]) {
+      continue;
+    }
+
+    items[currentPath] = {
+      index: currentPath,
+      isFolder: true,
+      children: [],
+      data: { name: segment, path: currentPath, isFolder: true },
+    };
+
+    if (parentPath) {
+      const existing = folderChildrenMap[parentPath] ?? [];
+      if (!existing.includes(currentPath)) {
+        existing.push(currentPath);
+      }
+      folderChildrenMap[parentPath] = existing;
+    } else if (!rootChildren.includes(currentPath)) {
+      rootChildren.push(currentPath);
+    }
+  }
+
+  return currentPath;
+}
+
 function buildTreeData(
   files: FileEntry[]
 ): Record<string, TreeItem<FileNodeData>> {
@@ -41,39 +82,12 @@ function buildTreeData(
 
   for (const file of sorted) {
     const parts = file.path.split("/");
-    let currentPath = "";
-
-    for (let i = 0; i < parts.length - 1; i++) {
-      const segment = parts[i];
-      if (!segment) {
-        continue;
-      }
-      const parentPath = currentPath;
-      currentPath = currentPath ? `${currentPath}/${segment}` : segment;
-
-      if (!items[currentPath]) {
-        items[currentPath] = {
-          index: currentPath,
-          isFolder: true,
-          children: [],
-          data: {
-            name: segment,
-            path: currentPath,
-            isFolder: true,
-          },
-        };
-
-        if (parentPath) {
-          const existing = folderChildrenMap[parentPath] ?? [];
-          if (!existing.includes(currentPath)) {
-            existing.push(currentPath);
-          }
-          folderChildrenMap[parentPath] = existing;
-        } else if (!rootChildren.includes(currentPath)) {
-          rootChildren.push(currentPath);
-        }
-      }
-    }
+    const currentPath = ensureFolderPath(
+      items,
+      rootChildren,
+      folderChildrenMap,
+      parts
+    );
 
     const fileName = parts.at(-1) ?? file.name;
     const fileIndex = file.path;
@@ -107,11 +121,7 @@ function buildTreeData(
     index: "root",
     isFolder: true,
     children: rootChildren,
-    data: {
-      name: "root",
-      path: "",
-      isFolder: true,
-    },
+    data: { name: "root", path: "", isFolder: true },
   };
 
   return items;

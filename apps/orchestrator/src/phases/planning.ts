@@ -127,6 +127,64 @@ Rules:
     return "Complete sprint tasks";
   }
 
+  private parseTaskBlock(
+    block: string,
+    id: string,
+    title: string
+  ): SprintPlan["tasks"][number] {
+    const descMatch = block.match(TASK_DESCRIPTION_RE);
+    const agentMatch = block.match(TASK_AGENT_RE);
+    const depsMatch = block.match(TASK_DEPS_RE);
+    const effortMatch = block.match(TASK_EFFORT_RE);
+
+    const acceptanceCriteria = this.parseAcceptanceCriteria(block);
+
+    const depsStr = depsMatch?.[1]?.trim() ?? "none";
+    const dependencies: string[] = [];
+    if (depsStr.toLowerCase() !== "none") {
+      const depMatches = depsStr.match(TASK_ID_RE);
+      if (depMatches) {
+        dependencies.push(...depMatches);
+      }
+    }
+
+    const agentRaw = agentMatch?.[1]?.toLowerCase() ?? "backend_coder";
+    const agentRole = this.normalizeAgentRole(agentRaw);
+
+    return {
+      id,
+      title,
+      description: descMatch?.[1]?.trim() ?? title,
+      agentRole,
+      dependencies,
+      effort: (effortMatch?.[1]?.toUpperCase() ?? "M") as
+        | "S"
+        | "M"
+        | "L"
+        | "XL",
+      acceptanceCriteria:
+        acceptanceCriteria.length > 0
+          ? acceptanceCriteria
+          : [`${title} is implemented and working`],
+    };
+  }
+
+  private parseAcceptanceCriteria(block: string): string[] {
+    const acSection = block.match(TASK_ACCEPTANCE_RE);
+    const criteria: string[] = [];
+    if (!acSection?.[1]) {
+      return criteria;
+    }
+    const lines = acSection[1].split("\n");
+    for (const line of lines) {
+      const criterion = line.replace(LIST_BULLET_PREFIX_RE, "").trim();
+      if (criterion.length > 0) {
+        criteria.push(criterion);
+      }
+    }
+    return criteria;
+  }
+
   private extractTasks(output: string): SprintPlan["tasks"] {
     const tasks: SprintPlan["tasks"] = [];
     TASK_HEADER_RE.lastIndex = 0;
@@ -138,7 +196,6 @@ Rules:
       const id = `TASK-${match[1]}`;
       const title = match[2]?.trim() ?? "";
 
-      // Extract the block for this task
       const startPos = match.index + match[0].length;
       const nextTask = taskSection.indexOf("TASK-", startPos);
       const nextSection = taskSection.indexOf("##", startPos);
@@ -148,59 +205,10 @@ Rules:
       );
       const block = taskSection.slice(startPos, endPos);
 
-      // Parse fields
-      const descMatch = block.match(TASK_DESCRIPTION_RE);
-      const agentMatch = block.match(TASK_AGENT_RE);
-      const depsMatch = block.match(TASK_DEPS_RE);
-      const effortMatch = block.match(TASK_EFFORT_RE);
-
-      // Parse acceptance criteria
-      const acSection = block.match(TASK_ACCEPTANCE_RE);
-      const acceptanceCriteria: string[] = [];
-      if (acSection?.[1]) {
-        const lines = acSection[1].split("\n");
-        for (const line of lines) {
-          const criterion = line.replace(LIST_BULLET_PREFIX_RE, "").trim();
-          if (criterion.length > 0) {
-            acceptanceCriteria.push(criterion);
-          }
-        }
-      }
-
-      // Parse dependencies
-      const depsStr = depsMatch?.[1]?.trim() ?? "none";
-      const dependencies: string[] = [];
-      if (depsStr.toLowerCase() !== "none") {
-        const depMatches = depsStr.match(TASK_ID_RE);
-        if (depMatches) {
-          dependencies.push(...depMatches);
-        }
-      }
-
-      // Map agent name to role
-      const agentRaw = agentMatch?.[1]?.toLowerCase() ?? "backend_coder";
-      const agentRole = this.normalizeAgentRole(agentRaw);
-
-      tasks.push({
-        id,
-        title,
-        description: descMatch?.[1]?.trim() ?? title,
-        agentRole,
-        dependencies,
-        effort: (effortMatch?.[1]?.toUpperCase() ?? "M") as
-          | "S"
-          | "M"
-          | "L"
-          | "XL",
-        acceptanceCriteria:
-          acceptanceCriteria.length > 0
-            ? acceptanceCriteria
-            : [`${title} is implemented and working`],
-      });
+      tasks.push(this.parseTaskBlock(block, id, title));
       match = TASK_HEADER_RE.exec(taskSection);
     }
 
-    // If no tasks were parsed, create a default task
     if (tasks.length === 0 && output.length > 100) {
       tasks.push({
         id: "TASK-1",

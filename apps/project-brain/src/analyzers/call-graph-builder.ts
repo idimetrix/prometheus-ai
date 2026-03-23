@@ -256,17 +256,59 @@ export class CallGraphBuilder {
     const importedSymbols = new Map<string, { source: string; line: number }>();
 
     // ── Extract nodes ─────────────────────────────────────────────
+    this.extractFunctionNodes(filePath, content, nodes, nodeNames);
+    this.extractArrowFunctionNodes(filePath, content, nodes, nodeNames);
+    this.extractClassNodes(filePath, content, nodes, edges, nodeNames);
+    this.extractMethodNodes(filePath, content, nodes, nodeNames);
+    this.extractDeclarationNodes(filePath, content, nodes, nodeNames);
 
-    // Named function declarations
+    // ── Extract import edges ──────────────────────────────────────
+    this.extractImportEdges(filePath, content, edges, importedSymbols);
+
+    // ── Extract call-site and type-reference edges ────────────────
+    const lines = content.split("\n");
+    this.extractCallSiteEdges(
+      filePath,
+      lines,
+      nodes,
+      edges,
+      nodeNames,
+      importedSymbols
+    );
+    this.extractTypeRefEdges(
+      filePath,
+      lines,
+      nodes,
+      edges,
+      nodeNames,
+      importedSymbols
+    );
+
+    // ── Deduplicate edges ─────────────────────────────────────────
+    const deduped = deduplicateEdges(edges);
+
+    logger.debug(
+      { filePath, nodes: nodes.length, edges: deduped.length },
+      "Call graph built for file"
+    );
+
+    return { nodes, edges: deduped };
+  }
+
+  private extractFunctionNodes(
+    filePath: string,
+    content: string,
+    nodes: CallGraphNode[],
+    nodeNames: Set<string>
+  ): void {
     for (const match of content.matchAll(NAMED_FN_RE)) {
       const name = match[3];
       if (!name) {
         continue;
       }
       const line = lineNumberOf(content, match.index);
-      const id = makeNodeId(filePath, name, "fn");
       nodes.push({
-        id,
+        id: makeNodeId(filePath, name, "fn"),
         name,
         type: "function",
         filePath,
@@ -278,21 +320,22 @@ export class CallGraphBuilder {
       });
       nodeNames.add(name);
     }
+  }
 
-    // Arrow function assignments
+  private extractArrowFunctionNodes(
+    filePath: string,
+    content: string,
+    nodes: CallGraphNode[],
+    nodeNames: Set<string>
+  ): void {
     for (const match of content.matchAll(ARROW_FN_RE)) {
       const name = match[2];
-      if (!name) {
+      if (!name || nodeNames.has(name)) {
         continue;
       }
       const line = lineNumberOf(content, match.index);
-      const id = makeNodeId(filePath, name, "fn");
-      // Avoid duplicates if already captured as named function
-      if (nodeNames.has(name)) {
-        continue;
-      }
       nodes.push({
-        id,
+        id: makeNodeId(filePath, name, "fn"),
         name,
         type: "function",
         filePath,
@@ -304,8 +347,15 @@ export class CallGraphBuilder {
       });
       nodeNames.add(name);
     }
+  }
 
-    // Class declarations
+  private extractClassNodes(
+    filePath: string,
+    content: string,
+    nodes: CallGraphNode[],
+    edges: CallGraphEdge[],
+    nodeNames: Set<string>
+  ): void {
     for (const match of content.matchAll(CLASS_DECL_RE)) {
       const name = match[3];
       if (!name) {
@@ -324,7 +374,6 @@ export class CallGraphBuilder {
       });
       nodeNames.add(name);
 
-      // extends edge
       const baseClass = match[4]?.trim();
       if (baseClass) {
         edges.push({
@@ -336,7 +385,6 @@ export class CallGraphBuilder {
         });
       }
 
-      // implements edges
       const interfaces = match[5];
       if (interfaces) {
         for (const iface of interfaces.split(",")) {
@@ -353,24 +401,28 @@ export class CallGraphBuilder {
         }
       }
     }
+  }
 
-    // Class methods (scan inside class bodies)
+  private extractMethodNodes(
+    filePath: string,
+    content: string,
+    nodes: CallGraphNode[],
+    nodeNames: Set<string>
+  ): void {
     for (const match of content.matchAll(METHOD_RE)) {
       const name = match[4];
       if (!name || name === "constructor") {
         continue;
       }
-      // Skip if it looks like a keyword
       if (CALL_SITE_KEYWORDS.has(name)) {
         continue;
       }
-      const line = lineNumberOf(content, match.index);
-      const id = makeNodeId(filePath, name, "method");
       if (nodeNames.has(name)) {
         continue;
       }
+      const line = lineNumberOf(content, match.index);
       nodes.push({
-        id,
+        id: makeNodeId(filePath, name, "method"),
         name,
         type: "method",
         filePath,
@@ -382,8 +434,14 @@ export class CallGraphBuilder {
       });
       nodeNames.add(name);
     }
+  }
 
-    // Interface declarations
+  private extractDeclarationNodes(
+    filePath: string,
+    content: string,
+    nodes: CallGraphNode[],
+    nodeNames: Set<string>
+  ): void {
     for (const match of content.matchAll(INTERFACE_RE)) {
       const name = match[2];
       if (!name) {
@@ -402,7 +460,6 @@ export class CallGraphBuilder {
       nodeNames.add(name);
     }
 
-    // Type alias declarations
     for (const match of content.matchAll(TYPE_ALIAS_RE)) {
       const name = match[2];
       if (!name) {
@@ -421,7 +478,6 @@ export class CallGraphBuilder {
       nodeNames.add(name);
     }
 
-    // Enum declarations
     for (const match of content.matchAll(ENUM_RE)) {
       const name = match[2];
       if (!name) {
@@ -440,7 +496,6 @@ export class CallGraphBuilder {
       nodeNames.add(name);
     }
 
-    // Variable declarations (non-function consts)
     for (const match of content.matchAll(VAR_DECL_RE)) {
       const name = match[2];
       if (!name || nodeNames.has(name)) {
@@ -459,9 +514,14 @@ export class CallGraphBuilder {
       });
       nodeNames.add(name);
     }
+  }
 
-    // ── Extract import edges ──────────────────────────────────────
-
+  private extractImportEdges(
+    filePath: string,
+    content: string,
+    edges: CallGraphEdge[],
+    importedSymbols: Map<string, { source: string; line: number }>
+  ): void {
     for (const match of content.matchAll(NAMED_IMPORT_RE)) {
       const specifiers = match[1];
       const source = match[2];
@@ -520,13 +580,18 @@ export class CallGraphBuilder {
         line,
       });
     }
+  }
 
-    // ── Extract call-site edges ───────────────────────────────────
-
-    const lines = content.split("\n");
+  private extractCallSiteEdges(
+    filePath: string,
+    lines: string[],
+    nodes: CallGraphNode[],
+    edges: CallGraphEdge[],
+    nodeNames: Set<string>,
+    importedSymbols: Map<string, { source: string; line: number }>
+  ): void {
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i] ?? "";
-      // Skip import/export lines for call-site detection
       if (IMPORT_EXPORT_LINE_RE.test(line)) {
         continue;
       }
@@ -536,30 +601,37 @@ export class CallGraphBuilder {
         if (!calledName || CALL_SITE_KEYWORDS.has(calledName)) {
           continue;
         }
-        // Only create edges to known symbols in this file or imported symbols
-        if (nodeNames.has(calledName) || importedSymbols.has(calledName)) {
-          // Find the enclosing function for this call
-          const caller = findEnclosingNode(nodes, i + 1);
-          const sourceId = caller
-            ? caller.id
-            : makeNodeId(filePath, "<module>", "fn");
-          const targetId = importedSymbols.has(calledName)
-            ? `import:${importedSymbols.get(calledName)?.source}:${calledName}`
-            : makeNodeId(filePath, calledName, "fn");
-
-          edges.push({
-            sourceId,
-            targetId,
-            type: "calls_function",
-            filePath,
-            line: i + 1,
-          });
+        if (!(nodeNames.has(calledName) || importedSymbols.has(calledName))) {
+          continue;
         }
+
+        const caller = findEnclosingNode(nodes, i + 1);
+        const sourceId = caller
+          ? caller.id
+          : makeNodeId(filePath, "<module>", "fn");
+        const targetId = importedSymbols.has(calledName)
+          ? `import:${importedSymbols.get(calledName)?.source}:${calledName}`
+          : makeNodeId(filePath, calledName, "fn");
+
+        edges.push({
+          sourceId,
+          targetId,
+          type: "calls_function",
+          filePath,
+          line: i + 1,
+        });
       }
     }
+  }
 
-    // ── Extract type-reference edges ──────────────────────────────
-
+  private extractTypeRefEdges(
+    filePath: string,
+    lines: string[],
+    nodes: CallGraphNode[],
+    edges: CallGraphEdge[],
+    nodeNames: Set<string>,
+    importedSymbols: Map<string, { source: string; line: number }>
+  ): void {
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i] ?? "";
       if (IMPORT_EXPORT_LINE_RE.test(line)) {
@@ -571,40 +643,27 @@ export class CallGraphBuilder {
         if (!typeName || BUILTIN_TYPES.has(typeName)) {
           continue;
         }
-        if (nodeNames.has(typeName) || importedSymbols.has(typeName)) {
-          const referrer = findEnclosingNode(nodes, i + 1);
-          const sourceId = referrer
-            ? referrer.id
-            : makeNodeId(filePath, "<module>", "fn");
-          const targetId = importedSymbols.has(typeName)
-            ? `import:${importedSymbols.get(typeName)?.source}:${typeName}`
-            : makeNodeId(filePath, typeName, "type");
-
-          edges.push({
-            sourceId,
-            targetId,
-            type: "references_type",
-            filePath,
-            line: i + 1,
-          });
+        if (!(nodeNames.has(typeName) || importedSymbols.has(typeName))) {
+          continue;
         }
+
+        const referrer = findEnclosingNode(nodes, i + 1);
+        const sourceId = referrer
+          ? referrer.id
+          : makeNodeId(filePath, "<module>", "fn");
+        const targetId = importedSymbols.has(typeName)
+          ? `import:${importedSymbols.get(typeName)?.source}:${typeName}`
+          : makeNodeId(filePath, typeName, "type");
+
+        edges.push({
+          sourceId,
+          targetId,
+          type: "references_type",
+          filePath,
+          line: i + 1,
+        });
       }
     }
-
-    // ── Deduplicate edges ─────────────────────────────────────────
-
-    const deduped = deduplicateEdges(edges);
-
-    logger.debug(
-      {
-        filePath,
-        nodes: nodes.length,
-        edges: deduped.length,
-      },
-      "Call graph built for file"
-    );
-
-    return { nodes, edges: deduped };
   }
 
   /**

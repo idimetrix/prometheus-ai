@@ -349,80 +349,9 @@ export class ConventionLearner {
       });
     }
 
-    // Barrel files
-    const barrelCount = analyses.filter((a) => a.usesBarrelFiles).length;
-    const indexFiles = analyses.filter((a) =>
-      (a.path.split("/").pop() ?? "").startsWith("index")
-    ).length;
-    if (indexFiles > 0) {
-      const usesBarrels = barrelCount > indexFiles * 0.5;
-      conventions.push({
-        type: "structure",
-        rule: usesBarrels
-          ? "Use barrel files (index.ts) to re-export from directories"
-          : "Avoid barrel files; import directly from source modules",
-        confidence: usesBarrels
-          ? barrelCount / indexFiles
-          : 1 - barrelCount / Math.max(indexFiles, 1),
-        examples: analyses
-          .filter((a) => a.usesBarrelFiles === usesBarrels)
-          .slice(0, 3)
-          .map((a) => a.path),
-        source: `Detected ${barrelCount} barrel files out of ${indexFiles} index files`,
-      });
-    }
-
-    // Indentation
-    const indentVote = majorityVote(analyses.map((a) => a.indentation));
-    if (indentVote) {
-      conventions.push({
-        type: "style",
-        rule: `Use ${indentVote.winner} for indentation`,
-        confidence: indentVote.count / indentVote.total,
-        examples: [],
-        source: `Detected from ${indentVote.count}/${indentVote.total} files`,
-      });
-    }
-
-    // Semicolons
-    const semiVote = majorityVote(analyses.map((a) => a.semicolons));
-    if (semiVote) {
-      conventions.push({
-        type: "style",
-        rule: semiVote.winner
-          ? "Use semicolons at the end of statements"
-          : "Omit semicolons (ASI style)",
-        confidence: semiVote.count / semiVote.total,
-        examples: [],
-        source: `Detected from ${semiVote.count}/${semiVote.total} files`,
-      });
-    }
-
-    // Quotes
-    const quoteVote = majorityVote(analyses.map((a) => a.quotes));
-    if (quoteVote && quoteVote.winner !== "mixed") {
-      conventions.push({
-        type: "style",
-        rule: `Use ${quoteVote.winner} quotes for string literals and imports`,
-        confidence: quoteVote.count / quoteVote.total,
-        examples: [],
-        source: `Detected from ${quoteVote.count}/${quoteVote.total} files`,
-      });
-    }
-
-    // Trailing commas
-    const commaVote = majorityVote(analyses.map((a) => a.trailingCommas));
-    if (commaVote) {
-      conventions.push({
-        type: "style",
-        rule: commaVote.winner
-          ? "Use trailing commas in multi-line constructs"
-          : "Omit trailing commas",
-        confidence: commaVote.count / commaVote.total,
-        examples: [],
-        source: `Detected from ${commaVote.count}/${commaVote.total} files`,
-      });
-    }
+    // Barrel files and style conventions
+    const styleConventions = this.analyzeStyleConventions(analyses);
+    conventions.push(...styleConventions);
 
     // Function style (arrow vs regular)
     const functionConventions = this.analyzeFunctionStyle(sourceFiles);
@@ -505,19 +434,108 @@ export class ConventionLearner {
   // Private analysis helpers
   // -------------------------------------------------------------------------
 
-  private analyzeVariableNaming(
-    files: Array<{ path: string; content: string }>
+  private analyzeStyleConventions(
+    analyses: Array<{
+      path: string;
+      usesBarrelFiles: boolean;
+      indentation: string;
+      semicolons: boolean;
+      quotes: string;
+      trailingCommas: boolean;
+    }>
   ): Convention[] {
     const conventions: Convention[] = [];
 
+    // Barrel files
+    const barrelCount = analyses.filter((a) => a.usesBarrelFiles).length;
+    const indexFiles = analyses.filter((a) =>
+      (a.path.split("/").pop() ?? "").startsWith("index")
+    ).length;
+    if (indexFiles > 0) {
+      const usesBarrels = barrelCount > indexFiles * 0.5;
+      conventions.push({
+        type: "structure",
+        rule: usesBarrels
+          ? "Use barrel files (index.ts) to re-export from directories"
+          : "Avoid barrel files; import directly from source modules",
+        confidence: usesBarrels
+          ? barrelCount / indexFiles
+          : 1 - barrelCount / Math.max(indexFiles, 1),
+        examples: analyses
+          .filter((a) => a.usesBarrelFiles === usesBarrels)
+          .slice(0, 3)
+          .map((a) => a.path),
+        source: `Detected ${barrelCount} barrel files out of ${indexFiles} index files`,
+      });
+    }
+
+    // Indentation
+    const indentVote = majorityVote(analyses.map((a) => a.indentation));
+    if (indentVote) {
+      conventions.push({
+        type: "style",
+        rule: `Use ${indentVote.winner} for indentation`,
+        confidence: indentVote.count / indentVote.total,
+        examples: [],
+        source: `Detected from ${indentVote.count}/${indentVote.total} files`,
+      });
+    }
+
+    // Semicolons
+    const semiVote = majorityVote(analyses.map((a) => a.semicolons));
+    if (semiVote) {
+      conventions.push({
+        type: "style",
+        rule: semiVote.winner
+          ? "Use semicolons at the end of statements"
+          : "Omit semicolons (ASI style)",
+        confidence: semiVote.count / semiVote.total,
+        examples: [],
+        source: `Detected from ${semiVote.count}/${semiVote.total} files`,
+      });
+    }
+
+    // Quotes
+    const quoteVote = majorityVote(analyses.map((a) => a.quotes));
+    if (quoteVote && quoteVote.winner !== "mixed") {
+      conventions.push({
+        type: "style",
+        rule: `Use ${quoteVote.winner} quotes for string literals and imports`,
+        confidence: quoteVote.count / quoteVote.total,
+        examples: [],
+        source: `Detected from ${quoteVote.count}/${quoteVote.total} files`,
+      });
+    }
+
+    // Trailing commas
+    const commaVote = majorityVote(analyses.map((a) => a.trailingCommas));
+    if (commaVote) {
+      conventions.push({
+        type: "style",
+        rule: commaVote.winner
+          ? "Use trailing commas in multi-line constructs"
+          : "Omit trailing commas",
+        confidence: commaVote.count / commaVote.total,
+        examples: [],
+        source: `Detected from ${commaVote.count}/${commaVote.total} files`,
+      });
+    }
+
+    return conventions;
+  }
+
+  private countNamingStyles(files: Array<{ path: string; content: string }>): {
+    camelCaseVars: number;
+    snakeCaseVars: number;
+    pascalCaseConstants: number;
+    screamingSnakeConstants: number;
+  } {
     let camelCaseVars = 0;
     let snakeCaseVars = 0;
     let pascalCaseConstants = 0;
     let screamingSnakeConstants = 0;
-    const examples: string[] = [];
 
     for (const file of files) {
-      // Match variable declarations
       const varMatches = file.content.matchAll(VARIABLE_DECLARATION_RE);
       for (const m of varMatches) {
         const name = m[1];
@@ -539,30 +557,46 @@ export class ConventionLearner {
       }
     }
 
-    const total = camelCaseVars + snakeCaseVars;
+    return {
+      camelCaseVars,
+      snakeCaseVars,
+      pascalCaseConstants,
+      screamingSnakeConstants,
+    };
+  }
+
+  private analyzeVariableNaming(
+    files: Array<{ path: string; content: string }>
+  ): Convention[] {
+    const conventions: Convention[] = [];
+    const counts = this.countNamingStyles(files);
+
+    const total = counts.camelCaseVars + counts.snakeCaseVars;
     if (total > 5) {
-      const prefersCamel = camelCaseVars > snakeCaseVars;
+      const prefersCamel = counts.camelCaseVars > counts.snakeCaseVars;
       conventions.push({
         type: "naming",
         rule: prefersCamel
           ? "Use camelCase for variable and function names"
           : "Use snake_case for variable and function names",
-        confidence: Math.max(camelCaseVars, snakeCaseVars) / total,
-        examples,
+        confidence:
+          Math.max(counts.camelCaseVars, counts.snakeCaseVars) / total,
+        examples: [],
         source: `Detected from ${total} variable declarations`,
       });
     }
 
-    const constantTotal = pascalCaseConstants + screamingSnakeConstants;
+    const constantTotal =
+      counts.pascalCaseConstants + counts.screamingSnakeConstants;
     if (constantTotal > 3) {
       conventions.push({
         type: "naming",
         rule:
-          screamingSnakeConstants > pascalCaseConstants
+          counts.screamingSnakeConstants > counts.pascalCaseConstants
             ? "Use SCREAMING_SNAKE_CASE for constants"
             : "Use PascalCase for constant/enum-like values",
         confidence:
-          Math.max(screamingSnakeConstants, pascalCaseConstants) /
+          Math.max(counts.screamingSnakeConstants, counts.pascalCaseConstants) /
           constantTotal,
         examples: [],
         source: `Detected from ${constantTotal} constant declarations`,

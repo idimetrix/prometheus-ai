@@ -78,11 +78,9 @@ const FNV_PRIME = 16_777_619;
 function fnv1aHash(input: string): number {
   let hash = FNV_OFFSET_BASIS;
   for (let i = 0; i < input.length; i++) {
-    // biome-ignore lint/suspicious/noBitwiseOperators: FNV-1a hash requires bitwise ops
     hash ^= input.charCodeAt(i);
     hash = Math.imul(hash, FNV_PRIME);
   }
-  // biome-ignore lint/suspicious/noBitwiseOperators: FNV-1a hash requires bitwise ops
   return ((hash >>> 0) % 10_000) / 10_000;
 }
 

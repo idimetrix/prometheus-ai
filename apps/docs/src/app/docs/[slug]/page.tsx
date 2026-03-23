@@ -49,7 +49,6 @@ export default async function DocPage({ params }: PageProps) {
         <div className="prose prose-invert prose-zinc max-w-none prose-pre:border prose-pre:border-zinc-800 prose-pre:bg-zinc-900 prose-a:text-violet-400 prose-code:text-violet-300 prose-headings:text-zinc-200 prose-p:text-zinc-400 prose-strong:text-zinc-200">
           {/* Render raw markdown as pre-formatted for now; MDX can be added later */}
           <div
-            // biome-ignore lint/security/noDangerouslySetInnerHtml: sanitized markdown content
             dangerouslySetInnerHTML={{
               __html: simpleMarkdownToHtml(doc.content),
             }}

@@ -12,6 +12,8 @@ import {
   createMockServiceClient,
 } from "./setup";
 
+const DATE_FORMAT_RE = /^\d{4}-\d{2}-\d{2}$/;
+
 const { mockLogger } = vi.hoisted(() => {
   const logger: Record<string, unknown> = {
     info: vi.fn(),
@@ -195,7 +197,7 @@ describe("Notification System", () => {
       expect(summary.runningTasks).toBe(3);
       expect(summary.creditsConsumed).toBe(450);
       expect(summary.topAgentRoles).toHaveLength(3);
-      expect(summary.date).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+      expect(summary.date).toMatch(DATE_FORMAT_RE);
     });
 
     it("includes top agent roles sorted by count", () => {

@@ -7,7 +7,7 @@
 // =============================================================================
 
 import type { ModelProvider } from "./models";
-import { getModelConfig, MODEL_REGISTRY } from "./models";
+import { getModelConfig, MODEL_REGISTRY, type ModelConfig } from "./models";
 import type {
   ChatMessage,
   CompletionResult,
@@ -369,16 +369,32 @@ function getProvider(provider: ModelProvider): LLMProvider {
   return p;
 }
 
-/**
- * Route a request and execute it against the best available model.
- * Automatically handles fallback on failure.
- *
- * Returns the completion result + routing metadata.
- */
-export async function routeAndComplete(
-  request: RouteRequest
-): Promise<{ result: CompletionResult; route: ResolvedRoute }> {
-  const estimatedTokens = estimateMessageTokens(request.messages);
+function isModelEligible(
+  modelKey: string,
+  estimatedTokens: number,
+  requiresStreaming = false
+): ModelConfig | null {
+  const config = getModelConfig(modelKey);
+  if (!config) {
+    return null;
+  }
+  if (!isProviderHealthy(config.provider)) {
+    return null;
+  }
+  if (!isWithinRateLimit(modelKey, estimatedTokens)) {
+    return null;
+  }
+  const maxOutput = config.maxOutputTokens ?? 4096;
+  if (estimatedTokens + maxOutput > config.contextWindow) {
+    return null;
+  }
+  if (requiresStreaming && !config.supportsStreaming) {
+    return null;
+  }
+  return config;
+}
+
+function resolveChain(request: RouteRequest, estimatedTokens: number) {
   const slot =
     request.slot ??
     autoDetectSlot({
@@ -392,34 +408,31 @@ export async function routeAndComplete(
   if (request.preferCheapest) {
     chain = sortByCost(chain);
   }
+  return { slot, slotConfig, chain };
+}
+
+/**
+ * Route a request and execute it against the best available model.
+ * Automatically handles fallback on failure.
+ *
+ * Returns the completion result + routing metadata.
+ */
+export async function routeAndComplete(
+  request: RouteRequest
+): Promise<{ result: CompletionResult; route: ResolvedRoute }> {
+  const estimatedTokens = estimateMessageTokens(request.messages);
+  const { slot, slotConfig, chain } = resolveChain(request, estimatedTokens);
 
   let lastError: Error | null = null;
 
   for (let i = 0; i < chain.length; i++) {
-    const modelKey = chain[i] as string;
-    const config = getModelConfig(modelKey);
+    const config = isModelEligible(chain[i] as string, estimatedTokens);
     if (!config) {
       continue;
     }
 
-    // Skip unhealthy
-    if (!isProviderHealthy(config.provider)) {
-      continue;
-    }
-
-    // Skip rate-limited
-    if (!isWithinRateLimit(modelKey, estimatedTokens)) {
-      continue;
-    }
-
-    // Skip if context doesn't fit
-    const maxOutput = config.maxOutputTokens ?? 4096;
-    if (estimatedTokens + maxOutput > config.contextWindow) {
-      continue;
-    }
-
     const route: ResolvedRoute = {
-      modelKey,
+      modelKey: chain[i] as string,
       slot,
       fallbackPosition: i,
       temperature: request.temperature ?? slotConfig.defaultTemperature,
@@ -436,9 +449,8 @@ export async function routeAndComplete(
         maxTokens: request.maxTokens ?? config.maxOutputTokens ?? undefined,
       });
 
-      // Record success
       reportSuccess(config.provider);
-      recordRequest(modelKey, result.usage.totalTokens);
+      recordRequest(chain[i] as string, result.usage.totalTokens);
 
       return { result, route };
     } catch (err) {
@@ -460,42 +472,14 @@ export async function routeAndStream(
   request: RouteRequest
 ): Promise<{ result: StreamCompletionResult; route: ResolvedRoute }> {
   const estimatedTokens = estimateMessageTokens(request.messages);
-  const slot =
-    request.slot ??
-    autoDetectSlot({
-      tokenCount: estimatedTokens,
-      taskType: request.taskType,
-      hasImages: request.hasImages,
-    });
-
-  const slotConfig = SLOT_CONFIGS[slot];
-  let chain = [...slotConfig.chain];
-  if (request.preferCheapest) {
-    chain = sortByCost(chain);
-  }
+  const { slot, slotConfig, chain } = resolveChain(request, estimatedTokens);
 
   let lastError: Error | null = null;
 
   for (let i = 0; i < chain.length; i++) {
     const modelKey = chain[i] as string;
-    const config = getModelConfig(modelKey);
+    const config = isModelEligible(modelKey, estimatedTokens, true);
     if (!config) {
-      continue;
-    }
-
-    if (!isProviderHealthy(config.provider)) {
-      continue;
-    }
-    if (!isWithinRateLimit(modelKey, estimatedTokens)) {
-      continue;
-    }
-
-    const maxOutput = config.maxOutputTokens ?? 4096;
-    if (estimatedTokens + maxOutput > config.contextWindow) {
-      continue;
-    }
-
-    if (!config.supportsStreaming) {
       continue;
     }
 
@@ -517,10 +501,8 @@ export async function routeAndStream(
         maxTokens: request.maxTokens ?? config.maxOutputTokens ?? undefined,
       });
 
-      // Report success (streaming initiated successfully)
       reportSuccess(config.provider);
 
-      // Track usage when stream completes
       result.done
         .then((done) => {
           recordRequest(modelKey, done.usage.totalTokens);

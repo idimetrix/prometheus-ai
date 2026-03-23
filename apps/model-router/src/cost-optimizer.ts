@@ -217,92 +217,133 @@ export class CostOptimizer {
       .filter((m) => m.avgQuality >= QUALITY_THRESHOLD)
       .sort((a, b) => a.avgCost - b.avgCost);
 
-    // Step 5: Prefer free models meeting threshold
+    // Step 5: Try free models, then paid models, then best quality, then default
+    const result =
+      this.tryFreeQualifyingModel(
+        qualifyingModels,
+        agentRole,
+        taskType,
+        budget
+      ) ??
+      this.tryCheapestPaidModel(
+        qualifyingModels,
+        agentRole,
+        taskType,
+        budget
+      ) ??
+      this.tryBestQualityModel(modelStats, agentRole, taskType, budget) ??
+      this.defaultRecommendation(agentRole, taskType, budget);
+
+    return result;
+  }
+
+  private tryFreeQualifyingModel(
+    qualifyingModels: Array<{
+      modelKey: string;
+      avgQuality: number;
+      avgCost: number;
+      count: number;
+    }>,
+    agentRole: string,
+    taskType: string,
+    budget?: BudgetConstraint
+  ): CostOptimizationResult | null {
     const freeQualifying = qualifyingModels.filter((m) =>
       FREE_MODELS.has(m.modelKey)
     );
-
     if (
-      freeQualifying.length > 0 &&
-      (budget?.preferFreeModels !== false || !budget)
+      freeQualifying.length === 0 ||
+      (budget && budget.preferFreeModels === false)
     ) {
-      const best = freeQualifying[0];
-      if (!best) {
-        return this.defaultRecommendation(agentRole, taskType, budget);
-      }
-      const slot = MODEL_SLOT_MAP[best.modelKey] ?? "default";
+      return null;
+    }
+    const best = freeQualifying[0];
+    if (!best) {
+      return null;
+    }
+    logger.info(
+      {
+        agentRole,
+        taskType,
+        model: best.modelKey,
+        avgQuality: best.avgQuality.toFixed(3),
+        samples: best.count,
+      },
+      "Recommending free model based on historical quality"
+    );
+    return {
+      recommendedModel: best.modelKey,
+      recommendedSlot: MODEL_SLOT_MAP[best.modelKey] ?? "default",
+      estimatedCost: 0,
+      reasoning: `Free model "${best.modelKey}" meets quality threshold (avg ${best.avgQuality.toFixed(2)} over ${best.count} samples). Zero cost.`,
+      isFreeModel: true,
+    };
+  }
 
-      logger.info(
-        {
-          agentRole,
-          taskType,
-          model: best.modelKey,
-          avgQuality: best.avgQuality.toFixed(3),
-          samples: best.count,
-        },
-        "Recommending free model based on historical quality"
+  private tryCheapestPaidModel(
+    qualifyingModels: Array<{
+      modelKey: string;
+      avgQuality: number;
+      avgCost: number;
+      count: number;
+    }>,
+    agentRole: string,
+    taskType: string,
+    budget?: BudgetConstraint
+  ): CostOptimizationResult | null {
+    if (qualifyingModels.length === 0) {
+      return null;
+    }
+    const best = qualifyingModels[0];
+    if (!best) {
+      return null;
+    }
+    if (budget?.maxCostPerTask && best.avgCost > budget.maxCostPerTask) {
+      return this.fallbackToFreeModel(
+        agentRole,
+        taskType,
+        `Cheapest qualifying model "${best.modelKey}" costs $${best.avgCost.toFixed(4)}/task, exceeding per-task budget of $${budget.maxCostPerTask.toFixed(4)}. Falling back to free model.`
       );
-
-      return {
-        recommendedModel: best.modelKey,
-        recommendedSlot: slot,
-        estimatedCost: 0,
-        reasoning: `Free model "${best.modelKey}" meets quality threshold (avg ${best.avgQuality.toFixed(2)} over ${best.count} samples). Zero cost.`,
-        isFreeModel: true,
-      };
     }
+    const isFree = FREE_MODELS.has(best.modelKey);
+    return {
+      recommendedModel: best.modelKey,
+      recommendedSlot: MODEL_SLOT_MAP[best.modelKey] ?? "default",
+      estimatedCost: isFree ? 0 : best.avgCost,
+      reasoning: `Cheapest model meeting quality threshold: "${best.modelKey}" (avg quality ${best.avgQuality.toFixed(2)}, avg cost $${best.avgCost.toFixed(4)} over ${best.count} samples).`,
+      isFreeModel: isFree,
+    };
+  }
 
-    // Use cheapest paid model meeting threshold
-    if (qualifyingModels.length > 0) {
-      const best = qualifyingModels[0];
-      if (!best) {
-        return this.defaultRecommendation(agentRole, taskType, budget);
-      }
-      const isFree = FREE_MODELS.has(best.modelKey);
-      const slot = MODEL_SLOT_MAP[best.modelKey] ?? "default";
-
-      // Check per-task budget
-      if (budget?.maxCostPerTask && best.avgCost > budget.maxCostPerTask) {
-        return this.fallbackToFreeModel(
-          agentRole,
-          taskType,
-          `Cheapest qualifying model "${best.modelKey}" costs $${best.avgCost.toFixed(4)}/task, exceeding per-task budget of $${budget.maxCostPerTask.toFixed(4)}. Falling back to free model.`
-        );
-      }
-
-      return {
-        recommendedModel: best.modelKey,
-        recommendedSlot: slot,
-        estimatedCost: isFree ? 0 : best.avgCost,
-        reasoning: `Cheapest model meeting quality threshold: "${best.modelKey}" (avg quality ${best.avgQuality.toFixed(2)}, avg cost $${best.avgCost.toFixed(4)} over ${best.count} samples).`,
-        isFreeModel: isFree,
-      };
-    }
-
-    // No model met quality threshold — use best quality model within budget
+  private tryBestQualityModel(
+    modelStats: Array<{
+      modelKey: string;
+      avgQuality: number;
+      avgCost: number;
+      count: number;
+    }>,
+    _agentRole: string,
+    _taskType: string,
+    _budget?: BudgetConstraint
+  ): CostOptimizationResult | null {
     const sortedByQuality = modelStats.sort(
       (a, b) => b.avgQuality - a.avgQuality
     );
-
-    if (sortedByQuality.length > 0) {
-      const best = sortedByQuality[0];
-      if (!best) {
-        return this.defaultRecommendation(agentRole, taskType, budget);
-      }
-      const isFree = FREE_MODELS.has(best.modelKey);
-      const slot = MODEL_SLOT_MAP[best.modelKey] ?? "default";
-
-      return {
-        recommendedModel: best.modelKey,
-        recommendedSlot: slot,
-        estimatedCost: isFree ? 0 : best.avgCost,
-        reasoning: `No model met quality threshold (${QUALITY_THRESHOLD}). Using highest-quality model: "${best.modelKey}" (avg quality ${best.avgQuality.toFixed(2)}).`,
-        isFreeModel: isFree,
-      };
+    if (sortedByQuality.length === 0) {
+      return null;
     }
-
-    // Absolute fallback
-    return this.defaultRecommendation(agentRole, taskType, budget);
+    const best = sortedByQuality[0];
+    if (!best) {
+      return null;
+    }
+    const isFree = FREE_MODELS.has(best.modelKey);
+    return {
+      recommendedModel: best.modelKey,
+      recommendedSlot: MODEL_SLOT_MAP[best.modelKey] ?? "default",
+      estimatedCost: isFree ? 0 : best.avgCost,
+      reasoning: `No model met quality threshold (${QUALITY_THRESHOLD}). Using highest-quality model: "${best.modelKey}" (avg quality ${best.avgQuality.toFixed(2)}).`,
+      isFreeModel: isFree,
+    };
   }
 
   /** Get cost profiles for monitoring */

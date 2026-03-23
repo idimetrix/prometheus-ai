@@ -179,46 +179,56 @@ export class SAMLProvider {
 
     logger.debug("Validating SAML response");
 
-    // -----------------------------------------------------------------------
-    // 1. Verify XML signature against IdP certificate
-    // -----------------------------------------------------------------------
     if (this.wantAssertionsSigned) {
       this.verifySignature(xml);
     }
 
-    // -----------------------------------------------------------------------
-    // 2. Extract InResponseTo and verify it matches a pending request
-    // -----------------------------------------------------------------------
-    const inResponseTo = extractAttribute(xml, "InResponseTo");
-    if (inResponseTo) {
-      const pending = this.pendingRequests.get(inResponseTo);
-      if (pending) {
-        this.pendingRequests.delete(inResponseTo);
-      } else if (this.strictRequestValidation) {
-        const error = `SAML response references unknown request ID: ${inResponseTo}`;
-        logger.error({ inResponseTo }, error);
-        throw new SAMLValidationError(error);
-      } else {
-        logger.warn(
-          { inResponseTo },
-          "SAML response references unknown request ID"
-        );
-      }
-    }
+    this.validateInResponseTo(xml);
+    this.validateAudience(xml);
+    this.validateTimeConditions(xml);
+    this.validateStatusCode(xml);
 
-    // -----------------------------------------------------------------------
-    // 3. Verify audience matches our entity ID
-    // -----------------------------------------------------------------------
+    const user = this.extractUserAttributes(xml);
+
+    logger.info(
+      { email: user.email, groups: user.groups },
+      "SAML user authenticated"
+    );
+
+    return user;
+  }
+
+  private validateInResponseTo(xml: string): void {
+    const inResponseTo = extractAttribute(xml, "InResponseTo");
+    if (!inResponseTo) {
+      return;
+    }
+    const pending = this.pendingRequests.get(inResponseTo);
+    if (pending) {
+      this.pendingRequests.delete(inResponseTo);
+      return;
+    }
+    if (this.strictRequestValidation) {
+      const error = `SAML response references unknown request ID: ${inResponseTo}`;
+      logger.error({ inResponseTo }, error);
+      throw new SAMLValidationError(error);
+    }
+    logger.warn(
+      { inResponseTo },
+      "SAML response references unknown request ID"
+    );
+  }
+
+  private validateAudience(xml: string): void {
     const audience = extractElementText(xml, "Audience");
     if (audience && audience !== this.config.entityId) {
       const error = `Audience mismatch: expected ${this.config.entityId}, got ${audience}`;
       logger.error({ audience }, error);
       throw new SAMLValidationError(error);
     }
+  }
 
-    // -----------------------------------------------------------------------
-    // 4. Check time conditions with clock skew tolerance
-    // -----------------------------------------------------------------------
+  private validateTimeConditions(xml: string): void {
     const toleranceMs = this.clockSkewToleranceSec * 1000;
     const now = Date.now();
 
@@ -241,10 +251,9 @@ export class SAMLProvider {
         throw new SAMLValidationError(error);
       }
     }
+  }
 
-    // -----------------------------------------------------------------------
-    // 5. Extract status — reject if not Success
-    // -----------------------------------------------------------------------
+  private validateStatusCode(xml: string): void {
     const statusCode = extractAttribute(xml, "Value");
     if (
       statusCode &&
@@ -255,10 +264,9 @@ export class SAMLProvider {
       logger.error({ statusCode }, error);
       throw new SAMLValidationError(error);
     }
+  }
 
-    // -----------------------------------------------------------------------
-    // 6. Extract user attributes
-    // -----------------------------------------------------------------------
+  private extractUserAttributes(xml: string): SAMLUser {
     const nameId =
       extractElementText(xml, "NameID") ??
       extractElementText(xml, "saml:NameID");
@@ -266,7 +274,26 @@ export class SAMLProvider {
       throw new SAMLValidationError("Missing NameID in SAML response");
     }
 
-    const email =
+    const email = this.extractEmail(xml, nameId);
+    const firstName = this.extractFirstName(xml);
+    const lastName = this.extractLastName(xml);
+    const groups = this.extractGroups(xml);
+    const sessionIndex = extractAttribute(xml, "SessionIndex");
+    const rawAttributes = extractAllSAMLAttributes(xml);
+
+    return {
+      email,
+      firstName,
+      lastName,
+      groups,
+      nameId,
+      sessionIndex,
+      rawAttributes,
+    };
+  }
+
+  private extractEmail(xml: string, fallback: string): string {
+    return (
       extractSAMLAttribute(xml, "email") ??
       extractSAMLAttribute(xml, "Email") ??
       extractSAMLAttribute(
@@ -277,9 +304,12 @@ export class SAMLProvider {
         xml,
         "http://schemas.microsoft.com/ws/2008/06/identity/claims/emailaddress"
       ) ??
-      nameId;
+      fallback
+    );
+  }
 
-    const firstName =
+  private extractFirstName(xml: string): string {
+    return (
       extractSAMLAttribute(xml, "firstName") ??
       extractSAMLAttribute(xml, "FirstName") ??
       extractSAMLAttribute(xml, "givenName") ??
@@ -291,9 +321,12 @@ export class SAMLProvider {
         xml,
         "http://schemas.microsoft.com/ws/2008/06/identity/claims/givenname"
       ) ??
-      "";
+      ""
+    );
+  }
 
-    const lastName =
+  private extractLastName(xml: string): string {
+    return (
       extractSAMLAttribute(xml, "lastName") ??
       extractSAMLAttribute(xml, "LastName") ??
       extractSAMLAttribute(xml, "surname") ??
@@ -305,9 +338,12 @@ export class SAMLProvider {
         xml,
         "http://schemas.microsoft.com/ws/2008/06/identity/claims/surname"
       ) ??
-      "";
+      ""
+    );
+  }
 
-    const groups =
+  private extractGroups(xml: string): string[] {
+    return (
       extractSAMLAttributeValues(xml, "groups") ??
       extractSAMLAttributeValues(xml, "memberOf") ??
       extractSAMLAttributeValues(
@@ -318,30 +354,8 @@ export class SAMLProvider {
         xml,
         "http://schemas.microsoft.com/ws/2008/06/identity/claims/groups"
       ) ??
-      [];
-
-    // Extract session index for SLO support
-    const sessionIndex = extractAttribute(xml, "SessionIndex");
-
-    // Collect raw attributes
-    const rawAttributes = extractAllSAMLAttributes(xml);
-
-    const user: SAMLUser = {
-      email,
-      firstName,
-      lastName,
-      groups,
-      nameId,
-      sessionIndex,
-      rawAttributes,
-    };
-
-    logger.info(
-      { email: user.email, groups: user.groups },
-      "SAML user authenticated"
+      []
     );
-
-    return user;
   }
 
   /**

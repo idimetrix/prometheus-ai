@@ -256,7 +256,10 @@ describe("Authentication and Authorization", () => {
 
   describe("API key scoping", () => {
     it("read-only key cannot write", () => {
-      const key = dataStore.apiKeys.get("key_readonly")!;
+      const key = dataStore.apiKeys.get("key_readonly");
+      if (!key) {
+        throw new Error("Expected key_readonly to exist");
+      }
 
       expect(checkApiKeyScope(key.scopes, "sessions:read")).toBe(true);
       expect(checkApiKeyScope(key.scopes, "tasks:read")).toBe(true);
@@ -265,7 +268,10 @@ describe("Authentication and Authorization", () => {
     });
 
     it("write key can read and write sessions/tasks", () => {
-      const key = dataStore.apiKeys.get("key_write")!;
+      const key = dataStore.apiKeys.get("key_write");
+      if (!key) {
+        throw new Error("Expected key_write to exist");
+      }
 
       expect(checkApiKeyScope(key.scopes, "sessions:read")).toBe(true);
       expect(checkApiKeyScope(key.scopes, "sessions:write")).toBe(true);
@@ -276,7 +282,10 @@ describe("Authentication and Authorization", () => {
     });
 
     it("admin key has wildcard access", () => {
-      const key = dataStore.apiKeys.get("key_admin")!;
+      const key = dataStore.apiKeys.get("key_admin");
+      if (!key) {
+        throw new Error("Expected key_admin to exist");
+      }
 
       expect(checkApiKeyScope(key.scopes, "sessions:read")).toBe(true);
       expect(checkApiKeyScope(key.scopes, "billing:write")).toBe(true);
@@ -284,7 +293,10 @@ describe("Authentication and Authorization", () => {
     });
 
     it("API key is scoped to its own org", () => {
-      const key = dataStore.apiKeys.get("key_readonly")!;
+      const key = dataStore.apiKeys.get("key_readonly");
+      if (!key) {
+        throw new Error("Expected key_readonly to exist");
+      }
 
       // Key belongs to org A, should not access org B
       expect(key.orgId).toBe(orgA.org.id);

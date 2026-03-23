@@ -189,7 +189,10 @@ describe("Billing and credit flow", () => {
       const reservation = reserveCredits(fixtures.org.id, fixtures.task.id, 25);
       expect(reservation.success).toBe(true);
 
-      const commit = commitCredits(reservation.reservationId!, 20);
+      if (!reservation.reservationId) {
+        throw new Error("Expected reservationId");
+      }
+      const commit = commitCredits(reservation.reservationId, 20);
 
       expect(commit.success).toBe(true);
       expect(commit.creditsConsumed).toBe(20);
@@ -205,7 +208,10 @@ describe("Billing and credit flow", () => {
       expect(reservation.success).toBe(true);
 
       // Task used fewer credits than estimated
-      const commit = commitCredits(reservation.reservationId!, 30);
+      if (!reservation.reservationId) {
+        throw new Error("Expected reservationId");
+      }
+      const commit = commitCredits(reservation.reservationId, 30);
 
       expect(commit.success).toBe(true);
       expect(commit.newBalance).toBe(470); // 500 - 30 (not 75)
@@ -213,7 +219,10 @@ describe("Billing and credit flow", () => {
 
     it("records transaction in ledger", () => {
       const reservation = reserveCredits(fixtures.org.id, fixtures.task.id, 25);
-      commitCredits(reservation.reservationId!, 20);
+      if (!reservation.reservationId) {
+        throw new Error("Expected reservationId");
+      }
+      commitCredits(reservation.reservationId, 20);
 
       expect(creditLedger.transactions).toHaveLength(1);
       expect(creditLedger.transactions[0].type).toBe("consumption");
@@ -228,7 +237,10 @@ describe("Billing and credit flow", () => {
       expect(reservation.success).toBe(true);
       expect(getAvailable(fixtures.org.id)).toBe(475);
 
-      const release = releaseCredits(reservation.reservationId!);
+      if (!reservation.reservationId) {
+        throw new Error("Expected reservationId");
+      }
+      const release = releaseCredits(reservation.reservationId);
 
       expect(release.success).toBe(true);
       expect(getAvailable(fixtures.org.id)).toBe(500); // fully restored
@@ -236,9 +248,12 @@ describe("Billing and credit flow", () => {
 
     it("prevents double-release", () => {
       const reservation = reserveCredits(fixtures.org.id, fixtures.task.id, 25);
-      releaseCredits(reservation.reservationId!);
+      if (!reservation.reservationId) {
+        throw new Error("Expected reservationId");
+      }
+      releaseCredits(reservation.reservationId);
 
-      const secondRelease = releaseCredits(reservation.reservationId!);
+      const secondRelease = releaseCredits(reservation.reservationId);
       expect(secondRelease.success).toBe(false);
     });
   });
@@ -298,11 +313,17 @@ describe("Billing and credit flow", () => {
       expect(getBalance(orgId)).toEqual({ balance: 500, reserved: 150 });
 
       // Commit task_1 for 80
-      commitCredits(r1.reservationId!, 80);
+      if (!r1.reservationId) {
+        throw new Error("Expected reservationId for r1");
+      }
+      commitCredits(r1.reservationId, 80);
       expect(getBalance(orgId)).toEqual({ balance: 420, reserved: 50 });
 
       // Release task_2 (failed)
-      releaseCredits(r2.reservationId!);
+      if (!r2.reservationId) {
+        throw new Error("Expected reservationId for r2");
+      }
+      releaseCredits(r2.reservationId);
       expect(getBalance(orgId)).toEqual({ balance: 420, reserved: 0 });
 
       // Verify: initial 500 - 80 consumed = 420
@@ -315,13 +336,19 @@ describe("Billing and credit flow", () => {
       reserveCredits(orgId, "task_1", 100);
       const r1 = [...creditLedger.reservations.values()].find(
         (r) => r.taskId === "task_1"
-      )!;
+      );
+      if (!r1) {
+        throw new Error("Expected reservation for task_1");
+      }
       commitCredits(r1.id, 80);
 
       reserveCredits(orgId, "task_2", 50);
       const r2 = [...creditLedger.reservations.values()].find(
         (r) => r.taskId === "task_2"
-      )!;
+      );
+      if (!r2) {
+        throw new Error("Expected reservation for task_2");
+      }
       commitCredits(r2.id, 45);
 
       const totalConsumed = creditLedger.transactions
