@@ -62,6 +62,19 @@ export class TaskProcessor {
       timestamp: new Date().toISOString(),
     });
 
+    // Emit task progress: queued -> routing
+    await this.publisher.publishSessionEvent(sessionId, {
+      type: "task_progress",
+      data: {
+        taskId,
+        phase: "routing",
+        progress: 5,
+        message: "Routing task to agent",
+        agentRole: agentRole ?? "orchestrator",
+      },
+      timestamp: new Date().toISOString(),
+    });
+
     try {
       // Create agent instance record
       const agentId = generateId("agt");
@@ -71,6 +84,19 @@ export class TaskProcessor {
         role: agentRole ?? "orchestrator",
         status: "working",
         currentTaskId: taskId,
+      });
+
+      // Emit task progress: agent assigned
+      await this.publisher.publishSessionEvent(sessionId, {
+        type: "task_progress",
+        data: {
+          taskId,
+          phase: "agent_assigned",
+          progress: 10,
+          message: `Agent ${agentRole ?? "orchestrator"} assigned`,
+          agentRole: agentRole ?? "orchestrator",
+        },
+        timestamp: new Date().toISOString(),
       });
 
       // Call orchestrator service to process the task
@@ -141,6 +167,19 @@ export class TaskProcessor {
           costUsd: 0,
         });
       }
+
+      // Emit task progress: completed
+      await this.publisher.publishSessionEvent(sessionId, {
+        type: "task_progress",
+        data: {
+          taskId,
+          phase: "completed",
+          progress: 100,
+          message: "Task completed",
+          agentRole: agentRole ?? "orchestrator",
+        },
+        timestamp: new Date().toISOString(),
+      });
 
       // Publish completion
       await this.publisher.publishSessionEvent(sessionId, {

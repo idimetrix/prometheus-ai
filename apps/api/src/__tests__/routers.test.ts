@@ -8,7 +8,7 @@ const PK_LIVE_HEX_RE = /^pk_live_[0-9a-f]{64}$/;
 
 // ── shared mock factories ────────────────────────────────────────────────────
 
-// biome-ignore lint/suspicious/noExplicitAny: test mock chains require flexible return types for chaining
+// Test mock chains require flexible return types for chaining
 type ChainMock = ReturnType<typeof vi.fn> & ((...args: any[]) => any);
 
 interface MockChain {

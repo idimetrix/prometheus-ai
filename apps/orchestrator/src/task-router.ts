@@ -100,6 +100,7 @@ export class TaskRouter {
   private readonly sessionManager: SessionManager;
   private readonly eventPublisher: EventPublisher;
   private currentSessionId: string | null = null;
+  private currentTaskId: string | null = null;
 
   constructor(sessionManager: SessionManager) {
     this.sessionManager = sessionManager;
@@ -135,6 +136,7 @@ export class TaskRouter {
     const results: AgentExecutionResult[] = [];
     let totalCreditsConsumed = 0;
     this.currentSessionId = sessionId;
+    this.currentTaskId = taskId;
 
     this.logger.info({ taskId, mode, agentRole }, "Processing task");
 
@@ -1478,6 +1480,21 @@ Respond with ONLY the role name (e.g., "backend_coder") and a one-line reason. F
     return null;
   }
 
+  private static readonly PHASE_PROGRESS: Record<string, number> = {
+    discovery: 10,
+    architecture: 20,
+    planning: 30,
+    spec_first: 40,
+    coding: 60,
+    visual_verify: 70,
+    testing: 75,
+    spec_validation: 80,
+    ci_loop: 85,
+    security: 90,
+    deploy: 95,
+    property_testing: 98,
+  };
+
   private async publishPhaseUpdate(
     phase: string,
     status: string
@@ -1490,6 +1507,21 @@ Respond with ONLY the role name (e.g., "backend_coder") and a one-line reason. F
         data: { phase, status },
         timestamp: new Date().toISOString(),
       });
+
+      // Emit granular task progress event
+      if (this.currentTaskId) {
+        const baseProgress = TaskRouter.PHASE_PROGRESS[phase] ?? 50;
+        const progress =
+          status === "completed" ? baseProgress : Math.max(baseProgress - 5, 0);
+        const taskPhase = status === "completed" ? "reviewing" : "executing";
+        await this.sessionManager.emitTaskProgress(
+          this.currentSessionId,
+          this.currentTaskId,
+          taskPhase as import("@prometheus/types").TaskPhase,
+          progress,
+          `${phase}: ${status}`
+        );
+      }
     }
   }
 

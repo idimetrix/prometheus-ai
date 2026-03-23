@@ -1,5 +1,6 @@
 import { MODEL_REGISTRY } from "@prometheus/ai";
 import { createLogger } from "@prometheus/logger";
+import { ComplexityEstimator } from "./complexity-estimator";
 import type { ModelRouterService, RouteRequest, RouteResponse } from "./router";
 
 const logger = createLogger("model-router:cascade");
@@ -121,6 +122,7 @@ interface CascadeMetrics {
 export class CascadeRouter {
   private readonly inner: ModelRouterService;
   private readonly config: CascadeConfig;
+  private readonly complexityEstimator: ComplexityEstimator;
   private readonly metrics: CascadeMetrics = {
     totalRequests: 0,
     requestsHandledCheap: 0,
@@ -132,13 +134,35 @@ export class CascadeRouter {
   constructor(inner: ModelRouterService, config?: Partial<CascadeConfig>) {
     this.inner = inner;
     this.config = { ...DEFAULT_CASCADE_CONFIG, ...config };
+    this.complexityEstimator = new ComplexityEstimator();
   }
 
   async route(request: RouteRequest): Promise<RouteResponse> {
     this.metrics.totalRequests++;
 
-    const escalationChain = SLOT_ESCALATION_CHAIN[request.slot] ?? [
-      request.slot,
+    // Use complexity estimation to potentially skip cheap slots for complex tasks
+    let effectiveSlot = request.slot;
+    try {
+      const estimate = this.complexityEstimator.estimate({
+        messages: request.messages,
+      });
+      if (estimate.recommendedSlot && estimate.score >= 4) {
+        effectiveSlot = estimate.recommendedSlot;
+        logger.debug(
+          {
+            originalSlot: request.slot,
+            recommendedSlot: estimate.recommendedSlot,
+            complexityScore: estimate.score,
+          },
+          "Complexity estimator recommends higher slot"
+        );
+      }
+    } catch {
+      // Complexity estimation failed, use original slot
+    }
+
+    const escalationChain = SLOT_ESCALATION_CHAIN[effectiveSlot] ?? [
+      effectiveSlot,
     ];
 
     // Detect language hint from the request messages for quality assessment
