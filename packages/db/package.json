@@ -33,6 +33,6 @@
   "devDependencies": {
     "@prometheus/config-typescript": "workspace:*",
     "drizzle-kit": "^0.31.10",
-    "typescript": "^5.9.3"
+    "typescript": "^6.0.2"
   }
 }
