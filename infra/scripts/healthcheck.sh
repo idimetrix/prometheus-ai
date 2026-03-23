@@ -123,6 +123,7 @@ check_http "Project Brain" "http://localhost:4003/health"
 check_http "Model Router" "http://localhost:4004/health"
 check_http "MCP Gateway" "http://localhost:4005/health"
 check_http "Sandbox Manager" "http://localhost:4006/health"
+check_http "Queue Worker" "http://localhost:4007/health"
 
 echo ""
 echo "============================================"

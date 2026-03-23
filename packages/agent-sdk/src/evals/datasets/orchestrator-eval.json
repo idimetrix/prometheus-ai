@@ -1,0 +1,102 @@
+[
+  {
+    "input": "Add user authentication with email/password and OAuth",
+    "expectedRole": "backend_coder",
+    "expectedMode": "task"
+  },
+  {
+    "input": "Design the database schema for a multi-tenant SaaS platform",
+    "expectedRole": "architect",
+    "expectedMode": "task"
+  },
+  {
+    "input": "Build a dashboard page showing project analytics",
+    "expectedRole": "frontend_coder",
+    "expectedMode": "task"
+  },
+  {
+    "input": "Write unit tests for the credit service",
+    "expectedRole": "test_engineer",
+    "expectedMode": "task"
+  },
+  {
+    "input": "Set up the Kubernetes deployment manifests and CI/CD pipeline",
+    "expectedRole": "deploy_engineer",
+    "expectedMode": "task"
+  },
+  {
+    "input": "Review the app for OWASP Top 10 vulnerabilities",
+    "expectedRole": "security_auditor",
+    "expectedMode": "task"
+  },
+  {
+    "input": "Wire up the task list frontend component to the tRPC backend",
+    "expectedRole": "integration_coder",
+    "expectedMode": "task"
+  },
+  {
+    "input": "I need a new SaaS app for managing invoices from scratch",
+    "expectedRole": "discovery",
+    "expectedMode": "plan"
+  },
+  {
+    "input": "Plan the sprint for implementing the billing feature",
+    "expectedRole": "planner",
+    "expectedMode": "plan"
+  },
+  {
+    "input": "The tests are failing after the last code change, fix them",
+    "expectedRole": "ci_loop",
+    "expectedMode": "task"
+  },
+  {
+    "input": "Create a tRPC endpoint for CRUD operations on projects",
+    "expectedRole": "backend_coder",
+    "expectedMode": "task"
+  },
+  {
+    "input": "Build the settings page with profile editing and avatar upload",
+    "expectedRole": "frontend_coder",
+    "expectedMode": "task"
+  },
+  {
+    "input": "We need to figure out what features the MVP should have",
+    "expectedRole": "discovery",
+    "expectedMode": "plan"
+  },
+  {
+    "input": "Create Playwright E2E tests for the login and signup flows",
+    "expectedRole": "test_engineer",
+    "expectedMode": "task"
+  },
+  {
+    "input": "Add rate limiting middleware to all API endpoints",
+    "expectedRole": "backend_coder",
+    "expectedMode": "task"
+  },
+  {
+    "input": "Connect the real-time Socket.io events to the notification panel",
+    "expectedRole": "integration_coder",
+    "expectedMode": "task"
+  },
+  {
+    "input": "Scan all environment variables and secrets for credential leaks",
+    "expectedRole": "security_auditor",
+    "expectedMode": "task"
+  },
+  {
+    "input": "Decide on the tech stack and create the project Blueprint",
+    "expectedRole": "architect",
+    "expectedMode": "task"
+  },
+  {
+    "input": "Build a complete CLI tool for managing deployments",
+    "expectedRole": "backend_coder",
+    "expectedMode": "fleet"
+  },
+  {
+    "input": "Break down the notification system into implementable tasks",
+    "expectedRole": "planner",
+    "expectedMode": "plan"
+  }
+]

@@ -70,6 +70,54 @@
           }
         }
       }
+    },
+    {
+      "includes": ["tests/**"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noNonNullAssertion": "off",
+            "noExportedImports": "off"
+          },
+          "suspicious": {
+            "useAwait": "off",
+            "noEvolvingTypes": "off"
+          },
+          "performance": {
+            "useTopLevelRegex": "off"
+          }
+        }
+      }
+    },
+    {
+      "includes": ["apps/web/e2e/**"],
+      "linter": {
+        "rules": {
+          "performance": {
+            "useTopLevelRegex": "off"
+          }
+        }
+      }
+    },
+    {
+      "includes": [
+        "apps/api/src/routers/cost-prediction.ts",
+        "apps/orchestrator/src/quality/**",
+        "apps/orchestrator/src/context/**"
+      ],
+      "linter": {
+        "rules": {
+          "performance": {
+            "useTopLevelRegex": "off"
+          },
+          "style": {
+            "noNestedTernary": "off"
+          },
+          "suspicious": {
+            "useAwait": "off"
+          }
+        }
+      }
     }
   ]
 }

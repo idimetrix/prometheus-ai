@@ -31,6 +31,9 @@ import { appRouter } from "./routers";
 import { sseApp } from "./routes/sse";
 import { alertsWebhookApp } from "./routes/webhooks/alerts";
 import { clerkWebhookApp } from "./routes/webhooks/clerk";
+import { inboundWebhookApp } from "./routes/webhooks/inbound";
+import { slackWebhookApp } from "./routes/webhooks/slack";
+import { slackCommandsApp } from "./routes/webhooks/slack-commands";
 import { stripeWebhookApp } from "./routes/webhooks/stripe";
 import { createContext } from "./trpc";
 
@@ -184,6 +187,9 @@ app.route("/api/sse", sseApp);
 app.route("/webhooks/stripe", stripeWebhookApp);
 app.route("/webhooks/clerk", clerkWebhookApp);
 app.route("/webhooks/alerts", alertsWebhookApp);
+app.route("/webhooks/slack", slackWebhookApp);
+app.route("/webhooks/slack/commands", slackCommandsApp);
+app.route("/webhooks/inbound", inboundWebhookApp);
 
 // ---------------------------------------------------------------------------
 // Internal: model usage logging (called by model-router, fire-and-forget)

@@ -112,6 +112,10 @@ export function securityHeaders(cspConfig?: CspConfig): MiddlewareHandler {
       "Permissions-Policy",
       "camera=(), microphone=(), geolocation=(), payment=()"
     );
+    // Cross-origin isolation headers (OWASP recommended)
+    c.header("Cross-Origin-Opener-Policy", "same-origin");
+    c.header("Cross-Origin-Resource-Policy", "same-origin");
+    c.header("Cross-Origin-Embedder-Policy", "require-corp");
     // Prevent caching of API responses by default
     c.header("Cache-Control", "no-store");
     c.header("Pragma", "no-cache");

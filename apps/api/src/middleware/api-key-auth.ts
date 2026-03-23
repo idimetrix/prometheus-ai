@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import type { AuthContext } from "@prometheus/auth";
+import type { ApiKeyScope } from "@prometheus/db";
 import { apiKeys, db, organizations } from "@prometheus/db";
 import { createLogger } from "@prometheus/logger";
 import { redis } from "@prometheus/queue";
@@ -151,7 +152,67 @@ export function apiKeyAuthMiddleware(): MiddlewareHandler {
     c.set("userId", key.userId);
     c.set("apiKeyId", key.id);
     c.set("apiKeyAuth", syntheticAuth);
+    c.set("apiKeyScopes", key.scopes ?? []);
 
     await next();
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Scope Enforcement Middleware
+// ---------------------------------------------------------------------------
+
+/**
+ * Check whether the current API key (if any) has the required scope.
+ *
+ * Scopes use the format `"resource:action"` (e.g., `"sessions:read"`,
+ * `"tasks:write"`).  A wildcard scope `"*"` grants access to everything.
+ *
+ * When the request is authenticated via a Clerk JWT (no API key), the
+ * middleware passes through — JWT-based auth does not use scopes.
+ *
+ * Usage:
+ * ```ts
+ * app.use("/api/sessions/*", checkScope("sessions:read"));
+ * ```
+ */
+export function checkScope(requiredScope: string): MiddlewareHandler {
+  return async (c: Context, next) => {
+    const apiKeyId = c.get("apiKeyId") as string | undefined;
+
+    // Not an API-key request — skip scope check (JWT auth handles roles)
+    if (!apiKeyId) {
+      await next();
+      return;
+    }
+
+    const scopes = (c.get("apiKeyScopes") as ApiKeyScope[] | undefined) ?? [];
+
+    if (
+      scopes.includes("*" as ApiKeyScope) ||
+      scopes.includes(requiredScope as ApiKeyScope)
+    ) {
+      await next();
+      return;
+    }
+
+    // Check for wildcard on the resource (e.g., "sessions:*" grants "sessions:read")
+    const [resource] = requiredScope.split(":");
+    if (resource && scopes.includes(`${resource}:*` as ApiKeyScope)) {
+      await next();
+      return;
+    }
+
+    logger.warn(
+      { apiKeyId, requiredScope, scopes },
+      "API key scope check failed"
+    );
+    return c.json(
+      {
+        error: "Forbidden",
+        message: `API key missing required scope: ${requiredScope}`,
+      },
+      403
+    );
   };
 }

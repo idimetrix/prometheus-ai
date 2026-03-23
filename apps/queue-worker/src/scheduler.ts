@@ -1,6 +1,8 @@
 import { createLogger } from "@prometheus/logger";
 import {
+  agentTaskQueue,
   cleanupSandboxQueue,
+  notificationQueue,
   reconciliationQueue,
   redis,
   usageRollupQueue,
@@ -13,6 +15,114 @@ const logger = createLogger("queue-worker:scheduler");
 const memoryConsolidationQueue = new Queue("memory-consolidation", {
   connection: redis,
 });
+
+/** Stale task detection queue */
+const staleTaskDetectionQueue = new Queue("stale-task-detection", {
+  connection: redis,
+});
+
+/** Daily summary notification queue */
+const dailySummaryQueue = new Queue("daily-summary", {
+  connection: redis,
+});
+
+// ========== Scheduled Task Registry ==========
+
+export interface ScheduledTaskDefinition {
+  /** Cron pattern (e.g. "0 2 * * *" for daily at 2am) */
+  cronPattern: string;
+  /** Human-readable description */
+  description: string;
+  /** Whether the task is enabled */
+  enabled: boolean;
+  /** Unique name for this scheduled task */
+  name: string;
+  /** Organization that owns this task (use "__system__" for global) */
+  orgId: string;
+  /** Queue to add the job to */
+  queueName: string;
+  /** Job data payload */
+  taskData: Record<string, unknown>;
+}
+
+/**
+ * Register a custom cron-scheduled task at runtime.
+ * Uses BullMQ's built-in repeat/cron feature for reliable scheduling.
+ */
+export async function registerScheduledTask(
+  definition: ScheduledTaskDefinition
+): Promise<void> {
+  if (!definition.enabled) {
+    logger.info({ name: definition.name }, "Skipping disabled scheduled task");
+    return;
+  }
+
+  const queueMap: Record<string, Queue> = {
+    "agent-tasks": agentTaskQueue,
+    "cleanup-sandbox": cleanupSandboxQueue,
+    "usage-rollup": usageRollupQueue,
+    "credit-reconciliation": reconciliationQueue,
+    "send-notification": notificationQueue,
+    "stale-task-detection": staleTaskDetectionQueue,
+    "daily-summary": dailySummaryQueue,
+  };
+
+  const queue = queueMap[definition.queueName];
+  if (!queue) {
+    logger.warn(
+      { queueName: definition.queueName, name: definition.name },
+      "Unknown queue for scheduled task"
+    );
+    return;
+  }
+
+  await queue.add(`scheduled:${definition.name}`, definition.taskData, {
+    repeat: { pattern: definition.cronPattern },
+    jobId: `scheduled:${definition.name}`,
+  });
+
+  logger.info(
+    {
+      name: definition.name,
+      cron: definition.cronPattern,
+      queue: definition.queueName,
+    },
+    "Registered scheduled task"
+  );
+}
+
+/**
+ * Remove a previously registered scheduled task.
+ */
+export async function removeScheduledTask(
+  queueName: string,
+  taskName: string
+): Promise<boolean> {
+  const queueMap: Record<string, Queue> = {
+    "agent-tasks": agentTaskQueue,
+    "cleanup-sandbox": cleanupSandboxQueue,
+    "usage-rollup": usageRollupQueue,
+    "credit-reconciliation": reconciliationQueue,
+    "send-notification": notificationQueue,
+    "stale-task-detection": staleTaskDetectionQueue,
+    "daily-summary": dailySummaryQueue,
+  };
+
+  const queue = queueMap[queueName];
+  if (!queue) {
+    return false;
+  }
+
+  const removed = await queue.removeRepeatableByKey(
+    `scheduled:${taskName}:::${taskName}`
+  );
+
+  logger.info(
+    { name: taskName, queue: queueName, removed },
+    "Removed scheduled task"
+  );
+  return removed;
+}
 
 /**
  * Registers repeatable (cron-like) jobs on startup using BullMQ's repeat option.
@@ -117,6 +227,33 @@ export async function setupScheduledJobs(): Promise<void> {
     {
       repeat: { pattern: "0 2 * * *" },
       jobId: "scheduled:memory-consolidation",
+    }
+  );
+
+  // Stale task detection — every 5 minutes
+  // Detects tasks stuck in "queued" status for more than 15 minutes
+  await staleTaskDetectionQueue.add(
+    "scheduled:stale-task-detection",
+    {
+      maxAgeMinutes: 15,
+      action: "notify",
+    },
+    {
+      repeat: { pattern: "*/5 * * * *" },
+      jobId: "scheduled:stale-task-detection",
+    }
+  );
+
+  // Daily summary notification — every day at 8am UTC
+  await dailySummaryQueue.add(
+    "scheduled:daily-summary",
+    {
+      orgId: "__all__",
+      lookbackHours: 24,
+    },
+    {
+      repeat: { pattern: "0 8 * * *" },
+      jobId: "scheduled:daily-summary",
     }
   );
 

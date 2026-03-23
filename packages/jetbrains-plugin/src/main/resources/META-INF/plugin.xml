@@ -1,0 +1,63 @@
+<idea-plugin>
+    <id>dev.prometheus.jetbrains</id>
+    <name>Prometheus AI</name>
+    <version>0.1.0</version>
+    <vendor email="support@prometheus.dev" url="https://prometheus.dev">Prometheus</vendor>
+
+    <description><![CDATA[
+        AI-powered engineering platform with 12 specialist agents.
+        <br/><br/>
+        Prometheus brings a fleet of AI agents directly into your JetBrains IDE.
+        Submit tasks, monitor agent progress, and review AI-generated code — all
+        without leaving your editor.
+        <br/><br/>
+        <b>Features:</b>
+        <ul>
+            <li>Agent chat panel with streaming responses</li>
+            <li>Task submission and real-time progress tracking</li>
+            <li>Session management (start / stop / monitor)</li>
+            <li>Configurable API endpoint and authentication</li>
+        </ul>
+    ]]></description>
+
+    <depends>com.intellij.modules.platform</depends>
+
+    <extensions defaultExtensionNs="com.intellij">
+        <!-- Settings page under Settings > Tools > Prometheus AI -->
+        <applicationConfigurable
+                parentId="tools"
+                instance="dev.prometheus.PrometheusSettingsConfigurable"
+                id="dev.prometheus.settings"
+                displayName="Prometheus AI"/>
+
+        <!-- Persistent settings state -->
+        <applicationService
+                serviceImplementation="dev.prometheus.PrometheusSettings"/>
+
+        <!-- Tool window in the right sidebar -->
+        <toolWindow
+                id="Prometheus"
+                anchor="right"
+                factoryClass="dev.prometheus.PrometheusToolWindowFactory"
+                icon="/icons/prometheus.svg"
+                secondary="false"/>
+    </extensions>
+
+    <actions>
+        <group id="dev.prometheus.ActionGroup"
+               text="Prometheus AI"
+               popup="true">
+            <add-to-group group-id="ToolsMenu" anchor="last"/>
+
+            <action id="dev.prometheus.SubmitTask"
+                    class="dev.prometheus.actions.SubmitTaskAction"
+                    text="Submit Task to Prometheus"
+                    description="Send a task to the Prometheus agent fleet"/>
+
+            <action id="dev.prometheus.StartSession"
+                    class="dev.prometheus.actions.StartSessionAction"
+                    text="Start Session"
+                    description="Start a new Prometheus agent session"/>
+        </group>
+    </actions>
+</idea-plugin>

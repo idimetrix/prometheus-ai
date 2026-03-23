@@ -24,6 +24,8 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 import { CommandPalette } from "@/components/command-palette";
+import { MobileLayout } from "@/components/layout/mobile-layout";
+import { useIsMobile } from "@/hooks/use-breakpoint";
 import { useDashboardStore } from "@/stores/dashboard.store";
 
 const NAV_ITEMS: Array<{
@@ -73,6 +75,7 @@ export default function DashboardLayout({
   const { organization } = useOrganization();
   const { activeAgents, creditBalance } = useDashboardStore();
   const [commandOpen, setCommandOpen] = useState(false);
+  const isMobile = useIsMobile();
 
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
@@ -85,11 +88,21 @@ export default function DashboardLayout({
     return () => document.removeEventListener("keydown", handleKeyDown);
   }, []);
 
+  // Mobile layout: use dedicated mobile component
+  if (isMobile) {
+    return (
+      <TooltipProvider>
+        <MobileLayout>{children}</MobileLayout>
+        <CommandPalette onOpenChange={setCommandOpen} open={commandOpen} />
+      </TooltipProvider>
+    );
+  }
+
   return (
     <TooltipProvider>
       <div className="flex h-screen bg-background">
-        {/* Sidebar */}
-        <aside className="flex w-60 flex-col border-r bg-background">
+        {/* Sidebar — hidden on mobile via the isMobile check above */}
+        <aside className="hidden w-60 flex-col border-r bg-background md:flex">
           {/* Logo */}
           <div className="flex h-14 items-center gap-2 border-b px-4">
             <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-primary font-bold text-primary-foreground text-xs">
@@ -110,7 +123,7 @@ export default function DashboardLayout({
                     pathname.startsWith(item.href));
                 return (
                   <Link
-                    className={`flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm transition-colors ${
+                    className={`flex min-h-[44px] items-center gap-2.5 rounded-lg px-3 py-2 text-sm transition-colors ${
                       isActive
                         ? "bg-primary/10 font-medium text-primary"
                         : "text-muted-foreground hover:bg-accent hover:text-accent-foreground"
@@ -168,13 +181,13 @@ export default function DashboardLayout({
         {/* Main content */}
         <div className="flex flex-1 flex-col overflow-hidden">
           {/* Top bar */}
-          <header className="flex h-14 shrink-0 items-center justify-between border-b bg-background px-6">
+          <header className="flex h-14 shrink-0 items-center justify-between border-b bg-background px-4 md:px-6">
             <div className="flex items-center gap-4">
               <h1 className="font-medium text-foreground text-sm">
                 {organization?.name ?? "Personal Workspace"}
               </h1>
             </div>
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-2 md:gap-3">
               {/* Active agents badge */}
               <Badge variant={activeAgents > 0 ? "success" : "outline"}>
                 <span
@@ -192,13 +205,15 @@ export default function DashboardLayout({
                 <span className="font-medium">
                   {creditBalance.toLocaleString()}
                 </span>
-                <span className="ml-1 text-muted-foreground">credits</span>
+                <span className="ml-1 hidden text-muted-foreground sm:inline">
+                  credits
+                </span>
               </Badge>
             </div>
           </header>
 
           {/* Page content */}
-          <main className="flex-1 overflow-auto p-6">{children}</main>
+          <main className="flex-1 overflow-auto p-4 md:p-6">{children}</main>
         </div>
 
         {/* Command palette */}

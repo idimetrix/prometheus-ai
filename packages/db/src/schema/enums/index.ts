@@ -60,6 +60,18 @@ export {
   deployTargetValues,
 } from "./deploy-target";
 export {
+  type DeploymentProvider,
+  DeploymentProviderEnum,
+  deploymentProviderEnum,
+  deploymentProviderValues,
+} from "./deployment-provider";
+export {
+  type DeploymentStatus,
+  DeploymentStatusEnum,
+  deploymentStatusEnum,
+  deploymentStatusValues,
+} from "./deployment-status";
+export {
   type ExperimentStatus,
   ExperimentStatusEnum,
   experimentStatusEnum,

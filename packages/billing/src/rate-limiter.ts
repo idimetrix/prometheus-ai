@@ -3,7 +3,7 @@ import { createRedisConnection } from "@prometheus/queue";
 
 type IORedis = ReturnType<typeof createRedisConnection>;
 
-const _logger = createLogger("billing:rate-limiter");
+const logger = createLogger("billing:rate-limiter");
 
 interface TierLimits {
   maxConcurrentAgents: number;
@@ -21,6 +21,27 @@ const TIER_LIMITS: Record<string, TierLimits> = {
     maxConcurrentAgents: Number.POSITIVE_INFINITY,
   },
 };
+
+// ─── Cost Cap Thresholds ───────────────────────────────────────────────────
+
+/** Percentage of budget at which an alert notification is published */
+const COST_CAP_ALERT_THRESHOLD = 0.8;
+
+/** Percentage of budget at which new tasks are rejected (hard stop) */
+const COST_CAP_HARD_LIMIT = 1.0;
+
+export interface CostCapResult {
+  /** Whether the 80% alert threshold has been crossed */
+  alertTriggered: boolean;
+  /** Whether the org is allowed to start new tasks */
+  allowed: boolean;
+  /** Current spend in dollars (or credit units) */
+  currentSpend: number;
+  /** Budget limit in dollars (or credit units) */
+  limit: number;
+  /** Percentage of budget used (0-1+) */
+  usageRatio: number;
+}
 
 export class RateLimiter {
   private readonly redis: IORedis;
@@ -115,5 +136,130 @@ export class RateLimiter {
     const priority = this.getPriorityForTier(planTier);
     // Rough estimate: higher priority = lower wait
     return Math.max(0, (priority - 1) * 15);
+  }
+
+  // ─── Cost Cap ──────────────────────────────────────────────────────────────
+
+  /**
+   * Check whether an organization has exceeded its cost cap (budget limit).
+   *
+   * - At 80% usage an alert event key is set in Redis so downstream consumers
+   *   (notification service, webhooks) can fire a warning to the org admins.
+   * - At 100% usage new tasks are rejected (hard stop).
+   *
+   * @param orgId - Organization identifier
+   * @param currentSpend - Current billing-period spend (dollars or credit units)
+   * @param limit - Budget cap for the billing period
+   */
+  async checkCostCap(
+    orgId: string,
+    currentSpend: number,
+    limit: number
+  ): Promise<CostCapResult> {
+    // If no limit is set (unlimited), always allow
+    if (limit <= 0 || !Number.isFinite(limit)) {
+      return {
+        allowed: true,
+        currentSpend,
+        limit,
+        usageRatio: 0,
+        alertTriggered: false,
+      };
+    }
+
+    const usageRatio = currentSpend / limit;
+    let alertTriggered = false;
+
+    // Check if we should publish the 80% alert
+    if (
+      usageRatio >= COST_CAP_ALERT_THRESHOLD &&
+      usageRatio < COST_CAP_HARD_LIMIT
+    ) {
+      alertTriggered = await this.publishCostCapAlert(
+        orgId,
+        currentSpend,
+        limit,
+        usageRatio
+      );
+    }
+
+    // Hard stop at 100%
+    if (usageRatio >= COST_CAP_HARD_LIMIT) {
+      logger.warn(
+        { orgId, currentSpend, limit, usageRatio },
+        "Cost cap exceeded — rejecting new tasks"
+      );
+      // Also trigger alert if not already sent
+      alertTriggered = await this.publishCostCapAlert(
+        orgId,
+        currentSpend,
+        limit,
+        usageRatio
+      );
+
+      return {
+        allowed: false,
+        currentSpend,
+        limit,
+        usageRatio,
+        alertTriggered,
+      };
+    }
+
+    return {
+      allowed: true,
+      currentSpend,
+      limit,
+      usageRatio,
+      alertTriggered,
+    };
+  }
+
+  /**
+   * Publish a cost cap alert notification event via Redis.
+   * Uses a dedup key so the alert is only published once per billing period.
+   *
+   * @returns true if the alert was newly published, false if already sent
+   */
+  private async publishCostCapAlert(
+    orgId: string,
+    currentSpend: number,
+    limit: number,
+    usageRatio: number
+  ): Promise<boolean> {
+    // Dedup key — one alert per org per day
+    const dedupKey = `cost-cap:alert:${orgId}:${new Date().toISOString().slice(0, 10)}`;
+
+    try {
+      // SET NX — only set if not already present
+      const wasSet = await this.redis.set(dedupKey, "1", "EX", 86_400, "NX");
+
+      if (wasSet) {
+        // Publish notification event for downstream consumers
+        const event = JSON.stringify({
+          type: "cost_cap_alert",
+          orgId,
+          currentSpend,
+          limit,
+          usagePercent: Math.round(usageRatio * 100),
+          timestamp: new Date().toISOString(),
+        });
+        await this.redis.publish("notifications:cost-cap", event);
+
+        logger.info(
+          { orgId, usagePercent: Math.round(usageRatio * 100) },
+          "Cost cap alert published"
+        );
+        return true;
+      }
+
+      return false;
+    } catch (err) {
+      logger.warn(
+        { orgId, error: (err as Error).message },
+        "Failed to publish cost cap alert"
+      );
+      return false;
+    }
   }
 }

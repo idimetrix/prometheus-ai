@@ -354,6 +354,7 @@ export default function CreateProjectPage() {
   const [isCreating, setIsCreating] = useState(false);
 
   const createMutation = trpc.projects.create.useMutation();
+  const createSessionMutation = trpc.sessions.create.useMutation();
 
   // Auto-detect tech when moving to step 2
   useEffect(() => {
@@ -417,8 +418,22 @@ export default function CreateProjectPage() {
         description: description.trim(),
         techStackPreset: getTechStackPreset(),
       });
-      toast.success("Project created successfully!");
-      router.push(`/dashboard/projects/${project?.id}` as Route);
+
+      // Auto-create a session with the project description as the initial task
+      // This kicks off the agent pipeline immediately
+      try {
+        const session = await createSessionMutation.mutateAsync({
+          projectId: project.id,
+          mode: "task" as const,
+          prompt: `Build the project: ${projectName.trim()}. ${description.trim()}. Tech stack: ${selectedTech.join(", ")}.`,
+        });
+        toast.success("Project created! Agent is starting...");
+        router.push(`/dashboard/sessions/${session.id}` as Route);
+      } catch {
+        // Session creation failed but project was created — redirect to project
+        toast.success("Project created! Start a session to begin building.");
+        router.push(`/dashboard/projects/${project?.id}` as Route);
+      }
     } catch {
       toast.error("Failed to create project");
       setIsCreating(false);

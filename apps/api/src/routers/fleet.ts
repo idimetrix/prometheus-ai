@@ -91,13 +91,28 @@ export const fleetRouter = router({
   status: protectedProcedure
     .input(z.object({ sessionId: z.string().min(1, "Session ID is required") }))
     .query(async ({ input, ctx }) => {
+      // RLS: verify session belongs to caller's org
+      const session = await ctx.db.query.sessions.findFirst({
+        where: eq(sessions.id, input.sessionId),
+        with: { project: { columns: { id: true, orgId: true } } },
+      });
+      if (!session || session.project.orgId !== ctx.orgId) {
+        throw new TRPCError({
+          code: "NOT_FOUND",
+          message: "Session not found",
+        });
+      }
+
       const activeAgents = await ctx.db.query.agents.findMany({
         where: eq(agents.sessionId, input.sessionId),
         orderBy: [desc(agents.startedAt)],
       });
 
       const sessionTasks = await ctx.db.query.tasks.findMany({
-        where: eq(tasks.sessionId, input.sessionId),
+        where: and(
+          eq(tasks.sessionId, input.sessionId),
+          eq(tasks.orgId, ctx.orgId)
+        ),
         orderBy: [desc(tasks.createdAt)],
       });
 
@@ -387,7 +402,32 @@ export const fleetRouter = router({
       })
     )
     .mutation(async ({ input, ctx }) => {
+      // RLS: verify session belongs to caller's org
+      const session = await ctx.db.query.sessions.findFirst({
+        where: eq(sessions.id, input.sessionId),
+        with: { project: { columns: { id: true, orgId: true } } },
+      });
+      if (!session || session.project.orgId !== ctx.orgId) {
+        throw new TRPCError({
+          code: "NOT_FOUND",
+          message: "Session not found",
+        });
+      }
+
       if (input.agentId) {
+        // Verify agent belongs to this session
+        const agent = await ctx.db.query.agents.findFirst({
+          where: and(
+            eq(agents.id, input.agentId),
+            eq(agents.sessionId, input.sessionId)
+          ),
+        });
+        if (!agent) {
+          throw new TRPCError({
+            code: "NOT_FOUND",
+            message: "Agent not found",
+          });
+        }
         await ctx.db
           .update(agents)
           .set({ status: "terminated", terminatedAt: new Date() })

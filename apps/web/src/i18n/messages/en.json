@@ -1,0 +1,42 @@
+{
+  "common": {
+    "dashboard": "Dashboard",
+    "projects": "Projects",
+    "sessions": "Sessions",
+    "settings": "Settings",
+    "analytics": "Analytics",
+    "fleet": "Fleet Manager",
+    "create": "Create Project",
+    "cancel": "Cancel",
+    "save": "Save",
+    "delete": "Delete",
+    "loading": "Loading...",
+    "error": "Something went wrong",
+    "retry": "Retry",
+    "search": "Search...",
+    "noResults": "No results found"
+  },
+  "auth": {
+    "signIn": "Sign In",
+    "signUp": "Sign Up",
+    "signOut": "Sign Out"
+  },
+  "agents": {
+    "title": "AI Agents",
+    "orchestrator": "Orchestrator",
+    "discovery": "Discovery",
+    "architect": "Architect",
+    "planner": "Planner",
+    "frontendCoder": "Frontend Coder",
+    "backendCoder": "Backend Coder",
+    "testEngineer": "Test Engineer",
+    "securityAuditor": "Security Auditor",
+    "deployEngineer": "Deploy Engineer"
+  },
+  "billing": {
+    "credits": "Credits",
+    "balance": "Balance",
+    "usage": "Usage",
+    "upgrade": "Upgrade Plan"
+  }
+}

@@ -9,12 +9,12 @@ const logger = createLogger("api:rate-limit");
 // Plan tier rate limits (requests per minute)
 // ---------------------------------------------------------------------------
 const TIER_LIMITS: Record<PlanTier, number> = {
-  hobby: 10,
-  starter: 30,
-  pro: 60,
-  team: 120,
-  studio: 300,
-  enterprise: 600,
+  hobby: 60,
+  starter: 120,
+  pro: 300,
+  team: 600,
+  studio: 1500,
+  enterprise: 3000,
 };
 
 // Per-path overrides – matched via `startsWith`.

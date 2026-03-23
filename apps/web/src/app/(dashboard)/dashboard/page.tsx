@@ -119,27 +119,35 @@ export default function DashboardPage() {
   return (
     <div className="space-y-8">
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h1 className="font-bold text-2xl text-zinc-100">Dashboard</h1>
+          <h1 className="font-bold text-xl text-zinc-100 sm:text-2xl">
+            Dashboard
+          </h1>
           <p className="mt-1 text-sm text-zinc-500">
             Welcome to PROMETHEUS. Your AI engineering platform.
           </p>
         </div>
-        <div className="flex gap-3">
-          <Button asChild>
+        <div className="flex flex-wrap gap-2 sm:gap-3">
+          <Button asChild className="min-h-[44px]">
             <Link href="/dashboard/projects/new">
               <Plus className="h-4 w-4" />
-              New Project
+              <span className="hidden sm:inline">New Project</span>
+              <span className="sm:hidden">New</span>
             </Link>
           </Button>
-          <Button asChild variant="outline">
+          <Button asChild className="min-h-[44px]" variant="outline">
             <Link href="/new">
               <Zap className="h-4 w-4" />
-              New Task
+              <span className="hidden sm:inline">New Task</span>
+              <span className="sm:hidden">Task</span>
             </Link>
           </Button>
-          <Button asChild variant="outline">
+          <Button
+            asChild
+            className="hidden min-h-[44px] sm:inline-flex"
+            variant="outline"
+          >
             <Link href="/dashboard/analytics">
               <BarChart3 className="h-4 w-4" />
               View Analytics
@@ -150,14 +158,14 @@ export default function DashboardPage() {
 
       {/* Quick stats */}
       {isLoading ? (
-        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
           <StatCardSkeleton />
           <StatCardSkeleton />
           <StatCardSkeleton />
           <StatCardSkeleton />
         </div>
       ) : (
-        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
           <MetricCard
             icon={Cpu}
             iconBg="bg-green-500/10"
@@ -232,7 +240,7 @@ export default function DashboardPage() {
         </div>
 
         {sessionsQuery.isLoading && (
-          <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
             <SessionCardSkeleton />
             <SessionCardSkeleton />
             <SessionCardSkeleton />
@@ -255,7 +263,7 @@ export default function DashboardPage() {
           </Card>
         )}
         {!sessionsQuery.isLoading && sessions.length > 0 && (
-          <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
             {sessions.slice(0, 6).map((session) => (
               <Link
                 className="group rounded-xl border border-zinc-800 bg-zinc-900/50 p-4 transition-colors hover:border-zinc-700 hover:bg-zinc-900"
@@ -320,7 +328,7 @@ export default function DashboardPage() {
         </div>
 
         {projectsQuery.isLoading && (
-          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
             <ProjectCardSkeleton />
             <ProjectCardSkeleton />
             <ProjectCardSkeleton />
@@ -343,7 +351,7 @@ export default function DashboardPage() {
           </Card>
         )}
         {!projectsQuery.isLoading && projects.length > 0 && (
-          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {projects.map((project) => (
               <Link
                 className="group rounded-xl border border-zinc-800 bg-zinc-900/50 p-5 transition-colors hover:border-zinc-700 hover:bg-zinc-900"

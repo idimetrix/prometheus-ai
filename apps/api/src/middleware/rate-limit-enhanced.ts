@@ -15,6 +15,18 @@ const TIER_LIMITS: Record<EndpointTier, number> = {
 };
 
 /**
+ * Per-plan request limits (requests per minute).
+ * These are applied at the org level in the base rate-limit middleware.
+ * Referenced here for documentation and header generation.
+ */
+export const PLAN_RATE_LIMITS: Record<string, number> = {
+  hobby: 60,
+  pro: 300,
+  team: 600,
+  enterprise: 3000,
+};
+
+/**
  * Per-user rate limit classification for tRPC procedures.
  * Add procedures to a tier to enforce per-user (not per-org) limits.
  */

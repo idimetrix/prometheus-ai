@@ -219,6 +219,7 @@ export const tasksRouter = router({
           agentRole: input.agentRole ?? null,
           planTier: "hobby",
           creditsReserved: reservationId ? estimatedCredits : 0,
+          dependsOn: input.dependsOn ?? [],
         },
         {
           priority: input.priority ?? 50,

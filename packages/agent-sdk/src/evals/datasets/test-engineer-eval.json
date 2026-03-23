@@ -1,0 +1,102 @@
+[
+  {
+    "input": "Write unit tests for a formatDate utility function",
+    "expectedPatterns": ["describe", "it", "expect", "toBe"],
+    "framework": "vitest"
+  },
+  {
+    "input": "Write tests for a Zod createTaskSchema validator",
+    "expectedPatterns": ["describe", "safeParse", "success", "expect"],
+    "framework": "vitest"
+  },
+  {
+    "input": "Write integration tests for the tasks tRPC router with setup",
+    "expectedPatterns": ["describe", "it", "beforeAll"],
+    "framework": "vitest"
+  },
+  {
+    "input": "Write tests for a React TaskCard component",
+    "expectedPatterns": ["render", "screen", "expect", "describe"],
+    "framework": "vitest"
+  },
+  {
+    "input": "Write E2E browser page tests for the project creation click flow",
+    "expectedPatterns": ["test", "page", "click"],
+    "framework": "playwright"
+  },
+  {
+    "input": "Write tests for an async credit reservation service",
+    "expectedPatterns": ["describe", "it", "expect", "async", "await"],
+    "framework": "vitest"
+  },
+  {
+    "input": "Write tests for error handling in the authentication middleware",
+    "expectedPatterns": ["describe", "it", "expect", "toThrow"],
+    "framework": "vitest"
+  },
+  {
+    "input": "Write tests for cursor-based pagination logic",
+    "expectedPatterns": ["describe", "it", "expect", "length", "cursor"],
+    "framework": "vitest"
+  },
+  {
+    "input": "Write tests for a generateId utility with prefix validation",
+    "expectedPatterns": ["describe", "it", "expect", "toMatch"],
+    "framework": "vitest"
+  },
+  {
+    "input": "Write tests to verify orgId scoping on database queries",
+    "expectedPatterns": ["describe", "it", "expect", "orgId"],
+    "framework": "vitest"
+  },
+  {
+    "input": "Write tests for a rate limiting middleware",
+    "expectedPatterns": ["describe", "it", "expect", "beforeEach"],
+    "framework": "vitest"
+  },
+  {
+    "input": "Write tests with mock stubs for a BullMQ job processor that sends emails",
+    "expectedPatterns": ["describe", "it", "mock"],
+    "framework": "vitest"
+  },
+  {
+    "input": "Write tests for WebSocket event handling in Socket.io",
+    "expectedPatterns": ["describe", "it", "expect", "emit", "on"],
+    "framework": "vitest"
+  },
+  {
+    "input": "Write snapshot tests for a configuration object builder",
+    "expectedPatterns": ["describe", "it", "expect", "toMatchObject"],
+    "framework": "vitest"
+  },
+  {
+    "input": "Write tests for file upload validation including size and type checks",
+    "expectedPatterns": ["describe", "it", "expect", "size", "type"],
+    "framework": "vitest"
+  },
+  {
+    "input": "Write tests for a caching layer with TTL expiration",
+    "expectedPatterns": ["describe", "it", "expect", "cache", "async"],
+    "framework": "vitest"
+  },
+  {
+    "input": "Write tests that verify proper cleanup in afterEach hooks",
+    "expectedPatterns": ["describe", "it", "expect", "afterEach", "beforeEach"],
+    "framework": "vitest"
+  },
+  {
+    "input": "Write tests for concurrent access to shared resources",
+    "expectedPatterns": ["describe", "it", "expect", "Promise", "async"],
+    "framework": "vitest"
+  },
+  {
+    "input": "Write tests for a search function to check result count with edge cases like empty input",
+    "expectedPatterns": ["describe", "it", "length"],
+    "framework": "vitest"
+  },
+  {
+    "input": "Write tests for a date range filtering utility",
+    "expectedPatterns": ["describe", "it", "expect", "Date", "toBe"],
+    "framework": "vitest"
+  }
+]

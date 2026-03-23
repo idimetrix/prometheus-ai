@@ -155,6 +155,96 @@ export class SlackBot {
       ],
     });
   }
+
+  /**
+   * Post a progress update to an existing Slack thread.
+   * Used for streaming task progress back to the originating conversation.
+   */
+  async streamProgress(
+    channel: string,
+    threadTs: string,
+    update: { message: string; percentage?: number; step?: string }
+  ): Promise<string | null> {
+    const progressBar =
+      update.percentage == null ? "" : ` (${update.percentage}%)`;
+    const stepInfo = update.step ? `*Step:* ${update.step}\n` : "";
+
+    return await this.postMessage({
+      channel,
+      threadTs,
+      text: `Progress${progressBar}: ${update.message}`,
+      blocks: [
+        {
+          type: "section",
+          text: {
+            type: "mrkdwn",
+            text: `${stepInfo}:gear: ${update.message}${progressBar}`,
+          },
+        },
+      ],
+    });
+  }
+
+  /**
+   * Send a daily task summary to a channel.
+   * Provides an overview of completed, failed, and active tasks.
+   */
+  async sendDailySummary(
+    channel: string,
+    summary: {
+      activeTasks: number;
+      completedTasks: number;
+      creditsUsed: number;
+      date: string;
+      failedTasks: number;
+      highlights?: string[];
+    }
+  ): Promise<string | null> {
+    const highlightLines = summary.highlights?.length
+      ? summary.highlights.map((h) => `  - ${h}`).join("\n")
+      : "  No highlights today.";
+
+    const text = [
+      `Daily Summary for ${summary.date}`,
+      `Completed: ${summary.completedTasks}`,
+      `Failed: ${summary.failedTasks}`,
+      `Active: ${summary.activeTasks}`,
+      `Credits used: ${summary.creditsUsed}`,
+    ].join(" | ");
+
+    return await this.postMessage({
+      channel,
+      text,
+      blocks: [
+        {
+          type: "section",
+          text: {
+            type: "mrkdwn",
+            text: `:bar_chart: *Daily Summary — ${summary.date}*`,
+          },
+        },
+        {
+          type: "section",
+          text: {
+            type: "mrkdwn",
+            text: [
+              `:white_check_mark: *Completed:* ${summary.completedTasks}`,
+              `:x: *Failed:* ${summary.failedTasks}`,
+              `:arrows_counterclockwise: *Active:* ${summary.activeTasks}`,
+              `:coin: *Credits Used:* ${summary.creditsUsed}`,
+            ].join("\n"),
+          },
+        },
+        {
+          type: "section",
+          text: {
+            type: "mrkdwn",
+            text: `*Highlights:*\n${highlightLines}`,
+          },
+        },
+      ],
+    });
+  }
 }
 
 export function createSlackBot(token?: string): SlackBot {

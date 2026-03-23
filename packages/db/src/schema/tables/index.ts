@@ -7,6 +7,7 @@ export * from "./code-reviews";
 export * from "./conventions";
 export * from "./credits";
 export * from "./decisions";
+export * from "./deployments";
 export * from "./domain-rules";
 export * from "./embeddings";
 export * from "./governance";

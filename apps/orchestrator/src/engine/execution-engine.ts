@@ -45,7 +45,9 @@ import type {
   ToolCallEvent,
   ToolResultEvent,
 } from "./execution-events";
+import { HealthWatchdog } from "./health-watchdog";
 import { QualityGate } from "./quality-gate";
+import { RecoveryStrategy } from "./recovery-strategy";
 
 /**
  * Feature flag: set to true to use Vercel AI SDK streaming instead of raw SSE.
@@ -177,6 +179,11 @@ export const ExecutionEngine = {
     const selfReview = new SelfReview();
     const qualityGate = new QualityGate();
     const contextCompressor = new ContextCompressor();
+    const healthWatchdog = new HealthWatchdog();
+    const recoveryStrategy = new RecoveryStrategy();
+    let recoveryAttempts = 0;
+
+    healthWatchdog.startMonitoring(ctx.sessionId);
 
     // Inject learned context from procedural memories
     try {
@@ -632,6 +639,12 @@ export const ExecutionEngine = {
         }): Promise<ExecutionEvent[]> => {
           const events: ExecutionEvent[] = [];
           totalToolCalls++;
+
+          // Report progress to health watchdog
+          healthWatchdog.reportProgress(ctx.sessionId, "tool_call", {
+            tool: tc.name,
+            args: tc.args,
+          });
 
           // Yield tool_call event
           events.push(
@@ -1094,6 +1107,70 @@ export const ExecutionEngine = {
         );
       }
 
+      // Health watchdog check after each iteration
+      const watchdogAction = healthWatchdog.getRecoveryAction(ctx.sessionId);
+      if (watchdogAction === "escalate") {
+        const reason = healthWatchdog.getStatus(ctx.sessionId)?.isLooping
+          ? "infinite_loop"
+          : "extended_stale";
+        const strategy = recoveryStrategy.handleStuckAgent(
+          ctx.sessionId,
+          reason,
+          {
+            attemptCount: recoveryAttempts,
+            currentModelSlot: slot,
+            sessionId: ctx.sessionId,
+            reason,
+          }
+        );
+        const recoveryResult = recoveryStrategy.executeRecovery(strategy, {
+          attemptCount: recoveryAttempts,
+          currentModelSlot: slot,
+          sessionId: ctx.sessionId,
+          reason,
+        });
+        recoveryAttempts++;
+
+        if (recoveryResult.injectedPrompt) {
+          agent.addUserMessage(recoveryResult.injectedPrompt);
+        }
+        if (recoveryResult.newModelSlot) {
+          slot = recoveryResult.newModelSlot;
+        }
+
+        logger.warn(
+          { sessionId: ctx.sessionId, strategy, recoveryAttempts },
+          "Health watchdog triggered recovery"
+        );
+      } else if (watchdogAction === "abort") {
+        logger.error(
+          { sessionId: ctx.sessionId },
+          "Health watchdog recommends abort"
+        );
+        yield makeEvent<ErrorEvent>({
+          type: "error",
+          error: "Agent exceeded maximum runtime — aborting",
+          recoverable: false,
+        });
+        yield makeEvent<CompleteEvent>({
+          type: "complete",
+          success: false,
+          output: lastOutput,
+          filesChanged: Array.from(filesChanged),
+          tokensUsed: { input: totalInputTokens, output: totalOutputTokens },
+          toolCalls: totalToolCalls,
+          steps: i,
+          creditsConsumed: totalCreditsConsumed,
+        });
+        healthWatchdog.stopMonitoring(ctx.sessionId);
+        iterationSpan.setStatus({
+          code: SpanStatusCode.ERROR,
+          message: "Health watchdog abort",
+        });
+        iterationSpan.end();
+        return;
+      }
+
       iterationSpan.setAttribute("gen_ai.iteration.tool_calls", totalToolCalls);
       iterationSpan.setAttribute(
         "gen_ai.iteration.tokens.input",
@@ -1110,6 +1187,9 @@ export const ExecutionEngine = {
       iterationSpan.setStatus({ code: SpanStatusCode.OK });
       iterationSpan.end();
     }
+
+    // Clean up watchdog
+    healthWatchdog.stopMonitoring(ctx.sessionId);
 
     // Completed all iterations or agent finished naturally
     yield makeEvent<CompleteEvent>({

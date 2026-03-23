@@ -1,14 +1,35 @@
+import type { Database } from "@prometheus/db";
 import {
   agentMemories,
   blueprints,
   codeEmbeddings,
   episodicMemories,
   proceduralMemories,
+  projects,
 } from "@prometheus/db";
 import { generateId } from "@prometheus/utils";
+import { TRPCError } from "@trpc/server";
 import { and, desc, eq, sql } from "drizzle-orm";
 import { z } from "zod";
 import { protectedProcedure, router } from "../trpc";
+
+/**
+ * Verify that a project belongs to the caller's org.
+ * Prevents cross-org access via projectId guessing.
+ */
+async function verifyProjectOrg(
+  db: Database,
+  projectId: string,
+  orgId: string
+) {
+  const project = await db.query.projects.findFirst({
+    where: and(eq(projects.id, projectId), eq(projects.orgId, orgId)),
+    columns: { id: true },
+  });
+  if (!project) {
+    throw new TRPCError({ code: "NOT_FOUND", message: "Project not found" });
+  }
+}
 
 export const brainRouter = router({
   search: protectedProcedure
@@ -20,6 +41,9 @@ export const brainRouter = router({
       })
     )
     .query(async ({ input, ctx }) => {
+      // RLS: verify project belongs to caller's org
+      await verifyProjectOrg(ctx.db, input.projectId, ctx.orgId);
+
       // Text-based search fallback (semantic search requires embedding generation)
       const results = await ctx.db
         .select({
@@ -57,6 +81,9 @@ export const brainRouter = router({
       })
     )
     .query(async ({ input, ctx }) => {
+      // RLS: verify project belongs to caller's org
+      await verifyProjectOrg(ctx.db, input.projectId, ctx.orgId);
+
       const conditions = [eq(agentMemories.projectId, input.projectId)];
       if (input.type) {
         conditions.push(eq(agentMemories.memoryType, input.type));
@@ -86,6 +113,9 @@ export const brainRouter = router({
       })
     )
     .mutation(async ({ input, ctx }) => {
+      // RLS: verify project belongs to caller's org
+      await verifyProjectOrg(ctx.db, input.projectId, ctx.orgId);
+
       const id = generateId("mem");
       const [memory] = await ctx.db
         .insert(agentMemories)
@@ -108,6 +138,9 @@ export const brainRouter = router({
       })
     )
     .query(async ({ input, ctx }) => {
+      // RLS: verify project belongs to caller's org
+      await verifyProjectOrg(ctx.db, input.projectId, ctx.orgId);
+
       const memories = await ctx.db.query.episodicMemories.findMany({
         where: eq(episodicMemories.projectId, input.projectId),
         orderBy: [desc(episodicMemories.createdAt)],
@@ -123,6 +156,9 @@ export const brainRouter = router({
       })
     )
     .query(async ({ input, ctx }) => {
+      // RLS: verify project belongs to caller's org
+      await verifyProjectOrg(ctx.db, input.projectId, ctx.orgId);
+
       const memories = await ctx.db.query.proceduralMemories.findMany({
         where: eq(proceduralMemories.projectId, input.projectId),
       });
@@ -136,6 +172,9 @@ export const brainRouter = router({
       })
     )
     .query(async ({ input, ctx }) => {
+      // RLS: verify project belongs to caller's org
+      await verifyProjectOrg(ctx.db, input.projectId, ctx.orgId);
+
       const blueprint = await ctx.db.query.blueprints.findFirst({
         where: and(
           eq(blueprints.projectId, input.projectId),
@@ -154,6 +193,9 @@ export const brainRouter = router({
       })
     )
     .query(async ({ input, ctx }) => {
+      // RLS: verify project belongs to caller's org
+      await verifyProjectOrg(ctx.db, input.projectId, ctx.orgId);
+
       // Return file dependency graph from embeddings
       const files = await ctx.db
         .select({

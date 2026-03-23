@@ -39,6 +39,8 @@ export const submitTaskSchema = z.object({
   description: z.string().max(5000).optional(),
   priority: z.number().int().min(0).max(10).default(5),
   agentRole: agentRoleSchema.optional(),
+  /** Task IDs that must complete before this task starts */
+  dependsOn: z.array(z.string().min(1)).max(20).optional(),
 });
 
 export const updateTaskSchema = z.object({

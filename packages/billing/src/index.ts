@@ -37,6 +37,7 @@ export {
   PLAN_QUOTAS,
   type PlanQuotas,
 } from "./quotas";
+export type { CostCapResult } from "./rate-limiter";
 export { RateLimiter } from "./rate-limiter";
 export { StripeService } from "./stripe";
 export type { UsageRecord } from "./usage-tracker";

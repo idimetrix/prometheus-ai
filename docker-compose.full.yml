@@ -1,0 +1,455 @@
+# =============================================================================
+# Prometheus Platform — Full Stack Docker Compose
+# =============================================================================
+# Extends the base docker-compose.yml with ALL 9 application services.
+# Designed for full-stack local development with hot reload.
+#
+# Usage:
+#   docker compose -f docker-compose.yml -f docker-compose.full.yml up -d
+#
+# Or with profiles (base compose uses profiles):
+#   docker compose -f docker-compose.yml -f docker-compose.full.yml \
+#     --profile full up -d
+#
+# Prerequisites:
+#   - Docker images built: docker compose -f docker-compose.full.yml build
+#   - .env file configured (copy from .env.example)
+#   - Database initialized: pnpm db:push
+#
+# Port mapping:
+#   3000 — Web (Next.js frontend)
+#   4000 — API (tRPC + Hono backend)
+#   4001 — Socket Server (WebSocket real-time)
+#   4002 — Orchestrator (agent coordination)
+#   4003 — Project Brain (RAG + code intelligence)
+#   4004 — Model Router (LLM provider routing)
+#   4005 — MCP Gateway (Model Context Protocol bridge)
+#   4006 — Sandbox Manager (secure code execution)
+#   4007 — Queue Worker (Inngest background jobs)
+# =============================================================================
+
+services:
+  # ── Web: Next.js frontend application ──────────────────────────────────────
+  # Serves the main user interface. Depends on the API for data and
+  # socket-server for real-time updates.
+  web:
+    build:
+      context: .
+      dockerfile: infra/docker/Dockerfile.web
+      target: builder
+    container_name: prometheus-web
+    ports:
+      - "3000:3000"
+    environment:
+      NODE_ENV: development
+      PORT: 3000
+      # Connect to API and Socket Server within the Docker network
+      NEXT_PUBLIC_API_URL: http://localhost:4000
+      NEXT_PUBLIC_SOCKET_URL: http://localhost:4001
+    env_file:
+      - .env
+    volumes:
+      # Hot reload: mount source code, exclude node_modules and build output
+      - ./apps/web/src:/app/apps/web/src
+      - ./apps/web/public:/app/apps/web/public
+      - ./packages/ui/src:/app/packages/ui/src
+    depends_on:
+      api:
+        condition: service_healthy
+      socket-server:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:3000/ || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 45s
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+          cpus: "2.0"
+        reservations:
+          memory: 512M
+          cpus: "0.5"
+    networks:
+      - prometheus-net
+
+  # ── API: tRPC + Hono backend ───────────────────────────────────────────────
+  # Core backend service. Handles all tRPC routes, authentication, and
+  # coordinates with other services. Connects to PostgreSQL via PgBouncer.
+  api:
+    build:
+      context: .
+      dockerfile: infra/docker/Dockerfile.api
+      target: builder
+    container_name: prometheus-api
+    ports:
+      - "4000:4000"
+    environment:
+      NODE_ENV: development
+      PORT: 4000
+      DATABASE_URL: postgresql://prometheus:prometheus_dev@pgbouncer:6432/prometheus
+      DIRECT_DATABASE_URL: postgresql://prometheus:prometheus_dev@postgres:5432/prometheus
+      REDIS_URL: redis://redis:6379
+      LITELLM_URL: http://litellm:4000
+      LITELLM_API_KEY: sk-prometheus-litellm-dev
+      SOCKET_SERVER_URL: http://socket-server:4001
+      ORCHESTRATOR_URL: http://orchestrator:4002
+      MINIO_ENDPOINT: http://minio:9000
+      MINIO_ACCESS_KEY: minioadmin
+      MINIO_SECRET_KEY: minioadmin
+    env_file:
+      - .env
+    volumes:
+      # Hot reload: mount source code for development
+      - ./apps/api/src:/app/apps/api/src
+      - ./packages/db/src:/app/packages/db/src
+      - ./packages/auth/src:/app/packages/auth/src
+      - ./packages/validators/src:/app/packages/validators/src
+    depends_on:
+      postgres:
+        condition: service_healthy
+      pgbouncer:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:4000/health || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: "1.0"
+        reservations:
+          memory: 256M
+          cpus: "0.25"
+    networks:
+      - prometheus-net
+
+  # ── Socket Server: WebSocket real-time communication ───────────────────────
+  # Manages WebSocket connections for real-time updates (agent progress,
+  # chat streaming, notifications). Backed by Redis pub/sub.
+  socket-server:
+    build:
+      context: .
+      dockerfile: infra/docker/Dockerfile.socket-server
+      target: builder
+    container_name: prometheus-socket-server
+    ports:
+      - "4001:4001"
+    environment:
+      NODE_ENV: development
+      PORT: 4001
+      REDIS_URL: redis://redis:6379
+    env_file:
+      - .env
+    volumes:
+      - ./apps/socket-server/src:/app/apps/socket-server/src
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:4001/health || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: "0.5"
+        reservations:
+          memory: 128M
+          cpus: "0.25"
+    networks:
+      - prometheus-net
+
+  # ── Orchestrator: Agent coordination and task planning ─────────────────────
+  # Central coordination service for multi-agent workflows. Receives tasks
+  # from the API, plans execution, and dispatches work to specialist agents.
+  orchestrator:
+    build:
+      context: .
+      dockerfile: infra/docker/Dockerfile.orchestrator
+      target: builder
+    container_name: prometheus-orchestrator
+    ports:
+      - "4002:4002"
+    environment:
+      NODE_ENV: development
+      PORT: 4002
+      DATABASE_URL: postgresql://prometheus:prometheus_dev@pgbouncer:6432/prometheus
+      REDIS_URL: redis://redis:6379
+      LITELLM_URL: http://litellm:4000
+      LITELLM_API_KEY: sk-prometheus-litellm-dev
+      API_URL: http://api:4000
+      PROJECT_BRAIN_URL: http://project-brain:4003
+      MODEL_ROUTER_URL: http://model-router:4004
+      MCP_GATEWAY_URL: http://mcp-gateway:4005
+      SANDBOX_MANAGER_URL: http://sandbox-manager:4006
+    env_file:
+      - .env
+    volumes:
+      - ./apps/orchestrator/src:/app/apps/orchestrator/src
+    depends_on:
+      api:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:4002/health || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+          cpus: "2.0"
+        reservations:
+          memory: 512M
+          cpus: "0.5"
+    networks:
+      - prometheus-net
+
+  # ── Project Brain: RAG, code intelligence, and embeddings ──────────────────
+  # Provides semantic code search, project understanding, and retrieval-
+  # augmented generation. Uses pgvector for embeddings and Zoekt for
+  # trigram code search.
+  project-brain:
+    build:
+      context: .
+      dockerfile: infra/docker/Dockerfile.project-brain
+      target: builder
+    container_name: prometheus-project-brain
+    ports:
+      - "4003:4003"
+    environment:
+      NODE_ENV: development
+      PORT: 4003
+      DATABASE_URL: postgresql://prometheus:prometheus_dev@pgbouncer:6432/prometheus
+      REDIS_URL: redis://redis:6379
+      LITELLM_URL: http://litellm:4000
+      LITELLM_API_KEY: sk-prometheus-litellm-dev
+      OLLAMA_BASE_URL: http://ollama:11434
+      EMBEDDING_MODEL: nomic-embed-text
+      ZOEKT_URL: http://zoekt:6070
+    env_file:
+      - .env
+    volumes:
+      - ./apps/project-brain/src:/app/apps/project-brain/src
+    depends_on:
+      pgbouncer:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:4003/health || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: "1.0"
+        reservations:
+          memory: 256M
+          cpus: "0.25"
+    networks:
+      - prometheus-net
+
+  # ── Model Router: LLM provider routing and load balancing ──────────────────
+  # Routes LLM requests to the optimal provider based on cost, latency,
+  # and capability requirements. Supports fallback chains and rate limiting.
+  model-router:
+    build:
+      context: .
+      dockerfile: infra/docker/Dockerfile.model-router
+      target: builder
+    container_name: prometheus-model-router
+    ports:
+      - "4004:4004"
+    environment:
+      NODE_ENV: development
+      PORT: 4004
+      LITELLM_URL: http://litellm:4000
+      LITELLM_API_KEY: sk-prometheus-litellm-dev
+      REDIS_URL: redis://redis:6379
+      OLLAMA_BASE_URL: http://ollama:11434
+    env_file:
+      - .env
+    volumes:
+      - ./apps/model-router/src:/app/apps/model-router/src
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:4004/health || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: "0.5"
+        reservations:
+          memory: 128M
+          cpus: "0.25"
+    networks:
+      - prometheus-net
+
+  # ── MCP Gateway: Model Context Protocol bridge ─────────────────────────────
+  # Bridges the Model Context Protocol, enabling agents to interact with
+  # external tools, file systems, and APIs through a standardized interface.
+  mcp-gateway:
+    build:
+      context: .
+      dockerfile: infra/docker/Dockerfile.mcp-gateway
+      target: builder
+    container_name: prometheus-mcp-gateway
+    ports:
+      - "4005:4005"
+    environment:
+      NODE_ENV: development
+      PORT: 4005
+      REDIS_URL: redis://redis:6379
+      API_URL: http://api:4000
+    env_file:
+      - .env
+    volumes:
+      - ./apps/mcp-gateway/src:/app/apps/mcp-gateway/src
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:4005/health || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: "0.5"
+        reservations:
+          memory: 128M
+          cpus: "0.25"
+    networks:
+      - prometheus-net
+
+  # ── Sandbox Manager: Secure code execution environment ─────────────────────
+  # Manages isolated sandboxes for running user/agent-generated code safely.
+  # Uses Docker-in-Docker or Firecracker for isolation. Maintains a warm
+  # pool of pre-created sandboxes for low-latency execution.
+  sandbox-manager:
+    build:
+      context: .
+      dockerfile: infra/docker/Dockerfile.sandbox-manager
+      target: builder
+    container_name: prometheus-sandbox-manager
+    ports:
+      - "4006:4006"
+    environment:
+      NODE_ENV: development
+      PORT: 4006
+      REDIS_URL: redis://redis:6379
+      SANDBOX_IMAGE: node:22-alpine
+      SANDBOX_BASE_DIR: /tmp/prometheus-sandboxes
+      WARM_POOL_SIZE: 2
+      MAX_POOL_SIZE: 10
+    env_file:
+      - .env
+    volumes:
+      - ./apps/sandbox-manager/src:/app/apps/sandbox-manager/src
+      # Docker socket for container management
+      - /var/run/docker.sock:/var/run/docker.sock
+      - sandbox_data:/tmp/prometheus-sandboxes
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:4006/health || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: "1.0"
+        reservations:
+          memory: 256M
+          cpus: "0.25"
+    networks:
+      - prometheus-net
+
+  # ── Queue Worker: Background job processing via Inngest ────────────────────
+  # Processes asynchronous tasks: agent execution, embedding generation,
+  # billing reconciliation, cleanup jobs, and webhook delivery.
+  queue-worker:
+    build:
+      context: .
+      dockerfile: infra/docker/Dockerfile.queue-worker
+      target: builder
+    container_name: prometheus-queue-worker
+    ports:
+      - "4007:4007"
+    environment:
+      NODE_ENV: development
+      PORT: 4007
+      DATABASE_URL: postgresql://prometheus:prometheus_dev@pgbouncer:6432/prometheus
+      REDIS_URL: redis://redis:6379
+      API_URL: http://api:4000
+      ORCHESTRATOR_URL: http://orchestrator:4002
+    env_file:
+      - .env
+    volumes:
+      - ./apps/queue-worker/src:/app/apps/queue-worker/src
+    depends_on:
+      pgbouncer:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:4007/health || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: "1.0"
+        reservations:
+          memory: 256M
+          cpus: "0.25"
+    networks:
+      - prometheus-net
+
+# Additional volume for sandbox data
+volumes:
+  sandbox_data:
+    name: prometheus-sandbox-data

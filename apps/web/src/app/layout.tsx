@@ -16,6 +16,11 @@ export default function RootLayout({
 }) {
   return (
     <html className="dark" lang="en" suppressHydrationWarning>
+      <head>
+        <link href="/manifest.json" rel="manifest" />
+        <meta content="#7c3aed" name="theme-color" />
+        <meta content="yes" name="apple-mobile-web-app-capable" />
+      </head>
       <body className="min-h-screen bg-background font-sans text-foreground antialiased">
         <Providers>{children}</Providers>
         <Toaster

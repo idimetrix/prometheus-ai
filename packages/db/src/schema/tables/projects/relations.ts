@@ -1,5 +1,6 @@
 import { relations } from "drizzle-orm";
 import { blueprints } from "../blueprints/blueprints";
+import { deployments } from "../deployments/deployments";
 import { codeEmbeddings, fileIndexes } from "../embeddings/embeddings";
 import { mcpToolConfigs } from "../integrations/integrations";
 import {
@@ -31,4 +32,5 @@ export const projectsRelations = relations(projects, ({ one, many }) => ({
   episodicMemories: many(episodicMemories),
   proceduralMemories: many(proceduralMemories),
   mcpToolConfigs: many(mcpToolConfigs),
+  deployments: many(deployments),
 }));

@@ -100,6 +100,8 @@ export interface AgentTaskData {
   agentRole: AgentRole | null;
   checkpointId?: string;
   creditsReserved: number;
+  /** Task IDs that must complete before this task starts */
+  dependsOn?: string[];
   description: string | null;
   mode: AgentMode;
   orgId: string;
@@ -183,6 +185,16 @@ export interface CreditGrantData {
   reason: "subscription_monthly" | "bonus" | "refund" | "manual";
 }
 
+/** preview-deployment: Build and deploy a preview environment */
+export interface PreviewDeploymentData {
+  branch?: string;
+  deploymentId: string;
+  orgId: string;
+  projectId: string;
+  provider: "vercel" | "netlify" | "cloudflare" | "docker";
+  sessionId?: string;
+}
+
 // ========== Job Name Registry ==========
 export interface JobDataMap {
   "agent-task": AgentTaskData;
@@ -190,6 +202,7 @@ export interface JobDataMap {
   "credit-grant": CreditGrantData;
   "generate-embeddings": GenerateEmbeddingsData;
   "index-project": IndexProjectData;
+  "preview-deployment": PreviewDeploymentData;
   "send-notification": SendNotificationData;
   "usage-rollup": UsageRollupData;
 }

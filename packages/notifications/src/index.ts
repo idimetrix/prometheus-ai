@@ -1,3 +1,9 @@
+export type {
+  DailySummary,
+  SlackSummaryBlocks,
+  TaskSummaryInput,
+} from "./daily-summary";
+export { formatSlackSummary, generateDailySummary } from "./daily-summary";
 export { NovuClient } from "./novu-client";
 export type {
   Alert,

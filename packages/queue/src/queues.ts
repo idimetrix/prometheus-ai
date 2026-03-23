@@ -8,6 +8,7 @@ import {
   type GenerateEmbeddingsData,
   type IndexProjectData,
   JobPriority,
+  type PreviewDeploymentData,
   RetryPolicies,
   type SendNotificationData,
   type UsageRollupData,
@@ -111,6 +112,21 @@ export const cleanupSandboxQueue = new Queue<CleanupSandboxData>(
   }
 );
 
+// ========== Preview Deployments ==========
+
+/** Preview deployment queue */
+export const previewDeploymentQueue = new Queue<PreviewDeploymentData>(
+  "preview-deployment",
+  {
+    connection: redis,
+    defaultJobOptions: buildJobOptions(RetryPolicies.standard, {
+      removeOnComplete: 500,
+      removeOnFail: 1000,
+      priority: JobPriority.NORMAL,
+    }),
+  }
+);
+
 // ========== Billing & Usage ==========
 
 /** Usage rollup aggregation queue */
@@ -181,6 +197,7 @@ export const ALL_QUEUES = {
   "generate-embeddings": embeddingsQueue,
   "send-notification": notificationQueue,
   "cleanup-sandbox": cleanupSandboxQueue,
+  "preview-deployment": previewDeploymentQueue,
   "usage-rollup": usageRollupQueue,
   "credit-grant": creditGrantQueue,
   "credit-reconciliation": reconciliationQueue,

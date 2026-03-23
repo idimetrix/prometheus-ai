@@ -69,8 +69,8 @@
 
 ## 1. Core Framework Layer
 
-### Next.js 15 / 16 — `MUST USE` — `IN USE`
-- **Version**: 15.3.0 (current), targeting 16.x
+### Next.js 16 — `MUST USE` — `IN USE`
+- **Version**: 16.2.0
 - **License**: MIT
 - **GitHub**: 130K+ stars
 - **What**: Full-stack React framework with App Router, React Server Components (RSC), streaming, and Turbopack
@@ -79,15 +79,15 @@
 - **Status**: `IN USE` — `apps/web`
 
 ### React 19 — `MUST USE` — `IN USE`
-- **Version**: 19.1.0
+- **Version**: 19.2.4
 - **License**: MIT
 - **GitHub**: 235K+ stars
 - **What**: UI component library with concurrent features, Server Components, Actions, and `use()` hook
 - **Why**: Foundation of our entire frontend. React 19's streaming + Suspense powers the real-time agent session UI
 - **Status**: `IN USE`
 
-### TypeScript 5.7 — `MUST USE` — `IN USE`
-- **Version**: 5.7.0
+### TypeScript 5.9 — `MUST USE` — `IN USE`
+- **Version**: 5.9.3
 - **License**: Apache-2.0
 - **GitHub**: 105K+ stars
 - **What**: Typed superset of JavaScript
@@ -95,7 +95,7 @@
 - **Status**: `IN USE` — strict mode enabled
 
 ### Hono — `MUST USE` — `IN USE`
-- **Version**: 4.7.0
+- **Version**: 4.12.8
 - **License**: MIT
 - **GitHub**: 22K+ stars
 - **What**: Ultrafast, lightweight web framework for edge and Node.js. Built on Web Standards
@@ -114,7 +114,7 @@
 
 ## 2. UI & Design System
 
-### shadcn/ui — `MUST USE` — `PLANNED`
+### shadcn/ui — `MUST USE` — `IN USE`
 - **Version**: Latest (CLI install)
 - **License**: MIT
 - **GitHub**: 80K+ stars
@@ -122,35 +122,35 @@
 - **Why**: Primary design system. AI Agent Skills (March 2026) reduce LLM hallucinations when generating UI. Design System Presets for rapid theming. Dark mode native. Every screen in APEX is built with shadcn
 - **Key components**: Card, Badge, ScrollArea, Separator, Dialog, Select, Textarea, Button, Tabs, Table, Chart, Command
 - **Alternatives**: Ark UI, Park UI, NextUI
-- **Status**: `PLANNED` — Sprint 1
+- **Status**: `IN USE` — `packages/ui`, `apps/web`
 
-### Radix UI — `MUST USE` — `PLANNED`
+### Radix UI — `MUST USE` — `IN USE`
 - **Version**: Latest (@radix-ui/react-*)
 - **License**: MIT
 - **GitHub**: 16K+ stars
 - **What**: Unstyled, accessible UI primitives. The foundation underneath shadcn/ui
 - **Why**: Provides accessible, WAI-ARIA compliant primitives that shadcn styles with Tailwind
-- **Status**: `PLANNED` — installed with shadcn
+- **Status**: `IN USE` — installed with shadcn
 
-### AI Elements / Vercel AI SDK — `MUST USE` — `PLANNED`
-- **Version**: ai ^5.0.0, ai-elements latest
+### Vercel AI SDK — `MUST USE` — `IN USE`
+- **Version**: ai ^6.0.116, @ai-sdk/anthropic ^3.0.58, @ai-sdk/openai ^3.0.41, @ai-sdk/google ^3.0.43
 - **License**: MIT / Apache-2.0
 - **GitHub**: 12K+ stars (ai SDK)
 - **What**: AI-native UI components (Terminal, FileTree, Plan, Message, Reasoning, CodeBlock, Queue, Task, Checkpoint, PromptInput, Sources, Suggestion) + React hooks (useChat, useCompletion)
 - **Why**: These components ARE the agent session UI. Terminal for live shell output, Plan for task plans, Queue for Fleet Mode, Message for Ask Mode. No other library provides these AI-native primitives
 - **Key components used**: `<Terminal />`, `<FileTree />`, `<Plan />`, `<PlanAction />`, `<Message />`, `<MessageContent />`, `<Reasoning />`, `<ReasoningContent />`, `<CodeBlock />`, `<Queue />`, `<QueueItem />`, `<Task />`, `<TaskContent />`, `<Checkpoint />`, `<PromptInput />`, `<Sources />`, `<Suggestion />`
-- **Status**: `PLANNED` — Sprint 2
+- **Status**: `IN USE` — `packages/ai`, `packages/agent-sdk`, `apps/orchestrator`
 
 ### Tailwind CSS v4 — `MUST USE` — `IN USE`
-- **Version**: 4.0.0
+- **Version**: 4.2.2
 - **License**: MIT
 - **GitHub**: 86K+ stars
 - **What**: Utility-first CSS framework
 - **Why**: Fastest iteration speed. Native shadcn compatibility. Dark mode trivial. CSS-first config in v4 (no tailwind.config.js)
 - **Status**: `IN USE`
 
-### Framer Motion — `SHOULD USE` — `PLANNED`
-- **Version**: ^11.0.0
+### Framer Motion — `SHOULD USE` — `IN USE`
+- **Version**: ^12.38.0
 - **License**: MIT
 - **GitHub**: 25K+ stars
 - **What**: Production-ready animation library for React
@@ -158,7 +158,7 @@
 - **Alternatives**: React Spring, CSS animations
 - **Status**: `PLANNED`
 
-### cmdk — `SHOULD USE` — `PLANNED`
+### cmdk — `SHOULD USE` — `IN USE`
 - **Version**: ^1.0.0
 - **License**: MIT
 - **GitHub**: 10K+ stars
@@ -166,7 +166,7 @@
 - **Why**: Power user navigation. Quick access to repos, agents, tasks, settings. Essential for developer-focused UX
 - **Status**: `PLANNED`
 
-### CodeMirror 6 — `SHOULD USE` — `PLANNED`
+### CodeMirror 6 — `SHOULD USE` — `IN USE`
 - **Version**: ^6.0.0
 - **License**: MIT
 - **GitHub**: 5K+ stars
@@ -183,7 +183,7 @@
 - **Why**: Alternative to CodeMirror if we need full IDE-like editing in the browser (Watch Mode). Heavier bundle but more features
 - **Status**: `OPTIONAL`
 
-### D3.js — `SHOULD USE` — `PLANNED`
+### D3.js — `SHOULD USE` — `IN USE`
 - **Version**: ^7.9.0
 - **License**: ISC
 - **GitHub**: 110K+ stars
@@ -191,8 +191,8 @@
 - **Why**: Powers the Project Brain codebase dependency graph visualization (Screen 4). No other library provides this level of graph customization
 - **Status**: `PLANNED` — Sprint 3
 
-### Recharts — `SHOULD USE` — `PLANNED`
-- **Version**: ^2.12.0
+### Recharts — `SHOULD USE` — `IN USE`
+- **Version**: ^3.8.0
 - **License**: MIT
 - **GitHub**: 24K+ stars
 - **What**: Composable charting library built on D3 + React
@@ -207,7 +207,7 @@
 - **Why**: Quick diff rendering for PR previews. Lighter alternative if CodeMirror merge is overkill for read-only diffs
 - **Status**: `OPTIONAL`
 
-### react-markdown — `MUST USE` — `PLANNED`
+### react-markdown — `MUST USE` — `IN USE`
 - **Version**: ^9.0.0
 - **License**: MIT
 - **GitHub**: 13K+ stars
@@ -234,8 +234,8 @@
 - **Alternatives**: Prism.js, highlight.js
 - **Status**: `PLANNED`
 
-### xterm.js — `MUST USE` — `PLANNED`
-- **Version**: ^5.5.0
+### xterm.js — `MUST USE` — `IN USE`
+- **Version**: @xterm/xterm ^6.0.0 (package renamed)
 - **License**: MIT
 - **GitHub**: 18K+ stars
 - **What**: Full-featured terminal emulator for the browser. Used by VS Code, Hyper, and Theia
@@ -243,8 +243,8 @@
 - **Alternatives**: None at this quality level
 - **Status**: `PLANNED` — Sprint 2
 
-### Sonner — `MUST USE` — `PLANNED`
-- **Version**: ^1.7.0
+### Sonner — `MUST USE` — `IN USE`
+- **Version**: ^2.0.7
 - **License**: MIT
 - **GitHub**: 9K+ stars
 - **What**: Opinionated toast notification component for React
@@ -252,8 +252,8 @@
 - **Alternatives**: react-hot-toast
 - **Status**: `PLANNED` — Sprint 1
 
-### react-hook-form — `SHOULD USE` — `PLANNED`
-- **Version**: ^7.54.0
+### react-hook-form — `SHOULD USE` — `IN USE`
+- **Version**: ^7.71.2
 - **License**: MIT
 - **GitHub**: 42K+ stars
 - **What**: Performant, flexible form library with minimal re-renders
@@ -261,7 +261,7 @@
 - **Alternatives**: Formik (heavier), TanStack Form
 - **Status**: `PLANNED`
 
-### date-fns — `SHOULD USE` — `PLANNED`
+### date-fns — `SHOULD USE` — `IN USE`
 - **Version**: ^4.0.0
 - **License**: MIT
 - **GitHub**: 35K+ stars
@@ -304,7 +304,7 @@
 - **Alternatives**: Custom implementation with Radix Accordion
 - **Status**: `PLANNED`
 
-### dnd-kit — `SHOULD USE` — `PLANNED`
+### dnd-kit — `SHOULD USE` — `IN USE`
 - **Version**: ^6.1.0
 - **License**: MIT
 - **GitHub**: 13K+ stars
@@ -384,7 +384,7 @@
 - **Status**: `IN USE` — `apps/web`
 
 ### tRPC 11 — `MUST USE` — `IN USE`
-- **Version**: 11.0.0
+- **Version**: 11.13.4
 - **License**: MIT
 - **GitHub**: 36K+ stars
 - **What**: End-to-end type-safe APIs without code generation
@@ -438,19 +438,19 @@
 ## 4. Real-Time Communication
 
 ### Socket.io 4.8 — `MUST USE` — `IN USE`
-- **Version**: 4.8.0
+- **Version**: 4.8.3
 - **License**: MIT
 - **GitHub**: 62K+ stars
 - **What**: Real-time bidirectional WebSocket library with automatic reconnection, room support, and fallbacks
 - **Why**: Powers real-time collaboration: multiple users watching the same agent session, override/takeover, terminal input. Requires custom Next.js server (not Vercel serverless)
 - **Status**: `IN USE` — `apps/socket-server` + `apps/web` (socket.io-client)
 
-### Server-Sent Events (SSE) — `MUST USE` — `PLANNED`
+### Server-Sent Events (SSE) — `MUST USE` — `IN USE`
 - **Version**: Native Web API
 - **License**: N/A (web standard)
 - **What**: Unidirectional server→client streaming over HTTP
 - **Why**: Primary transport for agent output streaming (terminal output, file changes, plan updates). SSE is stateless, works through any HTTP proxy, and is simpler than WebSockets for one-way data. Agent Orchestrator → Redis Pub/Sub → SSE → Browser
-- **Status**: `PLANNED` — Sprint 2
+- **Status**: `IN USE` — `apps/api/src/routes/sse.ts`
 
 ### Novu — `SHOULD USE` — `PLANNED`
 - **Version**: ^2.0.0
@@ -488,7 +488,7 @@
 ## 5. Authentication & Authorization
 
 ### Clerk — `MUST USE` — `IN USE`
-- **Version**: @clerk/nextjs 6.12.0, @clerk/backend 1.21.0
+- **Version**: @clerk/nextjs ^7.0.6
 - **License**: Proprietary (free tier: 10K MAU)
 - **What**: Managed authentication with multi-tenant organizations, GitHub OAuth, SSO, RBAC
 - **Why**: Fastest path to launch. Multi-tenant org support out of the box (critical for team/enterprise plans). GitHub OAuth for developer auth. Pre-built UI components
@@ -539,7 +539,7 @@
 - **Status**: `IN USE` — via Docker image
 
 ### Drizzle ORM — `MUST USE` — `IN USE`
-- **Version**: 0.39.0
+- **Version**: 0.45.1
 - **License**: Apache-2.0
 - **GitHub**: 28K+ stars
 - **What**: TypeScript ORM with SQL-like syntax. Lightweight, edge-native (5KB)
@@ -648,7 +648,7 @@
 ## 8. Task Queue & Workflow Orchestration
 
 ### BullMQ 5 — `MUST USE` — `IN USE`
-- **Version**: 5.34.0
+- **Version**: 5.71.0
 - **License**: MIT
 - **GitHub**: 6K+ stars
 - **What**: Redis-backed job queue for Node.js with retries, rate limiting, concurrency control, dead letter queues
@@ -672,7 +672,7 @@
 - **Why**: Simpler alternative to Temporal for TypeScript-only teams. Never-timeout workflows. Good for tasks that don't need Temporal's full complexity
 - **Status**: `OPTIONAL`
 
-### Inngest — `CAN USE` — `OPTIONAL`
+### Inngest — `MUST USE` — `IN USE`
 - **Version**: Latest
 - **License**: Proprietary (free tier)
 - **What**: Reliable serverless functions with step-based execution and automatic retries
@@ -792,7 +792,7 @@
 
 ## 10. LLM Model Serving & Local AI
 
-### Ollama — `MUST USE` — `PLANNED`
+### Ollama — `MUST USE` — `IN USE`
 - **Version**: Latest
 - **License**: MIT
 - **GitHub**: 115K+ stars
@@ -925,7 +925,7 @@
 
 ## 13. RAG & Code Intelligence
 
-### tree-sitter — `MUST USE` — `PLANNED`
+### tree-sitter — `MUST USE` — `IN USE`
 - **Version**: Latest
 - **License**: MIT
 - **GitHub**: 19K+ stars
@@ -950,7 +950,7 @@
 - **Why**: Lowest overhead (~5.9ms) for retrieval pipelines. Better debugging than LlamaIndex. Good for complex retrieval chains with multiple sources
 - **Status**: `OPTIONAL`
 
-### ast-grep — `SHOULD USE` — `PLANNED`
+### ast-grep — `SHOULD USE` — `IN USE`
 - **Version**: Latest
 - **License**: MIT
 - **GitHub**: 8K+ stars
@@ -959,7 +959,7 @@
 - **Alternatives**: Semgrep (heavier, security-focused)
 - **Status**: `PLANNED`
 
-### Cognee — `SHOULD USE` — `PLANNED`
+### Cognee — `SHOULD USE` — `IN USE`
 - **Version**: Latest
 - **License**: Apache-2.0
 - **GitHub**: 7K+ stars
@@ -975,7 +975,7 @@
 - **Why**: If agents need to process non-code documents (specs, designs, documentation) as part of task context
 - **Status**: `OPTIONAL`
 
-### Zoekt — `SHOULD USE` — `PLANNED`
+### Zoekt — `SHOULD USE` — `IN USE`
 - **Version**: Latest
 - **License**: Apache-2.0
 - **GitHub**: 2K+ stars
@@ -1054,7 +1054,7 @@
 
 ## 16. Browser Automation
 
-### browser-use — `MUST USE` — `PLANNED`
+### browser-use — `MUST USE` — `IN USE`
 - **Version**: Latest
 - **License**: MIT
 - **GitHub**: 50K+ stars
@@ -1182,7 +1182,7 @@
 - **Why**: Deep security analysis for enterprise customers. Finds complex vulnerabilities that pattern-matching (Semgrep) misses. Free for open source
 - **Status**: `OPTIONAL` — enterprise security feature
 
-### ast-grep — `SHOULD USE` — `PLANNED`
+### ast-grep — `SHOULD USE` — `IN USE`
 - **Version**: Latest
 - **License**: MIT
 - **GitHub**: 8K+ stars
@@ -2396,6 +2396,135 @@
 │  Serwist (PWA) │ next-intl (i18n) │ axe-core (a11y)            │
 └─────────────────────────────────────────────────────────────────┘
 ```
+
+---
+
+---
+
+## 45. Code Formatting & Linting
+
+### Ultracite — `MUST USE` — `IN USE`
+- **Version**: ^7.3.2
+- **License**: MIT
+- **What**: Zero-config preset wrapping Biome for strict code quality standards
+- **Why**: Single command `pnpm unsafe` fixes all formatting and linting. Error-level enforcement prevents sloppy code
+- **Status**: `IN USE` — root package.json
+
+### Biome — `MUST USE` — `IN USE`
+- **Version**: ^2.4.8
+- **License**: MIT
+- **GitHub**: 18K+ stars
+- **What**: Fast all-in-one linter + formatter (Rust-based, replaces ESLint + Prettier)
+- **Why**: 10-100x faster than ESLint. Single tool for format + lint. Used via Ultracite preset
+- **Status**: `IN USE` — all packages
+
+### Lefthook — `MUST USE` — `IN USE`
+- **Version**: ^2.1.4
+- **License**: MIT
+- **What**: Git hooks manager (fast, zero-dependency)
+- **Why**: Pre-commit auto-formats staged files, pre-push runs typecheck
+- **Status**: `IN USE`
+
+---
+
+## 46. Voice & Speech
+
+### Web Speech API — `SHOULD USE` — `IN USE`
+- **Version**: Browser native
+- **License**: N/A (web standard)
+- **What**: Browser-native speech recognition and synthesis
+- **Why**: Powers voice commands and TTS in the web UI. Zero dependencies
+- **Status**: `IN USE` — `packages/voice`
+
+---
+
+## 47. Collaborative Editing
+
+### Yjs — `MUST USE` — `IN USE`
+- **Version**: ^13.6.30
+- **License**: MIT
+- **GitHub**: 17K+ stars
+- **What**: CRDT-based collaborative editing framework
+- **Why**: Enables Google Docs-style real-time collaborative coding between humans and AI agents
+- **Status**: `IN USE` — `packages/collaboration`
+
+### y-websocket — `MUST USE` — `IN USE`
+- **Version**: ^3.0.0
+- **License**: MIT
+- **What**: Yjs WebSocket provider for real-time sync
+- **Status**: `IN USE` — `apps/socket-server`
+
+### y-codemirror.next — `SHOULD USE` — `IN USE`
+- **Version**: ^0.3.5
+- **License**: MIT
+- **What**: Yjs binding for CodeMirror 6
+- **Status**: `IN USE` — `apps/web`
+
+---
+
+## 48. Additional Technologies In Use
+
+### PostHog — `SHOULD USE` — `IN USE`
+- **Version**: ^1.363.1
+- **License**: MIT
+- **What**: Open source product analytics, session replay, feature flags
+- **Why**: Product analytics without vendor lock-in. Self-hostable
+- **Status**: `IN USE` — `apps/web`
+
+### Playwright — `MUST USE` — `IN USE`
+- **Version**: ^1.58.2
+- **License**: Apache-2.0
+- **GitHub**: 70K+ stars
+- **What**: Cross-browser automation framework
+- **Why**: E2E testing + browser automation in sandboxes for visual verification
+- **Status**: `IN USE` — `apps/sandbox-manager`, E2E tests
+
+### Lucide React — `MUST USE` — `IN USE`
+- **Version**: ^0.577.0
+- **License**: ISC
+- **What**: Icon library (fork of Feather Icons with 1000+ icons)
+- **Status**: `IN USE` — `apps/web`
+
+### SuperJSON — `MUST USE` — `IN USE`
+- **Version**: ^2.2.6
+- **License**: MIT
+- **What**: JSON serialization with Dates, RegExps, Maps, Sets support
+- **Why**: tRPC transformer for type-safe serialization
+- **Status**: `IN USE` — tRPC layer
+
+### Turbo — `MUST USE` — `IN USE`
+- **Version**: ^2.8.20
+- **License**: MIT (Vercel)
+- **What**: Monorepo build orchestrator with remote caching
+- **Why**: Parallel builds, dependency-aware task scheduling, CI caching
+- **Status**: `IN USE` — `turbo.json`
+
+### tsup — `MUST USE` — `IN USE`
+- **Version**: ^8.5.1
+- **License**: MIT
+- **What**: TypeScript bundler powered by esbuild
+- **Why**: Fast package builds for all shared packages
+- **Status**: `IN USE` — all packages
+
+### @sentry/node — `MUST USE` — `IN USE`
+- **Version**: ^10.45.0
+- **License**: MIT
+- **What**: Error tracking and performance monitoring
+- **Status**: `IN USE` — `apps/api`
+
+### Langfuse — `SHOULD USE` — `IN USE`
+- **Version**: Referenced in model-router
+- **License**: MIT
+- **What**: LLM observability — traces, evaluations, prompt management
+- **Why**: Track model performance, cost, and quality per request
+- **Status**: `IN USE` — `apps/model-router`
+
+### Zod 4 — `MUST USE` — `IN USE`
+- **Version**: 4.3.6
+- **License**: MIT
+- **What**: TypeScript-first schema validation (major upgrade from Zod 3)
+- **Why**: Input validation for all APIs. Runtime type checking. Integration with tRPC and Drizzle
+- **Status**: `IN USE` — all packages
 
 ---
 

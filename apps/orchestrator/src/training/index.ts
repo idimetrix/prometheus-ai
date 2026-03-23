@@ -5,3 +5,9 @@ export {
   type TrainingExample,
   type TrainingMetrics,
 } from "./self-play-trainer";
+export {
+  type InsightCategory,
+  type LearningInsight,
+  SharedLearningStore,
+  type TransferResult,
+} from "./transfer-learning";

@@ -36,6 +36,12 @@ export default function MarketingLayout({
               About
             </Link>
             <Link
+              className="text-sm text-zinc-400 transition-colors hover:text-zinc-200"
+              href={"/benchmarks" as Route}
+            >
+              Benchmarks
+            </Link>
+            <Link
               className="font-medium text-sm text-zinc-200 hover:text-white"
               href={"/sign-in" as Route}
             >
@@ -89,6 +95,12 @@ export default function MarketingLayout({
                   href="/about"
                 >
                   About
+                </Link>
+                <Link
+                  className="block text-sm text-zinc-500 hover:text-zinc-300"
+                  href={"/benchmarks" as Route}
+                >
+                  Benchmarks
                 </Link>
               </div>
             </div>
