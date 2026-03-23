@@ -1,18 +1,23 @@
-const path = require("path");
-const fs = require("fs");
+"use strict";
+const _path = require("node:path");
+const fs = require("node:fs");
 
 // Load .env file manually
 const envFile = fs.readFileSync("/root/prometheus/.env", "utf-8");
 const env = {};
-envFile.split("\n").forEach((line) => {
-  line = line.trim();
-  if (!line || line.startsWith("#")) return;
-  const idx = line.indexOf("=");
-  if (idx === -1) return;
-  const key = line.substring(0, idx);
-  const val = line.substring(idx + 1);
+for (const rawLine of envFile.split("\n")) {
+  const trimmed = rawLine.trim();
+  if (!trimmed || trimmed.startsWith("#")) {
+    continue;
+  }
+  const idx = trimmed.indexOf("=");
+  if (idx === -1) {
+    continue;
+  }
+  const key = trimmed.slice(0, idx);
+  const val = trimmed.slice(idx + 1);
   env[key] = val;
-});
+}
 
 module.exports = {
   apps: [

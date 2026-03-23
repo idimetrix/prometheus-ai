@@ -19,7 +19,7 @@ export default function MarketingLayout({
           <nav className="flex items-center gap-6">
             <Link
               className="text-sm text-zinc-400 transition-colors hover:text-zinc-200"
-              href="/features"
+              href={"/features" as Route}
             >
               Features
             </Link>
@@ -80,7 +80,7 @@ export default function MarketingLayout({
               <div className="mt-3 space-y-2">
                 <Link
                   className="block text-sm text-zinc-500 hover:text-zinc-300"
-                  href="/features"
+                  href={"/features" as Route}
                 >
                   Features
                 </Link>

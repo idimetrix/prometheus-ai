@@ -10,6 +10,7 @@ import {
   Plus,
   Zap,
 } from "lucide-react";
+import type { Route } from "next";
 import Link from "next/link";
 import { useEffect } from "react";
 import { MetricCard } from "@/components/dashboard/metric-card";
@@ -387,7 +388,7 @@ export default function DashboardPage() {
             {projects.map((project) => (
               <Link
                 className="group rounded-xl border border-zinc-800 bg-zinc-900/50 p-5 transition-colors hover:border-zinc-700 hover:bg-zinc-900"
-                href={`/dashboard/projects/${project.id}`}
+                href={`/dashboard/projects/${project.id}` as Route}
                 key={project.id}
               >
                 <div className="flex items-center justify-between">

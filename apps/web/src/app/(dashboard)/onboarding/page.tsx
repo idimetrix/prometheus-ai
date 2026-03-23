@@ -1,5 +1,6 @@
 "use client";
 
+import type { Route } from "next";
 import { useRouter } from "next/navigation";
 import { useCallback, useState } from "react";
 import { toast } from "sonner";
@@ -169,7 +170,7 @@ export default function OnboardingPage() {
       }
 
       toast.success("Project created! Redirecting to your session...");
-      router.push(`/dashboard/sessions/${session.id}`);
+      router.push(`/dashboard/sessions/${session.id}` as Route);
     } catch {
       // Errors are handled by mutation onError callbacks
       setIsLaunching(false);
