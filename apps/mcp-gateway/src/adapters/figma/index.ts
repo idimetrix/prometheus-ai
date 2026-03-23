@@ -1,7 +1,7 @@
 import { createLogger } from "@prometheus/logger";
-import type { ToolRegistry, MCPToolResult } from "../../registry";
+import type { MCPToolResult, ToolRegistry } from "../../registry";
 
-const logger = createLogger("mcp-gateway:figma");
+const _logger = createLogger("mcp-gateway:figma");
 
 const FIGMA_API = "https://api.figma.com/v1";
 
@@ -28,15 +28,22 @@ async function figmaFetch(
   });
 
   const contentType = response.headers.get("content-type") ?? "";
-  const data = contentType.includes("json") ? await response.json() : await response.text();
+  const data = contentType.includes("json")
+    ? await response.json()
+    : await response.text();
 
   return { status: response.status, data };
 }
 
-function requireToken(credentials?: Record<string, string>): MCPToolResult | string {
+function requireToken(
+  credentials?: Record<string, string>
+): MCPToolResult | string {
   const token = credentials?.figma_token;
   if (!token) {
-    return { success: false, error: "Figma access token required. Provide credentials.figma_token." };
+    return {
+      success: false,
+      error: "Figma access token required. Provide credentials.figma_token.",
+    };
   }
   return token;
 }
@@ -52,7 +59,10 @@ export function registerFigmaAdapter(registry: ToolRegistry): void {
         type: "object",
         properties: {
           fileKey: { type: "string", description: "Figma file key (from URL)" },
-          depth: { type: "number", description: "Depth of node tree to return (default: 2)" },
+          depth: {
+            type: "number",
+            description: "Depth of node tree to return (default: 2)",
+          },
         },
         required: ["fileKey"],
       },
@@ -60,34 +70,57 @@ export function registerFigmaAdapter(registry: ToolRegistry): void {
     },
     async (input, credentials) => {
       const tokenOrErr = requireToken(credentials);
-      if (typeof tokenOrErr !== "string") return tokenOrErr;
+      if (typeof tokenOrErr !== "string") {
+        return tokenOrErr;
+      }
 
       const { fileKey, depth } = input as { fileKey: string; depth?: number };
 
       const params = new URLSearchParams();
-      if (depth !== undefined) params.set("depth", String(depth));
+      if (depth !== undefined) {
+        params.set("depth", String(depth));
+      }
 
       const queryStr = params.toString() ? `?${params.toString()}` : "";
-      const { status, data } = await figmaFetch(`/files/${fileKey}${queryStr}`, tokenOrErr);
+      const { status, data } = await figmaFetch(
+        `/files/${fileKey}${queryStr}`,
+        tokenOrErr
+      );
 
       if (status !== 200) {
-        return { success: false, error: `Figma API error (${status}): ${JSON.stringify(data)}` };
+        return {
+          success: false,
+          error: `Figma API error (${status}): ${JSON.stringify(data)}`,
+        };
       }
 
       const file = data as Record<string, unknown>;
       const document = file.document as Record<string, unknown> | undefined;
 
       // Extract pages and their top-level frames
-      const pages: Array<{ id: string; name: string; frames: Array<{ id: string; name: string }> }> = [];
+      const pages: Array<{
+        id: string;
+        name: string;
+        frames: Array<{ id: string; name: string }>;
+      }> = [];
       if (document?.children) {
-        for (const page of document.children as any[]) {
-          const frames = (page.children ?? [])
-            .filter((child: any) => child.type === "FRAME" || child.type === "COMPONENT" || child.type === "COMPONENT_SET")
-            .map((frame: any) => ({ id: frame.id, name: frame.name, type: frame.type }));
+        for (const page of document.children as Record<string, unknown>[]) {
+          const frames = ((page.children as Record<string, unknown>[]) ?? [])
+            .filter(
+              (child: Record<string, unknown>) =>
+                child.type === "FRAME" ||
+                child.type === "COMPONENT" ||
+                child.type === "COMPONENT_SET"
+            )
+            .map((frame: Record<string, unknown>) => ({
+              id: frame.id as string,
+              name: frame.name as string,
+              type: frame.type as string,
+            }));
 
           pages.push({
-            id: page.id,
-            name: page.name,
+            id: page.id as string,
+            name: page.name as string,
             frames,
           });
         }
@@ -95,7 +128,9 @@ export function registerFigmaAdapter(registry: ToolRegistry): void {
 
       // Extract components from the file metadata
       const components = file.components
-        ? Object.entries(file.components as Record<string, any>).map(([id, comp]) => ({
+        ? Object.entries(
+            file.components as Record<string, Record<string, unknown>>
+          ).map(([id, comp]) => ({
             id,
             name: comp.name,
             description: comp.description ?? "",
@@ -105,7 +140,9 @@ export function registerFigmaAdapter(registry: ToolRegistry): void {
 
       // Extract styles
       const styles = file.styles
-        ? Object.entries(file.styles as Record<string, any>).map(([id, style]) => ({
+        ? Object.entries(
+            file.styles as Record<string, Record<string, unknown>>
+          ).map(([id, style]) => ({
             id,
             name: style.name,
             type: style.styleType, // FILL, TEXT, EFFECT, GRID
@@ -145,24 +182,37 @@ export function registerFigmaAdapter(registry: ToolRegistry): void {
     },
     async (input, credentials) => {
       const tokenOrErr = requireToken(credentials);
-      if (typeof tokenOrErr !== "string") return tokenOrErr;
+      if (typeof tokenOrErr !== "string") {
+        return tokenOrErr;
+      }
 
       const { fileKey } = input as { fileKey: string };
-      const { status, data } = await figmaFetch(`/files/${fileKey}/components`, tokenOrErr);
+      const { status, data } = await figmaFetch(
+        `/files/${fileKey}/components`,
+        tokenOrErr
+      );
 
       if (status !== 200) {
-        return { success: false, error: `Figma API error (${status}): ${JSON.stringify(data)}` };
+        return {
+          success: false,
+          error: `Figma API error (${status}): ${JSON.stringify(data)}`,
+        };
       }
 
       const result = data as Record<string, unknown>;
       const meta = result.meta as Record<string, unknown> | undefined;
-      const components = ((meta?.components as any[]) ?? []).map((comp) => ({
+      const components = (
+        (meta?.components as Record<string, unknown>[]) ?? []
+      ).map((comp) => ({
         key: comp.key,
         name: comp.name,
         description: comp.description ?? "",
         node_id: comp.node_id,
         containing_frame: comp.containing_frame
-          ? { name: comp.containing_frame.name, nodeId: comp.containing_frame.nodeId }
+          ? {
+              name: (comp.containing_frame as Record<string, unknown>).name,
+              nodeId: (comp.containing_frame as Record<string, unknown>).nodeId,
+            }
           : null,
         created_at: comp.created_at,
         updated_at: comp.updated_at,
@@ -185,9 +235,20 @@ export function registerFigmaAdapter(registry: ToolRegistry): void {
         type: "object",
         properties: {
           fileKey: { type: "string" },
-          nodeIds: { type: "array", items: { type: "string" }, description: "Node IDs to export" },
-          format: { type: "string", enum: ["png", "svg", "jpg", "pdf"], description: "Export format" },
-          scale: { type: "number", description: "Export scale (1-4, default 2)" },
+          nodeIds: {
+            type: "array",
+            items: { type: "string" },
+            description: "Node IDs to export",
+          },
+          format: {
+            type: "string",
+            enum: ["png", "svg", "jpg", "pdf"],
+            description: "Export format",
+          },
+          scale: {
+            type: "number",
+            description: "Export scale (1-4, default 2)",
+          },
         },
         required: ["fileKey", "nodeIds"],
       },
@@ -195,10 +256,15 @@ export function registerFigmaAdapter(registry: ToolRegistry): void {
     },
     async (input, credentials) => {
       const tokenOrErr = requireToken(credentials);
-      if (typeof tokenOrErr !== "string") return tokenOrErr;
+      if (typeof tokenOrErr !== "string") {
+        return tokenOrErr;
+      }
 
       const { fileKey, nodeIds, format, scale } = input as {
-        fileKey: string; nodeIds: string[]; format?: string; scale?: number;
+        fileKey: string;
+        nodeIds: string[];
+        format?: string;
+        scale?: number;
       };
 
       if (!nodeIds.length) {
@@ -217,7 +283,10 @@ export function registerFigmaAdapter(registry: ToolRegistry): void {
       );
 
       if (status !== 200) {
-        return { success: false, error: `Figma API error (${status}): ${JSON.stringify(data)}` };
+        return {
+          success: false,
+          error: `Figma API error (${status}): ${JSON.stringify(data)}`,
+        };
       }
 
       const result = data as Record<string, unknown>;
@@ -249,7 +318,8 @@ export function registerFigmaAdapter(registry: ToolRegistry): void {
     {
       name: "figma_get_design_tokens",
       adapter: "figma",
-      description: "Extract design tokens (colors, typography, spacing) from a Figma file's published styles",
+      description:
+        "Extract design tokens (colors, typography, spacing) from a Figma file's published styles",
       inputSchema: {
         type: "object",
         properties: {
@@ -261,33 +331,48 @@ export function registerFigmaAdapter(registry: ToolRegistry): void {
     },
     async (input, credentials) => {
       const tokenOrErr = requireToken(credentials);
-      if (typeof tokenOrErr !== "string") return tokenOrErr;
+      if (typeof tokenOrErr !== "string") {
+        return tokenOrErr;
+      }
 
       const { fileKey } = input as { fileKey: string };
 
       // Get file styles
-      const { status, data } = await figmaFetch(`/files/${fileKey}/styles`, tokenOrErr);
+      const { status, data } = await figmaFetch(
+        `/files/${fileKey}/styles`,
+        tokenOrErr
+      );
 
       if (status !== 200) {
-        return { success: false, error: `Figma API error (${status}): ${JSON.stringify(data)}` };
+        return {
+          success: false,
+          error: `Figma API error (${status}): ${JSON.stringify(data)}`,
+        };
       }
 
       const result = data as Record<string, unknown>;
       const meta = result.meta as Record<string, unknown> | undefined;
-      const styles = (meta?.styles as any[]) ?? [];
+      const styles = (meta?.styles as Record<string, unknown>[]) ?? [];
 
       // Categorize styles into token types
-      const colors: Array<{ name: string; key: string; description: string }> = [];
-      const typography: Array<{ name: string; key: string; description: string }> = [];
-      const effects: Array<{ name: string; key: string; description: string }> = [];
-      const grids: Array<{ name: string; key: string; description: string }> = [];
+      const colors: Array<{ name: string; key: string; description: string }> =
+        [];
+      const typography: Array<{
+        name: string;
+        key: string;
+        description: string;
+      }> = [];
+      const effects: Array<{ name: string; key: string; description: string }> =
+        [];
+      const grids: Array<{ name: string; key: string; description: string }> =
+        [];
 
       for (const style of styles) {
         const entry = {
-          name: style.name,
-          key: style.key,
-          description: style.description ?? "",
-          node_id: style.node_id,
+          name: style.name as string,
+          key: style.key as string,
+          description: (style.description as string) ?? "",
+          node_id: style.node_id as string,
         };
 
         switch (style.style_type) {
@@ -303,15 +388,20 @@ export function registerFigmaAdapter(registry: ToolRegistry): void {
           case "GRID":
             grids.push(entry);
             break;
+          default:
+            break;
         }
       }
 
       // Also get the file to extract actual color/text values from the nodes
-      const fileResult = await figmaFetch(`/files/${fileKey}?depth=1`, tokenOrErr);
-      let fileStyles: Record<string, unknown> = {};
+      const fileResult = await figmaFetch(
+        `/files/${fileKey}?depth=1`,
+        tokenOrErr
+      );
+      let _fileStyles: Record<string, unknown> = {};
       if (fileResult.status === 200) {
         const fileData = fileResult.data as Record<string, unknown>;
-        fileStyles = (fileData.styles as Record<string, unknown>) ?? {};
+        _fileStyles = (fileData.styles as Record<string, unknown>) ?? {};
       }
 
       return {

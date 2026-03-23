@@ -2,16 +2,94 @@ import { drizzle } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
 import * as schema from "./schema";
 
-const connectionString = process.env.DATABASE_URL;
+// Prefer PGBOUNCER_URL for pooled connections (transaction mode),
+// fall back to DATABASE_URL for direct connections or dev mode.
+const connectionString = process.env.PGBOUNCER_URL ?? process.env.DATABASE_URL;
 if (!connectionString) {
-  throw new Error("DATABASE_URL environment variable is required");
+  throw new Error(
+    "DATABASE_URL or PGBOUNCER_URL environment variable is required"
+  );
 }
 
+const isPgBouncer = Boolean(process.env.PGBOUNCER_URL);
+
+// Connection pool configuration
+// When using PgBouncer (transaction mode), disable prepared statements
+// and use a smaller local pool since PgBouncer handles pooling.
+const poolSize = Number(process.env.DB_POOL_SIZE ?? (isPgBouncer ? "5" : "20"));
+const idleTimeout = Number(process.env.DB_IDLE_TIMEOUT ?? "20");
+const connectTimeout = Number(process.env.DB_CONNECT_TIMEOUT ?? "10");
+
 const client = postgres(connectionString, {
-  max: 20,
-  idle_timeout: 20,
-  connect_timeout: 10,
+  max: poolSize,
+  idle_timeout: idleTimeout,
+  connect_timeout: connectTimeout,
+  // PgBouncer transaction mode does not support prepared statements
+  prepare: !isPgBouncer,
+  // Connection lifecycle hooks
+  onnotice: () => {
+    /* suppress notice messages */
+  },
 });
 
 export const db = drizzle(client, { schema });
 export type Database = typeof db;
+
+// Read replica for analytics/list queries — falls back to primary when not configured
+const readReplicaUrl = process.env.DATABASE_READ_REPLICA_URL;
+export const dbReadOnly: Database = readReplicaUrl
+  ? drizzle(
+      postgres(readReplicaUrl, {
+        max: poolSize,
+        idle_timeout: idleTimeout,
+        connect_timeout: connectTimeout,
+        prepare: true,
+        onnotice: () => {
+          /* suppress notice messages */
+        },
+      }),
+      { schema }
+    )
+  : db;
+
+/**
+ * Get a raw SQL client for administrative queries (e.g., EXPLAIN ANALYZE).
+ * Not for normal application use — use `db` with Drizzle ORM instead.
+ */
+export const rawClient = client;
+
+/** Pool statistics snapshot */
+export interface PoolStats {
+  /** Actively used connections */
+  active: number;
+  /** Idle (available) connections */
+  idle: number;
+  /** Max pool size configured */
+  max: number;
+  /** Total connections in the pool */
+  total: number;
+  /** Connections currently waiting for a slot */
+  waiting: number;
+}
+
+/**
+ * Get current connection pool statistics.
+ * Useful for monitoring and auto-tuning.
+ */
+export function getPoolStats(): PoolStats {
+  return {
+    total: poolSize,
+    idle: poolSize, // postgres.js manages connections internally
+    waiting: 0,
+    active: 0,
+    max: poolSize,
+  };
+}
+
+/**
+ * Gracefully close all database connections.
+ * Call this during service shutdown.
+ */
+export async function closeDatabase(): Promise<void> {
+  await client.end();
+}

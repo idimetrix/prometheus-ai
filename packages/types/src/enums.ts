@@ -11,6 +11,7 @@ export const AgentRole = {
   CI_LOOP: "ci_loop",
   SECURITY_AUDITOR: "security_auditor",
   DEPLOY_ENGINEER: "deploy_engineer",
+  DOCUMENTATION_SPECIALIST: "documentation_specialist",
 } as const;
 export type AgentRole = (typeof AgentRole)[keyof typeof AgentRole];
 
@@ -60,27 +61,31 @@ export const CreditTransactionType = {
   BONUS: "bonus",
   SUBSCRIPTION_GRANT: "subscription_grant",
 } as const;
-export type CreditTransactionType = (typeof CreditTransactionType)[keyof typeof CreditTransactionType];
+export type CreditTransactionType =
+  (typeof CreditTransactionType)[keyof typeof CreditTransactionType];
 
 export const BlueprintEnforcement = {
   STRICT: "strict",
   FLEXIBLE: "flexible",
   ADVISORY: "advisory",
 } as const;
-export type BlueprintEnforcement = (typeof BlueprintEnforcement)[keyof typeof BlueprintEnforcement];
+export type BlueprintEnforcement =
+  (typeof BlueprintEnforcement)[keyof typeof BlueprintEnforcement];
 
 export const AgentAggressiveness = {
   BALANCED: "balanced",
   FULL_AUTO: "full_auto",
   SUPERVISED: "supervised",
 } as const;
-export type AgentAggressiveness = (typeof AgentAggressiveness)[keyof typeof AgentAggressiveness];
+export type AgentAggressiveness =
+  (typeof AgentAggressiveness)[keyof typeof AgentAggressiveness];
 
 export const SessionEventType = {
   AGENT_OUTPUT: "agent_output",
   FILE_CHANGE: "file_change",
   PLAN_UPDATE: "plan_update",
   TASK_STATUS: "task_status",
+  TASK_PROGRESS: "task_progress",
   QUEUE_POSITION: "queue_position",
   CREDIT_UPDATE: "credit_update",
   CHECKPOINT: "checkpoint",
@@ -88,5 +93,7 @@ export const SessionEventType = {
   REASONING: "reasoning",
   TERMINAL_OUTPUT: "terminal_output",
   BROWSER_SCREENSHOT: "browser_screenshot",
+  PR_CREATED: "pr_created",
 } as const;
-export type SessionEventType = (typeof SessionEventType)[keyof typeof SessionEventType];
+export type SessionEventType =
+  (typeof SessionEventType)[keyof typeof SessionEventType];

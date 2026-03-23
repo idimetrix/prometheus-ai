@@ -1,59 +1,134 @@
-import { db } from "@prometheus/db";
-import { codeEmbeddings, fileIndexes } from "@prometheus/db";
-import { generateId } from "@prometheus/utils";
-import { createLogger } from "@prometheus/logger";
-import { eq, and, ilike, sql } from "drizzle-orm";
 import crypto from "node:crypto";
+import { codeEmbeddings, db, fileIndexes } from "@prometheus/db";
+import { createLogger } from "@prometheus/logger";
+import { generateId } from "@prometheus/utils";
+import { and, eq, ilike, sql } from "drizzle-orm";
+import { chunkBySemantic } from "../indexing/semantic-chunker";
 
 const logger = createLogger("project-brain:semantic");
 
-const MAX_CHUNK_CHARS = 2000; // ~500 tokens
-
 export interface SearchResult {
-  filePath: string;
-  content: string;
-  score: number;
   chunkIndex: number;
+  content: string;
+  filePath: string;
+  score: number;
+}
+
+const MODEL_ROUTER_URL =
+  process.env.MODEL_ROUTER_URL ?? "http://localhost:4004";
+
+/** Whether the embedding service has been verified as available */
+let _embeddingServiceVerified = false;
+
+/**
+ * Verify that the embedding service is available via model-router.
+ * The model-router handles fallback (Voyage Code 3 → Ollama nomic-embed-text).
+ * Should be called at startup. Logs a warning if unavailable but does not throw,
+ * allowing the service to start in degraded mode.
+ */
+export async function verifyEmbeddingService(): Promise<boolean> {
+  try {
+    const response = await fetch(`${MODEL_ROUTER_URL}/embeddings`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ input: "health check" }),
+      signal: AbortSignal.timeout(15_000),
+    });
+
+    if (response.ok) {
+      const data = (await response.json()) as {
+        embedding: number[];
+        dimensions: number;
+        model: string;
+      };
+      if (data.embedding?.length > 0) {
+        _embeddingServiceVerified = true;
+        logger.info(
+          { model: data.model, dimensions: data.dimensions },
+          "Embedding service verified via model-router"
+        );
+        return true;
+      }
+    }
+
+    logger.warn(
+      { status: response.status },
+      "Embedding service returned unexpected response — semantic search will be unavailable"
+    );
+    return false;
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    logger.warn(
+      { error: msg, url: MODEL_ROUTER_URL },
+      "Embedding service unavailable via model-router — semantic search will be degraded"
+    );
+    return false;
+  }
 }
 
 /**
- * Generate a simple numeric hash-based pseudo-embedding.
- * This is a deterministic fallback; for production use, call a real embedding model.
+ * Generate an embedding vector for the given text using model-router's
+ * routeEmbedding() endpoint. Supports automatic fallback chain:
+ * Voyage Code 3 → Ollama nomic-embed-text.
  *
- * TODO: Replace with real embedding call to Ollama nomic-embed-text or OpenAI:
- *   const response = await fetch(EMBEDDING_ENDPOINT, {
- *     method: "POST",
- *     body: JSON.stringify({ model: "nomic-embed-text", prompt: text }),
- *   });
- *   return (await response.json()).embedding; // number[768]
+ * Throws an error if all embedding providers are unavailable — callers
+ * must handle this gracefully.
  */
-function hashEmbedding(text: string, dimensions: number = 768): number[] {
-  const embedding: number[] = new Array(dimensions);
-  // Use multiple sha256 hashes to fill the vector
-  let seed = text;
-  let offset = 0;
-  while (offset < dimensions) {
-    const hash = crypto.createHash("sha256").update(seed).digest();
-    for (let i = 0; i < hash.length && offset < dimensions; i += 4) {
-      // Convert 4 bytes to a float in [-1, 1]
-      const val = hash.readInt32BE(i) / 2147483647;
-      embedding[offset] = val;
-      offset++;
+async function generateEmbedding(text: string): Promise<number[]> {
+  const MAX_RETRIES = 2;
+  let lastError: string | undefined;
+
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    try {
+      const response = await fetch(`${MODEL_ROUTER_URL}/embeddings`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ input: text }),
+        signal: AbortSignal.timeout(30_000),
+      });
+
+      if (response.ok) {
+        const data = (await response.json()) as {
+          embedding: number[];
+          model: string;
+          dimensions: number;
+        };
+        if (data.embedding?.length > 0) {
+          _embeddingServiceVerified = true;
+          return data.embedding;
+        }
+        lastError = "Model-router returned empty embedding vector";
+      } else {
+        lastError = `Model-router returned HTTP ${response.status}`;
+      }
+    } catch (err) {
+      lastError = err instanceof Error ? err.message : String(err);
     }
-    seed = hash.toString("hex");
-  }
-  // Normalize to unit length
-  const norm = Math.sqrt(embedding.reduce((sum, v) => sum + v * v, 0));
-  if (norm > 0) {
-    for (let i = 0; i < dimensions; i++) {
-      embedding[i] = embedding[i]! / norm;
+
+    // Exponential backoff before retry
+    if (attempt < MAX_RETRIES) {
+      const delayMs = 1000 * 2 ** attempt;
+      logger.debug(
+        { attempt: attempt + 1, delayMs },
+        "Retrying embedding generation via model-router"
+      );
+      await new Promise((r) => setTimeout(r, delayMs));
     }
   }
-  return embedding;
+
+  _embeddingServiceVerified = false;
+  throw new Error(
+    `Embedding generation failed after ${MAX_RETRIES + 1} attempts: ${lastError}. ` +
+      `Ensure model-router is running at ${MODEL_ROUTER_URL} with embedding providers configured.`
+  );
 }
 
 export class SemanticLayer {
-  async indexFile(projectId: string, filePath: string, content: string): Promise<void> {
+  async indexFile(
+    projectId: string,
+    filePath: string,
+    content: string
+  ): Promise<void> {
     const chunks = this.chunkContent(content, filePath);
     const fileHash = crypto.createHash("sha256").update(content).digest("hex");
 
@@ -61,10 +136,15 @@ export class SemanticLayer {
     const existing = await db
       .select()
       .from(fileIndexes)
-      .where(and(eq(fileIndexes.projectId, projectId), eq(fileIndexes.filePath, filePath)))
+      .where(
+        and(
+          eq(fileIndexes.projectId, projectId),
+          eq(fileIndexes.filePath, filePath)
+        )
+      )
       .limit(1);
 
-    if (existing.length > 0 && existing[0]!.fileHash === fileHash) {
+    if (existing.length > 0 && existing[0]?.fileHash === fileHash) {
       logger.debug({ projectId, filePath }, "File unchanged, skipping index");
       return;
     }
@@ -72,12 +152,27 @@ export class SemanticLayer {
     // Remove old embeddings for this file
     await db
       .delete(codeEmbeddings)
-      .where(and(eq(codeEmbeddings.projectId, projectId), eq(codeEmbeddings.filePath, filePath)));
+      .where(
+        and(
+          eq(codeEmbeddings.projectId, projectId),
+          eq(codeEmbeddings.filePath, filePath)
+        )
+      );
 
     // Insert new chunks with embeddings
     for (let i = 0; i < chunks.length; i++) {
-      const chunk = chunks[i]!;
-      const embedding = hashEmbedding(chunk);
+      const chunk = chunks[i] as string;
+      let embedding: number[];
+      try {
+        embedding = await generateEmbedding(chunk);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        logger.error(
+          { projectId, filePath, chunkIndex: i, error: msg },
+          "Failed to generate embedding — skipping chunk. Fix embedding service to enable semantic search."
+        );
+        continue;
+      }
 
       await db.insert(codeEmbeddings).values({
         id: generateId("emb"),
@@ -100,7 +195,7 @@ export class SemanticLayer {
           loc: content.split("\n").length,
           lastIndexed: new Date(),
         })
-        .where(eq(fileIndexes.id, existing[0]!.id));
+        .where(eq(fileIndexes.id, (existing[0] as (typeof existing)[0]).id));
     } else {
       await db.insert(fileIndexes).values({
         id: generateId("fidx"),
@@ -116,9 +211,13 @@ export class SemanticLayer {
     logger.info({ projectId, filePath, chunks: chunks.length }, "File indexed");
   }
 
-  async search(projectId: string, query: string, limit: number = 10): Promise<SearchResult[]> {
+  async search(
+    projectId: string,
+    query: string,
+    limit = 10
+  ): Promise<SearchResult[]> {
     // Try pgvector cosine similarity search first
-    const queryEmbedding = hashEmbedding(query);
+    const queryEmbedding = await generateEmbedding(query);
 
     try {
       const vectorResults = await db
@@ -130,7 +229,9 @@ export class SemanticLayer {
         })
         .from(codeEmbeddings)
         .where(eq(codeEmbeddings.projectId, projectId))
-        .orderBy(sql`${codeEmbeddings.embedding} <=> ${JSON.stringify(queryEmbedding)}::vector`)
+        .orderBy(
+          sql`${codeEmbeddings.embedding} <=> ${JSON.stringify(queryEmbedding)}::vector`
+        )
         .limit(limit);
 
       if (vectorResults.length > 0) {
@@ -156,8 +257,8 @@ export class SemanticLayer {
       .where(
         and(
           eq(codeEmbeddings.projectId, projectId),
-          ilike(codeEmbeddings.content, `%${query}%`),
-        ),
+          ilike(codeEmbeddings.content, `%${query}%`)
+        )
       )
       .limit(limit);
 
@@ -169,18 +270,29 @@ export class SemanticLayer {
     }));
   }
 
-  async getRelatedFiles(projectId: string, filePath: string, limit: number = 10): Promise<SearchResult[]> {
+  async getRelatedFiles(
+    projectId: string,
+    filePath: string,
+    limit = 10
+  ): Promise<SearchResult[]> {
     // Get the chunks for this file, use average embedding to find similar files
     const fileChunks = await db
       .select()
       .from(codeEmbeddings)
-      .where(and(eq(codeEmbeddings.projectId, projectId), eq(codeEmbeddings.filePath, filePath)));
+      .where(
+        and(
+          eq(codeEmbeddings.projectId, projectId),
+          eq(codeEmbeddings.filePath, filePath)
+        )
+      );
 
-    if (fileChunks.length === 0) return [];
+    if (fileChunks.length === 0) {
+      return [];
+    }
 
     // Use the first chunk's content as a representative query
-    const representativeContent = fileChunks[0]!.content;
-    const embedding = hashEmbedding(representativeContent);
+    const representativeContent = fileChunks[0]?.content ?? "";
+    const embedding = await generateEmbedding(representativeContent);
 
     try {
       const results = await db
@@ -194,10 +306,12 @@ export class SemanticLayer {
         .where(
           and(
             eq(codeEmbeddings.projectId, projectId),
-            sql`${codeEmbeddings.filePath} != ${filePath}`,
-          ),
+            sql`${codeEmbeddings.filePath} != ${filePath}`
+          )
         )
-        .orderBy(sql`${codeEmbeddings.embedding} <=> ${JSON.stringify(embedding)}::vector`)
+        .orderBy(
+          sql`${codeEmbeddings.embedding} <=> ${JSON.stringify(embedding)}::vector`
+        )
         .limit(limit);
 
       // De-duplicate by filePath, keeping highest score
@@ -220,11 +334,19 @@ export class SemanticLayer {
     }
   }
 
-  async getFileContent(projectId: string, filePath: string): Promise<SearchResult[]> {
+  async getFileContent(
+    projectId: string,
+    filePath: string
+  ): Promise<SearchResult[]> {
     const chunks = await db
       .select()
       .from(codeEmbeddings)
-      .where(and(eq(codeEmbeddings.projectId, projectId), eq(codeEmbeddings.filePath, filePath)))
+      .where(
+        and(
+          eq(codeEmbeddings.projectId, projectId),
+          eq(codeEmbeddings.filePath, filePath)
+        )
+      )
       .orderBy(codeEmbeddings.chunkIndex);
 
     return chunks.map((c) => ({
@@ -238,131 +360,60 @@ export class SemanticLayer {
   async removeFile(projectId: string, filePath: string): Promise<void> {
     await db
       .delete(codeEmbeddings)
-      .where(and(eq(codeEmbeddings.projectId, projectId), eq(codeEmbeddings.filePath, filePath)));
+      .where(
+        and(
+          eq(codeEmbeddings.projectId, projectId),
+          eq(codeEmbeddings.filePath, filePath)
+        )
+      );
 
     await db
       .delete(fileIndexes)
-      .where(and(eq(fileIndexes.projectId, projectId), eq(fileIndexes.filePath, filePath)));
+      .where(
+        and(
+          eq(fileIndexes.projectId, projectId),
+          eq(fileIndexes.filePath, filePath)
+        )
+      );
 
     logger.info({ projectId, filePath }, "File removed from index");
   }
 
+  /**
+   * Chunk file content using the semantic chunker (SymbolTable-based for
+   * TS/JS/Python/Go/Rust/Java) with fallback to line-based chunking.
+   * Returns plain string chunks for embedding, with symbol metadata available
+   * via chunkContentStructured().
+   */
   chunkContent(content: string, filePath: string): string[] {
-    const ext = filePath.split(".").pop() ?? "";
-    const isCode = ["ts", "tsx", "js", "jsx", "py", "go", "rs", "rb", "java", "c", "cpp", "h"].includes(ext);
-
-    if (isCode) {
-      return this.chunkByDeclarations(content);
-    }
-    return this.chunkByParagraph(content);
+    const structured = chunkBySemantic(filePath, content);
+    // Prepend import context to each chunk for embedding quality
+    return structured.map((chunk) => {
+      if (chunk.importContext) {
+        return `${chunk.importContext}\n\n${chunk.content}`;
+      }
+      return chunk.content;
+    });
   }
 
   /**
-   * Split code by top-level declarations (functions, classes, exports).
-   * Each chunk is at most MAX_CHUNK_CHARS characters.
+   * Chunk with full structured metadata (symbol type, name, line numbers).
+   * Used by the indexing pipeline for storing rich metadata in code_embeddings.
    */
-  private chunkByDeclarations(content: string): string[] {
-    const lines = content.split("\n");
-    const chunks: string[] = [];
-    let currentChunk: string[] = [];
-    let braceDepth = 0;
-    let inTopLevelDecl = false;
-
-    // Patterns that mark new top-level declarations
-    const declPattern =
-      /^(?:export\s+)?(?:default\s+)?(?:async\s+)?(?:function|class|interface|type|const|let|var|enum)\s+/;
-
-    for (const line of lines) {
-      const trimmed = line.trimStart();
-
-      // Check if this line starts a new top-level declaration at depth 0
-      if (braceDepth === 0 && declPattern.test(trimmed) && currentChunk.length > 0) {
-        // Flush current chunk if it has substance
-        const chunkText = currentChunk.join("\n").trim();
-        if (chunkText.length > 0) {
-          chunks.push(...this.splitLargeChunk(chunkText));
-        }
-        currentChunk = [];
-        inTopLevelDecl = true;
-      }
-
-      currentChunk.push(line);
-
-      // Track brace depth
-      for (const ch of line) {
-        if (ch === "{") braceDepth++;
-        if (ch === "}") braceDepth = Math.max(0, braceDepth - 1);
-      }
-
-      // If we were in a top-level declaration and braces are balanced, consider the chunk complete
-      if (inTopLevelDecl && braceDepth === 0 && currentChunk.length > 2) {
-        const chunkText = currentChunk.join("\n").trim();
-        if (chunkText.length > 0) {
-          chunks.push(...this.splitLargeChunk(chunkText));
-        }
-        currentChunk = [];
-        inTopLevelDecl = false;
-      }
-    }
-
-    // Flush remaining
-    if (currentChunk.length > 0) {
-      const chunkText = currentChunk.join("\n").trim();
-      if (chunkText.length > 0) {
-        chunks.push(...this.splitLargeChunk(chunkText));
-      }
-    }
-
-    return chunks.length > 0 ? chunks : [content];
+  chunkContentStructured(content: string, filePath: string) {
+    return chunkBySemantic(filePath, content);
   }
 
-  /** Split a chunk that exceeds MAX_CHUNK_CHARS into smaller pieces by line boundaries */
-  private splitLargeChunk(text: string): string[] {
-    if (text.length <= MAX_CHUNK_CHARS) return [text];
-
-    const lines = text.split("\n");
-    const results: string[] = [];
-    let current: string[] = [];
-    let currentLen = 0;
-
-    for (const line of lines) {
-      if (currentLen + line.length + 1 > MAX_CHUNK_CHARS && current.length > 0) {
-        results.push(current.join("\n"));
-        current = [];
-        currentLen = 0;
-      }
-      current.push(line);
-      currentLen += line.length + 1;
-    }
-
-    if (current.length > 0) {
-      results.push(current.join("\n"));
-    }
-
-    return results;
+  /** Get count of indexed files for a project (for progress tracking) */
+  async getIndexedFileCount(projectId: string): Promise<number> {
+    const result = await db
+      .select({ count: sql<number>`count(*)` })
+      .from(fileIndexes)
+      .where(eq(fileIndexes.projectId, projectId));
+    return result[0]?.count ?? 0;
   }
 
-  private chunkByParagraph(content: string): string[] {
-    const paragraphs = content.split(/\n\n+/);
-    const chunks: string[] = [];
-    let current = "";
-
-    for (const para of paragraphs) {
-      if (current.length + para.length > MAX_CHUNK_CHARS && current.length > 0) {
-        chunks.push(current.trim());
-        current = "";
-      }
-      current += para + "\n\n";
-    }
-
-    if (current.trim()) {
-      chunks.push(current.trim());
-    }
-
-    return chunks.length > 0 ? chunks : [content];
-  }
-
-  private detectLanguage(filePath: string): string | null {
+  detectLanguage(filePath: string): string | null {
     const ext = filePath.split(".").pop()?.toLowerCase();
     const langMap: Record<string, string> = {
       ts: "typescript",
@@ -385,7 +436,14 @@ export class SemanticLayer {
       sql: "sql",
       css: "css",
       html: "html",
+      graphql: "graphql",
+      gql: "graphql",
+      prisma: "prisma",
+      proto: "protobuf",
+      sh: "shell",
+      bash: "shell",
+      dockerfile: "dockerfile",
     };
-    return ext ? langMap[ext] ?? null : null;
+    return ext ? (langMap[ext] ?? null) : null;
   }
 }

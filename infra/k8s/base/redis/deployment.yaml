@@ -17,23 +17,33 @@ spec:
     spec:
       containers:
         - name: redis
-          image: valkey/valkey:8-alpine
+          image: docker.dragonflydb.io/dragonflydb/dragonfly:latest
           ports:
             - containerPort: 6379
           resources:
             requests:
-              cpu: 250m
+              cpu: 500m
               memory: 512Mi
             limits:
-              cpu: 500m
-              memory: 1Gi
+              cpu: "2"
+              memory: 2Gi
           args:
+            - "dragonfly"
             - "--maxmemory"
             - "800mb"
-            - "--maxmemory-policy"
-            - "allkeys-lru"
-            - "--appendonly"
-            - "yes"
+            - "--proactor_threads"
+            - "2"
+            - "--cache_mode"
+          readinessProbe:
+            exec:
+              command: ["redis-cli", "ping"]
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            exec:
+              command: ["redis-cli", "ping"]
+            initialDelaySeconds: 15
+            periodSeconds: 30
           volumeMounts:
             - name: redis-data
               mountPath: /data

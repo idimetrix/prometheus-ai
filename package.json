@@ -2,23 +2,43 @@
   "name": "prometheus",
   "private": true,
   "scripts": {
-    "build": "turbo run build",
     "dev": "turbo run dev",
-    "lint": "turbo run lint",
+    "build": "turbo run build",
     "test": "turbo run test",
     "typecheck": "turbo run typecheck",
-    "db:push": "turbo run db:push --filter=@prometheus/db",
-    "db:migrate": "turbo run db:migrate --filter=@prometheus/db",
+    "lint": "biome check",
+    "format": "ultracite fix --diagnostic-level=error",
+    "unsafe": "ultracite fix --unsafe",
+    "check": "ultracite check",
+    "fix": "ultracite fix",
+    "clean": "turbo run clean && rm -rf node_modules .turbo",
+    "prepare": "lefthook install",
     "db:generate": "turbo run db:generate --filter=@prometheus/db",
-    "format": "prettier --write \"**/*.{ts,tsx,js,jsx,json,md}\"",
-    "clean": "turbo run clean && rm -rf node_modules"
+    "db:migrate": "turbo run db:migrate --filter=@prometheus/db",
+    "db:push": "turbo run db:push --filter=@prometheus/db",
+    "db:pull": "turbo run db:pull --filter=@prometheus/db",
+    "db:seed": "turbo run db:seed --filter=@prometheus/db",
+    "db:studio": "turbo run db:studio --filter=@prometheus/db",
+    "db:check": "turbo run db:check --filter=@prometheus/db",
+    "db:reset": "turbo run db:reset --filter=@prometheus/db",
+    "db:drop": "turbo run db:drop --filter=@prometheus/db",
+    "db:fresh": "turbo run db:fresh --filter=@prometheus/db",
+    "db:setup": "pnpm db:generate && pnpm db:migrate",
+    "test:integration": "vitest run --config tests/integration/vitest.config.ts",
+    "test:contract": "vitest run --config tests/contract/vitest.config.ts",
+    "gen:package": "tsx scripts/gen-package.ts",
+    "gen:router": "tsx scripts/gen-router.ts",
+    "gen:table": "tsx scripts/gen-table.ts"
   },
   "devDependencies": {
-    "turbo": "^2.5.0",
-    "typescript": "^5.7.0",
-    "prettier": "^3.5.0",
-    "@types/node": "^22.0.0",
-    "vitest": "^3.2.0"
+    "@biomejs/biome": "^2.4.8",
+    "@types/node": "^25.5.0",
+    "lefthook": "^2.1.4",
+    "tsx": "^4.21.0",
+    "turbo": "^2.8.20",
+    "typescript": "^6.0.2",
+    "ultracite": "^7.3.2",
+    "vitest": "^4.1.1"
   },
   "packageManager": "pnpm@10.32.1",
   "engines": {
@@ -33,10 +53,21 @@
       "@clerk/shared",
       "cpu-features",
       "protobufjs",
-      "ssh2"
+      "ssh2",
+      "turbo"
     ],
     "overrides": {
       "ioredis": "5.9.3"
     }
+  },
+  "dependencies": {
+    "@ai-sdk/anthropic": "^3.0.63",
+    "@ai-sdk/google": "^3.0.53",
+    "@ai-sdk/groq": "^3.0.31",
+    "@ai-sdk/mcp": "^1.0.30",
+    "@ai-sdk/mistral": "^3.0.27",
+    "@ai-sdk/openai": "^3.0.48",
+    "ai": "^6.0.137",
+    "zod": "^4.3.6"
   }
 }

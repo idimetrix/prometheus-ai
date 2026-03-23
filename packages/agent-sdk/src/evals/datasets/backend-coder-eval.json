@@ -1,0 +1,102 @@
+[
+  {
+    "input": "Create a tRPC endpoint for listing projects with pagination",
+    "expectedPatterns": ["router", "procedure", "query"],
+    "language": "typescript"
+  },
+  {
+    "input": "Add a mutation to create a new organization with a generated ID",
+    "expectedPatterns": ["mutation", "insert", "generateId"],
+    "language": "typescript"
+  },
+  {
+    "input": "Build a service function for reserving credits with atomic transaction safety",
+    "expectedPatterns": ["transaction", "TRPCError"],
+    "language": "typescript"
+  },
+  {
+    "input": "Create a Drizzle schema for a comments table with foreign key references",
+    "expectedPatterns": ["pgTable", "text", "references", "notNull"],
+    "language": "typescript"
+  },
+  {
+    "input": "Add rate limiting middleware using Redis cache store",
+    "expectedPatterns": ["middleware", "redis"],
+    "language": "typescript"
+  },
+  {
+    "input": "Create a Zod z.object validation schema for user profile updates with optional fields",
+    "expectedPatterns": ["z.object", "optional", "parse"],
+    "language": "typescript"
+  },
+  {
+    "input": "Implement a BullMQ Job processor for sending email notification events",
+    "expectedPatterns": ["Job"],
+    "language": "typescript"
+  },
+  {
+    "input": "Add a tRPC query to get a single task by ID with orgId multi-tenant scoping",
+    "expectedPatterns": ["query", "orgId"],
+    "language": "typescript"
+  },
+  {
+    "input": "Create a service to upload files to a MinIO S3 bucket",
+    "expectedPatterns": ["upload", "bucket"],
+    "language": "typescript"
+  },
+  {
+    "input": "Implement cursor-based pagination for Drizzle select queries with limit",
+    "expectedPatterns": ["cursor", "limit", "select"],
+    "language": "typescript"
+  },
+  {
+    "input": "Build a webhook receiver endpoint that verifies request signatures",
+    "expectedPatterns": ["signature", "verify"],
+    "language": "typescript"
+  },
+  {
+    "input": "Create a database migration for adding an index on the createdAt table column",
+    "expectedPatterns": ["index", "create", "table"],
+    "language": "typescript"
+  },
+  {
+    "input": "Add soft delete to the projects table with a deletedAt timestamp column",
+    "expectedPatterns": ["timestamp", "isNull"],
+    "language": "typescript"
+  },
+  {
+    "input": "Implement a Redis caching layer for frequently accessed project data",
+    "expectedPatterns": ["redis", "cache"],
+    "language": "typescript"
+  },
+  {
+    "input": "Create an audit log service that inserts records for all mutation events",
+    "expectedPatterns": ["insert", "generateId"],
+    "language": "typescript"
+  },
+  {
+    "input": "Build a health check endpoint that verifies database and Redis status",
+    "expectedPatterns": ["health", "status"],
+    "language": "typescript"
+  },
+  {
+    "input": "Add Zod z.string input validation with min and max length limits",
+    "expectedPatterns": ["z.string", "min", "max"],
+    "language": "typescript"
+  },
+  {
+    "input": "Create a tRPC subscription for real-time task status update events",
+    "expectedPatterns": ["subscription"],
+    "language": "typescript"
+  },
+  {
+    "input": "Implement multi-tenant row-level security with orgId scoping on sessions",
+    "expectedPatterns": ["orgId"],
+    "language": "typescript"
+  },
+  {
+    "input": "Build a batch import mutation endpoint that parses and inserts CSV data in a transaction",
+    "expectedPatterns": ["mutation", "transaction", "parse"],
+    "language": "typescript"
+  }
+]

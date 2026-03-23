@@ -1,0 +1,132 @@
+# Promptfoo LLM Evaluation Configuration
+# Run: npx promptfoo eval -c infra/eval/promptfoo.yaml
+
+description: "Prometheus Agent Role Evaluation"
+
+providers:
+  - id: ollama:qwen2.5-coder:14b
+    label: "Ollama Local (14B)"
+  - id: groq:llama-3.3-70b-versatile
+    label: "Groq Free (70B)"
+
+prompts:
+  # Discovery Agent
+  - id: discovery
+    label: "Discovery Agent"
+    raw: |
+      You are a Discovery Agent for the Prometheus AI engineering platform.
+      Your role is to elicit requirements using the WHO/WHAT/NOT/DONE/RISK framework.
+
+      Given the following user request, identify and ask clarifying questions:
+
+      User Request: {{input}}
+
+      Provide a structured requirements analysis.
+
+  # Backend Coder Agent
+  - id: backend-coder
+    label: "Backend Coder"
+    raw: |
+      You are a Backend Coder Agent for the Prometheus AI engineering platform.
+      You write TypeScript code using tRPC, Drizzle ORM, Hono, and Zod.
+
+      Task: {{input}}
+
+      Write the implementation code. Use Drizzle ORM for database queries.
+      Always validate inputs with Zod. Use generateId() for IDs.
+
+  # Task Router
+  - id: task-router
+    label: "Task Router"
+    raw: |
+      Classify the following task description into the best agent role.
+      Choose from: discovery, architect, planner, frontend_coder, backend_coder,
+      integration_coder, test_engineer, ci_loop, security_auditor, deploy_engineer.
+
+      Return JSON: { "role": "...", "confidence": 0.0-1.0, "reasoning": "..." }
+
+      Task: {{input}}
+
+tests:
+  # ── Discovery Agent Tests ──────────────────────────────────
+  - description: "Discovery: identifies stakeholders"
+    vars:
+      input: "Build a user authentication system"
+    assert:
+      - type: contains
+        value: "user"
+      - type: llm-rubric
+        value: "Response asks about target users, security requirements, and authentication methods"
+
+  - description: "Discovery: asks clarifying questions"
+    vars:
+      input: "Create an e-commerce checkout flow"
+    assert:
+      - type: llm-rubric
+        value: "Response asks about payment providers, shipping, guest checkout, and cart requirements"
+
+  # ── Backend Coder Tests ────────────────────────────────────
+  - description: "Backend: generates tRPC router"
+    vars:
+      input: "Create a tRPC router for managing user profiles with get, update, and delete operations"
+    assert:
+      - type: contains
+        value: "protectedProcedure"
+      - type: contains
+        value: "z.object"
+      - type: llm-rubric
+        value: "Code uses Drizzle ORM, Zod validation, and proper tRPC patterns"
+
+  - description: "Backend: uses Drizzle ORM"
+    vars:
+      input: "Write a database query to get all tasks for a project, ordered by creation date"
+    assert:
+      - type: contains-any
+        value: ["db.select", "db.query"]
+      - type: not-contains
+        value: "raw SQL"
+
+  # ── Task Router Tests ──────────────────────────────────────
+  - description: "Router: classifies frontend task"
+    vars:
+      input: "Build a React dashboard component with charts"
+    assert:
+      - type: contains
+        value: "frontend_coder"
+
+  - description: "Router: classifies backend task"
+    vars:
+      input: "Create REST API endpoints for user CRUD"
+    assert:
+      - type: contains
+        value: "backend_coder"
+
+  - description: "Router: classifies testing task"
+    vars:
+      input: "Write unit tests for the billing module"
+    assert:
+      - type: contains
+        value: "test_engineer"
+
+  - description: "Router: classifies security task"
+    vars:
+      input: "Audit the authentication flow for vulnerabilities"
+    assert:
+      - type: contains
+        value: "security_auditor"
+
+  - description: "Router: classifies deploy task"
+    vars:
+      input: "Set up Kubernetes deployment with autoscaling"
+    assert:
+      - type: contains
+        value: "deploy_engineer"
+
+  - description: "Router: classifies architecture task"
+    vars:
+      input: "Design the system architecture and database schema"
+    assert:
+      - type: contains
+        value: "architect"
+
+outputPath: infra/eval/results

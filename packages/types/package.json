@@ -7,10 +7,12 @@
   "types": "./src/index.ts",
   "scripts": {
     "typecheck": "tsc --noEmit",
+    "test": "vitest run",
     "clean": "rm -rf dist .turbo"
   },
   "devDependencies": {
     "@prometheus/config-typescript": "workspace:*",
-    "typescript": "^5.7.0"
+    "typescript": "^6.0.2",
+    "vitest": "^4.1.1"
   }
 }

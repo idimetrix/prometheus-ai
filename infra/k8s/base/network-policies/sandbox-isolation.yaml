@@ -1,0 +1,155 @@
+## Sandbox pods: deny all by default, only allow ingress from sandbox-manager
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: sandbox-deny-all-egress
+  namespace: prometheus
+  labels:
+    app.kubernetes.io/part-of: prometheus
+spec:
+  podSelector:
+    matchLabels:
+      app: sandbox
+  policyTypes:
+    - Egress
+    - Ingress
+  ingress:
+    # Only sandbox-manager can reach sandbox pods
+    - from:
+        - podSelector:
+            matchLabels:
+              app: sandbox-manager
+      ports:
+        - protocol: TCP
+          port: 8080
+  egress: []
+---
+## Block sandbox-to-sandbox communication explicitly
+## This ensures sandboxes cannot communicate with each other
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: sandbox-block-sandbox-traffic
+  namespace: prometheus
+  labels:
+    app.kubernetes.io/part-of: prometheus
+spec:
+  podSelector:
+    matchLabels:
+      app: sandbox
+  policyTypes:
+    - Ingress
+  ingress:
+    # Deny traffic from other sandbox pods by only allowing sandbox-manager
+    - from:
+        - podSelector:
+            matchLabels:
+              app: sandbox-manager
+      ports:
+        - protocol: TCP
+          port: 8080
+---
+## Sandbox pods: allow DNS for dependency resolution
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: sandbox-allow-dns
+  namespace: prometheus
+  labels:
+    app.kubernetes.io/part-of: prometheus
+spec:
+  podSelector:
+    matchLabels:
+      app: sandbox
+  policyTypes:
+    - Egress
+  egress:
+    - ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+---
+## Sandbox pods: allow npm registry (registry.npmjs.org)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: sandbox-allow-npm-registry
+  namespace: prometheus
+  labels:
+    app.kubernetes.io/part-of: prometheus
+spec:
+  podSelector:
+    matchLabels:
+      app: sandbox
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - ipBlock:
+            cidr: 104.16.0.0/12
+        - ipBlock:
+            cidr: 2606:4700::/32
+      ports:
+        - protocol: TCP
+          port: 443
+---
+## Sandbox pods: allow pip registry (pypi.org / files.pythonhosted.org)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: sandbox-allow-pip-registry
+  namespace: prometheus
+  labels:
+    app.kubernetes.io/part-of: prometheus
+spec:
+  podSelector:
+    matchLabels:
+      app: sandbox
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - ipBlock:
+            cidr: 151.101.0.0/16
+        - ipBlock:
+            cidr: 2a04:4e42::/32
+      ports:
+        - protocol: TCP
+          port: 443
+---
+## Sandboxes: block access to internal metadata APIs (cloud provider)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: sandbox-block-metadata
+  namespace: prometheus
+  labels:
+    app.kubernetes.io/part-of: prometheus
+spec:
+  podSelector:
+    matchLabels:
+      app: sandbox
+  policyTypes:
+    - Egress
+  egress:
+    # Block access to cloud metadata endpoints
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              # AWS/GCP/Azure metadata service
+              - 169.254.169.254/32
+              # AWS metadata v2
+              - 169.254.170.2/32
+              # Link-local range (metadata services)
+              - 169.254.0.0/16
+              # Internal Kubernetes service network (prevent lateral movement)
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+      ports:
+        - protocol: TCP
+          port: 443
+        - protocol: TCP
+          port: 80

@@ -1,36 +1,39 @@
 import { createLogger } from "@prometheus/logger";
 import { generateId } from "@prometheus/utils";
 
-const logger = createLogger("agent-sdk:protocol:discovery");
+const _logger = createLogger("agent-sdk:protocol:discovery");
+
+const NEWLINE_SPLIT_RE = /[\n\r]+/;
+const LIST_PREFIX_RE = /^[\s\-*\d.]+/;
 
 export interface SoftwareRequirementsSpec {
-  id: string;
-  projectId: string;
-  who: {
-    personas: string[];
-    jobsToBeDone: string[];
-  };
-  what: {
-    coreFeatures: string[];
-    description: string;
-  };
-  notInScope: string[];
   acceptanceCriteria: Array<{
     criterion: string;
     testable: boolean;
   }>;
+  confidenceScore: number;
+  id: string;
+  notInScope: string[];
+  projectId: string;
+  requiresClarification: string[];
   risks: Array<{
     risk: string;
     severity: "low" | "medium" | "high";
     mitigation: string;
   }>;
-  confidenceScore: number;
-  requiresClarification: string[];
+  what: {
+    coreFeatures: string[];
+    description: string;
+  };
+  who: {
+    personas: string[];
+    jobsToBeDone: string[];
+  };
 }
 
 export interface DiscoveryQuestion {
-  id: string;
   category: "who" | "what" | "not" | "done" | "risk";
+  id: string;
   question: string;
   required: boolean;
 }
@@ -39,25 +42,29 @@ const DISCOVERY_QUESTIONS: DiscoveryQuestion[] = [
   {
     id: "who_1",
     category: "who",
-    question: "Who are the primary users of this feature? What are their roles and goals?",
+    question:
+      "Who are the primary users of this feature? What are their roles and goals?",
     required: true,
   },
   {
     id: "what_1",
     category: "what",
-    question: "What are the 3 most important capabilities this feature must have?",
+    question:
+      "What are the 3 most important capabilities this feature must have?",
     required: true,
   },
   {
     id: "not_1",
     category: "not",
-    question: "What is explicitly out of scope for this version? What should we NOT build?",
+    question:
+      "What is explicitly out of scope for this version? What should we NOT build?",
     required: true,
   },
   {
     id: "done_1",
     category: "done",
-    question: "How will we know this is done? What are the testable acceptance criteria?",
+    question:
+      "How will we know this is done? What are the testable acceptance criteria?",
     required: true,
   },
   {
@@ -69,9 +76,9 @@ const DISCOVERY_QUESTIONS: DiscoveryQuestion[] = [
 ];
 
 export class DiscoveryProtocol {
-  private spec: Partial<SoftwareRequirementsSpec> = {};
+  private readonly spec: Partial<SoftwareRequirementsSpec> = {};
 
-  constructor(private projectId: string) {
+  constructor(projectId: string) {
     this.spec = {
       id: generateId("srs"),
       projectId,
@@ -91,11 +98,21 @@ export class DiscoveryProtocol {
 
   getNextUnansweredQuestion(): DiscoveryQuestion | null {
     const answered = new Set<string>();
-    if (this.spec.who?.personas.length) answered.add("who");
-    if (this.spec.what?.coreFeatures.length) answered.add("what");
-    if (this.spec.notInScope?.length) answered.add("not");
-    if (this.spec.acceptanceCriteria?.length) answered.add("done");
-    if (this.spec.risks?.length) answered.add("risk");
+    if (this.spec.who?.personas.length) {
+      answered.add("who");
+    }
+    if (this.spec.what?.coreFeatures.length) {
+      answered.add("what");
+    }
+    if (this.spec.notInScope?.length) {
+      answered.add("not");
+    }
+    if (this.spec.acceptanceCriteria?.length) {
+      answered.add("done");
+    }
+    if (this.spec.risks?.length) {
+      answered.add("risk");
+    }
 
     return DISCOVERY_QUESTIONS.find((q) => !answered.has(q.category)) ?? null;
   }
@@ -130,6 +147,8 @@ export class DiscoveryProtocol {
           mitigation: "",
         }));
         break;
+      default:
+        break;
     }
 
     this.spec.confidenceScore = this.calculateConfidence();
@@ -137,13 +156,23 @@ export class DiscoveryProtocol {
 
   calculateConfidence(): number {
     let score = 0;
-    const weights = { who: 0.15, what: 0.30, not: 0.15, done: 0.25, risk: 0.15 };
+    const weights = { who: 0.15, what: 0.3, not: 0.15, done: 0.25, risk: 0.15 };
 
-    if (this.spec.who?.personas.length) score += weights.who;
-    if (this.spec.what?.coreFeatures.length) score += weights.what;
-    if (this.spec.notInScope?.length) score += weights.not;
-    if (this.spec.acceptanceCriteria?.length) score += weights.done;
-    if (this.spec.risks?.length) score += weights.risk;
+    if (this.spec.who?.personas.length) {
+      score += weights.who;
+    }
+    if (this.spec.what?.coreFeatures.length) {
+      score += weights.what;
+    }
+    if (this.spec.notInScope?.length) {
+      score += weights.not;
+    }
+    if (this.spec.acceptanceCriteria?.length) {
+      score += weights.done;
+    }
+    if (this.spec.risks?.length) {
+      score += weights.risk;
+    }
 
     return Math.round(score * 100) / 100;
   }
@@ -182,8 +211,8 @@ ${spec.risks?.map((r) => `- [${r.severity}] ${r.risk}`).join("\n") || "Not yet d
   private extractList(text: string): string[] {
     // Split by newlines, numbered lists, or bullet points
     return text
-      .split(/[\n\r]+/)
-      .map((line) => line.replace(/^[\s\-\*\d.]+/, "").trim())
+      .split(NEWLINE_SPLIT_RE)
+      .map((line) => line.replace(LIST_PREFIX_RE, "").trim())
       .filter((line) => line.length > 0);
   }
 }

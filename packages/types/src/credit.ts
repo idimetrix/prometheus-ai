@@ -1,29 +1,29 @@
 import type { CreditTransactionType } from "./enums";
 
 export interface CreditTransaction {
-  id: string;
-  orgId: string;
-  type: CreditTransactionType;
   amount: number;
   balanceAfter: number;
-  taskId: string | null;
-  description: string;
   createdAt: Date;
+  description: string;
+  id: string;
+  orgId: string;
+  taskId: string | null;
+  type: CreditTransactionType;
 }
 
 export interface CreditBalance {
-  orgId: string;
   balance: number;
+  orgId: string;
   reserved: number;
   updatedAt: Date;
 }
 
 export interface CreditReservation {
-  id: string;
-  orgId: string;
-  taskId: string;
   amount: number;
-  status: "active" | "committed" | "released";
   createdAt: Date;
   expiresAt: Date;
+  id: string;
+  orgId: string;
+  status: "active" | "committed" | "released";
+  taskId: string;
 }

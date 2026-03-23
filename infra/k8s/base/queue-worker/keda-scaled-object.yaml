@@ -1,0 +1,77 @@
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: queue-worker
+  namespace: prometheus
+  labels:
+    app: queue-worker
+spec:
+  scaleTargetRef:
+    name: queue-worker
+  pollingInterval: 15
+  cooldownPeriod: 60
+  idleReplicaCount: 0
+  minReplicaCount: 1
+  maxReplicaCount: 20
+  fallback:
+    failureThreshold: 3
+    replicas: 2
+  triggers:
+    - type: redis
+      metadata:
+        address: redis.prometheus.svc.cluster.local:6379
+        listName: "bull:session-events:wait"
+        listLength: "10"
+        activationListLength: "1"
+        enableTLS: "false"
+      authenticationRef:
+        name: redis-auth
+    - type: redis
+      metadata:
+        address: redis.prometheus.svc.cluster.local:6379
+        listName: "bull:workflow-runs:wait"
+        listLength: "5"
+        activationListLength: "1"
+        enableTLS: "false"
+      authenticationRef:
+        name: redis-auth
+    - type: redis
+      metadata:
+        address: redis.prometheus.svc.cluster.local:6379
+        listName: "bull:usage-aggregation:wait"
+        listLength: "20"
+        activationListLength: "1"
+        enableTLS: "false"
+      authenticationRef:
+        name: redis-auth
+  advanced:
+    restoreToOriginalReplicaCount: true
+    horizontalPodAutoscalerConfig:
+      behavior:
+        scaleDown:
+          stabilizationWindowSeconds: 120
+          policies:
+            - type: Percent
+              value: 25
+              periodSeconds: 60
+        scaleUp:
+          stabilizationWindowSeconds: 15
+          policies:
+            - type: Pods
+              value: 4
+              periodSeconds: 30
+            - type: Percent
+              value: 100
+              periodSeconds: 30
+          selectPolicy: Max
+---
+apiVersion: keda.sh/v1alpha1
+kind: TriggerAuthentication
+metadata:
+  name: redis-auth
+  namespace: prometheus
+spec:
+  secretTargetRef:
+    - parameter: password
+      name: redis-credentials
+      key: redis-password

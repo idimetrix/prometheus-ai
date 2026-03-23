@@ -1,14 +1,32 @@
 import { serve } from "@hono/node-server";
-import { Hono } from "hono";
 import { createLogger } from "@prometheus/logger";
-import { SandboxPool } from "./pool";
+import {
+  initSentry,
+  initTelemetry,
+  traceMiddleware,
+} from "@prometheus/telemetry";
+import {
+  installShutdownHandlers,
+  isProcessShuttingDown,
+} from "@prometheus/utils";
+import { Hono } from "hono";
+import { cors } from "hono/cors";
 import { ContainerManager } from "./container";
 import { GitOperations } from "./git-ops";
 import { createHealthChecker } from "./health";
+import { SandboxPool } from "./pool";
+import { screenshotRoute } from "./routes/screenshot";
 import { validateTimeout } from "./security";
+
+await initTelemetry({ serviceName: "sandbox-manager" });
+initSentry({ serviceName: "sandbox-manager" });
+installShutdownHandlers();
 
 const logger = createLogger("sandbox-manager");
 const app = new Hono();
+
+app.use("/*", cors());
+app.use("/*", traceMiddleware("sandbox-manager"));
 
 const containerManager = new ContainerManager();
 const sandboxPool = new SandboxPool(containerManager);
@@ -18,10 +36,19 @@ const healthCheck = createHealthChecker(containerManager, sandboxPool);
 // ---- Health ----
 
 app.get("/health", async (c) => {
+  if (isProcessShuttingDown()) {
+    return c.json({ status: "draining" }, 503);
+  }
   const health = await healthCheck();
   const statusCode = health.status === "unhealthy" ? 503 : 200;
   return c.json(health, statusCode);
 });
+
+// Liveness probe — lightweight, just confirms process is responsive
+app.get("/live", (c) => c.json({ status: "ok" }));
+
+// Readiness probe — can accept traffic
+app.get("/ready", (c) => c.json({ status: "ready" }));
 
 // ---- Pool stats ----
 
@@ -62,16 +89,22 @@ app.post("/sandbox/create", async (c) => {
       if (!cloneResult.success) {
         // Clean up the sandbox if clone fails
         await sandboxPool.release(sandbox.id);
-        return c.json({ error: `Failed to clone repo: ${cloneResult.error}` }, 500);
+        return c.json(
+          { error: `Failed to clone repo: ${cloneResult.error}` },
+          500
+        );
       }
     }
 
-    return c.json({
-      id: sandbox.id,
-      status: sandbox.status,
-      workspacePath: sandbox.workspacePath,
-      createdAt: sandbox.createdAt.toISOString(),
-    }, 201);
+    return c.json(
+      {
+        id: sandbox.id,
+        status: sandbox.status,
+        workspacePath: sandbox.workspacePath,
+        createdAt: sandbox.createdAt.toISOString(),
+      },
+      201
+    );
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);
     logger.error({ error: msg }, "Failed to create sandbox");
@@ -96,10 +129,19 @@ app.post("/sandbox/:id/exec", async (c) => {
     const timeoutMs = body.timeout ?? 60_000;
     const timeoutCheck = validateTimeout(timeoutMs);
     if (!timeoutCheck.valid) {
-      return c.json({ error: `Timeout exceeds maximum (300s). Clamped to ${timeoutCheck.timeout}ms` }, 400);
+      return c.json(
+        {
+          error: `Timeout exceeds maximum (300s). Clamped to ${timeoutCheck.timeout}ms`,
+        },
+        400
+      );
     }
 
-    const result = await containerManager.exec(sandboxId, body.command, timeoutCheck.timeout);
+    const result = await containerManager.exec(
+      sandboxId,
+      body.command,
+      timeoutCheck.timeout
+    );
 
     return c.json(result);
   } catch (error) {
@@ -205,7 +247,10 @@ app.post("/sandbox/:id/git", async (c) => {
 
       case "createBranch": {
         if (!body.branchName) {
-          return c.json({ error: "branchName is required for createBranch" }, 400);
+          return c.json(
+            { error: "branchName is required for createBranch" },
+            400
+          );
         }
         const result = await gitOps.createBranch(sandboxId, body.branchName);
         return c.json(result);
@@ -248,7 +293,10 @@ app.post("/sandbox/:id/git", async (c) => {
       }
 
       default:
-        return c.json({ error: `Unknown git operation: ${body.operation}` }, 400);
+        return c.json(
+          { error: `Unknown git operation: ${body.operation}` },
+          400
+        );
     }
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);
@@ -294,19 +342,28 @@ app.get("/sandbox/:id", (c) => {
   });
 });
 
+// ---- Screenshots (Playwright) ----
+app.route("/", screenshotRoute);
+
 // ---- Startup ----
 
-const port = Number(process.env.SANDBOX_MANAGER_PORT ?? 4003);
+const port = Number(process.env.SANDBOX_MANAGER_PORT ?? 4006);
 
 async function start() {
   // Initialize the sandbox pool (pre-warm sandboxes)
   await sandboxPool.initialize().catch((err) => {
     const msg = err instanceof Error ? err.message : String(err);
-    logger.warn({ error: msg }, "Pool initialization failed (will create sandboxes on demand)");
+    logger.warn(
+      { error: msg },
+      "Pool initialization failed (will create sandboxes on demand)"
+    );
   });
 
   serve({ fetch: app.fetch, port }, () => {
-    logger.info(`Sandbox Manager running on port ${port}`);
+    logger.info(
+      { port, mode: containerManager.getMode() },
+      "Sandbox Manager running"
+    );
   });
 
   // Graceful shutdown

@@ -1,5 +1,5 @@
 import { createLogger } from "@prometheus/logger";
-import type { ToolRegistry, MCPToolResult } from "../../registry";
+import type { MCPToolResult, ToolRegistry } from "../../registry";
 
 const logger = createLogger("mcp-gateway:gitlab");
 
@@ -28,16 +28,29 @@ async function gitlabFetch(
     body: options.body ? JSON.stringify(options.body) : undefined,
   });
 
+  // Handle GitLab rate limiting
+  const rateLimitRemaining = response.headers.get("ratelimit-remaining");
+  if (rateLimitRemaining && Number.parseInt(rateLimitRemaining, 10) < 10) {
+    logger.warn({ rateLimitRemaining }, "GitLab rate limit running low");
+  }
+
   const contentType = response.headers.get("content-type") ?? "";
-  const data = contentType.includes("json") ? await response.json() : await response.text();
+  const data = contentType.includes("json")
+    ? await response.json()
+    : await response.text();
 
   return { status: response.status, data };
 }
 
-function requireToken(credentials?: Record<string, string>): MCPToolResult | string {
+function requireToken(
+  credentials?: Record<string, string>
+): MCPToolResult | string {
   const token = credentials?.gitlab_token;
   if (!token) {
-    return { success: false, error: "GitLab token required. Provide credentials.gitlab_token." };
+    return {
+      success: false,
+      error: "GitLab token required. Provide credentials.gitlab_token.",
+    };
   }
   return token;
 }
@@ -52,7 +65,11 @@ export function registerGitLabAdapter(registry: ToolRegistry): void {
       inputSchema: {
         type: "object",
         properties: {
-          projectId: { type: "string", description: "Project ID or URL-encoded path (e.g., 'group%2Fproject')" },
+          projectId: {
+            type: "string",
+            description:
+              "Project ID or URL-encoded path (e.g., 'group%2Fproject')",
+          },
         },
         required: ["projectId"],
       },
@@ -60,14 +77,22 @@ export function registerGitLabAdapter(registry: ToolRegistry): void {
     },
     async (input, credentials) => {
       const tokenOrErr = requireToken(credentials);
-      if (typeof tokenOrErr !== "string") return tokenOrErr;
+      if (typeof tokenOrErr !== "string") {
+        return tokenOrErr;
+      }
 
       const { projectId } = input as { projectId: string };
       const encodedId = encodeURIComponent(projectId);
-      const { status, data } = await gitlabFetch(`/projects/${encodedId}`, tokenOrErr);
+      const { status, data } = await gitlabFetch(
+        `/projects/${encodedId}`,
+        tokenOrErr
+      );
 
       if (status !== 200) {
-        return { success: false, error: `GitLab API error (${status}): ${JSON.stringify(data)}` };
+        return {
+          success: false,
+          error: `GitLab API error (${status}): ${JSON.stringify(data)}`,
+        };
       }
 
       const project = data as Record<string, unknown>;
@@ -109,27 +134,49 @@ export function registerGitLabAdapter(registry: ToolRegistry): void {
     },
     async (input, credentials) => {
       const tokenOrErr = requireToken(credentials);
-      if (typeof tokenOrErr !== "string") return tokenOrErr;
+      if (typeof tokenOrErr !== "string") {
+        return tokenOrErr;
+      }
 
-      const { projectId, title, sourceBranch, targetBranch, description, draft, labels } = input as {
-        projectId: string; title: string; sourceBranch: string;
-        targetBranch: string; description?: string; draft?: boolean; labels?: string;
+      const {
+        projectId,
+        title,
+        sourceBranch,
+        targetBranch,
+        description,
+        draft,
+        labels,
+      } = input as {
+        projectId: string;
+        title: string;
+        sourceBranch: string;
+        targetBranch: string;
+        description?: string;
+        draft?: boolean;
+        labels?: string;
       };
 
       const encodedId = encodeURIComponent(projectId);
-      const { status, data } = await gitlabFetch(`/projects/${encodedId}/merge_requests`, tokenOrErr, {
-        method: "POST",
-        body: {
-          title: draft ? `Draft: ${title}` : title,
-          source_branch: sourceBranch,
-          target_branch: targetBranch,
-          description: description ?? "",
-          labels: labels ?? "",
-        },
-      });
+      const { status, data } = await gitlabFetch(
+        `/projects/${encodedId}/merge_requests`,
+        tokenOrErr,
+        {
+          method: "POST",
+          body: {
+            title: draft ? `Draft: ${title}` : title,
+            source_branch: sourceBranch,
+            target_branch: targetBranch,
+            description: description ?? "",
+            labels: labels ?? "",
+          },
+        }
+      );
 
       if (status !== 201) {
-        return { success: false, error: `Failed to create MR (${status}): ${JSON.stringify(data)}` };
+        return {
+          success: false,
+          error: `Failed to create MR (${status}): ${JSON.stringify(data)}`,
+        };
       }
 
       const mr = data as Record<string, unknown>;
@@ -165,17 +212,26 @@ export function registerGitLabAdapter(registry: ToolRegistry): void {
     },
     async (input, credentials) => {
       const tokenOrErr = requireToken(credentials);
-      if (typeof tokenOrErr !== "string") return tokenOrErr;
+      if (typeof tokenOrErr !== "string") {
+        return tokenOrErr;
+      }
 
       const { projectId, state, labels, page, per_page } = input as {
-        projectId: string; state?: string; labels?: string;
-        page?: number; per_page?: number;
+        projectId: string;
+        state?: string;
+        labels?: string;
+        page?: number;
+        per_page?: number;
       };
 
       const encodedId = encodeURIComponent(projectId);
       const params = new URLSearchParams();
-      if (state) params.set("state", state);
-      if (labels) params.set("labels", labels);
+      if (state) {
+        params.set("state", state);
+      }
+      if (labels) {
+        params.set("labels", labels);
+      }
       params.set("page", String(page ?? 1));
       params.set("per_page", String(per_page ?? 20));
 
@@ -188,17 +244,105 @@ export function registerGitLabAdapter(registry: ToolRegistry): void {
         return { success: false, error: `GitLab API error (${status})` };
       }
 
-      const issues = (data as any[]).map((issue) => ({
+      const issues = (data as Record<string, unknown>[]).map((issue) => ({
         iid: issue.iid,
         title: issue.title,
         state: issue.state,
         labels: issue.labels ?? [],
-        assignee: issue.assignee?.username ?? null,
+        assignee:
+          (issue.assignee as Record<string, unknown> | undefined)?.username ??
+          null,
         created_at: issue.created_at,
         web_url: issue.web_url,
       }));
 
       return { success: true, data: { issues, count: issues.length } };
+    }
+  );
+
+  // ---- create_issue ----
+  registry.register(
+    {
+      name: "gitlab_create_issue",
+      adapter: "gitlab",
+      description: "Create a new issue in a GitLab project",
+      inputSchema: {
+        type: "object",
+        properties: {
+          projectId: { type: "string" },
+          title: { type: "string" },
+          description: { type: "string" },
+          labels: { type: "string", description: "Comma-separated labels" },
+          assignee_ids: { type: "array", items: { type: "number" } },
+          milestone_id: { type: "number" },
+        },
+        required: ["projectId", "title"],
+      },
+      requiresAuth: true,
+    },
+    async (input, credentials) => {
+      const tokenOrErr = requireToken(credentials);
+      if (typeof tokenOrErr !== "string") {
+        return tokenOrErr;
+      }
+
+      const {
+        projectId,
+        title,
+        description,
+        labels,
+        assignee_ids,
+        milestone_id,
+      } = input as {
+        projectId: string;
+        title: string;
+        description?: string;
+        labels?: string;
+        assignee_ids?: number[];
+        milestone_id?: number;
+      };
+
+      const encodedId = encodeURIComponent(projectId);
+      const body: Record<string, unknown> = { title };
+      if (description) {
+        body.description = description;
+      }
+      if (labels) {
+        body.labels = labels;
+      }
+      if (assignee_ids?.length) {
+        body.assignee_ids = assignee_ids;
+      }
+      if (milestone_id) {
+        body.milestone_id = milestone_id;
+      }
+
+      const { status, data } = await gitlabFetch(
+        `/projects/${encodedId}/issues`,
+        tokenOrErr,
+        {
+          method: "POST",
+          body,
+        }
+      );
+
+      if (status !== 201) {
+        return {
+          success: false,
+          error: `Failed to create issue (${status}): ${JSON.stringify(data)}`,
+        };
+      }
+
+      const issue = data as Record<string, unknown>;
+      return {
+        success: true,
+        data: {
+          iid: issue.iid,
+          title: issue.title,
+          state: issue.state,
+          web_url: issue.web_url,
+        },
+      };
     }
   );
 
@@ -220,24 +364,33 @@ export function registerGitLabAdapter(registry: ToolRegistry): void {
     },
     async (input, credentials) => {
       const tokenOrErr = requireToken(credentials);
-      if (typeof tokenOrErr !== "string") return tokenOrErr;
+      if (typeof tokenOrErr !== "string") {
+        return tokenOrErr;
+      }
 
       const { page, per_page, membership } = input as {
-        page?: number; per_page?: number; membership?: boolean;
+        page?: number;
+        per_page?: number;
+        membership?: boolean;
       };
 
       const params = new URLSearchParams();
       params.set("page", String(page ?? 1));
       params.set("per_page", String(per_page ?? 20));
-      if (membership !== false) params.set("membership", "true");
+      if (membership !== false) {
+        params.set("membership", "true");
+      }
 
-      const { status, data } = await gitlabFetch(`/projects?${params.toString()}`, tokenOrErr);
+      const { status, data } = await gitlabFetch(
+        `/projects?${params.toString()}`,
+        tokenOrErr
+      );
 
       if (status !== 200) {
         return { success: false, error: `GitLab API error (${status})` };
       }
 
-      const projects = (data as any[]).map((p) => ({
+      const projects = (data as Record<string, unknown>[]).map((p) => ({
         id: p.id,
         name: p.name,
         path_with_namespace: p.path_with_namespace,
@@ -246,6 +399,84 @@ export function registerGitLabAdapter(registry: ToolRegistry): void {
       }));
 
       return { success: true, data: { projects, count: projects.length } };
+    }
+  );
+
+  // ---- list_pipelines ----
+  registry.register(
+    {
+      name: "gitlab_list_pipelines",
+      adapter: "gitlab",
+      description: "List CI/CD pipelines for a GitLab project",
+      inputSchema: {
+        type: "object",
+        properties: {
+          projectId: { type: "string" },
+          ref: { type: "string", description: "Branch or tag name" },
+          status: {
+            type: "string",
+            enum: [
+              "running",
+              "pending",
+              "success",
+              "failed",
+              "canceled",
+              "skipped",
+              "manual",
+            ],
+          },
+          page: { type: "number" },
+          per_page: { type: "number" },
+        },
+        required: ["projectId"],
+      },
+      requiresAuth: true,
+    },
+    async (input, credentials) => {
+      const tokenOrErr = requireToken(credentials);
+      if (typeof tokenOrErr !== "string") {
+        return tokenOrErr;
+      }
+
+      const { projectId, ref, status, page, per_page } = input as {
+        projectId: string;
+        ref?: string;
+        status?: string;
+        page?: number;
+        per_page?: number;
+      };
+
+      const encodedId = encodeURIComponent(projectId);
+      const params = new URLSearchParams();
+      if (ref) {
+        params.set("ref", ref);
+      }
+      if (status) {
+        params.set("status", status);
+      }
+      params.set("page", String(page ?? 1));
+      params.set("per_page", String(per_page ?? 20));
+
+      const { status: httpStatus, data } = await gitlabFetch(
+        `/projects/${encodedId}/pipelines?${params.toString()}`,
+        tokenOrErr
+      );
+
+      if (httpStatus !== 200) {
+        return { success: false, error: `GitLab API error (${httpStatus})` };
+      }
+
+      const pipelines = (data as Record<string, unknown>[]).map((p) => ({
+        id: p.id,
+        status: p.status,
+        ref: p.ref,
+        sha: p.sha,
+        web_url: p.web_url,
+        created_at: p.created_at,
+        updated_at: p.updated_at,
+      }));
+
+      return { success: true, data: { pipelines, count: pipelines.length } };
     }
   );
 }

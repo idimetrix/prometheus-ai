@@ -3,7 +3,22 @@ import type { AgentLoop } from "../agent-loop";
 
 const logger = createLogger("orchestrator:planning");
 
+const SPRINT_GOAL_RE = /##\s*SPRINT_GOAL[^\n]*\n([\s\S]*?)(?=##|$)/i;
+const TASK_HEADER_RE = /TASK-(\d+):\s*(.+?)(?:\n|$)/g;
+const TASK_DESCRIPTION_RE = /Description:\s*(.+?)(?=\n\s*-|\n\s*Agent|$)/is;
+const TASK_AGENT_RE = /Agent:\s*(\w+)/i;
+const TASK_DEPS_RE = /Dependencies:\s*(.+?)(?=\n|$)/i;
+const TASK_EFFORT_RE = /Effort:\s*(S|M|L|XL)/i;
+const TASK_ACCEPTANCE_RE = /Acceptance Criteria:([\s\S]*?)(?=\nTASK-|\n##|$)/i;
+const TASK_ID_RE = /TASK-\d+/g;
+const RISK_RE = /Risk:\s*(.+?)(?:\n|$)/gi;
+const RISK_MITIGATION_RE = /Mitigation:\s*(.+?)(?=\n\s*-|\n\s*Risk:|$)/is;
+const LIST_BULLET_PREFIX_RE = /^\s*[-*]\s*/;
+
 export interface SprintPlan {
+  criticalPath: string[];
+  parallelWorkstreams: string[][];
+  riskMitigations: Array<{ risk: string; mitigation: string }>;
   sprintGoal: string;
   tasks: Array<{
     id: string;
@@ -14,9 +29,6 @@ export interface SprintPlan {
     effort: "S" | "M" | "L" | "XL";
     acceptanceCriteria: string[];
   }>;
-  parallelWorkstreams: string[][];
-  criticalPath: string[];
-  riskMitigations: Array<{ risk: string; mitigation: string }>;
 }
 
 /**
@@ -25,7 +37,6 @@ export interface SprintPlan {
  * dependencies, effort estimates, and parallel workstream identification.
  */
 export class PlanningPhase {
-
   async execute(agentLoop: AgentLoop, blueprint: string): Promise<SprintPlan> {
     logger.info("Starting Planning phase");
 
@@ -36,11 +47,14 @@ export class PlanningPhase {
 
     const plan = this.parseSprintPlan(result.output);
 
-    logger.info({
-      taskCount: plan.tasks.length,
-      workstreams: plan.parallelWorkstreams.length,
-      criticalPathLength: plan.criticalPath.length,
-    }, "Planning phase complete");
+    logger.info(
+      {
+        taskCount: plan.tasks.length,
+        workstreams: plan.parallelWorkstreams.length,
+        criticalPathLength: plan.criticalPath.length,
+      },
+      "Planning phase complete"
+    );
 
     return plan;
   }
@@ -106,81 +120,95 @@ Rules:
   }
 
   private extractSprintGoal(output: string): string {
-    const match = output.match(/##\s*SPRINT_GOAL[^\n]*\n([\s\S]*?)(?=##|$)/i);
+    const match = output.match(SPRINT_GOAL_RE);
     if (match?.[1]) {
       return match[1].trim().split("\n")[0]?.trim() ?? "Complete sprint tasks";
     }
     return "Complete sprint tasks";
   }
 
+  private parseTaskBlock(
+    block: string,
+    id: string,
+    title: string
+  ): SprintPlan["tasks"][number] {
+    const descMatch = block.match(TASK_DESCRIPTION_RE);
+    const agentMatch = block.match(TASK_AGENT_RE);
+    const depsMatch = block.match(TASK_DEPS_RE);
+    const effortMatch = block.match(TASK_EFFORT_RE);
+
+    const acceptanceCriteria = this.parseAcceptanceCriteria(block);
+
+    const depsStr = depsMatch?.[1]?.trim() ?? "none";
+    const dependencies: string[] = [];
+    if (depsStr.toLowerCase() !== "none") {
+      const depMatches = depsStr.match(TASK_ID_RE);
+      if (depMatches) {
+        dependencies.push(...depMatches);
+      }
+    }
+
+    const agentRaw = agentMatch?.[1]?.toLowerCase() ?? "backend_coder";
+    const agentRole = this.normalizeAgentRole(agentRaw);
+
+    return {
+      id,
+      title,
+      description: descMatch?.[1]?.trim() ?? title,
+      agentRole,
+      dependencies,
+      effort: (effortMatch?.[1]?.toUpperCase() ?? "M") as
+        | "S"
+        | "M"
+        | "L"
+        | "XL",
+      acceptanceCriteria:
+        acceptanceCriteria.length > 0
+          ? acceptanceCriteria
+          : [`${title} is implemented and working`],
+    };
+  }
+
+  private parseAcceptanceCriteria(block: string): string[] {
+    const acSection = block.match(TASK_ACCEPTANCE_RE);
+    const criteria: string[] = [];
+    if (!acSection?.[1]) {
+      return criteria;
+    }
+    const lines = acSection[1].split("\n");
+    for (const line of lines) {
+      const criterion = line.replace(LIST_BULLET_PREFIX_RE, "").trim();
+      if (criterion.length > 0) {
+        criteria.push(criterion);
+      }
+    }
+    return criteria;
+  }
+
   private extractTasks(output: string): SprintPlan["tasks"] {
     const tasks: SprintPlan["tasks"] = [];
-    const taskRegex = /TASK-(\d+):\s*(.+?)(?:\n|$)/g;
-    let match;
+    TASK_HEADER_RE.lastIndex = 0;
 
     const taskSection = this.getSection(output, "TASKS");
+    let match: RegExpExecArray | null = TASK_HEADER_RE.exec(taskSection);
 
-    while ((match = taskRegex.exec(taskSection)) !== null) {
+    while (match !== null) {
       const id = `TASK-${match[1]}`;
       const title = match[2]?.trim() ?? "";
 
-      // Extract the block for this task
       const startPos = match.index + match[0].length;
       const nextTask = taskSection.indexOf("TASK-", startPos);
       const nextSection = taskSection.indexOf("##", startPos);
       const endPos = Math.min(
         nextTask > -1 ? nextTask : taskSection.length,
-        nextSection > -1 ? nextSection : taskSection.length,
+        nextSection > -1 ? nextSection : taskSection.length
       );
       const block = taskSection.slice(startPos, endPos);
 
-      // Parse fields
-      const descMatch = block.match(/Description:\s*(.+?)(?=\n\s*-|\n\s*Agent|$)/is);
-      const agentMatch = block.match(/Agent:\s*(\w+)/i);
-      const depsMatch = block.match(/Dependencies:\s*(.+?)(?=\n|$)/i);
-      const effortMatch = block.match(/Effort:\s*(S|M|L|XL)/i);
-
-      // Parse acceptance criteria
-      const acSection = block.match(/Acceptance Criteria:([\s\S]*?)(?=\nTASK-|\n##|$)/i);
-      const acceptanceCriteria: string[] = [];
-      if (acSection?.[1]) {
-        const lines = acSection[1].split("\n");
-        for (const line of lines) {
-          const criterion = line.replace(/^\s*[-*]\s*/, "").trim();
-          if (criterion.length > 0) {
-            acceptanceCriteria.push(criterion);
-          }
-        }
-      }
-
-      // Parse dependencies
-      const depsStr = depsMatch?.[1]?.trim() ?? "none";
-      const dependencies: string[] = [];
-      if (depsStr.toLowerCase() !== "none") {
-        const depMatches = depsStr.match(/TASK-\d+/g);
-        if (depMatches) {
-          dependencies.push(...depMatches);
-        }
-      }
-
-      // Map agent name to role
-      const agentRaw = agentMatch?.[1]?.toLowerCase() ?? "backend_coder";
-      const agentRole = this.normalizeAgentRole(agentRaw);
-
-      tasks.push({
-        id,
-        title,
-        description: descMatch?.[1]?.trim() ?? title,
-        agentRole,
-        dependencies,
-        effort: (effortMatch?.[1]?.toUpperCase() ?? "M") as "S" | "M" | "L" | "XL",
-        acceptanceCriteria: acceptanceCriteria.length > 0
-          ? acceptanceCriteria
-          : [`${title} is implemented and working`],
-      });
+      tasks.push(this.parseTaskBlock(block, id, title));
+      match = TASK_HEADER_RE.exec(taskSection);
     }
 
-    // If no tasks were parsed, create a default task
     if (tasks.length === 0 && output.length > 100) {
       tasks.push({
         id: "TASK-1",
@@ -199,11 +227,13 @@ Rules:
   private extractParallelWorkstreams(output: string): string[][] {
     const workstreams: string[][] = [];
     const section = this.getSection(output, "PARALLEL_WORKSTREAMS");
-    if (!section) return workstreams;
+    if (!section) {
+      return workstreams;
+    }
 
     const lines = section.split("\n");
     for (const line of lines) {
-      const taskIds = line.match(/TASK-\d+/g);
+      const taskIds = line.match(TASK_ID_RE);
       if (taskIds && taskIds.length > 0) {
         workstreams.push(taskIds);
       }
@@ -214,33 +244,40 @@ Rules:
 
   private extractCriticalPath(output: string): string[] {
     const section = this.getSection(output, "CRITICAL_PATH");
-    if (!section) return [];
+    if (!section) {
+      return [];
+    }
 
-    const taskIds = section.match(/TASK-\d+/g);
+    const taskIds = section.match(TASK_ID_RE);
     return taskIds ?? [];
   }
 
-  private extractRiskMitigations(output: string): SprintPlan["riskMitigations"] {
+  private extractRiskMitigations(
+    output: string
+  ): SprintPlan["riskMitigations"] {
     const mitigations: SprintPlan["riskMitigations"] = [];
     const section = this.getSection(output, "RISK_MITIGATIONS");
-    if (!section) return mitigations;
+    if (!section) {
+      return mitigations;
+    }
 
-    const riskRegex = /Risk:\s*(.+?)(?:\n|$)/gi;
-    let match;
+    RISK_RE.lastIndex = 0;
+    let match: RegExpExecArray | null = RISK_RE.exec(section);
 
-    while ((match = riskRegex.exec(section)) !== null) {
+    while (match !== null) {
       const risk = match[1]?.trim() ?? "";
       const mitigationStart = match.index + match[0].length;
       const nextRisk = section.indexOf("Risk:", mitigationStart);
       const blockEnd = nextRisk > -1 ? nextRisk : section.length;
       const block = section.slice(mitigationStart, blockEnd);
 
-      const mitMatch = block.match(/Mitigation:\s*(.+?)(?=\n\s*-|\n\s*Risk:|$)/is);
+      const mitMatch = block.match(RISK_MITIGATION_RE);
       const mitigation = mitMatch?.[1]?.trim() ?? "";
 
       if (risk) {
         mitigations.push({ risk, mitigation });
       }
+      match = RISK_RE.exec(section);
     }
 
     return mitigations;

@@ -2,23 +2,43 @@ services:
   postgres:
     image: pgvector/pgvector:pg16
     container_name: prometheus-postgres
+    profiles: ["core", "ai", "full"]
     environment:
       POSTGRES_USER: prometheus
       POSTGRES_PASSWORD: prometheus_dev
       POSTGRES_DB: prometheus
     ports:
       - "5432:5432"
+    command:
+      - postgres
+      - -c
+      - shared_preload_libraries=pg_stat_statements
+      - -c
+      - pg_stat_statements.track=all
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U prometheus"]
-      interval: 5s
+      test: ["CMD-SHELL", "pg_isready -U prometheus -d prometheus"]
+      interval: 10s
       timeout: 5s
       retries: 5
+      start_period: 30s
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+          cpus: "2.0"
+        reservations:
+          memory: 512M
+          cpus: "0.5"
+    networks:
+      - prometheus-net
 
   pgbouncer:
     image: bitnami/pgbouncer:latest
     container_name: prometheus-pgbouncer
+    profiles: ["core", "ai", "full"]
     environment:
       POSTGRESQL_HOST: postgres
       POSTGRESQL_PORT: 5432
@@ -28,29 +48,111 @@ services:
       PGBOUNCER_DATABASE: prometheus
       PGBOUNCER_POOL_MODE: transaction
       PGBOUNCER_MAX_CLIENT_CONN: 200
-      PGBOUNCER_DEFAULT_POOL_SIZE: 20
+      PGBOUNCER_DEFAULT_POOL_SIZE: 40
+      PGBOUNCER_RESERVE_POOL_SIZE: 5
+      PGBOUNCER_SERVER_LIFETIME: 3600
     ports:
       - "6432:6432"
     depends_on:
       postgres:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -p 6432 -U prometheus"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: "0.5"
+        reservations:
+          memory: 64M
+          cpus: "0.1"
+    networks:
+      - prometheus-net
 
   redis:
-    image: valkey/valkey:8-alpine
+    image: docker.dragonflydb.io/dragonflydb/dragonfly:latest
     container_name: prometheus-redis
+    profiles: ["core", "ai", "full"]
+    command: dragonfly --maxmemory 512mb --proactor_threads 2 --cache_mode
     ports:
       - "6379:6379"
     volumes:
       - redis_data:/data
     healthcheck:
-      test: ["CMD", "valkey-cli", "ping"]
-      interval: 5s
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
       timeout: 5s
       retries: 5
+      start_period: 10s
+    restart: unless-stopped
+    ulimits:
+      memlock: -1
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: "2.0"
+        reservations:
+          memory: 256M
+          cpus: "0.5"
+    networks:
+      - prometheus-net
+
+  litellm:
+    image: ghcr.io/berriai/litellm:main-latest
+    container_name: prometheus-litellm
+    profiles: ["ai", "full"]
+    ports:
+      - "4010:4000"
+    volumes:
+      - ./infra/litellm/litellm-config.yaml:/app/config.yaml
+    environment:
+      LITELLM_MASTER_KEY: sk-prometheus-litellm-dev
+      DATABASE_URL: postgresql://prometheus:prometheus_dev@postgres:5432/prometheus
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      OLLAMA_API_BASE: http://ollama:11434
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      CEREBRAS_API_KEY: ${CEREBRAS_API_KEY:-}
+      GROQ_API_KEY: ${GROQ_API_KEY:-}
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+      MISTRAL_API_KEY: ${MISTRAL_API_KEY:-}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      VOYAGE_API_KEY: ${VOYAGE_API_KEY:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:4000/health || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: "1.0"
+        reservations:
+          memory: 256M
+          cpus: "0.25"
+    networks:
+      - prometheus-net
 
   minio:
     image: minio/minio:latest
     container_name: prometheus-minio
+    profiles: ["full"]
     command: server /data --console-address ":9001"
     environment:
       MINIO_ROOT_USER: minioadmin
@@ -60,21 +162,124 @@ services:
       - "9001:9001"
     volumes:
       - minio_data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: "1.0"
+        reservations:
+          memory: 256M
+          cpus: "0.25"
+    networks:
+      - prometheus-net
 
   ollama:
     image: ollama/ollama:latest
     container_name: prometheus-ollama
+    profiles: ["ai", "full"]
+    environment:
+      OLLAMA_HOST: 0.0.0.0:11434
+      OLLAMA_NUM_PARALLEL: 2
+      OLLAMA_MAX_LOADED_MODELS: 2
     ports:
       - "11434:11434"
     volumes:
       - ollama_data:/root/.ollama
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:11434/api/tags || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
     deploy:
       resources:
+        limits:
+          memory: 12G
+          cpus: "4.0"
         reservations:
           memory: 8G
+          cpus: "2.0"
+    networks:
+      - prometheus-net
+
+  mem0:
+    image: qdrant/qdrant:latest
+    container_name: prometheus-mem0
+    profiles: ["full"]
+    ports:
+      - "6333:6333"
+      - "6334:6334"
+    volumes:
+      - mem0_data:/qdrant/storage
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:6333/healthz || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+          cpus: "2.0"
+        reservations:
+          memory: 512M
+          cpus: "0.5"
+    networks:
+      - prometheus-net
+
+  zoekt:
+    image: ghcr.io/sourcegraph/zoekt-webserver:latest
+    container_name: prometheus-zoekt
+    profiles: ["full"]
+    ports:
+      - "6070:6070"
+    volumes:
+      - zoekt_data:/data/index
+    environment:
+      DATA_DIR: /data/index
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:6070/healthz || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: "1.0"
+        reservations:
+          memory: 256M
+          cpus: "0.25"
+    networks:
+      - prometheus-net
 
 volumes:
   postgres_data:
+    name: prometheus-postgres-data
   redis_data:
+    name: prometheus-redis-data
   minio_data:
+    name: prometheus-minio-data
   ollama_data:
+    name: prometheus-ollama-data
+  mem0_data:
+    name: prometheus-mem0-data
+  zoekt_data:
+    name: prometheus-zoekt-data
+
+networks:
+  prometheus-net:
+    name: prometheus-network
+    driver: bridge

@@ -1,0 +1,299 @@
+name: Deploy Staging
+
+# Triggered on push to main (after CI passes) or manually via workflow_dispatch.
+# Builds all Docker images, pushes to GHCR, deploys to staging K8s cluster,
+# runs smoke tests, and posts results to Slack. Rolls back on failure.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: "Docker image tag override (default: git SHA)"
+        required: false
+        type: string
+      skip_smoke_tests:
+        description: "Skip smoke tests after deployment"
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  packages: write
+  id-token: write
+
+concurrency:
+  group: deploy-staging
+  cancel-in-progress: false  # Never cancel in-progress deployments
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_PREFIX: ghcr.io/${{ github.repository }}
+  NAMESPACE: prometheus-staging
+  # All 9 application services
+  SERVICES: "web api orchestrator queue-worker socket-server mcp-gateway model-router project-brain sandbox-manager"
+
+jobs:
+  # ── Step 1: Build all Docker images in parallel ─────────────────────────
+  build-images:
+    name: Build ${{ matrix.service }}
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        service:
+          - web
+          - api
+          - orchestrator
+          - queue-worker
+          - socket-server
+          - mcp-gateway
+          - model-router
+          - project-brain
+          - sandbox-manager
+      fail-fast: false
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Compute image tag
+        id: tag
+        env:
+          INPUT_TAG: ${{ inputs.image_tag }}
+          GIT_SHA: ${{ github.sha }}
+        run: |
+          TAG="${INPUT_TAG:-${GIT_SHA}}"
+          echo "tag=${TAG:0:12}" >> "$GITHUB_OUTPUT"
+          echo "date=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+
+      - name: Build and push ${{ matrix.service }}
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: infra/docker/Dockerfile.${{ matrix.service }}
+          push: true
+          tags: |
+            ${{ env.IMAGE_PREFIX }}/${{ matrix.service }}:${{ steps.tag.outputs.tag }}
+            ${{ env.IMAGE_PREFIX }}/${{ matrix.service }}:staging
+            ${{ env.IMAGE_PREFIX }}/${{ matrix.service }}:latest
+          cache-from: type=gha,scope=${{ matrix.service }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.service }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.created=${{ steps.tag.outputs.date }}
+
+    outputs:
+      image_tag: ${{ steps.tag.outputs.tag }}
+
+  # ── Step 2: Deploy to staging Kubernetes cluster ────────────────────────
+  deploy:
+    name: Deploy to Staging
+    needs: build-images
+    runs-on: ubuntu-latest
+    environment:
+      name: staging
+      url: https://staging.prometheus.dev
+    env:
+      DEPLOY_TAG: ${{ needs.build-images.outputs.image_tag }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure kubectl
+        uses: azure/k8s-set-context@v4
+        with:
+          method: kubeconfig
+          kubeconfig: ${{ secrets.STAGING_KUBECONFIG }}
+
+      - name: Verify cluster connectivity
+        run: |
+          echo "Verifying cluster access..."
+          kubectl cluster-info
+          kubectl get namespace "${NAMESPACE}" || kubectl create namespace "${NAMESPACE}"
+
+      - name: Apply kustomize overlay
+        run: |
+          echo "Applying staging kustomize overlay..."
+          kubectl apply -k infra/k8s/overlays/staging -n "${NAMESPACE}"
+
+      - name: Update image tags for all services
+        env:
+          PREFIX: ${{ env.IMAGE_PREFIX }}
+        run: |
+          TAG="${DEPLOY_TAG:0:12}"
+          echo "Updating all services to tag: ${TAG}"
+
+          for svc in ${SERVICES}; do
+            echo "  Updating ${svc}..."
+            kubectl set image "deployment/${svc}" \
+              "${svc}=${PREFIX}/${svc}:${TAG}" \
+              -n "${NAMESPACE}" 2>/dev/null || \
+              echo "  WARNING: deployment/${svc} not found — skipping"
+          done
+
+      - name: Wait for rollouts to complete
+        id: rollout
+        run: |
+          echo "Waiting for rollouts..."
+          FAILED=""
+          for svc in ${SERVICES}; do
+            echo -n "  ${svc}: "
+            if kubectl rollout status "deployment/${svc}" \
+                -n "${NAMESPACE}" --timeout=300s 2>/dev/null; then
+              echo "OK"
+            else
+              echo "FAILED"
+              FAILED="${FAILED} ${svc}"
+            fi
+          done
+
+          if [ -n "${FAILED}" ]; then
+            echo "failed_services=${FAILED}" >> "$GITHUB_OUTPUT"
+            echo "::error::Failed rollouts:${FAILED}"
+            exit 1
+          fi
+
+      - name: Capture deployment status
+        if: always()
+        run: |
+          echo "### Deployment Status" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          kubectl get deployments -n "${NAMESPACE}" -o wide >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || true
+
+  # ── Step 3: Run smoke tests against staging ─────────────────────────────
+  smoke-tests:
+    name: Smoke Tests
+    needs: deploy
+    if: ${{ !inputs.skip_smoke_tests }}
+    runs-on: ubuntu-latest
+    env:
+      STAGING_URL: ${{ secrets.STAGING_URL || 'https://staging.prometheus.dev' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Wait for services to stabilize
+        run: sleep 15
+
+      - name: Run smoke tests
+        id: smoke
+        run: |
+          FAILURES=0
+          TOTAL=0
+
+          # Health check endpoints
+          check_endpoint() {
+            local name="$1"
+            local url="$2"
+            TOTAL=$((TOTAL + 1))
+            echo -n "  ${name} (${url}): "
+            HTTP_CODE=$(curl -sf -o /dev/null -w "%{http_code}" --connect-timeout 10 --max-time 30 "${url}" 2>/dev/null || echo "000")
+            if [ "${HTTP_CODE}" = "200" ] || [ "${HTTP_CODE}" = "204" ]; then
+              echo "OK (${HTTP_CODE})"
+            else
+              echo "FAILED (${HTTP_CODE})"
+              FAILURES=$((FAILURES + 1))
+            fi
+          }
+
+          check_endpoint "Web" "${STAGING_URL}/"
+          check_endpoint "API Health" "${STAGING_URL}/api/health"
+          check_endpoint "Socket Health" "${STAGING_URL}/socket/health"
+
+          echo "failures=${FAILURES}" >> "$GITHUB_OUTPUT"
+          echo "total=${TOTAL}" >> "$GITHUB_OUTPUT"
+
+          if [ "${FAILURES}" -gt 0 ]; then
+            echo "::error::${FAILURES}/${TOTAL} smoke tests failed"
+            exit 1
+          fi
+
+          echo "All ${TOTAL} smoke tests passed"
+
+  # ── Step 4: Rollback on failure ─────────────────────────────────────────
+  rollback:
+    name: Rollback
+    needs: [deploy, smoke-tests]
+    if: failure()
+    runs-on: ubuntu-latest
+    environment: staging
+    steps:
+      - name: Configure kubectl
+        uses: azure/k8s-set-context@v4
+        with:
+          method: kubeconfig
+          kubeconfig: ${{ secrets.STAGING_KUBECONFIG }}
+
+      - name: Roll back all deployments
+        run: |
+          echo "Rolling back staging deployments..."
+          for svc in ${SERVICES}; do
+            echo "  Rolling back ${svc}..."
+            kubectl rollout undo "deployment/${svc}" \
+              -n "${NAMESPACE}" 2>/dev/null || \
+              echo "  WARNING: Could not roll back ${svc}"
+          done
+          echo "Rollback complete"
+
+      - name: Wait for rollback to stabilize
+        run: |
+          for svc in ${SERVICES}; do
+            kubectl rollout status "deployment/${svc}" \
+              -n "${NAMESPACE}" --timeout=120s 2>/dev/null || true
+          done
+
+  # ── Step 5: Post results to Slack ───────────────────────────────────────
+  notify:
+    name: Notify
+    needs: [build-images, deploy, smoke-tests]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Post to Slack
+        if: ${{ secrets.SLACK_WEBHOOK_URL != '' }}
+        uses: slackapi/slack-github-action@v1
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          SLACK_WEBHOOK_TYPE: INCOMING_WEBHOOK
+        with:
+          payload: |
+            {
+              "text": "${{ needs.smoke-tests.result == 'success' && ':white_check_mark: Staging Deploy SUCCESS' || ':x: Staging Deploy FAILED' }}",
+              "blocks": [
+                {
+                  "type": "header",
+                  "text": {
+                    "type": "plain_text",
+                    "text": "${{ needs.smoke-tests.result == 'success' && 'Staging Deploy Succeeded' || 'Staging Deploy Failed' }}"
+                  }
+                },
+                {
+                  "type": "section",
+                  "fields": [
+                    { "type": "mrkdwn", "text": "*Commit:*\n`${{ github.sha }}`" },
+                    { "type": "mrkdwn", "text": "*Build:*\n${{ needs.build-images.result }}" },
+                    { "type": "mrkdwn", "text": "*Deploy:*\n${{ needs.deploy.result }}" },
+                    { "type": "mrkdwn", "text": "*Smoke Tests:*\n${{ needs.smoke-tests.result || 'skipped' }}" }
+                  ]
+                },
+                {
+                  "type": "actions",
+                  "elements": [
+                    {
+                      "type": "button",
+                      "text": { "type": "plain_text", "text": "View Run" },
+                      "url": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+                    }
+                  ]
+                }
+              ]
+            }

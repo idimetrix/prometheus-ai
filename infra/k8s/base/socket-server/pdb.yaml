@@ -1,0 +1,10 @@
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: socket-server-pdb
+  namespace: prometheus
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app: socket-server

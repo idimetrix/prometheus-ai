@@ -1,6 +1,6 @@
 # PROMETHEUS — System Architecture
 
-> **Last updated:** 2026-03-18
+> **Last updated:** 2026-03-23
 > **Classification:** Internal Engineering Reference
 > **Audience:** Engineers, SREs, and technical stakeholders
 
@@ -14,21 +14,41 @@
 4. [Database Schema](#4-database-schema)
 5. [Real-Time Event Architecture](#5-real-time-event-architecture)
 6. [Agent Execution Pipeline](#6-agent-execution-pipeline)
-7. [Model Routing Decision Tree](#7-model-routing-decision-tree)
-8. [Scaling Architecture (1000+ Users)](#8-scaling-architecture-1000-users)
-9. [Security & Isolation Model](#9-security--isolation-model)
-10. [Credit & Billing Flow](#10-credit--billing-flow)
-11. [Deployment Topology](#11-deployment-topology)
-12. [Memory System (5 Layers)](#12-memory-system-5-layers)
-13. [Capacity Planning](#13-capacity-planning)
-14. [Performance Targets & SLOs](#14-performance-targets--slos)
-15. [Appendix: Key File Reference](#15-appendix-key-file-reference)
+7. [Agent Composition & Multi-Agent Patterns](#7-agent-composition--multi-agent-patterns)
+8. [Model Routing Decision Tree](#8-model-routing-decision-tree)
+9. [Cost Optimization System](#9-cost-optimization-system)
+10. [Scaling Architecture (1000+ Users)](#10-scaling-architecture-1000-users)
+11. [Security & Isolation Model](#11-security--isolation-model)
+12. [Credit & Billing Flow](#12-credit--billing-flow)
+13. [Deployment Topology](#13-deployment-topology)
+14. [Memory System (8 Layers)](#14-memory-system-8-layers)
+15. [Governance & Compliance Engine](#15-governance--compliance-engine)
+16. [Self-Play Training Pipeline](#16-self-play-training-pipeline)
+17. [Plugin Architecture](#17-plugin-architecture)
+18. [IDE & Voice Integration](#18-ide--voice-integration)
+19. [Capacity Planning](#19-capacity-planning)
+20. [Performance Targets & SLOs](#20-performance-targets--slos)
+21. [Appendix: Key File Reference](#21-appendix-key-file-reference)
+22. [Code Intelligence Pipeline](#22-code-intelligence-pipeline)
+23. [Guardian Security Pipeline](#23-guardian-security-pipeline)
+24. [Tool Execution Architecture](#24-tool-execution-architecture)
+25. [Docker Compose Infrastructure Stack](#25-docker-compose-infrastructure-stack)
+26. [12 Specialist Agent Roles](#26-12-specialist-agent-roles)
+27. [Key Data Flow: Task Submission](#27-key-data-flow-task-submission--agent-execution--result)
+28. [Key Data Flow: Multi-Agent Collaboration](#28-key-data-flow-multi-agent-collaboration)
+29. [Database Schema Overview](#29-database-schema-overview-94-tables-56-enums)
+30. [tRPC API Routers (26 Routers)](#30-trpc-api-routers-26-routers)
+31. [Docs Application Architecture](#31-docs-application-architecture)
+32. [Testing Architecture](#32-testing-architecture)
+33. [MCP Gateway Adapter Architecture](#33-mcp-gateway-adapter-architecture)
+34. [Workflow Patterns Catalog](#34-workflow-patterns-catalog)
+35. [Codebase Metrics](#35-codebase-metrics)
 
 ---
 
 ## 1. High-Level System Overview
 
-Prometheus is an AI-powered engineering platform with 12 specialist agents that autonomously handle software development tasks — from requirements discovery through deployment. The platform is built as a **Turborepo monorepo** with **pnpm workspaces**, containing 9 application services and 15 shared packages.
+Prometheus is an AI-powered engineering platform with 12 specialist agents that autonomously handle software development tasks — from requirements discovery through deployment. The platform is built as a **Turborepo monorepo** with **pnpm workspaces**, containing 10 application services and 29 shared packages.
 
 ### System Topology
 
@@ -49,20 +69,25 @@ graph TD
     end
 
     subgraph "Core Processing Services"
-        Orchestrator["orchestrator<br/>Agent Lifecycle"]
+        Orchestrator["orchestrator<br/>:4002<br/>Agent Lifecycle"]
         QueueWorker["queue-worker<br/>BullMQ Consumer"]
-        ModelRouter["model-router<br/>:4002<br/>LLM Routing"]
-        SandboxMgr["sandbox-manager<br/>:4003<br/>Container Isolation"]
+        ModelRouter["model-router<br/>:4004<br/>LLM Routing"]
+        SandboxMgr["sandbox-manager<br/>:4006<br/>Container Isolation"]
     end
 
     subgraph "Support Services"
-        MCPGateway["mcp-gateway<br/>:4004<br/>External Integrations"]
-        ProjectBrain["project-brain<br/>:4005<br/>Memory + Context"]
+        MCPGateway["mcp-gateway<br/>:4005<br/>External Integrations"]
+        ProjectBrain["project-brain<br/>:4003<br/>Memory + Context"]
+    end
+
+    subgraph "IDE / Extensions"
+        VSCode["VS Code Extension"]
+        CLI["CLI Tool"]
     end
 
     subgraph "Data Layer"
         PG["PostgreSQL 16<br/>+ pgvector<br/>:5432"]
-        Redis["Redis / Valkey 8<br/>:6379"]
+        Redis["Dragonfly<br/>(Redis-compatible)<br/>:6379"]
         MinIO["MinIO<br/>:9000<br/>Object Storage"]
     end
 
@@ -96,26 +121,47 @@ graph TD
 
 ```
 prometheus/
-├── apps/                          # 9 services
+├── apps/                          # 10 services
 │   ├── web/                       # Next.js 16 frontend (port 3000)
 │   ├── api/                       # tRPC v11 + Hono backend (port 4000)
 │   ├── socket-server/             # Socket.io real-time relay (port 4001)
-│   ├── orchestrator/              # Agent lifecycle management
+│   ├── orchestrator/              # Agent lifecycle management (port 4002)
 │   ├── queue-worker/              # BullMQ job consumer
-│   ├── model-router/              # Multi-provider LLM routing (port 4002)
-│   ├── sandbox-manager/           # Docker container isolation (port 4003)
-│   ├── mcp-gateway/               # MCP external integrations (port 4004)
-│   └── project-brain/             # Memory + context assembly (port 4005)
-├── packages/                      # 15 shared packages
-│   ├── db/                        # Drizzle ORM schemas + migrations
-│   ├── ai/                        # LLM client + model registry
-│   ├── agent-sdk/                 # Agent role definitions + tools
-│   ├── billing/                   # Plan tiers + credit costs
-│   ├── queue/                     # BullMQ queue definitions
-│   ├── validators/                # Zod schemas
-│   ├── logger/                    # Structured logging
-│   ├── utils/                     # Shared utilities (generateId, etc.)
-│   └── ...                        # Additional shared packages
+│   ├── model-router/              # Multi-provider LLM routing (port 4004)
+│   ├── sandbox-manager/           # Container isolation (port 4006)
+│   ├── mcp-gateway/               # MCP external integrations (port 4005)
+│   ├── project-brain/             # Memory + context assembly (port 4003)
+│   └── docs/                      # Documentation site (Next.js)
+├── packages/                      # 29 shared packages
+│   ├── db/                        # Drizzle ORM schemas + migrations (94 tables, 56 enums)
+│   ├── ai/                        # LLM client + model registry (11 providers, 27 models)
+│   ├── agent-sdk/                 # Agent role definitions (12 roles) + 35+ tools
+│   ├── billing/                   # Stripe integration, plan tiers + credit costs
+│   ├── queue/                     # BullMQ queue definitions (11 job types)
+│   ├── validators/                # Zod schemas for all domains
+│   ├── logger/                    # Pino structured logging with AsyncLocalStorage
+│   ├── utils/                     # Shared utilities (generateId, encryption, circuit breaker)
+│   ├── types/                     # Centralized TypeScript type definitions
+│   ├── auth/                      # Clerk integration, SSO (OIDC/SAML), SCIM, FGA
+│   ├── telemetry/                 # OpenTelemetry + Sentry + Prometheus metrics
+│   ├── workflow/                  # Inngest workflow orchestration
+│   ├── plugins/                   # Plugin SDK, marketplace, hot-loading
+│   ├── notifications/             # Multi-channel notification system (Novu)
+│   ├── feature-flags/             # Deterministic feature flag evaluation
+│   ├── email/                     # Template-based email service (Resend)
+│   ├── voice/                     # Speech recognition + TTS
+│   ├── collaboration/             # Yjs CRDT collaborative editing
+│   ├── code-intelligence/         # Tree-sitter parsing, AST analysis, call graphs
+│   ├── architecture-graph/        # Architecture visualization + dependency analysis
+│   ├── ci-integration/            # GitHub Actions + GitLab CI integration
+│   ├── cli/                       # Command-line interface
+│   ├── vscode-extension/          # VS Code IDE integration
+│   ├── ui/                        # React component library (Radix UI + Tailwind)
+│   ├── test-utils/                # Test fixtures, mock factories
+│   ├── config-typescript/         # Shared tsconfig
+│   ├── config-tailwind/           # Tailwind CSS config + design tokens
+│   ├── config-stacks/             # Tech stack presets (ecommerce, mobile, saas, data-pipeline)
+│   └── jetbrains-plugin/          # JetBrains IDE integration (WIP)
 ├── infra/                         # Infrastructure
 │   ├── docker/                    # Dockerfile.base, Dockerfile.api, Dockerfile.web
 │   └── k8s/base/                  # Kubernetes manifests (HPA, KEDA, Traefik)
@@ -154,10 +200,10 @@ sequenceDiagram
     participant QW as queue-worker
     participant TR as TaskRouter
     participant AL as AgentLoop
-    participant MR as model-router :4002
+    participant MR as model-router :4004
     participant LLM as LLM Provider
-    participant SM as sandbox-manager :4003
-    participant PB as project-brain :4005
+    participant SM as sandbox-manager :4006
+    participant PB as project-brain :4003
     participant Socket as socket-server :4001
 
     Note over User,Socket: Phase 1 — Task Submission
@@ -267,19 +313,19 @@ graph LR
     end
 
     subgraph "AI"
-        MR["model-router :4002"]
+        MR["model-router :4004"]
     end
 
     subgraph "Isolation"
-        SM["sandbox-manager :4003"]
+        SM["sandbox-manager :4006"]
     end
 
     subgraph "Integrations"
-        MCP["mcp-gateway :4004"]
+        MCP["mcp-gateway :4005"]
     end
 
     subgraph "Memory"
-        PB["project-brain :4005"]
+        PB["project-brain :4003"]
     end
 
     subgraph "Data"
@@ -337,10 +383,11 @@ graph LR
 | api | PostgreSQL | TCP | 5432 | Drizzle ORM queries |
 | api | Redis | TCP | 6379 | BullMQ enqueue, pub/sub |
 | queue-worker | Redis | TCP | 6379 | BullMQ consume |
-| queue-worker | orchestrator | HTTP | — | Agent lifecycle |
-| orchestrator | model-router | HTTP | 4002 | LLM routing |
-| orchestrator | project-brain | HTTP | 4005 | Context assembly |
-| orchestrator | sandbox-manager | HTTP | 4003 | Tool execution |
+| queue-worker | orchestrator | HTTP | 4002 | Agent lifecycle |
+| orchestrator | model-router | HTTP | 4004 | LLM routing |
+| orchestrator | project-brain | HTTP | 4003 | Context assembly |
+| orchestrator | sandbox-manager | HTTP | 4006 | Tool execution |
+| orchestrator | mcp-gateway | HTTP | 4005 | External tool execution |
 | orchestrator | Redis | TCP | 6379 | Event publishing |
 | orchestrator | PostgreSQL | TCP | 5432 | Task/agent state |
 | model-router | Ollama | HTTP | 11434 | Local LLM inference |
@@ -812,6 +859,9 @@ sequenceDiagram
 | `/sessions` | `session:{sessionId}` | `session:event`, `session:error` | `join`, `leave`, `message`, `command`, `takeover`, `release`, `approve-plan`, `checkpoint-response`, `pause`, `resume` |
 | `/fleet` | `fleet:{orgId}` | `fleet:event`, `fleet:status` | `fleet:status`, `fleet:stop-agent`, `fleet:reassign` |
 | `/notifications` | `user:{userId}` | `notification` | `mark-read` |
+| `/metrics` | `org:{orgId}` | `metrics:update` | — |
+| `/presence` | `org:{orgId}` | `presence:joined`, `presence:left`, `presence:updated` | `heartbeat` |
+| `/yjs` | `doc:{documentId}` | CRDT sync frames | CRDT sync frames |
 
 ### Session Event Types
 
@@ -888,11 +938,11 @@ flowchart TD
     end
 
     subgraph "Model Router"
-        MR["model-router :4002<br/>Slot-based routing"]
+        MR["model-router :4004<br/>Slot-based routing"]
     end
 
     subgraph "Tool Execution"
-        SM["sandbox-manager :4003"]
+        SM["sandbox-manager :4006"]
         Tools["file_read | file_write | file_edit<br/>terminal_exec | git_commit | git_diff<br/>search_files | search_content | search_semantic"]
     end
 
@@ -909,19 +959,20 @@ flowchart TD
 
 ### Agent Role Configuration
 
-| # | Role | Preferred Model | Slot | Tools | Description |
-|---|------|----------------|------|-------|-------------|
-| 1 | `orchestrator` | ollama/qwen3.5:27b | think | — (coordination only) | Coordinates all agents, resolves conflicts, tracks velocity |
-| 2 | `discovery` | gemini/gemini-2.5-flash | longContext | search_semantic, file_read, search_content | Requirements elicitation via 5-question framework (WHO, WHAT, NOT, DONE, RISK) |
-| 3 | `architect` | ollama/deepseek-r1:32b | think | file_read, file_write, search_files, search_content | Designs architecture, creates Blueprint.md, defines tech stack + DB schema |
-| 4 | `planner` | ollama/qwen3.5:27b | think | file_read, search_semantic | Creates sprint plans with task decomposition and dependency mapping |
-| 5 | `frontend_coder` | ollama/qwen3-coder-next | default | file_read, file_write, file_edit, terminal_exec, git_commit, git_diff, search_files, search_content | Implements React/Next.js components, pages, styling |
-| 6 | `backend_coder` | ollama/qwen3-coder-next | default | file_read, file_write, file_edit, terminal_exec, git_commit, git_diff, search_files, search_content | Implements APIs, services, business logic, DB queries |
-| 7 | `integration_coder` | cerebras/qwen3-235b | fastLoop | file_read, file_write, file_edit, terminal_exec, search_files, search_content | Wires frontend ↔ backend, tRPC + Socket.io integration |
-| 8 | `test_engineer` | groq/llama-3.3-70b | default | file_read, file_write, file_list, terminal_exec, search_files, search_content | Writes unit, integration, and E2E tests |
-| 9 | `ci_loop` | cerebras/qwen3-235b | fastLoop | terminal_exec, file_read, search_content | Test-fail-analyze-fix cycle (max 20 iterations via `ciLoopMaxIterations`) |
-| 10 | `security_auditor` | ollama/deepseek-r1:32b | think | file_read, search_files, search_content, terminal_exec | OWASP vulnerability scanning, security review |
-| 11 | `deploy_engineer` | ollama/qwen3-coder-next | default | file_read, file_write, file_edit, terminal_exec, search_files | Docker, k8s, CI/CD pipeline configuration |
+| # | Role | Preferred Model | Slot | Allowed Tools | Denied Tools | Description |
+|---|------|----------------|------|--------------|-------------|-------------|
+| 1 | `orchestrator` | ollama/qwen3.5:27b | think | READ_TOOLS, AGENT_TOOLS (spawn/kill/ask) | WRITE, GIT_WRITE, EXEC | Coordinates all agents, resolves conflicts, tracks velocity |
+| 2 | `discovery` | gemini/gemini-2.5-flash | longContext | READ_TOOLS, ask_user | WRITE, GIT_WRITE, EXEC, BROWSER | Requirements elicitation via 5-question framework |
+| 3 | `architect` | ollama/deepseek-r1:32b | think | READ_TOOLS, file_write, file_edit | GIT_WRITE, EXEC, BROWSER, AGENT | Designs architecture, Blueprint.md, tech stack + DB schema |
+| 4 | `planner` | ollama/qwen3.5:27b | think | READ_TOOLS (only) | WRITE, GIT_WRITE, EXEC, BROWSER | Sprint plans, task decomposition, dependency mapping |
+| 5 | `frontend_coder` | ollama/qwen3-coder-next | default | READ, WRITE, GIT_READ, EXEC, BROWSER | GIT_WRITE, AGENT | React/Next.js components, pages, styling |
+| 6 | `backend_coder` | ollama/qwen3-coder-next | default | READ, WRITE, GIT_READ, EXEC | GIT_WRITE, BROWSER, AGENT | APIs, services, business logic, DB queries |
+| 7 | `integration_coder` | cerebras/qwen3-235b | fastLoop | READ, WRITE, GIT_READ, EXEC | GIT_WRITE, BROWSER, AGENT | Frontend ↔ backend wiring, tRPC + Socket.io |
+| 8 | `test_engineer` | groq/llama-3.3-70b | default | READ, file_write, file_list, EXEC | file_delete, GIT_WRITE, BROWSER, AGENT | Unit, integration, E2E tests |
+| 9 | `ci_loop` | cerebras/qwen3-235b | fastLoop | READ, WRITE, EXEC | GIT_WRITE, BROWSER, AGENT | Test-fail-analyze-fix cycle (max 20 iterations) |
+| 10 | `security_auditor` | ollama/deepseek-r1:32b | think | READ, GIT_READ, EXEC | WRITE, GIT_WRITE, BROWSER, AGENT | OWASP scanning, security review (read-only) |
+| 11 | `deploy_engineer` | ollama/qwen3-coder-next | default | READ, WRITE, GIT_READ, EXEC | GIT_WRITE, BROWSER, AGENT | Docker, k8s, CI/CD pipeline configuration |
+| 12 | `documentation_specialist` | gemini/gemini-2.5-flash | longContext | READ, file_write, file_list, EXEC | file_delete, GIT_WRITE, BROWSER, AGENT | API docs, user guides, changelogs |
 
 ### Task Routing Rules
 
@@ -965,9 +1016,73 @@ Different agent roles are routed to different Model Router slots based on their 
 
 ---
 
-## 7. Model Routing Decision Tree
+## 7. Agent Composition & Multi-Agent Patterns
 
-The Model Router (`apps/model-router/`) provides intelligent routing across 15 models from 7 providers, with automatic fallback chains and Redis-backed rate limiting.
+The orchestrator supports advanced multi-agent coordination patterns beyond simple sequential execution.
+
+### Mixture of Agents (MoA)
+
+Multiple agents work on the same task in parallel, then a voting mechanism selects the best output.
+
+```
+Task → [Agent A] → Output A ─┐
+     → [Agent B] → Output B ─┼→ MoA Voting → Best Output
+     → [Agent C] → Output C ─┘
+```
+
+**Components:**
+- `apps/orchestrator/src/moa/parallel-generator.ts` — Spawns N agents concurrently
+- `apps/orchestrator/src/moa/voting.ts` — Consensus voting across agent outputs
+
+### Agent Composition
+
+Agents can spawn sub-agents and coordinate complex multi-step workflows.
+
+| Pattern | File | Description |
+|---------|------|-------------|
+| **Agent Composer** | `composition/agent-composer.ts` | Dynamic multi-agent composition based on task analysis |
+| **Task Analyzer** | `composition/task-analyzer.ts` | Analyzes tasks to determine optimal agent composition |
+| **Multi-Repo** | `composition/multi-repo.ts` | Cross-repository agent coordination |
+
+### Workflow Patterns
+
+| Pattern | File | Description |
+|---------|------|-------------|
+| **Spec-First** | `patterns/spec-first.ts` | Write tests/specs first, then implement to pass |
+| **TDD Workflow** | `patterns/tdd-workflow.ts` | Red-green-refactor cycle with agents |
+| **Design-to-Code** | `patterns/design-to-code.ts` | Convert design specs to implementation |
+| **Generator-Evaluator** | `patterns/generator-evaluator.ts` | Generate solution, evaluate quality, iterate |
+| **Ambiguity Resolver** | `patterns/ambiguity-resolver.ts` | Interactive clarification when requirements are ambiguous |
+
+### Fleet Management
+
+The fleet system (`apps/orchestrator/src/fleet/`) coordinates multiple agents across an organization:
+
+- **Agent Bus** — Inter-agent message passing
+- **Agent Lifecycle** — Spawn, monitor, terminate agents
+- **Conflict Detector** — Detect when agents modify the same files
+- **Merge Coordinator** — Resolve conflicts between agent outputs
+- **Shared Context** — Shared memory between fleet agents
+- **Spawn Manager** — Resource-aware agent spawning
+- **Swarm Coordinator** — Large-scale parallel agent coordination
+
+### CI Loop Enhancements
+
+The CI Loop agent has advanced debugging and testing capabilities:
+
+| Component | File | Description |
+|-----------|------|-------------|
+| **Five-Why Debugger** | `ci-loop/five-why-debugger.ts` | Root cause analysis via 5-why methodology |
+| **Fuzz Testing** | `ci-loop/fuzz-testing.ts` | Automated fuzz testing for failure discovery |
+| **Living Requirements** | `ci-loop/living-requirements.ts` | Dynamic requirement tracking from test outcomes |
+| **Property Testing** | `ci-loop/property-testing.ts` | Property-based testing generation |
+| **Systemic Analyzer** | `ci-loop/systemic-analyzer.ts` | Systemic issue detection across test failures |
+
+---
+
+## 8. Model Routing Decision Tree
+
+The Model Router (`apps/model-router/`) provides intelligent routing across 27 models from 11 providers, with automatic fallback chains and Redis-backed rate limiting.
 
 ### Slot-Based Routing
 
@@ -1026,21 +1141,37 @@ flowchart TD
 | `fastLoop` | cerebras/qwen3-235b | groq/llama-3.3-70b | ollama/qwen3-coder-next | CI loops, quick iteration |
 | `premium` | anthropic/claude-opus-4-6 | anthropic/claude-sonnet-4-6 | ollama/deepseek-r1:32b | Critical decisions |
 
-### Model Registry (5 Tiers)
+### Model Registry (5 Tiers, 27 Models, 11 Providers)
 
-| Tier | Provider | Model | Context Window | Cost (Input/Output per 1M tokens) | RPM Limit | TPM Limit |
-|------|----------|-------|---------------|-----------------------------------|-----------|-----------|
-| **0 — Free (Local)** | Ollama | qwen3-coder-next | 32K | $0 / $0 | ∞ | ∞ |
+| Tier | Provider | Model | Context | Cost ($/1M In/Out) | RPM | TPM |
+|------|----------|-------|---------|-------------------|-----|-----|
+| **0 — Local** | Ollama | qwen3-coder-next (80B MoE) | 32K | $0 / $0 | ∞ | ∞ |
 | 0 | Ollama | deepseek-r1:32b | 32K | $0 / $0 | ∞ | ∞ |
 | 0 | Ollama | qwen3.5:27b | 32K | $0 / $0 | ∞ | ∞ |
 | 0 | Ollama | qwen2.5-coder:14b | 32K | $0 / $0 | ∞ | ∞ |
+| 0 | Ollama | qwen2.5-coder:7b | 32K | $0 / $0 | ∞ | ∞ |
 | 0 | Ollama | nomic-embed-text | 8K | $0 / $0 | ∞ | ∞ |
-| **1 — Free APIs** | Cerebras | qwen3-235b | 8K | $0 / $0 | 30 | 1,000,000 |
-| 1 | Groq | llama-3.3-70b | 131K | $0 / $0 | 30 | 131,000 |
-| 1 | Gemini | gemini-2.5-flash | 1M | $0 / $0 | 15 | 4,000,000 |
-| **2 — Low-cost** | DeepSeek | deepseek-coder | 128K | $0.14 / $0.28 | 60 | ∞ |
-| **3 — Mid-tier** | Anthropic | claude-sonnet-4-6 | 200K | $3.00 / $15.00 | 50 | 80,000 |
-| **4 — Premium** | Anthropic | claude-opus-4-6 | 200K | $15.00 / $75.00 | 20 | 80,000 |
+| **1 — Free APIs** | Cerebras | qwen3-235b | 8K | $0 / $0 | 30 | 1M |
+| 1 | Groq | llama-3.3-70b-versatile | 131K | $0 / $0 | 30 | 131K |
+| 1 | Gemini | gemini-2.5-flash | 1M | $0 / $0 | 15 | 4M |
+| **2 — Low-cost** | DeepSeek | deepseek-chat (V3) | 131K | $0.27 / $1.10 | 60 | ∞ |
+| 2 | DeepSeek | deepseek-coder | 131K | $0.14 / $0.28 | 60 | ∞ |
+| 2 | DeepSeek | deepseek-reasoner (R1) | 131K | $0.55 / $2.19 | 60 | ∞ |
+| 2 | Mistral | mistral-small-latest | 32K | $0.10 / $0.30 | 2 | ∞ |
+| 2 | Mistral | mistral-large-latest | 131K | $2.00 / $6.00 | 2 | ∞ |
+| 2 | OpenAI | gpt-4o-mini | 128K | $0.15 / $0.60 | 500 | 200K |
+| 2 | OpenAI | gpt-4.1-mini | 1M | $0.40 / $1.60 | 500 | 200K |
+| 2 | OpenRouter | gemini-2.5-flash | 1M | $0.10 / $0.40 | 20 | 200K |
+| 2 | OpenRouter | deepseek-chat-v3 | 131K | $0.30 / $0.88 | 20 | 200K |
+| 2 | OpenRouter | llama-3.3-70b | 131K | $0.39 / $0.39 | 20 | 200K |
+| 2 | Voyage | voyage-code-3 (embeddings) | 32K | $0.06 / — | 300 | ∞ |
+| 2 | Voyage | rerank-2.5 | 32K | $0.05 / — | 100 | ∞ |
+| **3 — Mid-tier** | OpenAI | gpt-4o | 128K | $2.50 / $10.00 | 500 | 30K |
+| 3 | OpenAI | gpt-4.1 | 1M | $2.00 / $8.00 | 500 | 30K |
+| 3 | OpenAI | o3-mini | 200K | $1.10 / $4.40 | 500 | 200K |
+| 3 | OpenRouter | claude-sonnet-4 | 200K | $3.00 / $15.00 | 20 | 200K |
+| 3 | Anthropic | claude-sonnet-4-6 | 200K | $3.00 / $15.00 | 50 | 80K |
+| **4 — Premium** | Anthropic | claude-opus-4-6 | 200K | $15.00 / $75.00 | 20 | 80K |
 
 ### Fallback Chain Diagram
 
@@ -1101,7 +1232,55 @@ The Rate Limiter (`apps/model-router/src/rate-limiter.ts`) uses **Redis sliding 
 
 ---
 
-## 8. Scaling Architecture (1000+ Users)
+## 9. Cost Optimization System
+
+The Model Router includes sophisticated cost optimization beyond basic routing.
+
+### Cost Optimization Components
+
+| Component | File | Description |
+|-----------|------|-------------|
+| **Cost Monitor** | `model-router/src/cost-monitor.ts` | Real-time per-request cost tracking |
+| **Cost Optimizer** | `model-router/src/cost-optimizer.ts` | Automatic cheapest-viable-model selection |
+| **Prompt Cache** | `model-router/src/prompt-cache.ts` | Semantic caching of repeated prompts |
+| **Request Coalescer** | `model-router/src/request-coalescer.ts` | Deduplication of near-identical requests |
+| **Speculative Execution** | `model-router/src/speculative.ts` | Fast draft + full verification |
+| **A/B Testing** | `model-router/src/ab-testing.ts` | Experimental model comparisons |
+| **Model Scorer** | `model-router/src/model-scorer.ts` | Quality scoring per model |
+| **Complexity Estimator** | `model-router/src/complexity-estimator.ts` | Task complexity → model selection |
+| **Cascade Router** | `model-router/src/cascade.ts` | Quality-aware cascade fallback |
+
+### BYO (Bring Your Own) Model Support
+
+Users can provide their own API keys for private model providers:
+
+| Endpoint | Purpose |
+|----------|---------|
+| `POST /v1/byo/keys` | Register custom API key |
+| `DELETE /v1/byo/keys/:provider` | Remove custom key |
+| `GET /v1/byo/keys` | List configured providers |
+| `POST /v1/byo/test` | Test custom API key validity |
+| `GET /v1/byo/providers` | List supported BYO providers |
+
+**BYO Validator** (`byo-model-validator.ts`) validates custom models for schema compliance, response format, and latency.
+
+### Cost Reduction Strategy
+
+```
+Request → Complexity Estimator → Prompt Cache Check
+                                       ↓ (cache miss)
+                                 Request Coalescer → Deduplicated Request
+                                       ↓
+                                 Cost Optimizer → Cheapest viable model
+                                       ↓
+                                 Route to LLM → Track cost per request
+```
+
+Expected savings: 40-60% reduction in LLM costs via caching, coalescing, and smart model selection.
+
+---
+
+## 10. Scaling Architecture (1000+ Users)
 
 ### Cluster Topology
 
@@ -1140,7 +1319,7 @@ graph TD
 
         subgraph "Data Tier"
             PG["PostgreSQL 16<br/>StatefulSet<br/>20Gi PVC<br/>500m CPU / 2Gi Mem"]
-            Redis["Valkey 8<br/>Deployment<br/>5Gi PVC<br/>800mb maxmemory<br/>allkeys-lru"]
+            Redis["Dragonfly<br/>Deployment<br/>5Gi PVC<br/>800mb maxmemory<br/>allkeys-lru"]
         end
     end
 
@@ -1236,7 +1415,7 @@ When the wait queue exceeds 2 jobs, KEDA scales queue-worker pods from 2 up to 1
 
 ---
 
-## 9. Security & Isolation Model
+## 11. Security & Isolation Model
 
 ### Three-Layer Security Architecture
 
@@ -1290,6 +1469,25 @@ Organization → Projects → Sessions → Tasks → Agent Events
 
 ### Sandbox Security Controls
 
+The Sandbox Manager supports multiple isolation backends:
+
+| Provider | File | Use Case |
+|----------|------|----------|
+| **Docker** | `providers/docker.ts` | Standard development containers |
+| **Firecracker** | `providers/firecracker.ts` | Lightweight VMs for production |
+| **gVisor** | `providers/gvisor.ts` | Google's sandboxed containers |
+| **E2B** | `providers/e2b.ts` | Cloud-hosted sandboxes |
+| **Dev** | `providers/dev.ts` | Testing, no isolation |
+
+Additional sandbox features:
+- **Pool Manager** (`pool-manager.ts`) — Pre-warmed container pool with predictive scaling
+- **Auto-Snapshot** (`auto-snapshot.ts`) — Automatic state snapshots for rollback
+- **Browser Automation** (`browser/browser-use-engine.ts`) — Playwright-based browser testing
+- **Git Operations** (`git-ops.ts`) — Clone, commit, push within sandboxes
+- **Zoekt Indexer** (`zoekt-indexer.ts`) — Code search indexing per sandbox
+- **Network Isolation** (`network/`) — Network policies per sandbox
+- **Security Monitoring** (`security/`) — Escape detection and resource monitoring
+
 The `ContainerManager` (`apps/sandbox-manager/src/container.ts`) creates isolated Docker containers for agent tool execution:
 
 | Control | Setting | Purpose |
@@ -1313,9 +1511,29 @@ The `ContainerManager` (`apps/sandbox-manager/src/container.ts`) creates isolate
 | Stripe keys | Environment variables only, never in DB |
 | Clerk secrets | Environment variables only |
 
+### API Middleware Stack
+
+The API service applies 14 middleware layers to every request:
+
+| Middleware | File | Purpose |
+|-----------|------|---------|
+| **Auth (Clerk)** | `middleware/api-key-auth.ts` | JWT/API key verification |
+| **RBAC** | `middleware/rbac.ts` | Role-based access control |
+| **Org Context** | `middleware/org-context.ts` | Organization isolation injection |
+| **Project Auth** | `middleware/project-auth.ts` | Project-level authorization |
+| **Plan Enforcement** | `middleware/plan-enforcement.ts` | Plan tier limit enforcement |
+| **Rate Limit** | `middleware/rate-limit.ts` | Basic request rate limiting |
+| **Rate Limit Enhanced** | `middleware/rate-limit-enhanced.ts` | Advanced per-org rate limiting |
+| **Security** | `middleware/security.ts` | OWASP security headers |
+| **Audit** | `middleware/audit.ts` | Request/response audit trail |
+| **Audit Logger** | `middleware/audit-logger.ts` | Detailed audit logging |
+| **Cache** | `middleware/cache.ts` | Response caching |
+| **Compression** | `middleware/compression.ts` | Response compression |
+| **Sentry** | `middleware/sentry.ts` | Error tracking integration |
+
 ---
 
-## 10. Credit & Billing Flow
+## 12. Credit & Billing Flow
 
 ### Reserve → Execute → Commit Pattern
 
@@ -1383,13 +1601,20 @@ sequenceDiagram
 | Queue | Purpose | Concurrency | Retry Strategy | Cleanup |
 |-------|---------|-------------|----------------|---------|
 | `agent-tasks` | Primary agent execution | 2 per worker | 3 retries, exponential backoff | Completed: 1h, Failed: 24h |
-| `indexing` | Code indexing and embedding | — | 3 retries, exponential backoff | Completed: 1h, Failed: 24h |
-| `notifications` | User notifications | — | 3 retries, exponential backoff | Completed: 1h, Failed: 24h |
-| `billing-events` | Credit transactions, Stripe webhooks | — | 3 retries, exponential backoff | Completed: 1h, Failed: 24h |
+| `enterprise-tasks` | Priority enterprise jobs | 4 per worker | 3 retries, exponential backoff | Completed: 1h, Failed: 24h |
+| `index-project` | Code indexing | 1 (serial) | 3 retries, exponential backoff | Completed: 1h, Failed: 24h |
+| `generate-embeddings` | Vector embeddings | 2 per worker | 3 retries, exponential backoff | Completed: 1h, Failed: 24h |
+| `send-notification` | User notifications | 5 per worker | 3 retries, exponential backoff | Completed: 1h, Failed: 24h |
+| `usage-rollup` | Usage aggregation | 1 | 3 retries | Scheduled: hourly |
+| `usage-aggregation` | Billing aggregation | 1 | 3 retries | Scheduled: daily |
+| `credit-grant` | Credit allocation | 3 per worker | 3 retries | On demand |
+| `credit-reconciliation` | Credit verification | 1 | 3 retries | Scheduled: daily |
+| `cleanup-sandbox` | Sandbox cleanup | 2 per worker | 3 retries | Periodic |
+| `dlq-replay` | Dead letter queue recovery | 1 | Manual replay | On demand |
 
 ---
 
-## 11. Deployment Topology
+## 13. Deployment Topology
 
 ### Development vs Production
 
@@ -1398,7 +1623,7 @@ graph TD
     subgraph "Development (docker-compose)"
         direction TB
         DevPG["PostgreSQL 16<br/>+ pgvector<br/>port 5432<br/>Volume: pg_data"]
-        DevRedis["Valkey 8<br/>port 6379<br/>Volume: redis_data"]
+        DevRedis["Dragonfly<br/>port 6379<br/>Volume: redis_data"]
         DevMinIO["MinIO<br/>port 9000 (API) / 9001 (Console)<br/>Volume: minio_data"]
         DevApps["Apps via pnpm dev<br/>(turborepo, all 9 services)"]
 
@@ -1426,15 +1651,15 @@ graph TD
         subgraph "Internal"
             ProdQW["queue-worker (2-16 pods)<br/>KEDA Redis trigger"]
             ProdOrch["orchestrator"]
-            ProdMR["model-router :4002"]
-            ProdSM["sandbox-manager :4003"]
-            ProdMCP["mcp-gateway :4004"]
-            ProdPB["project-brain :4005"]
+            ProdMR["model-router :4004"]
+            ProdSM["sandbox-manager :4006"]
+            ProdMCP["mcp-gateway :4005"]
+            ProdPB["project-brain :4003"]
         end
 
         subgraph "Stateful"
             ProdPG["PostgreSQL 16<br/>StatefulSet, 20Gi PVC"]
-            ProdRedis["Valkey 8<br/>5Gi PVC, 800mb maxmem"]
+            ProdRedis["Dragonfly<br/>5Gi PVC, 800mb maxmem"]
         end
 
         ProdTraefik --> ProdWeb
@@ -1504,9 +1729,9 @@ The platform includes 10 PrometheusRule alert definitions (`infra/k8s/base/monit
 
 ---
 
-## 12. Memory System (5 Layers)
+## 14. Memory System (8 Layers)
 
-The Project Brain service (`apps/project-brain/`) implements a 5-layer memory architecture that gives agents persistent, contextual understanding of codebases.
+The Project Brain service (`apps/project-brain/`) implements an 8-layer memory architecture that gives agents persistent, contextual understanding of codebases.
 
 ### Memory Architecture
 
@@ -1635,6 +1860,48 @@ Ephemeral, session-scoped storage in Redis.
 
 Used for: current file being edited, conversation state, intermediate results, agent scratchpad.
 
+#### Layer 6: Conversational Memory
+
+Stores chat history and extracted insights from agent-user conversations.
+
+| Property | Value |
+|----------|-------|
+| **Storage** | PostgreSQL |
+| **Operations** | store, retrieve, extract insights, prune |
+| **Scope** | Per-session, with cross-session carry-over |
+
+#### Layer 7: Session Persistence
+
+Carries forward relevant context when resuming sessions or starting related sessions.
+
+| Property | Value |
+|----------|-------|
+| **Storage** | PostgreSQL + Redis |
+| **Scope** | Cross-session within a project |
+| **Use** | Session resume briefings, context carry-over |
+
+#### Layer 8: Domain Knowledge
+
+Stores framework-specific knowledge, conventions, and best practices.
+
+| Property | Value |
+|----------|-------|
+| **Storage** | PostgreSQL |
+| **Scope** | Per-project |
+| **Use** | Framework patterns, coding conventions, learned project-specific rules |
+
+### Additional Memory Components
+
+| Component | File | Description |
+|-----------|------|-------------|
+| **Digital Twin** | `digital-twin.ts` | Live representation of codebase state, synchronized in real-time |
+| **Meta-Learning** | `meta-learning/` | Learning from agent sessions to discover patterns and improve behavior |
+| **Convention Extractor** | `analyzers/convention-extractor.ts` | Auto-extracts coding conventions from codebase |
+| **Blueprint Enforcer** | `blueprint/enforcer.ts` | Validates agent output against project architecture blueprint |
+| **Blueprint Auto-Updater** | `blueprint/auto-updater.ts` | Evolves blueprints as project changes |
+| **Semantic Reranker** | `layers/reranker.ts` | Re-ranks search results by relevance |
+| **Symbol Store** | `parsers/symbols.ts` | Tree-sitter based symbol extraction and resolution |
+
 ### Context Assembly Budget
 
 The `ContextAssembler` (`apps/project-brain/src/context/assembler.ts`) allocates the 14,000 token default budget:
@@ -1673,7 +1940,149 @@ When resuming a paused session, the `SessionResume` service generates a briefing
 
 ---
 
-## 13. Capacity Planning
+## 15. Governance & Compliance Engine
+
+The orchestrator includes a comprehensive governance system for enterprise compliance.
+
+### Governance Components
+
+| Component | File | Description |
+|-----------|------|-------------|
+| **Governance Engine** | `governance/governance-engine.ts` | Policy enforcement and rule evaluation |
+| **Trust Scorer** | `governance/trust-scorer.ts` | Agent trust scoring based on history and performance |
+| **Audit Trail** | `governance/audit-trail.ts` | Full audit logging of all agent actions |
+| **Business Logic Guardian** | `guardian/business-logic-guardian.ts` | Domain-specific rule enforcement |
+| **Blueprint Enforcer** | `blueprint-enforcer.ts` | Architecture validation against project blueprints |
+
+### Compliance Audit Logger
+
+The `compliance/audit-logger.ts` (18.5KB) provides:
+
+- Complete audit trail of all agent actions
+- **PII detection and masking** in generated code and logs
+- **License scanning** (GPL, LGPL, AGPL, copyleft detection)
+- **ISO 42001 compliance reporting** (AI management system standard)
+- **IP provenance tracking** for generated code attribution
+- **Generated code attribution** to prevent IP issues
+
+### Agent Hooks (Pre/Post Execution)
+
+| Hook | File | Description |
+|------|------|-------------|
+| **Auto-Lint** | `hooks/auto-lint-hook.ts` | Lint code after every agent file write |
+| **Security Scan** | `hooks/security-scan-hook.ts` | Run security checks on generated code |
+| **Blueprint Guard** | `hooks/blueprint-guard-hook.ts` | Validate changes against architecture |
+| **Cost Guard** | `hooks/cost-guard-hook.ts` | Enforce cost budgets per task |
+| **Dependency Audit** | `hooks/dependency-audit-hook.ts` | Check for vulnerable dependencies |
+
+---
+
+## 16. Self-Play Training Pipeline
+
+The orchestrator includes a self-play training system that learns from agent sessions.
+
+### Training Pipeline
+
+```
+Completed Sessions → Example Extraction → Pattern Mining → Decision Trees
+                                                              ↓
+                                                     Improved Agent Prompts
+```
+
+**Self-Play Trainer** (`training/self-play-trainer.ts`):
+
+1. **Example Collection** — Collects training examples from successful agent sessions
+2. **Pattern Mining** — Discovers recurring patterns across accumulated examples
+3. **Decision Tree Generation** — Builds decision trees for common scenarios
+4. **Quality Scoring** — Rates examples by outcome quality
+
+### Training Data Types
+
+| Type | Description |
+|------|-------------|
+| **Positive** | Successful task completions with high quality |
+| **Negative** | Failed attempts to learn what to avoid |
+| **Correction** | Human feedback overrides on agent decisions |
+| **Pattern** | Discovered recurring patterns from multiple sessions |
+
+---
+
+## 17. Plugin Architecture
+
+The plugin system (`packages/plugins/`) enables extensibility through custom tools, skill packs, and marketplace integrations.
+
+### Plugin System Components
+
+| Component | File | Description |
+|-----------|------|-------------|
+| **Plugin Manager** | `core.ts` | Plugin lifecycle management |
+| **Plugin Loader** | `loader.ts` | Dynamic hot-loading of plugins |
+| **Plugin Registry** | `registry/` | Plugin discovery and registration |
+| **Plugin Sandbox** | `sandbox.ts` | Isolated execution environment |
+| **Plugin SDK** | `sdk/` | Development kit for plugin authors |
+| **Marketplace Client** | `marketplace/` | Plugin marketplace integration |
+| **Template Manager** | `templates/` | Project template management |
+| **MCP Integration** | `mcp/` | MCP server wrapping for plugins |
+
+### Skill Packs
+
+Pre-built agent skill bundles for common domains:
+
+| Pack | Description |
+|------|-------------|
+| **SaaS** | Subscription billing, user management, dashboards |
+| **Mobile** | React Native, Flutter patterns |
+| **Data Pipeline** | ETL, streaming, data warehouse |
+| **E-Commerce** | Product catalog, cart, checkout, payments |
+
+### Plugin Lifecycle
+
+```
+Discovery → Validation → Loading → Initialization → Active → Hot-Reload / Unload
+```
+
+---
+
+## 18. IDE & Voice Integration
+
+### VS Code Extension
+
+The `packages/vscode-extension/` provides full IDE integration:
+
+| Component | File | Description |
+|-----------|------|-------------|
+| **Extension Core** | `extension.ts` | Main entry point, command registration |
+| **API Client** | `api-client.ts` | Communication with Prometheus API |
+| **Chat Panel** | `chat-panel.ts` | Inline chat interface with agents |
+| **Status Bar** | `status-bar.ts` | Agent status, credits, session info |
+| **Commands** | `commands/` | VS Code command palette integration |
+| **Git Integration** | `git/` | Git operations via VS Code |
+| **UI Panels** | `panels/` | Custom webview panels |
+
+### Voice Interface
+
+The `packages/voice/` provides voice-based interaction:
+
+| Component | File | Description |
+|-----------|------|-------------|
+| **Voice Interface** | `voice-interface.ts` | Main voice I/O controller |
+| **Speech Recognizer** | `speech-recognizer.ts` | Web Speech API speech-to-text |
+| **Command Parser** | `command-parser.ts` | Natural language → agent command |
+
+Frontend components: `voice-input.tsx`, `voice-output.tsx`, `use-voice.ts` hook.
+
+### CLI Tool
+
+The `packages/cli/` provides command-line access:
+
+- Agent invocation from terminal
+- Task submission and management
+- Project setup and configuration
+- Session monitoring
+
+---
+
+## 19. Capacity Planning
 
 ### Compute Requirements (1000 MAU)
 
@@ -1742,7 +2151,7 @@ The model routing strategy prioritizes free Tier 0/1 models for the vast majorit
 
 ---
 
-## 14. Performance Targets & SLOs
+## 20. Performance Targets & SLOs
 
 ### Service Level Objectives
 
@@ -1786,14 +2195,14 @@ The model routing strategy prioritizes free Tier 0/1 models for the vast majorit
 
 ---
 
-## 15. Appendix: Key File Reference
+## 21. Appendix: Key File Reference
 
 ### Application Services
 
 | File | Purpose |
 |------|---------|
 | `apps/web/` | Next.js 16 frontend (React 19, Tailwind CSS 4, shadcn/ui) |
-| `apps/api/src/routers/index.ts` | Main tRPC router combining 13 sub-routers |
+| `apps/api/src/routers/index.ts` | Main tRPC router combining 26 sub-routers |
 | `apps/api/src/routers/tasks.ts` | Task submission, queue integration |
 | `apps/api/src/routers/sessions.ts` | Session lifecycle management |
 | `apps/api/src/routers/billing.ts` | Credit balance, checkout, transactions |
@@ -1825,15 +2234,32 @@ The model routing strategy prioritizes free Tier 0/1 models for the vast majorit
 
 | Package | Purpose |
 |---------|---------|
-| `packages/db/src/schema/*.ts` | Drizzle ORM schema definitions (15 files, 30+ tables) |
-| `packages/ai/src/models.ts` | Model registry (15 models, 5 tiers) |
-| `packages/ai/src/client.ts` | LLM client factory (9 providers) |
-| `packages/agent-sdk/src/roles/*.ts` | Agent role configs (12 roles) |
-| `packages/billing/src/products.ts` | Plan tiers (6) + credit costs (5 types) |
-| `packages/queue/src/queues.ts` | BullMQ queue definitions (4 queues) |
-| `packages/validators/` | Zod schemas for input validation |
-| `packages/logger/` | Structured logging |
-| `packages/utils/` | Shared utilities (generateId, etc.) |
+| `packages/db/src/schema/*.ts` | Drizzle ORM schema definitions (94 tables, 56 enums) |
+| `packages/ai/src/models.ts` | Model registry (27 models, 5 tiers, 11 providers) |
+| `packages/ai/src/client.ts` | LLM client factory (11 providers) |
+| `packages/agent-sdk/src/roles/*.ts` | Agent role configs (12 roles, 30+ tools) |
+| `packages/billing/` | Stripe integration, plan tiers (6), credit system |
+| `packages/queue/src/queues.ts` | BullMQ queue definitions (11 job types) |
+| `packages/validators/` | Zod schemas for all domains |
+| `packages/logger/` | Pino structured logging with AsyncLocalStorage |
+| `packages/utils/` | generateId, encryption, circuit breaker, rate limiter |
+| `packages/types/` | Centralized TypeScript type definitions |
+| `packages/auth/` | Clerk integration, SSO (OIDC/SAML), SCIM, FGA |
+| `packages/telemetry/` | OpenTelemetry + Sentry + Prometheus metrics + SLO monitoring |
+| `packages/workflow/` | Inngest workflow orchestration |
+| `packages/plugins/` | Plugin SDK, marketplace, hot-loading, skill packs |
+| `packages/notifications/` | Multi-channel notifications (Novu) |
+| `packages/feature-flags/` | Deterministic feature flag evaluation |
+| `packages/email/` | Template-based email (Resend) |
+| `packages/voice/` | Speech recognition + TTS |
+| `packages/collaboration/` | Yjs CRDT collaborative editing |
+| `packages/code-intelligence/` | Tree-sitter parsing, AST diff, call graphs |
+| `packages/architecture-graph/` | Architecture visualization |
+| `packages/ci-integration/` | GitHub Actions + GitLab CI integration |
+| `packages/cli/` | Command-line interface |
+| `packages/vscode-extension/` | VS Code IDE integration |
+| `packages/ui/` | React component library (Radix UI + Tailwind) |
+| `packages/test-utils/` | Test fixtures and mock factories |
 
 ### Infrastructure
 
@@ -1851,7 +2277,7 @@ The model routing strategy prioritizes free Tier 0/1 models for the vast majorit
 | `infra/k8s/base/keda/scaledobject-agent-worker.yaml` | KEDA scaler (2→16, Redis trigger) |
 | `infra/k8s/base/socket-server/deployment.yaml` | Socket server (2 replicas) |
 | `infra/k8s/base/postgres/deployment.yaml` | PostgreSQL StatefulSet (20Gi) |
-| `infra/k8s/base/redis/deployment.yaml` | Valkey 8 (5Gi, 800mb maxmem) |
+| `infra/k8s/base/redis/deployment.yaml` | Dragonfly (5Gi, 800mb maxmem) |
 | `infra/k8s/base/traefik/ingress.yaml` | Traefik IngressRoute + SSE middleware |
 | `infra/k8s/base/monitoring/alert-rules.yaml` | 10 PrometheusRule alerts |
 
@@ -1871,6 +2297,537 @@ The model routing strategy prioritizes free Tier 0/1 models for the vast majorit
 | `fleet` | `dispatch`, `status`, `stopAgent` |
 | `user` | `profile`, `settings`, `organizations` |
 | `integrations` | `list`, `connect`, `disconnect`, `configure` |
+| `apiKeys` | `create`, `list`, `revoke`, `rotate` |
+| `architecture` | `graph`, `components`, `dependencies`, `metrics` |
+| `audit` | `logs`, `search`, `export` |
+| `blueprintsEnhanced` | `create`, `update`, `versions`, `enforce` |
+| `codeAnalysis` | `analyze`, `review`, `quality`, `symbols` |
+| `costAnalytics` | `perProject`, `perModel`, `forecast`, `budget` |
+| `gdpr` | `export`, `delete`, `status` |
+| `plugins` | `list`, `install`, `uninstall`, `configure` |
+| `webhooksOutbound` | `create`, `list`, `delete`, `test`, `deliveries` |
+| `stats` | `teamIntelligence`, `agentMetrics`, `costBreakdown` |
+| `workspaces` | `create`, `list`, `update`, `members` |
+
+---
+
+---
+
+## 22. Code Intelligence Pipeline
+
+The code intelligence pipeline transforms raw source code into queryable knowledge that informs agent decisions.
+
+```mermaid
+graph LR
+    subgraph "Ingestion"
+        Source["Source Code<br/>(Git Clone)"]
+        TreeSitter["Tree-sitter WASM<br/>(Multi-language AST)"]
+        ASTDiff["AST Diff Analyzer"]
+    end
+
+    subgraph "Analysis"
+        CallGraph["Call Graph<br/>Analysis"]
+        CrossFile["Cross-File<br/>Symbol Resolution"]
+        Cognee["Cognee Pipeline<br/>(Code Summarization)"]
+        ConventionDetect["Convention<br/>Detection"]
+    end
+
+    subgraph "Storage"
+        Embeddings["Vector Embeddings<br/>(Voyage Code 3)"]
+        KnowledgeGraph["Knowledge Graph<br/>(Entity Relationships)"]
+        Conventions["Conventions DB<br/>(Learned Patterns)"]
+        Zoekt["Zoekt Index<br/>(Full-Text Search)"]
+    end
+
+    subgraph "Retrieval"
+        HybridSearch["Hybrid Search<br/>(BM25 + Semantic)"]
+        FusionSearch["Fusion Search<br/>(RRF Reranking)"]
+        SemanticRerank["Semantic Reranker<br/>(LLM-Powered)"]
+        ContextAssembly["Context Assembly<br/>(Token Budget)"]
+    end
+
+    Source --> TreeSitter --> CallGraph
+    Source --> ASTDiff
+    TreeSitter --> CrossFile
+    TreeSitter --> Cognee
+    Source --> ConventionDetect
+
+    CallGraph --> KnowledgeGraph
+    CrossFile --> KnowledgeGraph
+    Cognee --> Embeddings
+    ConventionDetect --> Conventions
+    Source --> Zoekt
+
+    Embeddings --> HybridSearch
+    Zoekt --> HybridSearch
+    KnowledgeGraph --> FusionSearch
+    HybridSearch --> FusionSearch
+    FusionSearch --> SemanticRerank
+    SemanticRerank --> ContextAssembly
+    Conventions --> ContextAssembly
+```
+
+**Key files:**
+- `packages/code-intelligence/src/` — Tree-sitter parsing, call graph, AST diff
+- `apps/project-brain/src/` — Embeddings, knowledge graph, semantic search
+- `apps/project-brain/src/search/fusion-search.ts` — RRF fusion
+- `apps/project-brain/src/search/semantic-reranker.ts` — LLM-powered reranking
+
+---
+
+## 23. Guardian Security Pipeline
+
+The Guardian module provides 12 security components that validate agent actions before execution.
+
+```mermaid
+graph TD
+    AgentAction["Agent Action<br/>(Tool Call)"]
+
+    subgraph "Guardian Pipeline"
+        SecretsScanner["Secrets Scanner<br/>(Regex + ML Patterns)"]
+        Semgrep["Semgrep SAST<br/>(Static Analysis)"]
+        OWASP["OWASP Checker<br/>(Top 10 Vulnerabilities)"]
+        RBACValidator["RBAC Validator<br/>(Permission Check)"]
+        DestructiveDetect["Destructive Action<br/>Detector"]
+        DepScanner["Dependency<br/>Scanner"]
+        PerfChecker["Performance<br/>Checker"]
+        ConstitutionalSafety["Constitutional<br/>Safety Rules"]
+        BusinessLogic["Business Logic<br/>Validator"]
+        LicenseScanner["License<br/>Scanner"]
+        PIIDetector["PII / Observation<br/>Masker"]
+        EscapeDetector["Sandbox Escape<br/>Detector"]
+    end
+
+    Approved["✅ Execute"]
+    Blocked["❌ Block + Alert"]
+    Approval["⏸ Request Human Approval"]
+
+    AgentAction --> SecretsScanner
+    AgentAction --> Semgrep
+    AgentAction --> OWASP
+    AgentAction --> RBACValidator
+    AgentAction --> DestructiveDetect
+    AgentAction --> DepScanner
+    AgentAction --> PerfChecker
+    AgentAction --> ConstitutionalSafety
+    AgentAction --> BusinessLogic
+    AgentAction --> LicenseScanner
+    AgentAction --> PIIDetector
+    AgentAction --> EscapeDetector
+
+    SecretsScanner -->|Pass| Approved
+    SecretsScanner -->|Fail| Blocked
+    DestructiveDetect -->|Detected| Approval
+```
+
+**Key files:** `apps/orchestrator/src/guardian/`
+
+---
+
+## 24. Tool Execution Architecture
+
+Agents interact with the environment through 35+ specialized tools organized by category.
+
+### Tool Categories
+
+| Category | Tools | Description |
+|----------|-------|-------------|
+| **Code** | git, terminal, file-read, file-write, file-search | Source code operations |
+| **Analysis** | lsp, ast-grep, semgrep, search, zoekt | Code understanding |
+| **Testing** | test-generator, e2e-generator, owasp-checker | Quality assurance |
+| **Execution** | sandbox, sandbox-rollback, streaming-terminal | Code execution |
+| **Browser** | browser-open, browser-screenshot, browser-automation | Visual verification |
+| **Generation** | migration-generator, iac-generator, api-contract-generator | Scaffolding |
+| **Registry** | registry-query, artifact-storage | Package management |
+| **AI** | ai-sdk-adapter | LLM interaction |
+
+### Tool Execution Flow
+
+```mermaid
+sequenceDiagram
+    participant Agent as Agent Loop
+    participant Tools as Tool Registry
+    participant Sandbox as Sandbox Manager
+    participant Guardian as Guardian Pipeline
+
+    Agent->>Tools: Request tool execution
+    Tools->>Guardian: Validate action
+    Guardian-->>Tools: Approved / Blocked
+    alt Approved
+        Tools->>Sandbox: Execute in sandbox
+        Sandbox-->>Tools: Result + stdout/stderr
+        Tools-->>Agent: Observation
+    else Blocked
+        Tools-->>Agent: Security violation
+    end
+    Agent->>Agent: Plan next action based on observation
+```
+
+**Key files:** `packages/agent-sdk/src/tools/`
+
+---
+
+## 25. Docker Compose Infrastructure Stack
+
+Local development uses Docker Compose with 8 infrastructure services:
+
+| Service | Image | Port | Purpose | Resources |
+|---------|-------|------|---------|-----------|
+| **PostgreSQL 16** | pgvector/pgvector:pg16 | 5432 | Primary database with vector extensions | 2 CPU, 512MB-2GB |
+| **pgBouncer** | bitnami/pgbouncer:latest | 6432 | Connection pooling (transaction mode, 200 max) | Minimal |
+| **Dragonfly** | dragonflydb/dragonfly:latest | 6379 | Redis-compatible cache, queues, pub/sub | 512MB max, 2 threads, cache_mode |
+| **LiteLLM** | ghcr.io/berriai/litellm:main-latest | 4010→4000 | LLM provider gateway with multi-provider fallback | 512MB |
+| **Ollama** | ollama/ollama:latest | 11434 | Local LLM inference | 12GB RAM limit |
+| **MinIO** | minio/minio:latest | 9000/9001 | S3-compatible object storage | 1GB |
+| **Mem0 (Qdrant)** | qdrant/qdrant:latest | 6333/6334 | Vector database for memory embeddings | 2GB, 2 CPU |
+| **Zoekt** | ghcr.io/sourcegraph/zoekt-webserver:latest | 6070 | Code search indexing | 1GB |
+
+### Docker Compose Profiles
+
+- `core` — PostgreSQL, pgBouncer, Dragonfly (minimum for development)
+- `ai` — + LiteLLM, Ollama (add local AI inference)
+- `full` — All services including MinIO, Qdrant, Zoekt
+
+---
+
+## 26. 12 Specialist Agent Roles
+
+Each agent role maps to an LLM routing slot for optimal model selection.
+
+| # | Role | Routing Slot | Responsibility | Key Tools |
+|---|------|-------------|---------------|-----------|
+| 1 | **Orchestrator** | `think` | Coordinates all agents, resolves conflicts, tracks velocity | All tools |
+| 2 | **Discovery** | `longContext` | Requirements elicitation via 5-question protocol, SRS generation | search, browser |
+| 3 | **Architect** | `think` | Blueprint generation, tech stack design, DB schema, API contracts | ast-grep, architecture-graph |
+| 4 | **Planner** | `think` | Sprint planning, dependency mapping, task decomposition, DAG creation | search, file-read |
+| 5 | **Frontend Coder** | `default` | React/Next.js implementation, UI components, styling, accessibility | file-write, browser-screenshot |
+| 6 | **Backend Coder** | `default` | APIs, services, database queries, business logic, migrations | terminal, git, file-write |
+| 7 | **Integration Coder** | `fastLoop` | Frontend-backend wiring, API integration, data flow | terminal, file-write |
+| 8 | **Test Engineer** | `fastLoop` | Unit, integration, and E2E test generation and execution | test-generator, terminal |
+| 9 | **CI/Loop Engineer** | `fastLoop` | Write-test-fail-analyze-fix cycle (up to 20 iterations) | terminal, git |
+| 10 | **Security Auditor** | `think` | OWASP scans, vulnerability detection, security review | semgrep, owasp-checker |
+| 11 | **Deploy Engineer** | `default` | Docker, K8s manifests, CI/CD pipeline, deployment, rollbacks | terminal, iac-generator |
+| 12 | **Documentation Specialist** | `longContext` | Documentation generation, API references, guides, changelogs | file-write, search |
+
+**Source:** `packages/agent-sdk/src/roles/index.ts`
+
+---
+
+## 27. Key Data Flow: Task Submission → Agent Execution → Result
+
+This is the complete lifecycle of a user task through the system.
+
+```mermaid
+sequenceDiagram
+    participant User as Browser
+    participant API as API :4000
+    participant Queue as Queue Worker
+    participant Orch as Orchestrator :4002
+    participant Brain as Project Brain :4003
+    participant Router as Model Router :4004
+    participant Sandbox as Sandbox Manager :4006
+    participant Socket as Socket Server :4001
+    participant LLM as LLM Provider
+
+    User->>API: POST /trpc/tasks.submit {prompt, projectId}
+    API->>API: Validate auth, check credits, reserve credits
+    API->>Queue: Enqueue agentTask (BullMQ)
+    API->>Socket: Emit "task:created" to session room
+    API-->>User: {taskId, sessionId}
+
+    Queue->>Orch: POST /process {taskData}
+    Orch->>Brain: GET /context {projectId, query}
+    Brain-->>Orch: {relevantCode, conventions, memory}
+
+    loop Agent Loop (max 50 iterations)
+        Orch->>Router: POST /chat {messages, slot, tools}
+        Router->>LLM: Chat completion (with tool definitions)
+        LLM-->>Router: {response, toolCalls[]}
+        Router-->>Orch: {response, toolCalls[], tokenUsage}
+        Orch->>Socket: Emit "agent:thinking" (stream tokens)
+
+        alt Tool Call: terminal
+            Orch->>Sandbox: POST /exec {command}
+            Sandbox-->>Orch: {stdout, stderr, exitCode}
+            Orch->>Socket: Emit "agent:terminal" {output}
+        else Tool Call: file-write
+            Orch->>Sandbox: POST /write {path, content}
+            Sandbox-->>Orch: {success}
+            Orch->>Socket: Emit "agent:file-change" {path, diff}
+        else Tool Call: git
+            Orch->>Sandbox: POST /exec {git commands}
+            Sandbox-->>Orch: {result}
+        else Tool Call: browser-screenshot
+            Orch->>Sandbox: POST /screenshot {url}
+            Sandbox-->>Orch: {imageBase64}
+            Orch->>Socket: Emit "agent:screenshot" {image}
+        end
+
+        Orch->>Orch: Feed observation back to LLM
+        Orch->>Socket: Emit "agent:progress" {step, total}
+
+        alt Task Complete
+            Orch->>Brain: POST /learn {patterns, memories}
+            Orch->>API: POST /tasks/complete {result}
+            Orch->>Socket: Emit "task:complete" {summary, files}
+        else Error
+            Orch->>Orch: Recovery strategy (retry, fallback, checkpoint)
+        end
+    end
+
+    API->>API: Deduct credits from reservation
+    Socket->>User: Real-time updates throughout
+```
+
+---
+
+## 28. Key Data Flow: Multi-Agent Collaboration
+
+When a complex task requires multiple specialist agents working together.
+
+```mermaid
+sequenceDiagram
+    participant Orch as Orchestrator
+    participant Plan as Planner Agent
+    participant Arch as Architect Agent
+    participant FE as Frontend Coder
+    participant BE as Backend Coder
+    participant Test as Test Engineer
+    participant Deploy as Deploy Engineer
+    participant Redis as Redis Pub/Sub
+
+    Orch->>Plan: Decompose "Build user dashboard"
+    Plan-->>Orch: DAG: [schema, API, UI, tests, deploy]
+
+    Orch->>Arch: Design architecture
+    Arch-->>Orch: Blueprint {components, schema, API contracts}
+
+    par Parallel Execution
+        Orch->>BE: Build API endpoints (from blueprint)
+        Orch->>FE: Build React components (from blueprint)
+    end
+
+    BE->>Redis: Publish "api:complete" {endpoints}
+    FE->>Redis: Subscribe "api:complete"
+    FE->>FE: Wire UI to API endpoints
+
+    BE-->>Orch: API code complete
+    FE-->>Orch: UI code complete
+
+    Orch->>Test: Generate tests for API + UI
+    Test-->>Orch: Tests pass (15/15)
+
+    Orch->>Deploy: Deploy to preview
+    Deploy-->>Orch: Preview URL: https://preview.example.com
+```
+
+---
+
+## 29. Database Schema Overview (94 Tables, 56 Enums)
+
+### Table Categories
+
+| Category | Tables | Key Tables |
+|----------|--------|------------|
+| **User & Auth** | 5 | users, organizations, orgMembers, apiKeys, workspaces |
+| **Projects** | 6 | projects, projectMembers, projectSettings, projectConfigs, blueprints, blueprintVersions |
+| **Sessions & Tasks** | 4 | sessions, sessionEvents, sessionMessages, tasks, taskSteps |
+| **Agents** | 2 | agents, models, modelConfigs |
+| **Memory & Knowledge** | 6 | memories, embeddings, conventions, graph, domainRules, learning |
+| **Billing & Usage** | 6 | creditBalances, creditReservations, creditTransactions, subscriptions, usageRollups, modelUsage |
+| **Integrations** | 4 | integrations, mcpConnections, mcpToolConfigs, installedPlugins |
+| **Quality & Review** | 3 | codeReviews, qualityReviews, decisions |
+| **Workflow** | 3 | workflowCheckpoints, workflowEvents, sprints |
+| **Deployment** | 1 | deployments |
+| **Governance** | 3 | auditLogs, governance, governanceEvents |
+| **Architecture** | 1 | architecture |
+
+### Multi-Tenancy via org_id
+
+Every tenant-scoped table has an `org_id` column. All queries use RLS-style filtering:
+
+```typescript
+// Example: All queries scoped to org
+const projects = await db
+  .select()
+  .from(projectsTable)
+  .where(eq(projectsTable.orgId, ctx.orgId));
+```
+
+### Vector Columns (pgvector)
+
+The `embeddings` table supports multiple embedding dimensions:
+- 768 dimensions (Voyage Code 3)
+- 1024 dimensions (alternative models)
+- 256 dimensions (compressed for fast similarity)
+
+**Schema location:** `packages/db/src/schema/tables/`
+
+---
+
+## 30. tRPC API Router Summary (28 Routers)
+
+| Router | Key Procedures | Description |
+|--------|---------------|-------------|
+| `health` | `ping` | Service health check |
+| `projects` | `create`, `get`, `list`, `update`, `delete`, `members.*`, `settings.*` | Project CRUD and team management |
+| `sessions` | `create`, `get`, `list`, `pause`, `resume`, `cancel`, `messages` | Agent session lifecycle |
+| `tasks` | `submit`, `get`, `list`, `cancel`, `estimate` | Task submission and tracking |
+| `billing` | `balance`, `plan`, `checkout`, `purchaseCredits`, `transactions`, `usage` | Credits, subscriptions, Stripe |
+| `analytics` | `overview`, `taskMetrics`, `agentPerformance`, `modelUsage`, `roi` | Platform analytics |
+| `analytics-enhanced` | `teamVelocity`, `agentAggressiveness`, `costBreakdown` | Advanced team analytics |
+| `cost-analytics` | `perProject`, `perModel`, `forecast`, `budget` | Cost analysis and forecasting |
+| `cost-prediction` | `estimateTask`, `timeline`, `roi` | Pre-execution cost estimation |
+| `settings` | `apiKeys.*`, `modelPreferences`, `mcpSettings`, `notifications` | User/org settings |
+| `user` | `profile`, `settings`, `organizations`, `preferences` | User management |
+| `api-keys` | `create`, `list`, `revoke`, `rotate` | API key management |
+| `brain` | `search`, `memories`, `blueprint`, `dependencies`, `embeddings` | Project brain queries |
+| `architecture` | `graph`, `components`, `dependencies`, `metrics`, `impact` | Architecture analysis |
+| `code-analysis` | `analyze`, `review`, `quality`, `symbols`, `deadCode` | Code intelligence |
+| `blueprints-enhanced` | `create`, `update`, `versions`, `enforce`, `techStack` | Blueprint management |
+| `integrations` | `list`, `connect`, `disconnect`, `configure`, `status` | Third-party integrations |
+| `plugins` | `list`, `install`, `uninstall`, `configure`, `marketplace` | Plugin management |
+| `fleet` | `dispatch`, `status`, `stopAgent`, `metrics` | Multi-agent fleet control |
+| `pm` | `sprints`, `milestones`, `velocity`, `burndown` | Project management |
+| `queue` | `position`, `stats`, `retry`, `dead-letter` | Job queue management |
+| `deployments` | `create`, `list`, `status`, `rollback`, `logs` | Deployment management |
+| `audit` | `logs`, `search`, `export`, `retention` | Audit trail |
+| `gdpr` | `export`, `delete`, `status`, `consent` | GDPR compliance |
+| `webhooks-outbound` | `create`, `list`, `delete`, `test`, `deliveries` | Outbound webhooks |
+| `branding` | `get`, `update`, `logo`, `theme` | White-label customization |
+| `workspaces` | `create`, `list`, `update`, `members` | Workspace management |
+| `stats` | `teamIntelligence`, `agentMetrics`, `costBreakdown` | Dashboard stats |
+
+**Source:** `apps/api/src/routers/`
+
+---
+
+## 31. Docs Application Architecture
+
+The `apps/docs/` directory contains a Next.js-based documentation site for the platform.
+
+| Component | Description |
+|-----------|-------------|
+| **Framework** | Next.js (same as web app) |
+| **Content** | MDX-based documentation in `content/` directory |
+| **Purpose** | User guides, API reference, agent capabilities, integration docs |
+| **Status** | Scaffolded, not yet deployed |
+
+---
+
+## 32. Testing Architecture
+
+The monorepo has 377 test files using Vitest as the test runner.
+
+| Metric | Value |
+|--------|-------|
+| **Test runner** | Vitest ^4.1.1 |
+| **Test files** | 377 (`.test.ts`, `.spec.ts`, `.test.tsx`, `.spec.tsx`) |
+| **Test utils** | `@prometheus/test-utils` package with mock factories |
+| **Integration tests** | `tests/integration/` with dedicated Vitest config |
+| **Contract tests** | `tests/contract/` with dedicated Vitest config |
+| **CI pipeline** | `.github/workflows/ci.yml` runs tests on every PR |
+
+### Test Infrastructure Files
+
+| File | Purpose |
+|------|---------|
+| `packages/test-utils/src/` | Mock factories, fixtures, test helpers |
+| `tests/integration/vitest.config.ts` | Integration test configuration |
+| `tests/contract/vitest.config.ts` | Contract test configuration |
+| `vitest.config.ts` (root) | Base Vitest configuration |
+
+### GitHub Workflows (8 pipelines)
+
+| Workflow | Purpose |
+|----------|---------|
+| `ci.yml` | Main CI — lint, typecheck, test, build |
+| `pr-check.yml` | PR validation checks |
+| `deploy-staging.yml` | Deploy to staging environment |
+| `deploy-production.yml` | Deploy to production |
+| `security-scan.yml` | Security vulnerability scanning |
+| `security.yml` | Additional security checks |
+| `benchmarks.yml` | Performance benchmarks |
+| `prometheus-agent.yml` | Agent-specific CI tasks |
+
+---
+
+## 33. MCP Gateway Adapter Architecture
+
+The MCP Gateway (`apps/mcp-gateway/`) connects agents to 13 external services via standardized adapters.
+
+### Adapter Directory
+
+| Adapter | Directory | Service | Key Operations |
+|---------|-----------|---------|---------------|
+| **AWS** | `adapters/aws/` | Amazon Web Services | Cloud resource provisioning |
+| **Confluence** | `adapters/confluence/` | Atlassian Confluence | Wiki/documentation sync |
+| **Datadog** | `adapters/datadog/` | Datadog | Monitoring, metrics, alerts |
+| **Docker Hub** | `adapters/docker-hub/` | Docker Hub | Image search, registry |
+| **Figma** | `adapters/figma/` | Figma | Design specs, components |
+| **GitHub** | `adapters/github/` | GitHub | Repos, PRs, issues, webhooks |
+| **GitLab** | `adapters/gitlab/` | GitLab | Repos, MRs, pipelines |
+| **Jira** | `adapters/jira/` | Atlassian Jira | Issues, sprints, workflows |
+| **Linear** | `adapters/linear/` | Linear | Issues, projects, milestones |
+| **Notion** | `adapters/notion/` | Notion | Pages, databases, comments |
+| **Sentry** | `adapters/sentry/` | Sentry | Error tracking, issues |
+| **Slack** | `adapters/slack/` | Slack | Messages, commands, bots |
+| **Vercel** | `adapters/vercel/` | Vercel | Deploy, preview environments |
+
+Each adapter follows a consistent structure:
+- Tool definitions with Zod schemas
+- OAuth/API key authentication
+- Rate limiting per provider
+- Circuit breaker for resilience
+- Powered by `@ai-sdk/mcp` (^1.0.25)
+
+---
+
+## 34. Workflow Patterns Catalog
+
+The orchestrator includes 5 workflow patterns in `apps/orchestrator/src/patterns/` that define different execution strategies for agent tasks.
+
+| Pattern | File | Description | When Used |
+|---------|------|-------------|-----------|
+| **Spec-First** | `spec-first.ts` | Write tests/specs first, then implement code to pass them | When test coverage is critical or specs are well-defined |
+| **TDD Workflow** | `tdd-workflow.ts` | Red-green-refactor cycle — write failing test → implement → refactor | When building new features incrementally |
+| **Design-to-Code** | `design-to-code.ts` | Convert design specifications (Figma, wireframes) into implementation | When Figma designs or UI mockups are provided |
+| **Generator-Evaluator** | `generator-evaluator.ts` | Generate multiple solutions, evaluate quality of each, select best | When quality is more important than speed |
+| **Ambiguity Resolver** | `ambiguity-resolver.ts` | Interactive clarification loop when requirements are unclear | When the discovery agent detects ambiguous requirements |
+
+Pattern selection is handled by the orchestrator based on task analysis, project settings, and agent role.
+
+---
+
+## 35. Codebase Metrics
+
+### Line Counts by Service
+
+| Service | Total Lines (TypeScript) | Key Files |
+|---------|------------------------|-----------|
+| **orchestrator** | ~56,600 lines | `agent-loop.ts`, `task-router.ts`, `session-manager.ts` |
+| **project-brain** | ~33,800 lines | `context/assembler.ts`, `layers/semantic.ts`, `fusion-search.ts` |
+| **model-router** | ~1,500 lines (`router.ts`), ~600 lines (`cascade.ts`) | `router.ts`, `cascade.ts`, `cost-optimizer.ts` |
+| **api** | 26 tRPC routers | All domain routers in `src/routers/` |
+| **web** | Next.js 16 + React 19 frontend | 22+ pages, 30+ component groups |
+| **mcp-gateway** | 13 adapters | Per-adapter tool definitions |
+| **sandbox-manager** | 5 providers | Docker, Firecracker, gVisor, E2B, Dev |
+
+### Package Counts
+
+| Category | Count |
+|----------|-------|
+| **Apps** | 10 (web, api, orchestrator, queue-worker, socket-server, model-router, project-brain, sandbox-manager, mcp-gateway, docs) |
+| **Packages** | 29 |
+| **DB Tables** | 94 (pgTable definitions) |
+| **DB Enums** | 56 (pgEnum definitions) |
+| **Test Files** | 377 |
+| **Agent Roles** | 12 (+ language variants) |
+| **MCP Adapters** | 13 |
+| **tRPC Routers** | 26 |
+| **BullMQ Queues** | 11 |
+| **Orchestrator Patterns** | 5 |
+| **Docker Compose Services** | 8 (postgres, pgbouncer, dragonfly, litellm, ollama, minio, mem0/qdrant, zoekt) |
 
 ---
 

@@ -1,0 +1,23 @@
+{
+  "name": "@prometheus/workflow",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "scripts": {
+    "test": "vitest run --passWithNoTests",
+    "typecheck": "tsc --noEmit",
+    "clean": "rm -rf dist .turbo"
+  },
+  "dependencies": {
+    "@prometheus/billing": "workspace:*",
+    "@prometheus/logger": "workspace:*",
+    "@prometheus/utils": "workspace:*",
+    "inngest": "^4.0.5"
+  },
+  "devDependencies": {
+    "@prometheus/config-typescript": "workspace:*",
+    "typescript": "^6.0.2"
+  }
+}

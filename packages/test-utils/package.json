@@ -1,0 +1,25 @@
+{
+  "name": "@prometheus/test-utils",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@prometheus/db": "workspace:*",
+    "@prometheus/utils": "workspace:*",
+    "@prometheus/queue": "workspace:*"
+  },
+  "devDependencies": {
+    "@prometheus/config-typescript": "workspace:*",
+    "typescript": "^6.0.2",
+    "vitest": "^4.1.1"
+  }
+}

@@ -1,0 +1,150 @@
+model_list:
+  # ─── Tier 0: Local Ollama (FREE) ───────────────────────────────────────
+  - model_name: ollama/qwen3-coder-next
+    litellm_params:
+      model: ollama/qwen3-coder-next
+      api_base: http://ollama:11434
+
+  - model_name: ollama/deepseek-r1:32b
+    litellm_params:
+      model: ollama/deepseek-r1:32b
+      api_base: http://ollama:11434
+
+  - model_name: ollama/qwen3.5:27b
+    litellm_params:
+      model: ollama/qwen3.5:27b
+      api_base: http://ollama:11434
+
+  - model_name: ollama/qwen2.5-coder:14b
+    litellm_params:
+      model: ollama/qwen2.5-coder:14b
+      api_base: http://ollama:11434
+
+  - model_name: ollama/qwen2.5-coder:7b
+    litellm_params:
+      model: ollama/qwen2.5-coder:7b
+      api_base: http://ollama:11434
+
+  - model_name: ollama/nomic-embed-text
+    litellm_params:
+      model: ollama/nomic-embed-text
+      api_base: http://ollama:11434
+
+  # ─── Tier 1: Free Cloud APIs ────────────────────────────────────────────
+  - model_name: cerebras/qwen3-235b
+    litellm_params:
+      model: cerebras/qwen3-235b
+      api_key: os.environ/CEREBRAS_API_KEY
+
+  - model_name: groq/llama-3.3-70b-versatile
+    litellm_params:
+      model: groq/llama-3.3-70b-versatile
+      api_key: os.environ/GROQ_API_KEY
+
+  - model_name: gemini/gemini-2.5-flash
+    litellm_params:
+      model: gemini/gemini-2.5-flash
+      api_key: os.environ/GEMINI_API_KEY
+
+  # ─── Tier 2: Low-cost APIs ──────────────────────────────────────────────
+  - model_name: deepseek/deepseek-chat
+    litellm_params:
+      model: deepseek/deepseek-chat
+      api_key: os.environ/DEEPSEEK_API_KEY
+
+  - model_name: deepseek/deepseek-coder
+    litellm_params:
+      model: deepseek/deepseek-coder
+      api_key: os.environ/DEEPSEEK_API_KEY
+
+  - model_name: deepseek/deepseek-reasoner
+    litellm_params:
+      model: deepseek/deepseek-reasoner
+      api_key: os.environ/DEEPSEEK_API_KEY
+
+  - model_name: mistral/mistral-small-latest
+    litellm_params:
+      model: mistral/mistral-small-latest
+      api_key: os.environ/MISTRAL_API_KEY
+
+  - model_name: mistral/mistral-large-latest
+    litellm_params:
+      model: mistral/mistral-large-latest
+      api_key: os.environ/MISTRAL_API_KEY
+
+  - model_name: openai/gpt-4o-mini
+    litellm_params:
+      model: gpt-4o-mini
+      api_key: os.environ/OPENAI_API_KEY
+
+  - model_name: openai/gpt-4o
+    litellm_params:
+      model: gpt-4o
+      api_key: os.environ/OPENAI_API_KEY
+
+  - model_name: openai/gpt-4.1
+    litellm_params:
+      model: gpt-4.1
+      api_key: os.environ/OPENAI_API_KEY
+
+  - model_name: openai/gpt-4.1-mini
+    litellm_params:
+      model: gpt-4.1-mini
+      api_key: os.environ/OPENAI_API_KEY
+
+  - model_name: openai/o3-mini
+    litellm_params:
+      model: o3-mini
+      api_key: os.environ/OPENAI_API_KEY
+
+  # ─── Tier 3: Mid-tier ──────────────────────────────────────────────────
+  - model_name: anthropic/claude-sonnet-4-6
+    litellm_params:
+      model: claude-sonnet-4-6
+      api_key: os.environ/ANTHROPIC_API_KEY
+
+  # ─── Tier 4: Premium ───────────────────────────────────────────────────
+  - model_name: anthropic/claude-opus-4-6
+    litellm_params:
+      model: claude-opus-4-6
+      api_key: os.environ/ANTHROPIC_API_KEY
+
+  # ─── Embeddings ─────────────────────────────────────────────────────────
+  - model_name: voyage/voyage-code-3
+    litellm_params:
+      model: voyage/voyage-code-3
+      api_key: os.environ/VOYAGE_API_KEY
+
+  - model_name: voyage/rerank-2.5
+    litellm_params:
+      model: voyage/rerank-2.5
+      api_key: os.environ/VOYAGE_API_KEY
+
+litellm_settings:
+  drop_params: true
+  set_verbose: false
+  cache: true
+  cache_params:
+    type: redis
+    host: redis
+    port: 6379
+  success_callback: []
+  failure_callback: []
+  num_retries: 2
+  request_timeout: 120
+  allowed_fails: 3
+  cooldown_time: 30
+
+router_settings:
+  routing_strategy: latency-based-routing
+  num_retries: 2
+  retry_after: 5
+  enable_pre_call_checks: true
+
+general_settings:
+  master_key: sk-prometheus-litellm-dev
+  alerting:
+    - slack
+  alert_types:
+    - llm_too_slow
+    - llm_requests_hanging

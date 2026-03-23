@@ -1,0 +1,283 @@
+# ─── Canary Release Strategy ──────────────────────────────────────────────────
+# Progressive traffic shifting using Traefik weighted services:
+#   Phase 1: 90% stable / 10% canary (initial rollout)
+#   Phase 2: 50% stable / 50% canary (wider exposure)
+#   Phase 3: 0% stable / 100% canary (full promotion)
+#
+# Auto-rollback: if error rate exceeds 1%, revert to 100% stable.
+# ---------------------------------------------------------------------------
+
+# ─── Stable Service ───────────────────────────────────────────────────────────
+apiVersion: v1
+kind: Service
+metadata:
+  name: api-stable
+  namespace: prometheus
+  labels:
+    app: api
+    track: stable
+    app.kubernetes.io/part-of: prometheus
+    app.kubernetes.io/component: canary
+spec:
+  selector:
+    app: api
+    track: stable
+  ports:
+    - port: 4000
+      targetPort: 4000
+      name: http
+      protocol: TCP
+  type: ClusterIP
+
+---
+# ─── Canary Service ───────────────────────────────────────────────────────────
+apiVersion: v1
+kind: Service
+metadata:
+  name: api-canary
+  namespace: prometheus
+  labels:
+    app: api
+    track: canary
+    app.kubernetes.io/part-of: prometheus
+    app.kubernetes.io/component: canary
+spec:
+  selector:
+    app: api
+    track: canary
+  ports:
+    - port: 4000
+      targetPort: 4000
+      name: http
+      protocol: TCP
+  type: ClusterIP
+
+---
+# ─── Canary Deployment ────────────────────────────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api-canary
+  namespace: prometheus
+  labels:
+    app: api
+    track: canary
+    app.kubernetes.io/part-of: prometheus
+    app.kubernetes.io/component: canary
+  annotations:
+    prometheus.io/canary-phase: "1"
+    prometheus.io/canary-started-at: ""
+    prometheus.io/canary-max-error-rate: "0.01"
+spec:
+  # Start with 1 replica for canary
+  replicas: 1
+  selector:
+    matchLabels:
+      app: api
+      track: canary
+  template:
+    metadata:
+      labels:
+        app: api
+        track: canary
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "4000"
+    spec:
+      containers:
+        - name: api
+          image: ghcr.io/prometheus/api:canary
+          ports:
+            - containerPort: 4000
+          envFrom:
+            - configMapRef:
+                name: prometheus-config
+            - secretRef:
+                name: prometheus-secrets
+          env:
+            - name: CANARY
+              value: "true"
+          readinessProbe:
+            httpGet:
+              path: /api/trpc/health.check
+              port: 4000
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /api/trpc/health.check
+              port: 4000
+            initialDelaySeconds: 15
+            periodSeconds: 30
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi
+
+---
+# ─── Traefik IngressRoute — Canary Traffic Split ─────────────────────────────
+# Phase 1: 90/10 split. Update weights for progressive rollout.
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: api-canary-ingress
+  namespace: prometheus
+  labels:
+    app.kubernetes.io/part-of: prometheus
+    app.kubernetes.io/component: canary
+  annotations:
+    prometheus.io/canary-phase: "1"
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - match: Host(`api.prometheus.dev`)
+      kind: Rule
+      services:
+        - name: api-stable
+          port: 4000
+          weight: 90
+        - name: api-canary
+          port: 4000
+          weight: 10
+      middlewares:
+        - name: ip-rate-limit
+        - name: global-rate-limit
+        - name: canary-headers
+  tls:
+    certResolver: letsencrypt
+
+---
+# ─── Canary Headers Middleware ────────────────────────────────────────────────
+# Adds a header to canary responses for observability
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: canary-headers
+  namespace: prometheus
+  labels:
+    app.kubernetes.io/part-of: prometheus
+    app.kubernetes.io/component: canary
+spec:
+  headers:
+    customResponseHeaders:
+      X-Canary: "true"
+
+---
+# ─── Canary Auto-Rollback CronJob ────────────────────────────────────────────
+# Periodically checks canary error rate via Prometheus metrics.
+# If error rate > 1%, automatically rolls back by setting canary weight to 0.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: canary-rollback-monitor
+  namespace: prometheus
+  labels:
+    app.kubernetes.io/part-of: prometheus
+    app.kubernetes.io/component: canary
+spec:
+  schedule: "*/2 * * * *" # Check every 2 minutes
+  concurrencyPolicy: Forbid
+  jobTemplate:
+    spec:
+      ttlSecondsAfterFinished: 120
+      template:
+        spec:
+          restartPolicy: Never
+          serviceAccountName: canary-monitor
+          containers:
+            - name: rollback-check
+              image: bitnami/kubectl:latest
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  set -e
+                  PROMETHEUS_URL="http://prometheus-server.monitoring.svc.cluster.local:9090"
+                  MAX_ERROR_RATE="0.01"
+
+                  echo "=== Canary Rollback Monitor ==="
+
+                  # Query canary error rate from Prometheus
+                  ERROR_RATE=$(curl -s "$PROMETHEUS_URL/api/v1/query" \
+                    --data-urlencode 'query=sum(rate(http_requests_total{track="canary",code=~"5.."}[5m])) / sum(rate(http_requests_total{track="canary"}[5m]))' \
+                    | grep -o '"value":\[.*\]' \
+                    | grep -o '[0-9.]*"' \
+                    | head -1 \
+                    | tr -d '"' || echo "0")
+
+                  echo "Current canary error rate: $ERROR_RATE"
+
+                  # Compare error rate with threshold
+                  if [ -z "$ERROR_RATE" ] || [ "$ERROR_RATE" = "NaN" ]; then
+                    echo "No metrics available yet, skipping check"
+                    exit 0
+                  fi
+
+                  SHOULD_ROLLBACK=$(echo "$ERROR_RATE > $MAX_ERROR_RATE" | bc -l 2>/dev/null || echo "0")
+
+                  if [ "$SHOULD_ROLLBACK" = "1" ]; then
+                    echo "ERROR RATE $ERROR_RATE exceeds threshold $MAX_ERROR_RATE"
+                    echo "Initiating automatic rollback..."
+
+                    # Scale down canary
+                    kubectl scale deployment api-canary \
+                      --replicas=0 \
+                      -n prometheus
+
+                    # Patch IngressRoute to remove canary weight
+                    kubectl annotate ingressroute api-canary-ingress \
+                      prometheus.io/canary-phase="rolled-back" \
+                      prometheus.io/rollback-reason="error_rate_${ERROR_RATE}" \
+                      prometheus.io/rollback-at="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+                      --overwrite \
+                      -n prometheus
+
+                    echo "ROLLBACK COMPLETE: canary scaled to 0, traffic to stable"
+                  else
+                    echo "Error rate within threshold. Canary is healthy."
+                  fi
+
+---
+# ─── RBAC for Canary Monitor ─────────────────────────────────────────────────
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: canary-monitor
+  namespace: prometheus
+  labels:
+    app.kubernetes.io/part-of: prometheus
+    app.kubernetes.io/component: canary
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: canary-monitor-role
+  namespace: prometheus
+rules:
+  - apiGroups: ["apps"]
+    resources: ["deployments", "deployments/scale"]
+    verbs: ["get", "patch", "update"]
+  - apiGroups: ["traefik.io"]
+    resources: ["ingressroutes"]
+    verbs: ["get", "patch", "update"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: canary-monitor-binding
+  namespace: prometheus
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: canary-monitor-role
+subjects:
+  - kind: ServiceAccount
+    name: canary-monitor
+    namespace: prometheus

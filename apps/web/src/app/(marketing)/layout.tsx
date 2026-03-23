@@ -1,3 +1,4 @@
+import type { Route } from "next";
 import Link from "next/link";
 
 export default function MarketingLayout({
@@ -7,36 +8,48 @@ export default function MarketingLayout({
 }) {
   return (
     <div className="flex min-h-screen flex-col bg-zinc-950">
-      <header className="sticky top-0 z-50 w-full border-b border-zinc-800 bg-zinc-950/80 backdrop-blur-lg">
+      <header className="sticky top-0 z-50 w-full border-zinc-800 border-b bg-zinc-950/80 backdrop-blur-lg">
         <div className="mx-auto flex h-16 max-w-6xl items-center justify-between px-6">
-          <Link href="/" className="flex items-center gap-2">
-            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-violet-600 text-sm font-bold text-white">
+          <Link className="flex items-center gap-2" href="/">
+            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-violet-600 font-bold text-sm text-white">
               P
             </div>
-            <span className="text-lg font-bold text-zinc-100">PROMETHEUS</span>
+            <span className="font-bold text-lg text-zinc-100">PROMETHEUS</span>
           </Link>
           <nav className="flex items-center gap-6">
             <Link
-              href="/pricing"
               className="text-sm text-zinc-400 transition-colors hover:text-zinc-200"
+              href="/features"
+            >
+              Features
+            </Link>
+            <Link
+              className="text-sm text-zinc-400 transition-colors hover:text-zinc-200"
+              href="/pricing"
             >
               Pricing
             </Link>
             <Link
-              href="/about"
               className="text-sm text-zinc-400 transition-colors hover:text-zinc-200"
+              href="/about"
             >
               About
             </Link>
             <Link
-              href="/sign-in"
-              className="text-sm font-medium text-zinc-200 hover:text-white"
+              className="text-sm text-zinc-400 transition-colors hover:text-zinc-200"
+              href={"/benchmarks" as Route}
+            >
+              Benchmarks
+            </Link>
+            <Link
+              className="font-medium text-sm text-zinc-200 hover:text-white"
+              href={"/sign-in" as Route}
             >
               Sign In
             </Link>
             <Link
-              href="/sign-up"
-              className="rounded-lg bg-violet-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-violet-700"
+              className="rounded-lg bg-violet-600 px-4 py-2 font-medium text-sm text-white transition-colors hover:bg-violet-700"
+              href={"/sign-up" as Route}
             >
               Get Started
             </Link>
@@ -44,43 +57,77 @@ export default function MarketingLayout({
         </div>
       </header>
       <main className="flex-1">{children}</main>
-      <footer className="border-t border-zinc-800 py-12">
+      <footer className="border-zinc-800 border-t py-12">
         <div className="mx-auto max-w-6xl px-6">
           <div className="grid gap-8 md:grid-cols-4">
             <div>
               <div className="flex items-center gap-2">
-                <div className="flex h-6 w-6 items-center justify-center rounded bg-violet-600 text-xs font-bold text-white">
+                <div className="flex h-6 w-6 items-center justify-center rounded bg-violet-600 font-bold text-white text-xs">
                   P
                 </div>
-                <span className="text-sm font-bold text-zinc-200">PROMETHEUS</span>
+                <span className="font-bold text-sm text-zinc-200">
+                  PROMETHEUS
+                </span>
               </div>
               <p className="mt-3 text-xs text-zinc-500">
                 AI engineering platform with 12 specialist agents.
               </p>
             </div>
             <div>
-              <h4 className="text-xs font-semibold uppercase tracking-wider text-zinc-400">Product</h4>
+              <h4 className="font-semibold text-xs text-zinc-400 uppercase tracking-wider">
+                Product
+              </h4>
               <div className="mt-3 space-y-2">
-                <Link href="/pricing" className="block text-sm text-zinc-500 hover:text-zinc-300">Pricing</Link>
-                <Link href="/about" className="block text-sm text-zinc-500 hover:text-zinc-300">About</Link>
+                <Link
+                  className="block text-sm text-zinc-500 hover:text-zinc-300"
+                  href="/features"
+                >
+                  Features
+                </Link>
+                <Link
+                  className="block text-sm text-zinc-500 hover:text-zinc-300"
+                  href="/pricing"
+                >
+                  Pricing
+                </Link>
+                <Link
+                  className="block text-sm text-zinc-500 hover:text-zinc-300"
+                  href="/about"
+                >
+                  About
+                </Link>
+                <Link
+                  className="block text-sm text-zinc-500 hover:text-zinc-300"
+                  href={"/benchmarks" as Route}
+                >
+                  Benchmarks
+                </Link>
               </div>
             </div>
             <div>
-              <h4 className="text-xs font-semibold uppercase tracking-wider text-zinc-400">Developers</h4>
+              <h4 className="font-semibold text-xs text-zinc-400 uppercase tracking-wider">
+                Developers
+              </h4>
               <div className="mt-3 space-y-2">
-                <span className="block text-sm text-zinc-500">Documentation</span>
-                <span className="block text-sm text-zinc-500">API Reference</span>
+                <span className="block text-sm text-zinc-500">
+                  Documentation
+                </span>
+                <span className="block text-sm text-zinc-500">
+                  API Reference
+                </span>
               </div>
             </div>
             <div>
-              <h4 className="text-xs font-semibold uppercase tracking-wider text-zinc-400">Company</h4>
+              <h4 className="font-semibold text-xs text-zinc-400 uppercase tracking-wider">
+                Company
+              </h4>
               <div className="mt-3 space-y-2">
                 <span className="block text-sm text-zinc-500">Privacy</span>
                 <span className="block text-sm text-zinc-500">Terms</span>
               </div>
             </div>
           </div>
-          <div className="mt-8 border-t border-zinc-800 pt-8 text-center text-xs text-zinc-600">
+          <div className="mt-8 border-zinc-800 border-t pt-8 text-center text-xs text-zinc-600">
             &copy; {new Date().getFullYear()} PROMETHEUS. All rights reserved.
           </div>
         </div>

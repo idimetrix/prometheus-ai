@@ -3,9 +3,20 @@ import type { AgentLoop } from "../agent-loop";
 
 const logger = createLogger("orchestrator:discovery");
 
+const CONFIDENCE_SCORE_RE = /CONFIDENCE_SCORE:\s*([\d.]+)/i;
+const CONFIDENCE_FALLBACK_RE =
+  /confidence[:\s]+(?:is\s+)?(?:approximately\s+)?([\d.]+)/i;
+const REQ_HEADER_RE = /REQ-(\d+):\s*(.+?)(?:\n|$)/g;
+const REQ_DESCRIPTION_RE =
+  /Description:\s*(.+?)(?=\n\s*-|\n\s*Priority|\n\s*Acceptance|$)/is;
+const REQ_PRIORITY_RE = /Priority:\s*(critical|high|medium|low)/i;
+const REQ_ACCEPTANCE_RE = /Acceptance Criteria:([\s\S]*?)(?=\n\s*REQ-|\n##|$)/i;
+const LIST_BULLET_PREFIX_RE = /^\s*[-*]\s*/;
+
 export interface DiscoveryResult {
-  srs: string;
+  clarificationsNeeded: string[];
   confidenceScore: number;
+  outOfScope: string[];
   requirements: Array<{
     id: string;
     title: string;
@@ -13,9 +24,8 @@ export interface DiscoveryResult {
     priority: "critical" | "high" | "medium" | "low";
     acceptanceCriteria: string[];
   }>;
-  outOfScope: string[];
   risks: string[];
-  clarificationsNeeded: string[];
+  srs: string;
 }
 
 /**
@@ -36,7 +46,10 @@ export class DiscoveryPhase {
     "What are the RISKS, constraints, and technical challenges?",
   ];
 
-  async execute(agentLoop: AgentLoop, initialPrompt: string): Promise<DiscoveryResult> {
+  async execute(
+    agentLoop: AgentLoop,
+    initialPrompt: string
+  ): Promise<DiscoveryResult> {
     logger.info("Starting Discovery phase");
 
     let lastResult: DiscoveryResult | null = null;
@@ -45,25 +58,39 @@ export class DiscoveryPhase {
 
     while (attempt < this.maxAttempts) {
       attempt++;
-      logger.info({ attempt, maxAttempts: this.maxAttempts }, "Discovery iteration");
+      logger.info(
+        { attempt, maxAttempts: this.maxAttempts },
+        "Discovery iteration"
+      );
 
-      const prompt = this.buildDiscoveryPrompt(initialPrompt, lastResult, accumulatedContext, attempt);
+      const prompt = this.buildDiscoveryPrompt(
+        initialPrompt,
+        lastResult,
+        accumulatedContext,
+        attempt
+      );
 
       const result = await agentLoop.executeTask(prompt, "discovery");
 
       // Parse the SRS from the agent output
       const parsed = this.parseSRS(result.output);
 
-      logger.info({
-        attempt,
-        confidence: parsed.confidenceScore,
-        requirementsCount: parsed.requirements.length,
-        risksCount: parsed.risks.length,
-      }, "Discovery iteration complete");
+      logger.info(
+        {
+          attempt,
+          confidence: parsed.confidenceScore,
+          requirementsCount: parsed.requirements.length,
+          risksCount: parsed.risks.length,
+        },
+        "Discovery iteration complete"
+      );
 
       // Check confidence threshold
       if (this.shouldProceed(parsed)) {
-        logger.info({ confidence: parsed.confidenceScore }, "Discovery confidence met, proceeding");
+        logger.info(
+          { confidence: parsed.confidenceScore },
+          "Discovery confidence met, proceeding"
+        );
         return parsed;
       }
 
@@ -73,34 +100,42 @@ export class DiscoveryPhase {
         accumulatedContext += `\n\nPrevious attempt identified these gaps:\n${parsed.clarificationsNeeded.map((c, i) => `${i + 1}. ${c}`).join("\n")}`;
       }
 
-      logger.info({
-        confidence: parsed.confidenceScore,
-        threshold: this.confidenceThreshold,
-        clarifications: parsed.clarificationsNeeded.length,
-      }, "Discovery confidence below threshold, iterating");
+      logger.info(
+        {
+          confidence: parsed.confidenceScore,
+          threshold: this.confidenceThreshold,
+          clarifications: parsed.clarificationsNeeded.length,
+        },
+        "Discovery confidence below threshold, iterating"
+      );
     }
 
     // After max attempts, return the best result we have
-    logger.warn({
-      attempts: attempt,
-      finalConfidence: lastResult?.confidenceScore ?? 0,
-    }, "Discovery reached max attempts, returning best result");
+    logger.warn(
+      {
+        attempts: attempt,
+        finalConfidence: lastResult?.confidenceScore ?? 0,
+      },
+      "Discovery reached max attempts, returning best result"
+    );
 
-    return lastResult ?? {
-      srs: "",
-      confidenceScore: 0,
-      requirements: [],
-      outOfScope: [],
-      risks: [],
-      clarificationsNeeded: ["Could not generate SRS after max attempts"],
-    };
+    return (
+      lastResult ?? {
+        srs: "",
+        confidenceScore: 0,
+        requirements: [],
+        outOfScope: [],
+        risks: [],
+        clarificationsNeeded: ["Could not generate SRS after max attempts"],
+      }
+    );
   }
 
   private buildDiscoveryPrompt(
     initialPrompt: string,
     previousResult: DiscoveryResult | null,
     accumulatedContext: string,
-    attempt: number,
+    attempt: number
   ): string {
     let prompt = `Analyze the following project request and generate a complete Software Requirements Specification (SRS).
 
@@ -164,7 +199,10 @@ Generate the most complete SRS possible. If you are uncertain about specific det
     const requirements = this.extractRequirements(output);
     const outOfScope = this.extractListSection(output, "OUT_OF_SCOPE");
     const risks = this.extractListSection(output, "RISKS");
-    const clarificationsNeeded = this.extractListSection(output, "CLARIFICATIONS_NEEDED");
+    const clarificationsNeeded = this.extractListSection(
+      output,
+      "CLARIFICATIONS_NEEDED"
+    );
 
     return {
       srs: output,
@@ -178,33 +216,41 @@ Generate the most complete SRS possible. If you are uncertain about specific det
 
   private extractConfidence(output: string): number {
     // Look for CONFIDENCE_SCORE: X.X pattern
-    const match = output.match(/CONFIDENCE_SCORE:\s*([\d.]+)/i);
+    const match = output.match(CONFIDENCE_SCORE_RE);
     if (match?.[1]) {
-      const score = parseFloat(match[1]);
-      if (!isNaN(score) && score >= 0 && score <= 1) return score;
+      const score = Number.parseFloat(match[1]);
+      if (!Number.isNaN(score) && score >= 0 && score <= 1) {
+        return score;
+      }
     }
 
     // Fallback: look for "confidence" mentions with numbers
-    const fallback = output.match(/confidence[:\s]+(?:is\s+)?(?:approximately\s+)?([\d.]+)/i);
+    const fallback = output.match(CONFIDENCE_FALLBACK_RE);
     if (fallback?.[1]) {
-      const score = parseFloat(fallback[1]);
-      if (!isNaN(score) && score >= 0 && score <= 1) return score;
+      const score = Number.parseFloat(fallback[1]);
+      if (!Number.isNaN(score) && score >= 0 && score <= 1) {
+        return score;
+      }
     }
 
     // Heuristic: if the output is substantial and has requirements, give it 0.7
-    if (output.length > 500 && output.includes("REQ-")) return 0.7;
-    if (output.length > 200) return 0.5;
+    if (output.length > 500 && output.includes("REQ-")) {
+      return 0.7;
+    }
+    if (output.length > 200) {
+      return 0.5;
+    }
     return 0.3;
   }
 
   private extractRequirements(output: string): DiscoveryResult["requirements"] {
     const requirements: DiscoveryResult["requirements"] = [];
     // Match REQ-N: Title pattern
-    const reqRegex = /REQ-(\d+):\s*(.+?)(?:\n|$)/g;
-    let match;
-    let currentIndex = 0;
+    REQ_HEADER_RE.lastIndex = 0;
+    let match: RegExpExecArray | null = REQ_HEADER_RE.exec(output);
+    let _currentIndex = 0;
 
-    while ((match = reqRegex.exec(output)) !== null) {
+    while (match !== null) {
       const id = `REQ-${match[1]}`;
       const title = match[2]?.trim() ?? "";
 
@@ -214,33 +260,44 @@ Generate the most complete SRS possible. If you are uncertain about specific det
       const nextSection = output.indexOf("## ", startPos);
       const endPos = Math.min(
         nextReq > -1 ? nextReq : output.length,
-        nextSection > -1 ? nextSection : output.length,
+        nextSection > -1 ? nextSection : output.length
       );
       const block = output.slice(startPos, endPos);
 
       // Extract description
-      const descMatch = block.match(/Description:\s*(.+?)(?=\n\s*-|\n\s*Priority|\n\s*Acceptance|$)/is);
+      const descMatch = block.match(REQ_DESCRIPTION_RE);
       const description = descMatch?.[1]?.trim() ?? title;
 
       // Extract priority
-      const prioMatch = block.match(/Priority:\s*(critical|high|medium|low)/i);
-      const priority = (prioMatch?.[1]?.toLowerCase() ?? "medium") as "critical" | "high" | "medium" | "low";
+      const prioMatch = block.match(REQ_PRIORITY_RE);
+      const priority = (prioMatch?.[1]?.toLowerCase() ?? "medium") as
+        | "critical"
+        | "high"
+        | "medium"
+        | "low";
 
       // Extract acceptance criteria
-      const acSection = block.match(/Acceptance Criteria:([\s\S]*?)(?=\n\s*REQ-|\n##|$)/i);
+      const acSection = block.match(REQ_ACCEPTANCE_RE);
       const acceptanceCriteria: string[] = [];
       if (acSection?.[1]) {
         const lines = acSection[1].split("\n");
         for (const line of lines) {
-          const criterion = line.replace(/^\s*[-*]\s*/, "").trim();
+          const criterion = line.replace(LIST_BULLET_PREFIX_RE, "").trim();
           if (criterion.length > 0) {
             acceptanceCriteria.push(criterion);
           }
         }
       }
 
-      requirements.push({ id, title, description, priority, acceptanceCriteria });
-      currentIndex++;
+      requirements.push({
+        id,
+        title,
+        description,
+        priority,
+        acceptanceCriteria,
+      });
+      _currentIndex++;
+      match = REQ_HEADER_RE.exec(output);
     }
 
     return requirements;
@@ -248,13 +305,16 @@ Generate the most complete SRS possible. If you are uncertain about specific det
 
   private extractListSection(output: string, sectionName: string): string[] {
     const items: string[] = [];
-    const sectionRegex = new RegExp(`##\\s*${sectionName}[\\s\\S]*?(?=##|$)`, "i");
+    const sectionRegex = new RegExp(
+      `##\\s*${sectionName}[\\s\\S]*?(?=##|$)`,
+      "i"
+    );
     const sectionMatch = output.match(sectionRegex);
 
     if (sectionMatch?.[0]) {
       const lines = sectionMatch[0].split("\n").slice(1); // skip header
       for (const line of lines) {
-        const item = line.replace(/^\s*[-*]\s*/, "").trim();
+        const item = line.replace(LIST_BULLET_PREFIX_RE, "").trim();
         if (item.length > 0 && !item.startsWith("##")) {
           items.push(item);
         }

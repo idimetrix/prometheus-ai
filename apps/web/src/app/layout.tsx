@@ -1,5 +1,6 @@
 export const dynamic = "force-dynamic";
 import type { Metadata } from "next";
+import { Toaster } from "sonner";
 import { Providers } from "./providers";
 import "./globals.css";
 
@@ -15,9 +16,25 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en" className="dark" suppressHydrationWarning>
-      <body className="min-h-screen bg-zinc-950 text-zinc-100 font-sans antialiased">
+    <html className="dark" lang="en" suppressHydrationWarning>
+      <head>
+        <link href="/manifest.json" rel="manifest" />
+        <meta content="#7c3aed" name="theme-color" />
+        <meta content="yes" name="apple-mobile-web-app-capable" />
+      </head>
+      <body className="min-h-screen bg-background font-sans text-foreground antialiased">
         <Providers>{children}</Providers>
+        <Toaster
+          position="bottom-right"
+          theme="dark"
+          toastOptions={{
+            style: {
+              background: "hsl(var(--color-card))",
+              border: "1px solid hsl(var(--color-border))",
+              color: "hsl(var(--color-foreground))",
+            },
+          }}
+        />
       </body>
     </html>
   );

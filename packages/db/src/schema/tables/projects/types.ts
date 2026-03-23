@@ -1,0 +1,17 @@
+import { createInsertSchema, createSelectSchema } from "drizzle-zod";
+import { projectMembers, projectSettings, projects } from "./projects";
+
+export const insertProjectSchema = createInsertSchema(projects);
+export const selectProjectSchema = createSelectSchema(projects);
+export type Project = typeof projects.$inferSelect;
+export type NewProject = typeof projects.$inferInsert;
+
+export const insertProjectSettingsSchema = createInsertSchema(projectSettings);
+export const selectProjectSettingsSchema = createSelectSchema(projectSettings);
+export type ProjectSettings = typeof projectSettings.$inferSelect;
+export type NewProjectSettings = typeof projectSettings.$inferInsert;
+
+export const insertProjectMemberSchema = createInsertSchema(projectMembers);
+export const selectProjectMemberSchema = createSelectSchema(projectMembers);
+export type ProjectMember = typeof projectMembers.$inferSelect;
+export type NewProjectMember = typeof projectMembers.$inferInsert;

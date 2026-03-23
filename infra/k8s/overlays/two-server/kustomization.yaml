@@ -1,0 +1,58 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - ../../base
+
+patches:
+  # API, web, socket on server-1
+  - target:
+      kind: Deployment
+      name: api
+    patch: |
+      - op: add
+        path: /spec/template/spec/nodeSelector
+        value:
+          kubernetes.io/hostname: server-1
+  - target:
+      kind: Deployment
+      name: web
+    patch: |
+      - op: add
+        path: /spec/template/spec/nodeSelector
+        value:
+          kubernetes.io/hostname: server-1
+  - target:
+      kind: Deployment
+      name: socket-server
+    patch: |
+      - op: add
+        path: /spec/template/spec/nodeSelector
+        value:
+          kubernetes.io/hostname: server-1
+
+  # Queue-worker, orchestrator, sandbox on server-2
+  - target:
+      kind: Deployment
+      name: orchestrator
+    patch: |
+      - op: add
+        path: /spec/template/spec/nodeSelector
+        value:
+          kubernetes.io/hostname: server-2
+  - target:
+      kind: Deployment
+      name: queue-worker
+    patch: |
+      - op: add
+        path: /spec/template/spec/nodeSelector
+        value:
+          kubernetes.io/hostname: server-2
+  - target:
+      kind: Deployment
+      name: sandbox-manager
+    patch: |
+      - op: add
+        path: /spec/template/spec/nodeSelector
+        value:
+          kubernetes.io/hostname: server-2

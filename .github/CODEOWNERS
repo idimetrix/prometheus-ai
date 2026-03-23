@@ -1,0 +1,37 @@
+# Prometheus CODEOWNERS
+# These patterns determine who gets requested for review on PRs.
+
+# ─── Security-Sensitive Files ─────────────────────────────────────
+# Auth, encryption, billing, and infrastructure changes require review.
+
+packages/auth/                @prometheus/security
+packages/billing/             @prometheus/security @prometheus/billing
+packages/utils/src/encryption.ts  @prometheus/security
+apps/api/src/middleware/       @prometheus/security
+apps/api/src/routes/webhooks/  @prometheus/security @prometheus/billing
+
+# ─── Infrastructure ───────────────────────────────────────────────
+infra/                        @prometheus/platform
+.github/workflows/            @prometheus/platform
+docker-compose.yml            @prometheus/platform
+Dockerfile*                   @prometheus/platform
+
+# ─── Database ─────────────────────────────────────────────────────
+packages/db/src/schema/       @prometheus/backend
+packages/db/drizzle/          @prometheus/backend
+
+# ─── Core Packages ────────────────────────────────────────────────
+packages/ai/                  @prometheus/ai-team
+packages/agent-sdk/           @prometheus/ai-team
+apps/orchestrator/            @prometheus/ai-team
+apps/model-router/            @prometheus/ai-team
+apps/project-brain/           @prometheus/ai-team
+
+# ─── Frontend ─────────────────────────────────────────────────────
+apps/web/                     @prometheus/frontend
+packages/ui/                  @prometheus/frontend
+
+# ─── Root Config ──────────────────────────────────────────────────
+package.json                  @prometheus/platform
+turbo.json                    @prometheus/platform
+pnpm-workspace.yaml           @prometheus/platform

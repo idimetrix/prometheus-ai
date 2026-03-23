@@ -1,0 +1,111 @@
+rules:
+  - id: no-raw-sql
+    patterns:
+      - pattern-either:
+          - pattern: |
+              $DB.query($SQL, ...)
+          - pattern: |
+              $DB.execute($SQL, ...)
+          - pattern: |
+              pool.query($SQL, ...)
+      - pattern-not: |
+          db.execute(sql`...`)
+    message: >
+      Raw SQL queries are not allowed. Use Drizzle ORM for all database
+      operations. See @prometheus/db for query patterns.
+    languages: [typescript, javascript]
+    severity: ERROR
+    metadata:
+      category: security
+      technology:
+        - typescript
+      references:
+        - https://orm.drizzle.team/docs/overview
+
+  - id: no-console-log
+    patterns:
+      - pattern-either:
+          - pattern: console.log(...)
+          - pattern: console.warn(...)
+          - pattern: console.error(...)
+          - pattern: console.info(...)
+          - pattern: console.debug(...)
+    paths:
+      include:
+        - "apps/*/src/**"
+        - "packages/*/src/**"
+      exclude:
+        - "**/*.test.*"
+        - "**/*.spec.*"
+        - "**/scripts/**"
+    message: >
+      Do not use console.log in production code. Use the structured logger
+      from @prometheus/logger instead.
+    languages: [typescript, javascript]
+    severity: WARNING
+    metadata:
+      category: best-practice
+      technology:
+        - typescript
+
+  - id: require-error-handling
+    patterns:
+      - pattern: |
+          async function $FUNC(...) {
+            ...
+            await $EXPR;
+            ...
+          }
+      - pattern-not: |
+          async function $FUNC(...) {
+            ...
+            try {
+              ...
+            } catch (...) {
+              ...
+            }
+            ...
+          }
+    paths:
+      include:
+        - "apps/*/src/**"
+        - "packages/*/src/**"
+      exclude:
+        - "**/*.test.*"
+        - "**/*.spec.*"
+    message: >
+      Async functions with await expressions should include try-catch error
+      handling. Unhandled promise rejections can crash the process.
+    languages: [typescript, javascript]
+    severity: WARNING
+    metadata:
+      category: best-practice
+      technology:
+        - typescript
+
+  - id: no-any-type
+    patterns:
+      - pattern-either:
+          - pattern: |
+              $X: any
+          - pattern: |
+              as any
+          - pattern: |
+              <any>
+    paths:
+      include:
+        - "apps/*/src/**"
+        - "packages/*/src/**"
+      exclude:
+        - "**/*.test.*"
+        - "**/*.spec.*"
+        - "**/*.d.ts"
+    message: >
+      Avoid using the `any` type. Use `unknown` with type guards, or define
+      a proper type. The `any` type disables type checking and can hide bugs.
+    languages: [typescript]
+    severity: WARNING
+    metadata:
+      category: best-practice
+      technology:
+        - typescript

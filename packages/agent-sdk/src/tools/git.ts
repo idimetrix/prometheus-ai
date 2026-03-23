@@ -1,20 +1,83 @@
-import type { AgentToolDefinition } from "./types";
+import { z } from "zod";
 import { execInSandbox } from "./sandbox";
+import type { AgentToolDefinition } from "./types";
+
+// ---------------------------------------------------------------------------
+// Zod Schemas
+// ---------------------------------------------------------------------------
+
+export const gitStatusSchema = z.object({}).strict();
+
+export const gitDiffSchema = z
+  .object({
+    staged: z.boolean().optional().describe("Show staged changes only"),
+    path: z.string().optional().describe("Specific file path to diff"),
+  })
+  .strict();
+
+export const gitCommitSchema = z
+  .object({
+    message: z.string().describe("Commit message"),
+    files: z
+      .array(z.string())
+      .optional()
+      .describe("Specific files to stage (defaults to all changes)"),
+  })
+  .strict();
+
+export const gitBranchSchema = z
+  .object({
+    name: z.string().optional().describe("Branch name to create and switch to"),
+    list: z
+      .boolean()
+      .optional()
+      .describe("List all branches instead of creating"),
+  })
+  .strict();
+
+export const gitPushSchema = z
+  .object({
+    branch: z
+      .string()
+      .optional()
+      .describe("Branch to push (default: current branch)"),
+    setUpstream: z
+      .boolean()
+      .optional()
+      .describe("Set upstream tracking (default: true for new branches)"),
+  })
+  .strict();
+
+export const gitCreatePrSchema = z
+  .object({
+    title: z.string().describe("PR title"),
+    body: z.string().describe("PR description (markdown)"),
+    base: z.string().optional().describe("Base branch (default: main)"),
+    draft: z.boolean().optional().describe("Create as draft PR"),
+  })
+  .strict();
+
+// ---------------------------------------------------------------------------
+// Tool Definitions
+// ---------------------------------------------------------------------------
 
 export const gitTools: AgentToolDefinition[] = [
   {
     name: "git_status",
-    description: "Show the working tree status (modified, staged, untracked files)",
+    description:
+      "Show the working tree status (modified, staged, untracked files)",
     inputSchema: { type: "object", properties: {}, required: [] },
+    zodSchema: gitStatusSchema,
     permissionLevel: "read",
     creditCost: 1,
     execute: async (_input, ctx) => {
-      return execInSandbox("git status --porcelain", ctx);
+      return await execInSandbox("git status --porcelain", ctx);
     },
   },
   {
     name: "git_diff",
-    description: "Show changes between commits, working tree, etc. Use staged=true to see only staged changes.",
+    description:
+      "Show changes between commits, working tree, etc. Use staged=true to see only staged changes.",
     inputSchema: {
       type: "object",
       properties: {
@@ -22,20 +85,27 @@ export const gitTools: AgentToolDefinition[] = [
         path: { type: "string", description: "Specific file path to diff" },
       },
     },
+    zodSchema: gitDiffSchema,
     permissionLevel: "read",
     creditCost: 1,
     execute: async (input, ctx) => {
+      const parsed = gitDiffSchema.parse(input);
       const parts = ["git", "diff"];
-      if (input.staged) parts.push("--cached");
-      if (input.path) parts.push(`"${input.path}"`);
+      if (parsed.staged) {
+        parts.push("--cached");
+      }
+      if (parsed.path) {
+        parts.push(`"${parsed.path}"`);
+      }
       // Limit diff output to prevent overwhelming context
       parts.push("| head -500");
-      return execInSandbox(parts.join(" "), ctx);
+      return await execInSandbox(parts.join(" "), ctx);
     },
   },
   {
     name: "git_commit",
-    description: "Stage all changes and create a new commit with the given message",
+    description:
+      "Stage all changes and create a new commit with the given message",
     inputSchema: {
       type: "object",
       properties: {
@@ -43,28 +113,29 @@ export const gitTools: AgentToolDefinition[] = [
         files: {
           type: "array",
           items: { type: "string" },
-          description: "Specific files to stage (optional, defaults to all changes)",
+          description:
+            "Specific files to stage (optional, defaults to all changes)",
         },
       },
       required: ["message"],
     },
+    zodSchema: gitCommitSchema,
     permissionLevel: "write",
     creditCost: 2,
     execute: async (input, ctx) => {
-      const message = input.message as string;
-      const files = input.files as string[] | undefined;
+      const parsed = gitCommitSchema.parse(input);
 
       let stageCmd: string;
-      if (files && files.length > 0) {
-        const quoted = files.map((f) => `"${f}"`).join(" ");
+      if (parsed.files && parsed.files.length > 0) {
+        const quoted = parsed.files.map((f) => `"${f}"`).join(" ");
         stageCmd = `git add ${quoted}`;
       } else {
         stageCmd = "git add -A";
       }
 
-      const escapedMsg = message.replace(/"/g, '\\"');
+      const escapedMsg = parsed.message.replace(/"/g, '\\"');
       const command = `${stageCmd} && git commit -m "${escapedMsg}"`;
-      return execInSandbox(command, ctx);
+      return await execInSandbox(command, ctx);
     },
   },
   {
@@ -73,20 +144,32 @@ export const gitTools: AgentToolDefinition[] = [
     inputSchema: {
       type: "object",
       properties: {
-        name: { type: "string", description: "Branch name to create and switch to" },
-        list: { type: "boolean", description: "List all branches instead of creating" },
+        name: {
+          type: "string",
+          description: "Branch name to create and switch to",
+        },
+        list: {
+          type: "boolean",
+          description: "List all branches instead of creating",
+        },
       },
     },
+    zodSchema: gitBranchSchema,
     permissionLevel: "write",
     creditCost: 1,
     execute: async (input, ctx) => {
-      if (input.list) {
+      const parsed = gitBranchSchema.parse(input);
+      if (parsed.list) {
         return execInSandbox("git branch -a", ctx);
       }
-      if (!input.name) {
-        return { success: false, output: "", error: "Branch name is required when not listing" };
+      if (!parsed.name) {
+        return {
+          success: false,
+          output: "",
+          error: "Branch name is required when not listing",
+        };
       }
-      return execInSandbox(`git checkout -b "${input.name}"`, ctx);
+      return await execInSandbox(`git checkout -b "${parsed.name}"`, ctx);
     },
   },
   {
@@ -95,15 +178,23 @@ export const gitTools: AgentToolDefinition[] = [
     inputSchema: {
       type: "object",
       properties: {
-        branch: { type: "string", description: "Branch to push (default: current branch)" },
-        setUpstream: { type: "boolean", description: "Set upstream tracking (default: true for new branches)" },
+        branch: {
+          type: "string",
+          description: "Branch to push (default: current branch)",
+        },
+        setUpstream: {
+          type: "boolean",
+          description: "Set upstream tracking (default: true for new branches)",
+        },
       },
     },
+    zodSchema: gitPushSchema,
     permissionLevel: "admin",
     creditCost: 2,
     execute: async (input, ctx) => {
-      const branch = (input.branch as string) || "HEAD";
-      const setUpstream = input.setUpstream !== false;
+      const parsed = gitPushSchema.parse(input);
+      const branch = parsed.branch || "HEAD";
+      const setUpstream = parsed.setUpstream !== false;
 
       let command: string;
       if (setUpstream) {
@@ -111,12 +202,13 @@ export const gitTools: AgentToolDefinition[] = [
       } else {
         command = `git push origin ${branch}`;
       }
-      return execInSandbox(command, ctx);
+      return await execInSandbox(command, ctx);
     },
   },
   {
     name: "git_create_pr",
-    description: "Create a pull request on the remote repository using the GitHub CLI",
+    description:
+      "Create a pull request on the remote repository using the GitHub CLI",
     inputSchema: {
       type: "object",
       properties: {
@@ -127,16 +219,19 @@ export const gitTools: AgentToolDefinition[] = [
       },
       required: ["title", "body"],
     },
+    zodSchema: gitCreatePrSchema,
     permissionLevel: "admin",
     creditCost: 3,
     execute: async (input, ctx) => {
-      const title = (input.title as string).replace(/"/g, '\\"');
-      const body = (input.body as string).replace(/"/g, '\\"');
-      const base = (input.base as string) || "main";
-      const draft = input.draft ? "--draft" : "";
+      const parsed = gitCreatePrSchema.parse(input);
+      const title = parsed.title.replace(/"/g, '\\"');
+      const body = parsed.body.replace(/"/g, '\\"');
+      const base = parsed.base || "main";
+      const draft = parsed.draft ? "--draft" : "";
 
-      const command = `gh pr create --title "${title}" --body "${body}" --base "${base}" ${draft}`.trim();
-      return execInSandbox(command, ctx);
+      const command =
+        `gh pr create --title "${title}" --body "${body}" --base "${base}" ${draft}`.trim();
+      return await execInSandbox(command, ctx);
     },
   },
 ];

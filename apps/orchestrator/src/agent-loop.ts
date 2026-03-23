@@ -1,35 +1,58 @@
+import type { AgentExecutionResult, BaseAgent } from "@prometheus/agent-sdk";
+import { db, sessionEvents } from "@prometheus/db";
 import { createLogger } from "@prometheus/logger";
 import { EventPublisher, QueueEvents } from "@prometheus/queue";
-import type { BaseAgent, AgentContext, AgentExecutionResult, ToolCall } from "@prometheus/agent-sdk";
-import { AGENT_ROLES, TOOL_REGISTRY } from "@prometheus/agent-sdk";
+import { withSpan } from "@prometheus/telemetry";
+import type { AgentRole } from "@prometheus/types";
+import { generateId, projectBrainClient } from "@prometheus/utils";
+import type { ConfidenceResult } from "./confidence";
+import { SessionMemory } from "./continuity/session-memory";
+import {
+  createExecutionContext,
+  ExecutionEngine,
+  type ExecutionEvent,
+  type ExecutionOptions,
+} from "./engine";
+import { ExecutionTracker } from "./feedback/execution-tracker";
+import { LearningExtractor } from "./feedback/learning-extractor";
 
 export type AgentLoopStatus = "idle" | "running" | "paused" | "stopped";
 
 interface LoopIteration {
-  iteration: number;
   agentRole: string;
-  startedAt: Date;
   completedAt: Date | null;
+  iteration: number;
   result: AgentExecutionResult | null;
+  startedAt: Date;
 }
 
 interface ProjectBrainContext {
   blueprintContent: string | null;
+  projectSummary: string | null;
   recentCIResults: string | null;
   sprintState: string | null;
-  projectSummary: string | null;
 }
 
-const MODEL_ROUTER_URL = process.env.MODEL_ROUTER_URL ?? "http://localhost:4002";
-const PROJECT_BRAIN_URL = process.env.PROJECT_BRAIN_URL ?? "http://localhost:4005";
-
-/** Maximum consecutive failures on the same step before triggering a blocker. */
-const BLOCKER_THRESHOLD = 3;
+const ROLE_SLOT_MAP: Record<string, string> = {
+  orchestrator: "think",
+  discovery: "longContext",
+  architect: "think",
+  planner: "think",
+  frontend_coder: "default",
+  backend_coder: "default",
+  integration_coder: "fastLoop",
+  test_engineer: "fastLoop",
+  ci_loop: "fastLoop",
+  security_auditor: "think",
+  deploy_engineer: "default",
+  documentation_specialist: "longContext",
+};
 
 /**
- * AgentLoop manages the full lifecycle of a single agent execution:
- * loading context, running the LLM loop with tool calls, tracking
- * credits consumed, and handling blockers.
+ * AgentLoop is now a thin wrapper around the ExecutionEngine.
+ * It manages session-level state (pause/resume/cancel), loads context
+ * from Project Brain, and publishes events to Redis — but delegates
+ * the core LLM loop to ExecutionEngine.execute().
  */
 export class AgentLoop {
   private readonly logger;
@@ -38,19 +61,45 @@ export class AgentLoop {
   private readonly orgId: string;
   private readonly userId: string;
   private status: AgentLoopStatus = "idle";
-  private iterations: LoopIteration[] = [];
-  private activeAgent: BaseAgent | null = null;
+  private readonly iterations: LoopIteration[] = [];
   private readonly eventPublisher: EventPublisher;
-  private consecutiveFailures = 0;
+  private readonly sessionMemory: SessionMemory;
+  private readonly learningExtractor: LearningExtractor;
+  private readonly executionTracker: ExecutionTracker;
   private totalCreditsConsumed = 0;
+  private lastConfidence: ConfidenceResult | null = null;
+  private activeAgent: BaseAgent | null = null;
+  private tokenBatchBuffer = "";
+  private tokenBatchTimer: ReturnType<typeof setTimeout> | null = null;
+  private fileChangeBatch: Array<{ tool: string; filePath: string }> = [];
+  private fileChangeBatchTimer: ReturnType<typeof setTimeout> | null = null;
+  private eventPersistBatch: Array<{
+    type: string;
+    data: Record<string, unknown>;
+    agentRole?: string;
+    timestamp: string;
+  }> = [];
+  private eventPersistTimer: ReturnType<typeof setTimeout> | null = null;
 
-  constructor(sessionId: string, projectId: string, orgId: string, userId: string) {
+  constructor(
+    sessionId: string,
+    projectId: string,
+    orgId: string,
+    userId: string
+  ) {
     this.sessionId = sessionId;
     this.projectId = projectId;
     this.orgId = orgId;
     this.userId = userId;
     this.logger = createLogger(`agent-loop:${sessionId}`);
     this.eventPublisher = new EventPublisher();
+    this.sessionMemory = new SessionMemory();
+    this.executionTracker = new ExecutionTracker();
+    this.learningExtractor = new LearningExtractor();
+  }
+
+  getLastConfidence(): ConfidenceResult | null {
+    return this.lastConfidence;
   }
 
   getStatus(): AgentLoopStatus {
@@ -69,9 +118,12 @@ export class AgentLoop {
     return [...this.iterations];
   }
 
+  getActiveAgent(): BaseAgent | null {
+    return this.activeAgent;
+  }
+
   /**
-   * Load context from Project Brain service. This fetches the active
-   * blueprint, recent CI results, and sprint state for the project.
+   * Load context from Project Brain service.
    */
   private async loadProjectBrainContext(): Promise<ProjectBrainContext> {
     const defaultCtx: ProjectBrainContext = {
@@ -82,92 +134,47 @@ export class AgentLoop {
     };
 
     try {
-      const response = await fetch(`${PROJECT_BRAIN_URL}/api/projects/${this.projectId}/context`, {
-        headers: { "Content-Type": "application/json" },
-        signal: AbortSignal.timeout(10_000),
-      });
-
-      if (!response.ok) {
-        this.logger.warn({ status: response.status }, "Failed to load Project Brain context, continuing without it");
-        return defaultCtx;
-      }
-
-      const data = await response.json() as ProjectBrainContext;
+      const response = await projectBrainClient.get<ProjectBrainContext>(
+        `/api/projects/${this.projectId}/context`
+      );
       this.logger.info("Loaded Project Brain context");
-      return data;
+      return response.data;
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
-      this.logger.warn({ error: msg }, "Project Brain unavailable, continuing without context");
+      this.logger.warn(
+        { error: msg },
+        "Project Brain unavailable, continuing without context"
+      );
       return defaultCtx;
     }
-  }
-
-  private createContext(brainContext: ProjectBrainContext): AgentContext {
-    return {
-      sessionId: this.sessionId,
-      projectId: this.projectId,
-      orgId: this.orgId,
-      userId: this.userId,
-      blueprintContent: brainContext.blueprintContent,
-      projectContext: brainContext.projectSummary,
-    };
-  }
-
-  /**
-   * Select the model router slot based on the agent role.
-   */
-  private selectSlotForRole(agentRole: string): string {
-    const slotMap: Record<string, string> = {
-      orchestrator: "think",
-      discovery: "longContext",
-      architect: "think",
-      planner: "think",
-      frontend_coder: "default",
-      backend_coder: "default",
-      integration_coder: "fastLoop",
-      test_engineer: "fastLoop",
-      ci_loop: "fastLoop",
-      security_auditor: "think",
-      deploy_engineer: "default",
-    };
-    return slotMap[agentRole] ?? "default";
   }
 
   /**
    * Execute a task with a specific agent role. This is the main entry
    * point called by the TaskRouter and phase runners.
+   *
+   * Delegates to ExecutionEngine.execute() and translates events
+   * into Redis pub/sub messages for the frontend.
    */
-  async executeTask(taskDescription: string, agentRole: string): Promise<AgentExecutionResult> {
+  executeTask(
+    taskDescription: string,
+    agentRole: string,
+    options?: ExecutionOptions
+  ): Promise<AgentExecutionResult> {
+    return withSpan(`agent.executeTask.${agentRole}`, (span) => {
+      span.setAttribute("session.id", this.sessionId);
+      span.setAttribute("agent.role", agentRole);
+      span.setAttribute("project.id", this.projectId);
+      return this._executeTaskInner(taskDescription, agentRole, options);
+    });
+  }
+
+  private async _executeTaskInner(
+    taskDescription: string,
+    agentRole: string,
+    options?: ExecutionOptions
+  ): Promise<AgentExecutionResult> {
     this.status = "running";
-    this.consecutiveFailures = 0;
-
-    // Load context from project brain
-    const brainContext = await this.loadProjectBrainContext();
-    const context = this.createContext(brainContext);
-
-    // Create agent instance
-    const roleConfig = AGENT_ROLES[agentRole];
-    if (!roleConfig) {
-      throw new Error(`Unknown agent role: ${agentRole}`);
-    }
-
-    const agent = roleConfig.create();
-    this.activeAgent = agent;
-    agent.initialize(context);
-
-    // Inject project context into the task description if available
-    let enrichedDescription = taskDescription;
-    if (brainContext.blueprintContent) {
-      enrichedDescription += `\n\n--- Blueprint ---\n${brainContext.blueprintContent}`;
-    }
-    if (brainContext.sprintState) {
-      enrichedDescription += `\n\n--- Current Sprint State ---\n${brainContext.sprintState}`;
-    }
-    if (brainContext.recentCIResults) {
-      enrichedDescription += `\n\n--- Recent CI Results ---\n${brainContext.recentCIResults}`;
-    }
-
-    agent.addUserMessage(enrichedDescription);
 
     const iteration: LoopIteration = {
       iteration: this.iterations.length + 1,
@@ -177,377 +184,594 @@ export class AgentLoop {
       result: null,
     };
 
-    this.logger.info({
-      iteration: iteration.iteration,
+    const ctx = await this.buildTaskContext(
+      taskDescription,
       agentRole,
-    }, "Starting agent execution");
+      iteration,
+      options
+    );
 
-    // Publish status event
+    try {
+      const result = await this.consumeExecutionEvents(ctx, agentRole);
+      return this.completeIteration(iteration, result, agentRole);
+    } catch (error) {
+      return this.failIteration(error, iteration, agentRole);
+    }
+  }
+
+  private async buildTaskContext(
+    taskDescription: string,
+    agentRole: string,
+    iteration: LoopIteration,
+    options?: ExecutionOptions
+  ): Promise<ReturnType<typeof createExecutionContext>> {
+    const brainContext = await this.loadProjectBrainContext();
+    const priorContext = await this.loadPriorContext();
+
+    this.logger.info(
+      { iteration: iteration.iteration, agentRole },
+      "Starting agent execution"
+    );
+
+    await this.publishStartEvent(agentRole, iteration.iteration);
+
+    const enrichedDescription = await this.enrichTaskDescription(
+      taskDescription,
+      agentRole
+    );
+
+    return createExecutionContext({
+      sessionId: this.sessionId,
+      projectId: this.projectId,
+      orgId: this.orgId,
+      userId: this.userId,
+      agentRole: agentRole as AgentRole,
+      taskDescription: enrichedDescription,
+      blueprintContent: brainContext.blueprintContent,
+      projectContext: brainContext.projectSummary,
+      sprintState: brainContext.sprintState,
+      recentCIResults: brainContext.recentCIResults,
+      priorSessionContext:
+        priorContext.loaded && priorContext.context
+          ? priorContext.context
+          : null,
+      options: {
+        slot: ROLE_SLOT_MAP[agentRole] ?? "default",
+        ...options,
+      },
+    });
+  }
+
+  private async loadPriorContext(): Promise<{
+    loaded: boolean;
+    priorSessions: number;
+    context: string;
+  }> {
+    const priorContext = await this.sessionMemory
+      .loadPriorContext(this.sessionId, this.projectId)
+      .catch(() => ({ loaded: false, priorSessions: 0, context: "" }));
+
+    if (priorContext.loaded && priorContext.context) {
+      this.logger.info(
+        { priorSessions: priorContext.priorSessions },
+        "Loaded prior session context"
+      );
+    }
+
+    return priorContext;
+  }
+
+  private async publishStartEvent(
+    agentRole: string,
+    iterationNum: number
+  ): Promise<void> {
     await this.eventPublisher.publishSessionEvent(this.sessionId, {
       type: QueueEvents.AGENT_STATUS,
       data: {
         agentRole,
         status: "running",
-        iteration: iteration.iteration,
+        iteration: iterationNum,
       },
       agentRole,
       timestamp: new Date().toISOString(),
     });
+  }
 
-    try {
-      const result = await this.runAgentLoop(agent, context, agentRole);
-      iteration.completedAt = new Date();
-      iteration.result = result;
-      this.iterations.push(iteration);
-      this.status = "idle";
+  private async enrichTaskDescription(
+    taskDescription: string,
+    agentRole: string
+  ): Promise<string> {
+    const taskType = this.inferTaskType(taskDescription);
+    const learnedContext = await this.learningExtractor
+      .getLearnedContext(agentRole, taskType, this.projectId)
+      .catch(() => "");
 
-      // Publish completion event
-      await this.eventPublisher.publishSessionEvent(this.sessionId, {
-        type: QueueEvents.AGENT_STATUS,
-        data: {
-          agentRole,
-          status: result.success ? "completed" : "failed",
-          tokensUsed: result.tokensUsed,
-          toolCalls: result.toolCalls,
-          filesChanged: result.filesChanged,
-        },
-        agentRole,
-        timestamp: new Date().toISOString(),
-      });
+    return learnedContext
+      ? `${taskDescription}\n\n${learnedContext}`
+      : taskDescription;
+  }
 
-      return result;
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      this.logger.error({ error: errorMessage }, "Agent execution failed");
+  private async consumeExecutionEvents(
+    ctx: ReturnType<typeof createExecutionContext>,
+    agentRole: string
+  ): Promise<AgentExecutionResult> {
+    let result: AgentExecutionResult | null = null;
 
-      iteration.completedAt = new Date();
-      iteration.result = {
+    for await (const event of ExecutionEngine.execute(ctx)) {
+      if (this.getStatus() === "paused") {
+        await this.waitForResume();
+      }
+      if (this.getStatus() === "stopped") {
+        break;
+      }
+
+      await this.publishExecutionEvent(event, agentRole);
+
+      const eventResult = this.trackEventState(event, result);
+      if (eventResult !== undefined) {
+        result = eventResult;
+      }
+    }
+
+    return (
+      result ?? {
         success: false,
         output: "",
         filesChanged: [],
         tokensUsed: { input: 0, output: 0 },
         toolCalls: 0,
-        error: errorMessage,
-      };
-      this.iterations.push(iteration);
-      this.status = "idle";
-
-      // Publish error event
-      await this.eventPublisher.publishSessionEvent(this.sessionId, {
-        type: QueueEvents.ERROR,
-        data: { agentRole, error: errorMessage },
-        agentRole,
-        timestamp: new Date().toISOString(),
-      });
-
-      return iteration.result;
-    }
+        steps: 0,
+        creditsConsumed: 0,
+        error: "Execution completed without result",
+      }
+    );
   }
 
-  /**
-   * Core agent loop: send messages to LLM, parse tool calls, execute
-   * them, and repeat until the agent completes or hits the iteration limit.
-   */
-  private async runAgentLoop(
-    agent: BaseAgent,
-    context: AgentContext,
-    agentRole: string,
+  private async completeIteration(
+    iteration: LoopIteration,
+    result: AgentExecutionResult,
+    agentRole: string
   ): Promise<AgentExecutionResult> {
-    const maxIterations = 50;
-    let totalToolCalls = 0;
-    let totalInputTokens = 0;
-    let totalOutputTokens = 0;
-    const filesChanged = new Set<string>();
-    let lastOutput = "";
-    let consecutiveErrors = 0;
+    iteration.completedAt = new Date();
+    iteration.result = result;
+    this.iterations.push(iteration);
+    this.status = "idle";
+    this.cleanup();
 
-    const slot = this.selectSlotForRole(agentRole);
-    const toolDefs = agent.getToolDefinitions();
-
-    for (let i = 0; i < maxIterations; i++) {
-      // Handle pause
-      if (this.status === "paused") {
-        await this.waitForResume();
-      }
-      if (this.status === "stopped") {
-        break;
-      }
-
-      // Send messages to model-router
-      const messages = agent.getMessages().map((m) => ({
-        role: m.role,
-        content: m.content,
-        ...(m.toolCallId ? { tool_call_id: m.toolCallId } : {}),
-        ...(m.toolCalls ? { tool_calls: m.toolCalls } : {}),
-      }));
-
-      let response: {
-        choices: Array<{
-          message: { role: string; content: string; tool_calls?: Array<{ id: string; function: { name: string; arguments: string } }> };
-          finish_reason: string;
-        }>;
-        usage: { prompt_tokens: number; completion_tokens: number; total_tokens: number; cost_usd: number };
-      };
-
-      try {
-        const routeResponse = await fetch(`${MODEL_ROUTER_URL}/route`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            slot,
-            messages,
-            options: {
-              tools: toolDefs.length > 0 ? toolDefs : undefined,
-              temperature: 0.1,
-              maxTokens: 4096,
-            },
-          }),
-          signal: AbortSignal.timeout(120_000),
-        });
-
-        if (!routeResponse.ok) {
-          const errBody = await routeResponse.text();
-          throw new Error(`Model router returned ${routeResponse.status}: ${errBody}`);
-        }
-
-        response = await routeResponse.json() as typeof response;
-      } catch (error) {
-        consecutiveErrors++;
-        const msg = error instanceof Error ? error.message : String(error);
-        this.logger.error({ error: msg, iteration: i }, "LLM request failed");
-
-        if (consecutiveErrors >= BLOCKER_THRESHOLD) {
-          await this.publishBlocker(agentRole, `LLM call failed ${consecutiveErrors} times: ${msg}`);
-          return {
-            success: false,
-            output: lastOutput,
-            filesChanged: Array.from(filesChanged),
-            tokensUsed: { input: totalInputTokens, output: totalOutputTokens },
-            toolCalls: totalToolCalls,
-            error: `Blocked after ${consecutiveErrors} consecutive LLM failures`,
-          };
-        }
-
-        // Brief pause before retry
-        await new Promise((r) => setTimeout(r, 2000));
-        continue;
-      }
-
-      // Reset consecutive error counter on success
-      consecutiveErrors = 0;
-
-      // Track token usage
-      totalInputTokens += response.usage.prompt_tokens;
-      totalOutputTokens += response.usage.completion_tokens;
-
-      // Track credits (1 credit per 1K tokens approximately)
-      const creditsForRequest = Math.ceil(response.usage.total_tokens / 1000);
-      this.totalCreditsConsumed += creditsForRequest;
-
-      // Publish credit update
-      await this.eventPublisher.publishSessionEvent(this.sessionId, {
-        type: QueueEvents.CREDIT_UPDATE,
-        data: {
-          creditsConsumed: creditsForRequest,
-          totalCreditsConsumed: this.totalCreditsConsumed,
-          tokensUsed: response.usage.total_tokens,
-        },
-        timestamp: new Date().toISOString(),
-      });
-
-      const choice = response.choices[0];
-      if (!choice) {
-        this.logger.warn("Empty response from LLM");
-        continue;
-      }
-
-      const assistantContent = choice.message.content ?? "";
-      const toolCalls = choice.message.tool_calls;
-
-      // Publish reasoning/output event for streaming to frontend
-      if (assistantContent) {
-        lastOutput = assistantContent;
-        await this.eventPublisher.publishSessionEvent(this.sessionId, {
-          type: QueueEvents.AGENT_OUTPUT,
-          data: { content: assistantContent, agentRole, iteration: i },
-          agentRole,
-          timestamp: new Date().toISOString(),
-        });
-      }
-
-      // If no tool calls, the agent is done
-      if (!toolCalls || toolCalls.length === 0) {
-        agent.addAssistantMessage(assistantContent);
-        break;
-      }
-
-      // Add assistant message with tool calls
-      const parsedToolCalls: ToolCall[] = toolCalls.map((tc) => ({
-        id: tc.id,
-        name: tc.function.name,
-        arguments: tc.function.arguments,
-      }));
-      agent.addAssistantMessage(assistantContent, parsedToolCalls);
-
-      // Execute each tool call
-      for (const tc of toolCalls) {
-        totalToolCalls++;
-        const toolName = tc.function.name;
-        const toolArgs = this.parseToolArgs(tc.function.arguments);
-
-        this.logger.info({ tool: toolName, callId: tc.id }, "Executing tool call");
-
-        const toolDef = TOOL_REGISTRY[toolName];
-        if (!toolDef) {
-          agent.addToolResult(tc.id, JSON.stringify({ success: false, error: `Unknown tool: ${toolName}` }));
-          continue;
-        }
-
-        try {
-          const toolResult = await toolDef.execute(toolArgs, {
-            sessionId: this.sessionId,
-            projectId: this.projectId,
-            sandboxId: this.sessionId, // sandbox scoped to session
-            workDir: `/workspace/${this.projectId}`,
-            orgId: this.orgId,
-            userId: this.userId,
-          });
-
-          agent.addToolResult(tc.id, JSON.stringify(toolResult));
-
-          // Track file changes
-          if (toolResult.metadata?.filePath) {
-            filesChanged.add(toolResult.metadata.filePath as string);
-          }
-          if (toolName === "file_write" || toolName === "file_edit") {
-            const filePath = toolArgs.path ?? toolArgs.filePath;
-            if (filePath) filesChanged.add(String(filePath));
-          }
-
-          // Publish file change event if applicable
-          if (filesChanged.size > 0 && (toolName === "file_write" || toolName === "file_edit")) {
-            await this.eventPublisher.publishSessionEvent(this.sessionId, {
-              type: QueueEvents.FILE_CHANGE,
-              data: {
-                tool: toolName,
-                filePath: toolArgs.path ?? toolArgs.filePath,
-                agentRole,
-              },
-              agentRole,
-              timestamp: new Date().toISOString(),
-            });
-          }
-
-          // Publish terminal output for terminal_exec
-          if (toolName === "terminal_exec" && toolResult.output) {
-            await this.eventPublisher.publishSessionEvent(this.sessionId, {
-              type: QueueEvents.TERMINAL_OUTPUT,
-              data: {
-                command: toolArgs.command,
-                output: toolResult.output.slice(0, 5000), // cap to 5KB
-                success: toolResult.success,
-              },
-              agentRole,
-              timestamp: new Date().toISOString(),
-            });
-          }
-        } catch (error) {
-          const errMsg = error instanceof Error ? error.message : String(error);
-          this.logger.error({ tool: toolName, error: errMsg }, "Tool execution failed");
-          agent.addToolResult(tc.id, JSON.stringify({
-            success: false,
-            error: errMsg,
-          }));
-
-          // Track consecutive failures for blocker detection
-          this.consecutiveFailures++;
-          if (this.consecutiveFailures >= BLOCKER_THRESHOLD) {
-            await this.publishBlocker(agentRole, `Tool ${toolName} failed ${this.consecutiveFailures} times: ${errMsg}`);
-            return {
-              success: false,
-              output: lastOutput,
-              filesChanged: Array.from(filesChanged),
-              tokensUsed: { input: totalInputTokens, output: totalOutputTokens },
-              toolCalls: totalToolCalls,
-              error: `Blocked: ${toolName} failed ${this.consecutiveFailures} consecutive times`,
-            };
-          }
-        }
-      }
-    }
-
-    return {
-      success: true,
-      output: lastOutput,
-      filesChanged: Array.from(filesChanged),
-      tokensUsed: { input: totalInputTokens, output: totalOutputTokens },
-      toolCalls: totalToolCalls,
-    };
+    await this.finalizeExecution(iteration, result, agentRole);
+    return result;
   }
 
-  /**
-   * Publish a human_input_needed event when the agent is blocked.
-   */
-  private async publishBlocker(agentRole: string, reason: string): Promise<void> {
-    this.logger.warn({ agentRole, reason }, "Agent blocked, requesting human input");
-    this.status = "paused";
+  private async failIteration(
+    error: unknown,
+    iteration: LoopIteration,
+    agentRole: string
+  ): Promise<AgentExecutionResult> {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    this.logger.error({ error: errorMessage }, "Agent execution failed");
+
+    iteration.completedAt = new Date();
+    iteration.result = {
+      success: false,
+      output: "",
+      filesChanged: [],
+      tokensUsed: { input: 0, output: 0 },
+      toolCalls: 0,
+      steps: 0,
+      creditsConsumed: 0,
+      error: errorMessage,
+    };
+    this.iterations.push(iteration);
+    this.status = "idle";
+    this.cleanup();
 
     await this.eventPublisher.publishSessionEvent(this.sessionId, {
       type: QueueEvents.ERROR,
+      data: { agentRole, error: errorMessage },
+      agentRole,
+      timestamp: new Date().toISOString(),
+    });
+
+    return iteration.result as NonNullable<typeof iteration.result>;
+  }
+
+  private async finalizeExecution(
+    iteration: LoopIteration,
+    result: AgentExecutionResult,
+    agentRole: string
+  ): Promise<void> {
+    await this.eventPublisher.publishSessionEvent(this.sessionId, {
+      type: QueueEvents.AGENT_STATUS,
       data: {
-        event: "human_input_needed",
         agentRole,
-        reason,
-        consecutiveFailures: this.consecutiveFailures,
+        status: result.success ? "completed" : "failed",
+        tokensUsed: result.tokensUsed,
+        toolCalls: result.toolCalls,
+        filesChanged: result.filesChanged,
       },
       agentRole,
       timestamp: new Date().toISOString(),
     });
 
-    // Also notify the user
-    await this.eventPublisher.publishNotification(this.userId, {
-      type: "human_input_needed",
-      title: "Agent needs help",
-      message: reason,
-      data: { sessionId: this.sessionId, agentRole },
-    });
+    this.sessionMemory
+      .saveSessionSummary({
+        sessionId: this.sessionId,
+        projectId: this.projectId,
+        outcome: result.success ? "completed" : "failed",
+        filesChanged: result.filesChanged,
+        creditsConsumed: result.creditsConsumed,
+        duration: iteration.completedAt
+          ? iteration.completedAt.getTime() - iteration.startedAt.getTime()
+          : 0,
+        decisions: [],
+        blockers: result.error ? [result.error] : [],
+      })
+      .catch((err) => {
+        this.logger.warn({ err }, "Failed to save session summary");
+      });
+
+    this.executionTracker
+      .record({
+        projectId: this.projectId,
+        agentRole,
+        taskType: agentRole,
+        success: result.success,
+        duration: iteration.completedAt
+          ? iteration.completedAt.getTime() - iteration.startedAt.getTime()
+          : 0,
+        iterations: result.steps,
+        tokensUsed: result.tokensUsed.input + result.tokensUsed.output,
+        filesChanged: result.filesChanged.length,
+        errorType: result.error,
+      })
+      .catch(() => {
+        /* fire-and-forget */
+      });
   }
 
-  private parseToolArgs(argsStr: string): Record<string, unknown> {
-    try {
-      return JSON.parse(argsStr);
-    } catch {
-      return { raw: argsStr };
+  /**
+   * Track internal state changes from execution events.
+   * Returns a new result if the event produces one, otherwise undefined.
+   */
+  private trackEventState(
+    event: ExecutionEvent,
+    currentResult: AgentExecutionResult | null
+  ): AgentExecutionResult | null | undefined {
+    if (event.type === "confidence") {
+      this.lastConfidence = {
+        score: event.score,
+        action: event.action,
+        factors: event.factors.map((f) => ({
+          name: f.name,
+          value: f.value,
+          weight: 0,
+          contribution: 0,
+        })),
+        recommendedSlot: null,
+      };
+      return undefined;
     }
+
+    if (event.type === "credit_update") {
+      this.totalCreditsConsumed = event.totalCreditsConsumed;
+      return undefined;
+    }
+
+    if (event.type === "complete") {
+      return {
+        success: event.success,
+        output: event.output,
+        filesChanged: event.filesChanged,
+        tokensUsed: event.tokensUsed,
+        toolCalls: event.toolCalls,
+        steps: event.steps,
+        creditsConsumed: event.creditsConsumed,
+      };
+    }
+
+    if (event.type === "error" && !event.recoverable && !currentResult) {
+      return {
+        success: false,
+        output: "",
+        filesChanged: [],
+        tokensUsed: { input: 0, output: 0 },
+        toolCalls: 0,
+        steps: 0,
+        creditsConsumed: 0,
+        error: event.error,
+      };
+    }
+
+    return undefined;
+  }
+
+  /**
+   * Translate ExecutionEngine events to Redis pub/sub messages.
+   */
+  private async publishExecutionEvent(
+    event: ExecutionEvent,
+    agentRole: string
+  ): Promise<void> {
+    switch (event.type) {
+      case "token":
+        // Batch token events (50ms window) to reduce pub/sub pressure
+        this.tokenBatchBuffer += event.content;
+        if (!this.tokenBatchTimer) {
+          this.tokenBatchTimer = setTimeout(() => {
+            const content = this.tokenBatchBuffer;
+            this.tokenBatchBuffer = "";
+            this.tokenBatchTimer = null;
+            if (content) {
+              this.eventPublisher
+                .publishSessionEvent(this.sessionId, {
+                  type: QueueEvents.AGENT_OUTPUT,
+                  data: { content, agentRole, streaming: true },
+                  agentRole,
+                  timestamp: new Date().toISOString(),
+                })
+                .catch(() => {
+                  // best-effort batch publish
+                });
+            }
+          }, 50);
+        }
+        break;
+
+      case "tool_call":
+        await this.eventPublisher.publishSessionEvent(this.sessionId, {
+          type: QueueEvents.AGENT_OUTPUT,
+          data: {
+            type: "tool_call",
+            tool: event.toolName,
+            args: event.args,
+            agentRole,
+          },
+          agentRole,
+          timestamp: event.timestamp,
+        });
+        break;
+
+      case "tool_result":
+        await this.eventPublisher.publishSessionEvent(this.sessionId, {
+          type: QueueEvents.AGENT_OUTPUT,
+          data: {
+            type: "tool_result",
+            tool: event.toolName,
+            success: event.success,
+            output: event.output.slice(0, 2000),
+            agentRole,
+          },
+          agentRole,
+          timestamp: event.timestamp,
+        });
+        break;
+
+      case "file_change":
+        // Batch file_change events (200ms window)
+        this.fileChangeBatch.push({
+          tool: event.tool,
+          filePath: event.filePath,
+        });
+        if (!this.fileChangeBatchTimer) {
+          this.fileChangeBatchTimer = setTimeout(() => {
+            const batch = [...this.fileChangeBatch];
+            this.fileChangeBatch = [];
+            this.fileChangeBatchTimer = null;
+            for (const change of batch) {
+              this.eventPublisher
+                .publishSessionEvent(this.sessionId, {
+                  type: QueueEvents.FILE_CHANGE,
+                  data: {
+                    tool: change.tool,
+                    filePath: change.filePath,
+                    agentRole,
+                  },
+                  agentRole,
+                  timestamp: new Date().toISOString(),
+                })
+                .catch(() => {
+                  // best-effort batch publish
+                });
+            }
+          }, 200);
+        }
+        break;
+
+      case "terminal_output":
+        await this.eventPublisher.publishSessionEvent(this.sessionId, {
+          type: QueueEvents.TERMINAL_OUTPUT,
+          data: {
+            command: event.command,
+            output: event.output,
+            success: event.success,
+          },
+          agentRole,
+          timestamp: event.timestamp,
+        });
+        break;
+
+      case "credit_update":
+        await this.eventPublisher.publishSessionEvent(this.sessionId, {
+          type: QueueEvents.CREDIT_UPDATE,
+          data: {
+            creditsConsumed: event.creditsConsumed,
+            totalCreditsConsumed: event.totalCreditsConsumed,
+          },
+          timestamp: event.timestamp,
+        });
+        break;
+
+      case "confidence":
+        await this.eventPublisher.publishSessionEvent(this.sessionId, {
+          type: QueueEvents.AGENT_STATUS,
+          data: {
+            agentRole,
+            confidence: event.score,
+            action: event.action,
+            iteration: event.iteration,
+          },
+          timestamp: event.timestamp,
+        });
+        break;
+
+      case "checkpoint":
+        await this.eventPublisher.publishSessionEvent(this.sessionId, {
+          type: QueueEvents.CHECKPOINT,
+          data: {
+            event: "strategic_checkpoint",
+            checkpointType: event.checkpointType,
+            agentRole,
+            reason: event.reason,
+            affectedFiles: event.affectedFiles,
+          },
+          agentRole,
+          timestamp: event.timestamp,
+        });
+        break;
+
+      case "error":
+        if (!event.recoverable) {
+          await this.eventPublisher.publishSessionEvent(this.sessionId, {
+            type: QueueEvents.ERROR,
+            data: {
+              event: "human_input_needed",
+              agentRole,
+              reason: event.error,
+            },
+            agentRole,
+            timestamp: event.timestamp,
+          });
+          await this.eventPublisher.publishNotification(this.userId, {
+            type: "human_input_needed",
+            title: "Agent needs help",
+            message: event.error,
+            data: { sessionId: this.sessionId, agentRole },
+          });
+        }
+        break;
+
+      // self_review and complete events don't need separate Redis publishing
+      default:
+        break;
+    }
+
+    // Batch-persist events to DB for session replay (fire-and-forget)
+    this.eventPersistBatch.push({
+      type: event.type,
+      data: event as unknown as Record<string, unknown>,
+      agentRole,
+      timestamp: event.timestamp,
+    });
+    if (!this.eventPersistTimer) {
+      this.eventPersistTimer = setTimeout(() => {
+        this.flushEventPersistBatch();
+      }, 500);
+    }
+  }
+
+  private flushEventPersistBatch(): void {
+    const batch = [...this.eventPersistBatch];
+    this.eventPersistBatch = [];
+    this.eventPersistTimer = null;
+    if (batch.length === 0) {
+      return;
+    }
+
+    const rows = batch.map((evt) => ({
+      id: generateId("evt"),
+      sessionId: this.sessionId,
+      type: evt.type as "agent_output",
+      data: evt.data,
+      agentRole: evt.agentRole ?? null,
+      timestamp: new Date(evt.timestamp),
+    }));
+
+    db.insert(sessionEvents)
+      .values(rows)
+      .catch((err) => {
+        this.logger.warn(
+          { err, count: rows.length },
+          "Event batch persist failed"
+        );
+      });
+  }
+
+  /**
+   * Infer a coarse task type from the description for memory lookup.
+   */
+  private inferTaskType(description: string): string {
+    const lower = description.toLowerCase();
+    if (lower.includes("bug") || lower.includes("fix")) {
+      return "bugfix";
+    }
+    if (lower.includes("test")) {
+      return "testing";
+    }
+    if (lower.includes("refactor")) {
+      return "refactoring";
+    }
+    if (lower.includes("deploy") || lower.includes("ci")) {
+      return "deployment";
+    }
+    if (lower.includes("security") || lower.includes("audit")) {
+      return "security";
+    }
+    if (lower.includes("document")) {
+      return "documentation";
+    }
+    return "feature";
   }
 
   private waitForResume(): Promise<void> {
     return new Promise((resolve) => {
       const check = () => {
-        if (this.status !== "paused") {
-          resolve();
-        } else {
+        if (this.status === "paused") {
           setTimeout(check, 500);
+        } else {
+          resolve();
         }
       };
       check();
     });
   }
 
-  async pause(): Promise<void> {
+  pause(): void {
     this.status = "paused";
     this.logger.info("Agent loop paused");
   }
 
-  async resume(): Promise<void> {
+  resume(): void {
     this.status = "running";
-    this.consecutiveFailures = 0;
     this.logger.info("Agent loop resumed");
   }
 
-  async stop(): Promise<void> {
+  stop(): void {
     this.status = "stopped";
-    this.activeAgent = null;
     this.logger.info("Agent loop stopped");
+  }
+
+  /**
+   * Clean up resources: clear batch timers, flush pending batches.
+   * Called after task completion (success or error).
+   */
+  cleanup(): void {
+    if (this.tokenBatchTimer) {
+      clearTimeout(this.tokenBatchTimer);
+      this.tokenBatchTimer = null;
+      this.tokenBatchBuffer = "";
+    }
+    if (this.fileChangeBatchTimer) {
+      clearTimeout(this.fileChangeBatchTimer);
+      this.fileChangeBatchTimer = null;
+      this.fileChangeBatch = [];
+    }
+    if (this.eventPersistTimer) {
+      clearTimeout(this.eventPersistTimer);
+      this.eventPersistTimer = null;
+    }
+    // Flush any remaining events to DB
+    this.flushEventPersistBatch();
+    this.activeAgent = null;
+    this.logger.debug("Agent loop cleaned up");
   }
 }

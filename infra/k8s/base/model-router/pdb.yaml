@@ -1,0 +1,10 @@
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: model-router-pdb
+  namespace: prometheus
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      app: model-router

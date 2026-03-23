@@ -1,0 +1,227 @@
+# Prometheus Platform — SLO / SLI Definitions
+# These definitions are consumed by the observability stack (Grafana Mimir rules,
+# alert manager) to compute error-budget burn rates and trigger alerts.
+
+slos:
+  # ──────────────────────────────────────────────
+  # 1. API Availability
+  # ──────────────────────────────────────────────
+  - name: api-availability
+    service: api
+    description: >
+      The API gateway must return successful (non-5xx) responses for the
+      vast majority of requests. Excludes health-check endpoints.
+    sli:
+      type: availability
+      good_events: |
+        sum(rate(http_requests_total{service="api", status_code!~"5.."}[5m]))
+      total_events: |
+        sum(rate(http_requests_total{service="api"}[5m]))
+    objectives:
+      - target: 0.999          # 99.9 %
+        window: 30d
+      - target: 0.9995         # 99.95 % stretch goal
+        window: 30d
+    alerting:
+      burn_rate_windows:
+        - long_window: 1h
+          short_window: 5m
+          factor: 14.4          # 2 % budget in 1 h
+        - long_window: 6h
+          short_window: 30m
+          factor: 6              # 5 % budget in 6 h
+        - long_window: 3d
+          short_window: 6h
+          factor: 1              # 10 % budget in 3 d
+
+  # ──────────────────────────────────────────────
+  # 2. API Latency (p99)
+  # ──────────────────────────────────────────────
+  - name: api-latency-p99
+    service: api
+    description: >
+      99th-percentile request latency for the API should remain below
+      the specified threshold.
+    sli:
+      type: latency
+      threshold_ms: 500
+      good_events: |
+        sum(rate(http_request_duration_seconds_bucket{service="api", le="0.5"}[5m]))
+      total_events: |
+        sum(rate(http_request_duration_seconds_count{service="api"}[5m]))
+    objectives:
+      - target: 0.99            # 99 % of requests < 500 ms
+        window: 30d
+    alerting:
+      burn_rate_windows:
+        - long_window: 1h
+          short_window: 5m
+          factor: 14.4
+        - long_window: 6h
+          short_window: 30m
+          factor: 6
+
+  # ──────────────────────────────────────────────
+  # 3. Agent Task Success Rate
+  # ──────────────────────────────────────────────
+  - name: agent-task-success
+    service: orchestrator
+    description: >
+      Agent tasks submitted via the orchestrator should complete
+      successfully (not fail or time out).
+    sli:
+      type: quality
+      good_events: |
+        sum(rate(agent_tasks_completed_total{status="success"}[5m]))
+      total_events: |
+        sum(rate(agent_tasks_completed_total[5m]))
+    objectives:
+      - target: 0.975           # 97.5 %
+        window: 30d
+    alerting:
+      burn_rate_windows:
+        - long_window: 1h
+          short_window: 5m
+          factor: 14.4
+        - long_window: 6h
+          short_window: 30m
+          factor: 6
+        - long_window: 3d
+          short_window: 6h
+          factor: 1
+
+  # ──────────────────────────────────────────────
+  # 4. WebSocket Connection Reliability
+  # ──────────────────────────────────────────────
+  - name: websocket-availability
+    service: socket-server
+    description: >
+      WebSocket upgrade requests should succeed, and active connections
+      should remain stable (low involuntary disconnect rate).
+    sli:
+      type: availability
+      good_events: |
+        sum(rate(ws_connections_total{status="success"}[5m]))
+      total_events: |
+        sum(rate(ws_connections_total[5m]))
+    objectives:
+      - target: 0.999
+        window: 30d
+    alerting:
+      burn_rate_windows:
+        - long_window: 1h
+          short_window: 5m
+          factor: 14.4
+        - long_window: 6h
+          short_window: 30m
+          factor: 6
+
+  # ──────────────────────────────────────────────
+  # 5. Database Query Latency
+  # ──────────────────────────────────────────────
+  - name: db-query-latency
+    service: db
+    description: >
+      Database query latency (as observed by the application) should
+      remain below the target for the majority of queries.
+    sli:
+      type: latency
+      threshold_ms: 100
+      good_events: |
+        sum(rate(db_query_duration_seconds_bucket{le="0.1"}[5m]))
+      total_events: |
+        sum(rate(db_query_duration_seconds_count[5m]))
+    objectives:
+      - target: 0.99
+        window: 30d
+    alerting:
+      burn_rate_windows:
+        - long_window: 1h
+          short_window: 5m
+          factor: 14.4
+        - long_window: 6h
+          short_window: 30m
+          factor: 6
+
+  # ──────────────────────────────────────────────
+  # 6. Queue Processing Throughput
+  # ──────────────────────────────────────────────
+  - name: queue-processing-latency
+    service: queue-worker
+    description: >
+      Jobs enqueued in BullMQ should be picked up and start processing
+      within the target wait time.
+    sli:
+      type: latency
+      threshold_ms: 30000        # 30 s queue wait
+      good_events: |
+        sum(rate(bullmq_job_wait_duration_seconds_bucket{le="30"}[5m]))
+      total_events: |
+        sum(rate(bullmq_job_wait_duration_seconds_count[5m]))
+    objectives:
+      - target: 0.95
+        window: 30d
+    alerting:
+      burn_rate_windows:
+        - long_window: 1h
+          short_window: 5m
+          factor: 14.4
+        - long_window: 6h
+          short_window: 30m
+          factor: 6
+
+  # ──────────────────────────────────────────────
+  # 7. Sandbox Provisioning
+  # ──────────────────────────────────────────────
+  - name: sandbox-provisioning
+    service: sandbox-manager
+    description: >
+      Sandbox environments should be provisioned and ready within the
+      target time.
+    sli:
+      type: latency
+      threshold_ms: 10000        # 10 s
+      good_events: |
+        sum(rate(sandbox_provision_duration_seconds_bucket{le="10"}[5m]))
+      total_events: |
+        sum(rate(sandbox_provision_duration_seconds_count[5m]))
+    objectives:
+      - target: 0.99
+        window: 30d
+    alerting:
+      burn_rate_windows:
+        - long_window: 1h
+          short_window: 5m
+          factor: 14.4
+        - long_window: 6h
+          short_window: 30m
+          factor: 6
+
+  # ──────────────────────────────────────────────
+  # 8. Model Router Availability
+  # ──────────────────────────────────────────────
+  - name: model-router-availability
+    service: model-router
+    description: >
+      LLM inference requests routed through the model router should
+      succeed (provider errors count as failures).
+    sli:
+      type: availability
+      good_events: |
+        sum(rate(model_requests_total{status="success"}[5m]))
+      total_events: |
+        sum(rate(model_requests_total[5m]))
+    objectives:
+      - target: 0.995            # 99.5 %
+        window: 30d
+    alerting:
+      burn_rate_windows:
+        - long_window: 1h
+          short_window: 5m
+          factor: 14.4
+        - long_window: 6h
+          short_window: 30m
+          factor: 6
+        - long_window: 3d
+          short_window: 6h
+          factor: 1

@@ -4,37 +4,62 @@ on:
   pull_request:
     branches: [main, develop]
   push:
-    branches: [main, develop]
+    branches: [main]
+
+permissions:
+  contents: read
 
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  TURBO_TOKEN: ${{ secrets.TURBO_TOKEN }}
+  TURBO_TEAM: ${{ vars.TURBO_TEAM }}
+
 jobs:
-  lint-and-typecheck:
+  lint:
+    name: Lint & Format
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
-        with:
-          version: 10
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version-file: '.nvmrc'
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - run: pnpm turbo typecheck
-      - run: pnpm turbo lint
+      - run: pnpm unsafe
+      - name: Check for uncommitted changes
+        run: |
+          if [ -n "$(git status --porcelain)" ]; then
+            echo "::error::Formatting changes detected. Run 'pnpm unsafe' locally and commit the changes."
+            git diff --stat
+            exit 1
+          fi
+
+  typecheck:
+    name: TypeScript Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: '.nvmrc'
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
 
   test:
+    name: Tests
     runs-on: ubuntu-latest
-    needs: lint-and-typecheck
     services:
       postgres:
         image: pgvector/pgvector:pg16
         env:
-          POSTGRES_USER: test
-          POSTGRES_PASSWORD: test
+          POSTGRES_USER: prometheus
+          POSTGRES_PASSWORD: prometheus
           POSTGRES_DB: prometheus_test
         ports:
           - 5432:5432
@@ -44,37 +69,102 @@ jobs:
           --health-timeout 5s
           --health-retries 5
       redis:
-        image: valkey/valkey:8-alpine
+        image: redis:7-alpine
         ports:
           - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DATABASE_URL: postgresql://prometheus:prometheus@localhost:5432/prometheus_test
+      REDIS_URL: redis://localhost:6379
+      EVENT_NAME: ${{ github.event_name }}
     steps:
       - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
         with:
-          version: 10
+          fetch-depth: 2
+      - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version-file: '.nvmrc'
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - run: pnpm turbo test
+      - run: pnpm db:push
+      - name: Run tests (selective on PR, full on push)
+        run: |
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            pnpm test --filter='...[HEAD^1]'
+          else
+            pnpm test
+          fi
+      - name: Upload coverage
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage-report
+          path: coverage/
+          retention-days: 7
+
+  security:
+    name: Security Scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Secret scanning with Gitleaks
+        uses: gitleaks/gitleaks-action@v2
         env:
-          DATABASE_URL: postgresql://test:test@localhost:5432/prometheus_test
-          REDIS_URL: redis://localhost:6379
-          CLERK_SECRET_KEY: sk_test_placeholder
-          ENCRYPTION_KEY: 0000000000000000000000000000000000000000000000000000000000000000
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: '.nvmrc'
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Audit dependencies
+        run: pnpm audit --audit-level=critical
+      - name: Check for known vulnerabilities
+        run: npx better-npm-audit audit --level critical
 
   build:
+    name: Build
     runs-on: ubuntu-latest
-    needs: test
+    needs: [lint, typecheck, test]
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
-        with:
-          version: 10
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version-file: '.nvmrc'
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - run: pnpm turbo build
+      - run: pnpm build
+
+  e2e:
+    name: E2E Tests
+    runs-on: ubuntu-latest
+    needs: [build]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: '.nvmrc'
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Install Playwright Browsers
+        run: pnpm --filter=@prometheus/web exec playwright install --with-deps chromium
+      - name: Run Playwright tests
+        run: pnpm --filter=@prometheus/web exec playwright test
+        env:
+          CI: true
+      - name: Upload test results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: playwright-report
+          path: apps/web/playwright-report/
+          retention-days: 7

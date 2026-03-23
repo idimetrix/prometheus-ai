@@ -7,22 +7,30 @@
     "dev": "tsx watch src/index.ts",
     "build": "tsup src/index.ts --format esm",
     "start": "node dist/index.js",
+    "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "clean": "rm -rf dist .turbo"
   },
   "dependencies": {
-    "hono": "^4.7.0",
-    "@hono/node-server": "^1.14.0",
+    "@ai-sdk/mcp": "^1.0.30",
+    "@hono/node-server": "^1.19.11",
     "@prometheus/auth": "workspace:*",
     "@prometheus/db": "workspace:*",
     "@prometheus/logger": "workspace:*",
+    "@prometheus/plugins": "workspace:*",
+    "@prometheus/queue": "workspace:*",
+    "@prometheus/telemetry": "workspace:*",
     "@prometheus/types": "workspace:*",
-    "@prometheus/utils": "workspace:*"
+    "@prometheus/utils": "workspace:*",
+    "ai": "^6.0.137",
+    "drizzle-orm": "^0.45.1",
+    "hono": "^4.12.9",
+    "zod": "^4.3.6"
   },
   "devDependencies": {
     "@prometheus/config-typescript": "workspace:*",
-    "tsx": "^4.19.0",
-    "tsup": "^8.4.0",
-    "typescript": "^5.7.0"
+    "tsup": "^8.5.1",
+    "tsx": "^4.21.0",
+    "typescript": "^6.0.2"
   }
 }

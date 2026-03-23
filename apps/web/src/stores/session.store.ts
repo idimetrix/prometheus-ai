@@ -2,57 +2,96 @@
 import { create } from "zustand";
 
 export interface SessionEvent {
-  id: string;
-  type: string;
   data: Record<string, unknown>;
+  id: string;
   timestamp: string;
+  type: string;
 }
 
 export interface PlanStep {
-  id: string;
-  title: string;
-  status: string;
   description?: string;
+  id: string;
+  status: string;
+  title: string;
 }
 
 export interface FileEntry {
+  children?: FileEntry[];
   name: string;
   path: string;
-  type: string;
   status?: string;
-  children?: FileEntry[];
+  type: string;
+}
+
+export type SessionMode = "task" | "plan" | "ask" | "watch" | "fleet";
+
+export type AgentStatus =
+  | "idle"
+  | "working"
+  | "waiting"
+  | "terminated"
+  | "error";
+
+export interface ActiveAgent {
+  currentTask?: string;
+  id: string;
+  role: string;
+  startedAt?: string;
+  status: AgentStatus;
+  stepsCompleted: number;
+  tokensIn: number;
+  tokensOut: number;
+}
+
+export interface CreditEntry {
+  credits: number;
+  timestamp: number;
 }
 
 interface SessionState {
+  activeFilePath: string | null;
   activeSessionId: string | null;
-  status: string | null;
-  terminalLines: Array<{ content: string; timestamp?: string }>;
-  planSteps: PlanStep[];
-  fileTree: FileEntry[];
+  addCreditEntry: (credits: number) => void;
+  addEvent: (event: SessionEvent) => void;
+  addFileEntry: (entry: FileEntry) => void;
+  addReasoning: (thought: string) => void;
+  addTerminalLine: (line: { content: string; timestamp?: string }) => void;
+  addTerminalOutput: (content: string) => void;
+  agents: ActiveAgent[];
+  clearSession: () => void;
+  closeFile: (path: string) => void;
+  creditHistory: CreditEntry[];
   events: SessionEvent[];
+  fileTree: FileEntry[];
   isConnected: boolean;
+  mode: SessionMode;
+  openFile: (path: string) => void;
+  openFiles: string[];
+  planSteps: PlanStep[];
   queuePosition: number;
   reasoning: string[];
+  removeAgent: (agentId: string) => void;
+  setActiveFile: (path: string) => void;
 
   setActiveSession: (id: string | null) => void;
-  setStatus: (status: string | null) => void;
-  addTerminalLine: (line: { content: string; timestamp?: string }) => void;
-  setPlanSteps: (steps: PlanStep[]) => void;
-  updatePlanStep: (stepId: string, updates: Partial<PlanStep>) => void;
-  setFileTree: (files: FileEntry[]) => void;
-  addFileEntry: (entry: FileEntry) => void;
-  addEvent: (event: SessionEvent) => void;
+  setAgents: (agents: ActiveAgent[]) => void;
   setConnected: (connected: boolean) => void;
+  setFileTree: (files: FileEntry[]) => void;
+  setMode: (mode: SessionMode) => void;
+  setPlanSteps: (steps: PlanStep[]) => void;
   setQueuePosition: (position: number) => void;
-  addReasoning: (thought: string) => void;
-  addTerminalOutput: (content: string) => void;
+  setStatus: (status: string | null) => void;
+  status: string | null;
+  terminalLines: Array<{ content: string; timestamp?: string }>;
+  updateAgent: (agentId: string, updates: Partial<ActiveAgent>) => void;
   updateFileTree: (files: FileEntry[]) => void;
-  clearSession: () => void;
+  updatePlanStep: (stepId: string, updates: Partial<PlanStep>) => void;
 }
 
 export const useSessionStore = create<SessionState>((set) => ({
   activeSessionId: null,
   status: null,
+  mode: "task",
   terminalLines: [],
   planSteps: [],
   fileTree: [],
@@ -60,9 +99,14 @@ export const useSessionStore = create<SessionState>((set) => ({
   isConnected: false,
   queuePosition: 0,
   reasoning: [],
+  agents: [],
+  openFiles: [],
+  activeFilePath: null,
+  creditHistory: [],
 
   setActiveSession: (id) => set({ activeSessionId: id }),
   setStatus: (status) => set({ status }),
+  setMode: (mode) => set({ mode }),
 
   addTerminalLine: (line) =>
     set((state) => ({
@@ -74,7 +118,7 @@ export const useSessionStore = create<SessionState>((set) => ({
   updatePlanStep: (stepId, updates) =>
     set((state) => ({
       planSteps: state.planSteps.map((s) =>
-        s.id === stepId ? { ...s, ...updates } : s,
+        s.id === stepId ? { ...s, ...updates } : s
       ),
     })),
 
@@ -114,10 +158,53 @@ export const useSessionStore = create<SessionState>((set) => ({
 
   updateFileTree: (files) => set({ fileTree: files }),
 
+  openFile: (path) =>
+    set((state) => ({
+      openFiles: state.openFiles.includes(path)
+        ? state.openFiles
+        : [...state.openFiles, path],
+      activeFilePath: path,
+    })),
+
+  closeFile: (path) =>
+    set((state) => {
+      const updated = state.openFiles.filter((f) => f !== path);
+      const newActive =
+        state.activeFilePath === path
+          ? (updated.at(-1) ?? null)
+          : state.activeFilePath;
+      return { openFiles: updated, activeFilePath: newActive };
+    }),
+
+  setActiveFile: (path) => set({ activeFilePath: path }),
+
+  addCreditEntry: (credits) =>
+    set((state) => ({
+      creditHistory: [
+        ...state.creditHistory,
+        { credits, timestamp: Date.now() },
+      ].slice(-100),
+    })),
+
+  setAgents: (agents) => set({ agents }),
+
+  updateAgent: (agentId, updates) =>
+    set((state) => ({
+      agents: state.agents.map((a) =>
+        a.id === agentId ? { ...a, ...updates } : a
+      ),
+    })),
+
+  removeAgent: (agentId) =>
+    set((state) => ({
+      agents: state.agents.filter((a) => a.id !== agentId),
+    })),
+
   clearSession: () =>
     set({
       activeSessionId: null,
       status: null,
+      mode: "task",
       terminalLines: [],
       planSteps: [],
       fileTree: [],
@@ -125,5 +212,9 @@ export const useSessionStore = create<SessionState>((set) => ({
       isConnected: false,
       queuePosition: 0,
       reasoning: [],
+      agents: [],
+      openFiles: [],
+      activeFilePath: null,
+      creditHistory: [],
     }),
 }));

@@ -1,0 +1,42 @@
+{
+  "common": {
+    "dashboard": "ダッシュボード",
+    "projects": "プロジェクト",
+    "sessions": "セッション",
+    "settings": "設定",
+    "analytics": "アナリティクス",
+    "fleet": "フリートマネージャー",
+    "create": "プロジェクトを作成",
+    "cancel": "キャンセル",
+    "save": "保存",
+    "delete": "削除",
+    "loading": "読み込み中...",
+    "error": "エラーが発生しました",
+    "retry": "再試行",
+    "search": "検索...",
+    "noResults": "結果が見つかりません"
+  },
+  "auth": {
+    "signIn": "サインイン",
+    "signUp": "サインアップ",
+    "signOut": "サインアウト"
+  },
+  "agents": {
+    "title": "AIエージェント",
+    "orchestrator": "オーケストレーター",
+    "discovery": "ディスカバリー",
+    "architect": "アーキテクト",
+    "planner": "プランナー",
+    "frontendCoder": "フロントエンドコーダー",
+    "backendCoder": "バックエンドコーダー",
+    "testEngineer": "テストエンジニア",
+    "securityAuditor": "セキュリティ監査",
+    "deployEngineer": "デプロイエンジニア"
+  },
+  "billing": {
+    "credits": "クレジット",
+    "balance": "残高",
+    "usage": "使用量",
+    "upgrade": "プランをアップグレード"
+  }
+}

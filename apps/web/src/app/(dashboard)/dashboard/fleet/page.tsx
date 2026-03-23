@@ -1,6 +1,38 @@
 "use client";
 
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+  Badge,
+  Button,
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@prometheus/ui";
+import { Activity, ArrowRight, Clock, Cpu, OctagonX } from "lucide-react";
 import { useState } from "react";
+import { toast } from "sonner";
+import { AgentCard } from "@/components/fleet/agent-card";
+import { FleetDashboard } from "@/components/fleet/fleet-dashboard";
 import { trpc } from "@/lib/trpc";
 
 const ROLE_COLORS: Record<string, string> = {
@@ -18,30 +50,123 @@ const ROLE_COLORS: Record<string, string> = {
   deployment: "bg-emerald-500/20 text-emerald-400",
 };
 
-const STATUS_INDICATORS: Record<string, { color: string; label: string }> = {
-  idle: { color: "bg-zinc-500", label: "Idle" },
-  working: { color: "bg-green-500 animate-pulse", label: "Working" },
-  waiting: { color: "bg-yellow-500", label: "Waiting" },
-  terminated: { color: "bg-red-500", label: "Terminated" },
-  error: { color: "bg-red-500", label: "Error" },
+function taskBadgeVariant(
+  status: string
+): "success" | "default" | "destructive" | "outline" {
+  if (status === "completed") {
+    return "success";
+  }
+  if (status === "running" || status === ("in_progress" as string)) {
+    return "default";
+  }
+  if (status === "failed") {
+    return "destructive";
+  }
+  return "outline";
+}
+
+interface TimelineEntry {
+  agentRole: string;
+  id: string;
+  message: string;
+  timestamp: string;
+  type: "task_start" | "task_complete" | "error" | "info";
+}
+
+function buildTimeline(
+  agents: Array<{
+    id: string;
+    role: string;
+    startedAt?: string;
+    status: string;
+    tokensIn?: number;
+    tokensOut?: number;
+  }>,
+  tasks: Array<{
+    agentRole?: string;
+    completedAt?: string;
+    id: string;
+    startedAt?: string;
+    status: string;
+    title: string;
+  }>
+): TimelineEntry[] {
+  const entries: TimelineEntry[] = [];
+
+  for (const task of tasks) {
+    if (task.startedAt) {
+      entries.push({
+        id: `${task.id}-start`,
+        type: "task_start",
+        agentRole: task.agentRole ?? "unknown",
+        message: `Started: ${task.title}`,
+        timestamp: task.startedAt,
+      });
+    }
+    if (task.status === "completed" && task.completedAt) {
+      entries.push({
+        id: `${task.id}-complete`,
+        type: "task_complete",
+        agentRole: task.agentRole ?? "unknown",
+        message: `Completed: ${task.title}`,
+        timestamp: task.completedAt,
+      });
+    }
+    if (task.status === "failed") {
+      entries.push({
+        id: `${task.id}-fail`,
+        type: "error",
+        agentRole: task.agentRole ?? "unknown",
+        message: `Failed: ${task.title}`,
+        timestamp:
+          task.completedAt ?? task.startedAt ?? new Date().toISOString(),
+      });
+    }
+  }
+
+  for (const agent of agents) {
+    if (agent.startedAt) {
+      entries.push({
+        id: `agent-${agent.id}-join`,
+        type: "info",
+        agentRole: agent.role,
+        message: `Agent ${agent.role} joined the fleet`,
+        timestamp: agent.startedAt,
+      });
+    }
+  }
+
+  entries.sort(
+    (a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
+  );
+
+  return entries.slice(0, 50);
+}
+
+const TIMELINE_COLORS: Record<string, string> = {
+  task_start: "bg-blue-500",
+  task_complete: "bg-green-500",
+  error: "bg-red-500",
+  info: "bg-zinc-500",
 };
 
 export default function FleetPage() {
   const [selectedSessionId, setSelectedSessionId] = useState("");
+  const [activeTab, setActiveTab] = useState<"grid" | "timeline">("grid");
 
-  // Get active sessions to pick from
   const sessionsQuery = trpc.sessions.list.useQuery(
     { status: "active", limit: 20 },
-    { retry: false },
+    { retry: false }
   );
 
-  // Get fleet status for selected session
   const fleetQuery = trpc.fleet.status.useQuery(
     { sessionId: selectedSessionId },
-    { enabled: !!selectedSessionId, refetchInterval: 5000, retry: false },
+    { enabled: !!selectedSessionId, refetchInterval: 5000, retry: false }
   );
 
   const stopMutation = trpc.fleet.stop.useMutation();
+  const pauseMutation = trpc.fleet.pause.useMutation();
+  const resumeMutation = trpc.fleet.resume.useMutation();
 
   const sessions = sessionsQuery.data?.sessions ?? [];
   const agents = fleetQuery.data?.agents ?? [];
@@ -49,264 +174,385 @@ export default function FleetPage() {
 
   const totalTokens = agents.reduce(
     (sum, a) => sum + (a.tokensIn ?? 0) + (a.tokensOut ?? 0),
-    0,
+    0
   );
   const totalCredits = fleetTasks.reduce(
     (sum, t) => sum + (t.creditsConsumed ?? 0),
-    0,
+    0
   );
   const activeCount = agents.filter(
-    (a) => a.status === "working" || a.status === "idle",
+    (a) => a.status === "working" || a.status === "idle"
   ).length;
-  const queuedCount = fleetTasks.filter((t) => t.status === "queued").length;
+  const completedTasks = fleetTasks.filter(
+    (t) => t.status === "completed"
+  ).length;
+  const failedTasks = fleetTasks.filter((t) => t.status === "failed").length;
+  const progressPct =
+    fleetTasks.length > 0
+      ? Math.round((completedTasks / fleetTasks.length) * 100)
+      : 0;
+
+  const mappedAgents = agents.map((a) => ({
+    ...a,
+    status: a.status as string,
+    startedAt: a.startedAt ? new Date(a.startedAt).toISOString() : undefined,
+  }));
+  const mappedTasks = fleetTasks.map((t) => ({
+    ...t,
+    status: t.status as string,
+    agentRole: t.agentRole ?? undefined,
+  }));
+  const timeline = buildTimeline(mappedAgents, mappedTasks);
+
+  // Estimate credit burn rate (credits per minute)
+  const sessionStartTime = agents.reduce((earliest, a) => {
+    if (!a.startedAt) {
+      return earliest;
+    }
+    const t = new Date(a.startedAt).getTime();
+    return t < earliest ? t : earliest;
+  }, Date.now());
+  const elapsedMinutes = Math.max(1, (Date.now() - sessionStartTime) / 60_000);
+  const burnRate =
+    totalCredits > 0 ? (totalCredits / elapsedMinutes).toFixed(1) : "0.0";
 
   async function handleStopAgent(agentId: string) {
-    if (!selectedSessionId) return;
+    if (!selectedSessionId) {
+      return;
+    }
     await stopMutation.mutateAsync({ sessionId: selectedSessionId, agentId });
+    fleetQuery.refetch();
+    toast.info("Agent stopped");
+  }
+
+  async function handlePauseAgent(agentId: string) {
+    if (!selectedSessionId) {
+      return;
+    }
+    await pauseMutation.mutateAsync({ sessionId: selectedSessionId, agentId });
+    fleetQuery.refetch();
+  }
+
+  async function handleResumeAgent(agentId: string) {
+    if (!selectedSessionId) {
+      return;
+    }
+    await resumeMutation.mutateAsync({ sessionId: selectedSessionId, agentId });
     fleetQuery.refetch();
   }
 
   async function handleStopAll() {
-    if (!selectedSessionId) return;
-    if (!confirm("Stop all agents in this session?")) return;
+    if (!selectedSessionId) {
+      return;
+    }
     await stopMutation.mutateAsync({ sessionId: selectedSessionId });
     fleetQuery.refetch();
+    toast.info("All agents stopped");
   }
 
   return (
     <div className="space-y-6">
-      {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-zinc-100">Fleet Manager</h1>
-          <p className="mt-1 text-sm text-zinc-500">
-            Monitor and manage your parallel AI agents.
+          <h1 className="font-bold text-2xl text-foreground">Fleet Manager</h1>
+          <p className="mt-1 text-muted-foreground text-sm">
+            Monitor and manage your parallel AI agents in real time.
           </p>
         </div>
         <div className="flex items-center gap-3">
-          <select
+          <Select
+            onValueChange={setSelectedSessionId}
             value={selectedSessionId}
-            onChange={(e) => setSelectedSessionId(e.target.value)}
-            className="rounded-lg border border-zinc-800 bg-zinc-900 px-3 py-1.5 text-sm text-zinc-200 outline-none focus:border-violet-500"
           >
-            <option value="">Select session...</option>
-            {sessions.map((s) => (
-              <option key={s.id} value={s.id}>
-                {s.id.slice(0, 12)} - {s.mode ?? "task"}
-              </option>
-            ))}
-          </select>
+            <SelectTrigger className="w-[220px]">
+              <SelectValue placeholder="Select session..." />
+            </SelectTrigger>
+            <SelectContent>
+              {sessions.map((s) => (
+                <SelectItem key={s.id} value={s.id}>
+                  {s.id.slice(0, 12)} - {s.mode ?? "task"}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
           {selectedSessionId && agents.length > 0 && (
-            <button
-              onClick={handleStopAll}
-              className="rounded-lg border border-red-800/50 bg-red-950/50 px-3 py-1.5 text-xs font-medium text-red-400 hover:bg-red-900/50"
-            >
-              Stop All
-            </button>
+            <AlertDialog>
+              <AlertDialogTrigger asChild>
+                <Button size="sm" variant="destructive">
+                  <OctagonX className="mr-1 h-3.5 w-3.5" />
+                  Stop All
+                </Button>
+              </AlertDialogTrigger>
+              <AlertDialogContent>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>Stop All Agents</AlertDialogTitle>
+                  <AlertDialogDescription>
+                    This will stop all running agents in this session. Any
+                    in-progress work will be lost.
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel>Cancel</AlertDialogCancel>
+                  <AlertDialogAction onClick={handleStopAll}>
+                    Stop All
+                  </AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
           )}
         </div>
       </div>
 
-      {/* Stats */}
-      <div className="grid gap-4 md:grid-cols-4">
-        <div className="rounded-xl border border-zinc-800 bg-zinc-900/50 p-4">
-          <div className="text-xs font-medium text-zinc-500">Active Agents</div>
-          <div className="mt-2 text-2xl font-bold text-zinc-100">
-            {activeCount}
-          </div>
-        </div>
-        <div className="rounded-xl border border-zinc-800 bg-zinc-900/50 p-4">
-          <div className="text-xs font-medium text-zinc-500">Queued Tasks</div>
-          <div className="mt-2 text-2xl font-bold text-zinc-100">
-            {queuedCount}
-          </div>
-        </div>
-        <div className="rounded-xl border border-zinc-800 bg-zinc-900/50 p-4">
-          <div className="text-xs font-medium text-zinc-500">Total Tokens</div>
-          <div className="mt-2 text-2xl font-bold text-zinc-100">
-            {totalTokens.toLocaleString()}
-          </div>
-        </div>
-        <div className="rounded-xl border border-zinc-800 bg-zinc-900/50 p-4">
-          <div className="text-xs font-medium text-zinc-500">Credits Used</div>
-          <div className="mt-2 text-2xl font-bold text-zinc-100">
-            {totalCredits.toLocaleString()}
-          </div>
-        </div>
-      </div>
+      {/* Fleet overview stats with burn rate */}
+      <FleetDashboard
+        activeCount={activeCount}
+        burnRate={burnRate}
+        completedTasks={completedTasks}
+        failedTasks={failedTasks}
+        progressPct={progressPct}
+        totalAgents={agents.length}
+        totalCredits={totalCredits}
+        totalTasks={fleetTasks.length}
+        totalTokens={totalTokens}
+      />
 
-      {/* Agent grid */}
-      <div>
-        <h2 className="mb-4 text-lg font-semibold text-zinc-200">
-          Agent Grid
-        </h2>
-
-        {!selectedSessionId ? (
-          <div className="rounded-xl border border-dashed border-zinc-800 bg-zinc-900/30 p-12 text-center">
-            <p className="text-sm text-zinc-500">
-              Select a session above to view its agents
-            </p>
-          </div>
-        ) : agents.length === 0 ? (
-          <div className="rounded-xl border border-dashed border-zinc-800 bg-zinc-900/30 p-12 text-center">
-            <p className="text-sm text-zinc-500">
-              No agents running in this session
-            </p>
-            <p className="mt-1 text-xs text-zinc-600">
-              Agents will appear here when tasks are dispatched
-            </p>
-          </div>
-        ) : (
-          <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
-            {agents.map((agent) => {
-              const statusInfo =
-                STATUS_INDICATORS[agent.status] ?? STATUS_INDICATORS.idle;
-              const roleColor =
-                ROLE_COLORS[agent.role] ?? "bg-zinc-500/20 text-zinc-400";
-
-              return (
-                <div
-                  key={agent.id}
-                  className="rounded-xl border border-zinc-800 bg-zinc-900/50 p-4 transition-colors hover:border-zinc-700"
-                >
-                  {/* Header */}
-                  <div className="flex items-center justify-between">
-                    <span
-                      className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${roleColor}`}
-                    >
-                      {agent.role}
-                    </span>
-                    <div className="flex items-center gap-1.5">
-                      <span className={`h-2 w-2 rounded-full ${statusInfo.color}`} />
-                      <span className="text-[10px] text-zinc-500">
-                        {statusInfo.label}
-                      </span>
+      {/* Task execution order */}
+      {fleetTasks.length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-sm">Task Execution Order</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="flex items-center gap-1 overflow-x-auto pb-2">
+              {fleetTasks.map((task, i) => (
+                <div className="flex shrink-0 items-center" key={task.id}>
+                  <div className="rounded-lg border p-2" title={task.title}>
+                    <div className="max-w-[120px] truncate font-medium text-xs">
+                      <Badge variant={taskBadgeVariant(task.status)}>
+                        {task.title}
+                      </Badge>
+                    </div>
+                    <div className="mt-0.5 flex items-center gap-1.5">
+                      {task.agentRole && (
+                        <span
+                          className={`rounded-full px-1.5 py-0.5 font-medium text-[8px] ${
+                            ROLE_COLORS[task.agentRole] ??
+                            "bg-muted text-muted-foreground"
+                          }`}
+                        >
+                          {task.agentRole}
+                        </span>
+                      )}
                     </div>
                   </div>
-
-                  {/* Stats */}
-                  <div className="mt-4 grid grid-cols-2 gap-3">
-                    <div>
-                      <div className="text-[10px] text-zinc-600">Tokens In</div>
-                      <div className="font-mono text-xs text-zinc-300">
-                        {(agent.tokensIn ?? 0).toLocaleString()}
-                      </div>
-                    </div>
-                    <div>
-                      <div className="text-[10px] text-zinc-600">Tokens Out</div>
-                      <div className="font-mono text-xs text-zinc-300">
-                        {(agent.tokensOut ?? 0).toLocaleString()}
-                      </div>
-                    </div>
-                    <div>
-                      <div className="text-[10px] text-zinc-600">Steps</div>
-                      <div className="font-mono text-xs text-zinc-300">
-                        {agent.stepsCompleted ?? 0}
-                      </div>
-                    </div>
-                    <div>
-                      <div className="text-[10px] text-zinc-600">Started</div>
-                      <div className="text-xs text-zinc-300">
-                        {agent.startedAt
-                          ? new Date(agent.startedAt).toLocaleTimeString()
-                          : "--"}
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Current task */}
-                  {fleetTasks
-                    .filter(
-                      (t) =>
-                        t.agentRole === agent.role &&
-                        (t.status === "running" || t.status === "in_progress"),
-                    )
-                    .slice(0, 1)
-                    .map((task) => (
-                      <div
-                        key={task.id}
-                        className="mt-3 rounded-lg bg-zinc-950 px-3 py-2"
-                      >
-                        <div className="text-[10px] text-zinc-600">
-                          Current Task
-                        </div>
-                        <div className="mt-0.5 truncate text-xs text-zinc-300">
-                          {task.title}
-                        </div>
-                      </div>
-                    ))}
-
-                  {/* Stop button */}
-                  {(agent.status === "working" || agent.status === "idle") && (
-                    <button
-                      onClick={() => handleStopAgent(agent.id)}
-                      className="mt-3 w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-1.5 text-xs text-zinc-400 transition-colors hover:border-red-800/50 hover:bg-red-950/30 hover:text-red-400"
-                    >
-                      Stop Agent
-                    </button>
+                  {i < fleetTasks.length - 1 && (
+                    <ArrowRight className="mx-1 h-4 w-4 shrink-0 text-muted-foreground" />
                   )}
                 </div>
-              );
-            })}
-          </div>
-        )}
-      </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
-      {/* Credit usage breakdown */}
+      {/* Tab switcher */}
+      {selectedSessionId && agents.length > 0 && (
+        <div className="flex items-center gap-1 rounded-lg border border-zinc-800 bg-zinc-900/50 p-1">
+          <button
+            className={`rounded-md px-4 py-1.5 text-sm transition-colors ${
+              activeTab === "grid"
+                ? "bg-zinc-800 font-medium text-zinc-100"
+                : "text-zinc-500 hover:text-zinc-300"
+            }`}
+            onClick={() => setActiveTab("grid")}
+            type="button"
+          >
+            <Cpu className="mr-1.5 inline-block h-3.5 w-3.5" />
+            Agent Grid
+          </button>
+          <button
+            className={`rounded-md px-4 py-1.5 text-sm transition-colors ${
+              activeTab === "timeline"
+                ? "bg-zinc-800 font-medium text-zinc-100"
+                : "text-zinc-500 hover:text-zinc-300"
+            }`}
+            onClick={() => setActiveTab("timeline")}
+            type="button"
+          >
+            <Activity className="mr-1.5 inline-block h-3.5 w-3.5" />
+            Activity Timeline
+          </button>
+        </div>
+      )}
+
+      {/* Agent grid */}
+      {activeTab === "grid" && (
+        <div>
+          <h2 className="mb-4 font-semibold text-foreground text-lg">
+            Agent Grid
+          </h2>
+
+          {selectedSessionId && agents.length === 0 && (
+            <Card className="border-dashed">
+              <CardContent className="p-12 text-center">
+                <p className="text-muted-foreground text-sm">
+                  No agents running in this session
+                </p>
+                <p className="mt-1 text-muted-foreground/60 text-xs">
+                  Agents will appear here when tasks are dispatched
+                </p>
+              </CardContent>
+            </Card>
+          )}
+          {selectedSessionId && agents.length > 0 && (
+            <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
+              {agents.map((agent) => {
+                const agentCredits = fleetTasks
+                  .filter((t) => t.agentRole === agent.role)
+                  .reduce((sum, t) => sum + (t.creditsConsumed ?? 0), 0);
+                const currentTask = fleetTasks.find(
+                  (t) =>
+                    t.agentRole === agent.role &&
+                    (t.status === "running" ||
+                      t.status === ("in_progress" as string))
+                );
+
+                const mappedAgent = {
+                  ...agent,
+                  status: agent.status as string,
+                  startedAt: agent.startedAt
+                    ? new Date(agent.startedAt).toISOString()
+                    : undefined,
+                };
+                return (
+                  <AgentCard
+                    agent={mappedAgent}
+                    creditsConsumed={agentCredits}
+                    currentTaskTitle={currentTask?.title}
+                    key={agent.id}
+                    onPause={handlePauseAgent}
+                    onResume={handleResumeAgent}
+                    onStop={handleStopAgent}
+                  />
+                );
+              })}
+            </div>
+          )}
+          {!selectedSessionId && (
+            <Card className="border-dashed">
+              <CardContent className="p-12 text-center">
+                <Cpu className="mx-auto h-8 w-8 text-muted-foreground" />
+                <p className="mt-2 text-muted-foreground text-sm">
+                  Select a session above to view its agents
+                </p>
+              </CardContent>
+            </Card>
+          )}
+        </div>
+      )}
+
+      {/* Activity timeline */}
+      {activeTab === "timeline" && selectedSessionId && (
+        <div>
+          <h2 className="mb-4 font-semibold text-foreground text-lg">
+            Activity Timeline
+          </h2>
+          {timeline.length === 0 ? (
+            <Card className="border-dashed">
+              <CardContent className="p-12 text-center">
+                <Clock className="mx-auto h-8 w-8 text-muted-foreground" />
+                <p className="mt-2 text-muted-foreground text-sm">
+                  No activity recorded yet
+                </p>
+              </CardContent>
+            </Card>
+          ) : (
+            <div className="space-y-0">
+              {timeline.map((entry, idx) => (
+                <div className="flex gap-3" key={entry.id}>
+                  {/* Timeline line */}
+                  <div className="flex w-6 flex-col items-center">
+                    <div
+                      className={`mt-1.5 h-2.5 w-2.5 shrink-0 rounded-full ${
+                        TIMELINE_COLORS[entry.type] ?? "bg-zinc-500"
+                      }`}
+                    />
+                    {idx < timeline.length - 1 && (
+                      <div className="w-px flex-1 bg-zinc-800" />
+                    )}
+                  </div>
+
+                  {/* Content */}
+                  <div className="pb-4">
+                    <div className="flex items-center gap-2">
+                      <span
+                        className={`rounded-full px-2 py-0.5 font-medium text-[10px] ${
+                          ROLE_COLORS[entry.agentRole] ??
+                          "bg-zinc-500/20 text-zinc-400"
+                        }`}
+                      >
+                        {entry.agentRole}
+                      </span>
+                      <span className="text-[10px] text-zinc-600">
+                        {new Date(entry.timestamp).toLocaleTimeString()}
+                      </span>
+                    </div>
+                    <p className="mt-0.5 text-sm text-zinc-300">
+                      {entry.message}
+                    </p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Task breakdown table */}
       {fleetTasks.length > 0 && (
         <div>
-          <h2 className="mb-4 text-lg font-semibold text-zinc-200">
+          <h2 className="mb-4 font-semibold text-foreground text-lg">
             Task Breakdown
           </h2>
-          <div className="rounded-xl border border-zinc-800 bg-zinc-900/50">
-            <table className="w-full">
-              <thead>
-                <tr className="border-b border-zinc-800 text-left text-xs text-zinc-500">
-                  <th className="px-4 py-3 font-medium">Task</th>
-                  <th className="px-4 py-3 font-medium">Agent</th>
-                  <th className="px-4 py-3 font-medium">Status</th>
-                  <th className="px-4 py-3 font-medium text-right">Credits</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-zinc-800">
+          <Card>
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Task</TableHead>
+                  <TableHead>Agent</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead className="text-right">Credits</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
                 {fleetTasks.map((task) => (
-                  <tr key={task.id} className="text-sm">
-                    <td className="px-4 py-2.5 text-zinc-300">
-                      <div className="truncate max-w-[240px]">{task.title}</div>
-                    </td>
-                    <td className="px-4 py-2.5">
+                  <TableRow key={task.id}>
+                    <TableCell>
+                      <div className="max-w-[240px] truncate">{task.title}</div>
+                    </TableCell>
+                    <TableCell>
                       <span
                         className={`rounded-full px-2 py-0.5 text-xs ${
                           ROLE_COLORS[task.agentRole ?? ""] ??
-                          "bg-zinc-800 text-zinc-400"
+                          "bg-muted text-muted-foreground"
                         }`}
                       >
                         {task.agentRole ?? "--"}
                       </span>
-                    </td>
-                    <td className="px-4 py-2.5">
-                      <span
-                        className={`text-xs ${
-                          task.status === "completed"
-                            ? "text-green-400"
-                            : task.status === "failed"
-                              ? "text-red-400"
-                              : task.status === "running" || task.status === "in_progress"
-                                ? "text-violet-400"
-                                : "text-zinc-500"
-                        }`}
-                      >
+                    </TableCell>
+                    <TableCell>
+                      <Badge variant={taskBadgeVariant(task.status)}>
                         {task.status}
-                      </span>
-                    </td>
-                    <td className="px-4 py-2.5 text-right font-mono text-xs text-zinc-400">
+                      </Badge>
+                    </TableCell>
+                    <TableCell className="text-right font-mono text-xs">
                       {task.creditsConsumed ?? 0}
-                    </td>
-                  </tr>
+                    </TableCell>
+                  </TableRow>
                 ))}
-              </tbody>
-            </table>
-          </div>
+              </TableBody>
+            </Table>
+          </Card>
         </div>
       )}
     </div>

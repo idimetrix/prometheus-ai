@@ -1,0 +1,12 @@
+export {
+  CommandParser,
+  type VoiceCommand,
+  type VoiceCommandType,
+} from "./command-parser";
+export {
+  SpeechRecognizer,
+  type SpeechRecognizerError,
+  type SpeechRecognizerEvents,
+  type SpeechRecognizerOptions,
+  type SpeechRecognizerResult,
+} from "./speech-recognizer";

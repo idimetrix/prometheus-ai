@@ -1,24 +1,25 @@
 export interface TechStackPreset {
-  id: string;
-  name: string;
-  description: string;
-  languages: string[];
-  frameworks: string[];
-  database: string;
-  orm: string;
   auth: string;
-  testing: string[];
+  database: string;
   deployment: string[];
-  packageManager: string;
-  linters: string[];
+  description: string;
+  frameworks: string[];
   icon: string;
+  id: string;
+  languages: string[];
+  linters: string[];
+  name: string;
+  orm: string;
+  packageManager: string;
+  testing: string[];
 }
 
 export const TECH_STACK_PRESETS: Record<string, TechStackPreset> = {
   "modern-saas": {
     id: "modern-saas",
     name: "Modern SaaS",
-    description: "Next.js + tRPC + Drizzle + PostgreSQL + Redis + Clerk + Stripe",
+    description:
+      "Next.js + tRPC + Drizzle + PostgreSQL + Redis + Clerk + Stripe",
     languages: ["TypeScript"],
     frameworks: ["Next.js 16", "React 19", "tRPC v11", "Tailwind CSS 4"],
     database: "PostgreSQL 16",
@@ -60,7 +61,7 @@ export const TECH_STACK_PRESETS: Record<string, TechStackPreset> = {
     linters: ["ruff", "ESLint"],
     icon: "snake",
   },
-  "rails": {
+  rails: {
     id: "rails",
     name: "Rails + Hotwire",
     description: "Ruby on Rails full-stack with Hotwire/Turbo",

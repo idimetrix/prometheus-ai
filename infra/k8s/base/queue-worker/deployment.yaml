@@ -17,7 +17,7 @@ spec:
     spec:
       containers:
         - name: queue-worker
-          image: prometheus/queue-worker:latest
+          image: ghcr.io/prometheus/queue-worker:latest
           resources:
             requests:
               cpu: 500m
@@ -33,7 +33,14 @@ spec:
           readinessProbe:
             exec:
               command: ["node", "-e", "process.exit(0)"]
+            initialDelaySeconds: 10
             periodSeconds: 30
+          livenessProbe:
+            exec:
+              command: ["node", "-e", "process.exit(0)"]
+            initialDelaySeconds: 30
+            periodSeconds: 60
+            failureThreshold: 3
   strategy:
     type: RollingUpdate
     rollingUpdate:

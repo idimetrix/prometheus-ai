@@ -3,8 +3,9 @@
 import { ClerkProvider } from "@clerk/nextjs";
 import { dark } from "@clerk/themes";
 import { ThemeProvider } from "next-themes";
-import { TRPCProvider } from "@/lib/trpc";
 import type { ReactNode } from "react";
+import { TRPCProvider } from "@/lib/trpc";
+import { SocketProvider } from "@/providers/socket-provider";
 
 export function Providers({ children }: { children: ReactNode }) {
   return (
@@ -21,10 +22,12 @@ export function Providers({ children }: { children: ReactNode }) {
       <ThemeProvider
         attribute="class"
         defaultTheme="dark"
-        enableSystem
         disableTransitionOnChange
+        enableSystem
       >
-        <TRPCProvider>{children}</TRPCProvider>
+        <TRPCProvider>
+          <SocketProvider>{children}</SocketProvider>
+        </TRPCProvider>
       </ThemeProvider>
     </ClerkProvider>
   );

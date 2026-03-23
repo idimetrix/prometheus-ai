@@ -1,0 +1,378 @@
+groups:
+  # ─── Service Health ─────────────────────────────────────────────
+  - name: service_health
+    rules:
+      - alert: ServiceDown
+        expr: up == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Service {{ $labels.job }} is down"
+          description: "{{ $labels.job }} ({{ $labels.instance }}) has been unreachable for more than 1 minute."
+
+      - alert: HealthCheckFailing
+        expr: probe_success == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Health check failing for {{ $labels.instance }}"
+          description: "Health check endpoint {{ $labels.instance }} has been failing for more than 2 minutes."
+
+  # ─── Error Rates ────────────────────────────────────────────────
+  - name: error_rates
+    rules:
+      - alert: HighErrorRate
+        expr: |
+          sum(rate(http_requests_total{status=~"5.."}[5m])) by (job)
+          / sum(rate(http_requests_total[5m])) by (job)
+          > 0.05
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High error rate on {{ $labels.job }}"
+          description: "{{ $labels.job }} has >5% error rate (current: {{ $value | humanizePercentage }})."
+
+      - alert: CriticalErrorRate
+        expr: |
+          sum(rate(http_requests_total{status=~"5.."}[5m])) by (job)
+          / sum(rate(http_requests_total[5m])) by (job)
+          > 0.15
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Critical error rate on {{ $labels.job }}"
+          description: "{{ $labels.job }} has >15% error rate (current: {{ $value | humanizePercentage }})."
+
+  # ─── Latency ────────────────────────────────────────────────────
+  - name: latency
+    rules:
+      - alert: HighP99Latency
+        expr: |
+          histogram_quantile(0.99, sum(rate(http_request_duration_seconds_bucket[5m])) by (le, job))
+          > 5
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High p99 latency on {{ $labels.job }}"
+          description: "{{ $labels.job }} p99 latency is above 5 seconds (current: {{ $value | humanizeDuration }})."
+
+  # ─── Queue Health ───────────────────────────────────────────────
+  - name: queue_health
+    rules:
+      - alert: QueueBackup
+        expr: bullmq_queue_waiting > 1000
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Queue backup: {{ $labels.queue }}"
+          description: "Queue {{ $labels.queue }} has {{ $value }} waiting jobs (threshold: 1000)."
+
+      - alert: CriticalQueueBackup
+        expr: bullmq_queue_waiting > 5000
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Critical queue backup: {{ $labels.queue }}"
+          description: "Queue {{ $labels.queue }} has {{ $value }} waiting jobs (threshold: 5000)."
+
+      - alert: HighDLQCount
+        expr: bullmq_dlq_total > 50
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Dead letter queue growing: {{ $labels.queue }}"
+          description: "DLQ for {{ $labels.queue }} has {{ $value }} messages."
+
+  # ─── Credits / Billing ──────────────────────────────────────────
+  - name: billing
+    rules:
+      - alert: LowCreditsOrg
+        expr: prometheus_org_credits_remaining < 100
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Low credits for org {{ $labels.org_id }}"
+          description: "Organization {{ $labels.org_id }} has only {{ $value }} credits remaining."
+
+  # ─── Infrastructure ─────────────────────────────────────────────
+  - name: infrastructure
+    rules:
+      - alert: HighMemoryUsage
+        expr: |
+          (node_memory_MemTotal_bytes - node_memory_MemAvailable_bytes)
+          / node_memory_MemTotal_bytes > 0.9
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High memory usage on {{ $labels.instance }}"
+          description: "Memory usage is above 90% (current: {{ $value | humanizePercentage }})."
+
+      - alert: HighCPUUsage
+        expr: |
+          100 - (avg by(instance) (rate(node_cpu_seconds_total{mode="idle"}[5m])) * 100) > 85
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High CPU usage on {{ $labels.instance }}"
+          description: "CPU usage is above 85% for 10 minutes."
+
+      - alert: DiskSpaceLow
+        expr: |
+          (node_filesystem_avail_bytes{mountpoint="/"} / node_filesystem_size_bytes{mountpoint="/"}) < 0.1
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Disk space low on {{ $labels.instance }}"
+          description: "Less than 10% disk space remaining on root partition."
+
+      - alert: PostgresConnectionsHigh
+        expr: pg_stat_activity_count > 80
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High PostgreSQL connections"
+          description: "PostgreSQL has {{ $value }} active connections (threshold: 80)."
+
+      - alert: RedisMemoryHigh
+        expr: redis_memory_used_bytes / redis_memory_max_bytes > 0.85
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Redis memory usage high"
+          description: "Redis is using more than 85% of max configured memory."
+
+  # ─── Agent & Orchestrator ────────────────────────────────────────
+  - name: agent_health
+    rules:
+      - alert: AgentHighFailureRate
+        expr: |
+          sum(rate(prometheus_agent_task_failures_total[5m])) by (agent)
+          / sum(rate(prometheus_agent_task_total[5m])) by (agent)
+          > 0.1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High agent failure rate for {{ $labels.agent }}"
+          description: "Agent {{ $labels.agent }} has >10% failure rate (current: {{ $value | humanizePercentage }})."
+
+      - alert: AgentCriticalFailureRate
+        expr: |
+          sum(rate(prometheus_agent_task_failures_total[5m])) by (agent)
+          / sum(rate(prometheus_agent_task_total[5m])) by (agent)
+          > 0.3
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Critical agent failure rate for {{ $labels.agent }}"
+          description: "Agent {{ $labels.agent }} has >30% failure rate (current: {{ $value | humanizePercentage }})."
+
+  # ─── Sandbox Health ──────────────────────────────────────────────
+  - name: sandbox_health
+    rules:
+      - alert: SandboxTimeoutRate
+        expr: |
+          sum(rate(prometheus_sandbox_timeout_total[5m]))
+          / sum(rate(prometheus_sandbox_requests_total[5m]))
+          > 0.1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High sandbox timeout rate"
+          description: "Sandbox timeout rate is above 10% (current: {{ $value | humanizePercentage }})."
+
+      - alert: SandboxPoolExhausted
+        expr: prometheus_sandbox_available_count == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Sandbox pool exhausted"
+          description: "No available sandboxes in the pool for more than 2 minutes."
+
+  # ─── Model Router ───────────────────────────────────────────────
+  - name: model_router_health
+    rules:
+      - alert: ModelRouterHighFailureRate
+        expr: |
+          sum(rate(prometheus_model_router_errors_total[5m]))
+          / sum(rate(prometheus_model_router_requests_total[5m]))
+          > 0.05
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High model router failure rate"
+          description: "Model router error rate is above 5% (current: {{ $value | humanizePercentage }})."
+
+      - alert: ModelRouterAllProvidersDown
+        expr: sum(prometheus_model_router_provider_up) == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "All model providers are down"
+          description: "No model providers are available. All AI operations will fail."
+
+      - alert: ModelRouterHighLatency
+        expr: |
+          histogram_quantile(0.95, sum(rate(prometheus_model_router_request_duration_seconds_bucket[5m])) by (le, provider))
+          > 30
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High model router latency for {{ $labels.provider }}"
+          description: "Provider {{ $labels.provider }} p95 latency exceeds 30 seconds."
+
+  # ─── SLO Burn Rate Alerting ───────────────────────────────────
+  # Multi-window burn rate alerts based on Google SRE practices.
+  # SLO target: 99.9% availability (error budget: 0.1%)
+  # Fast burn (1h) catches acute incidents; slow burn (6h) catches gradual degradation.
+  - name: slo_burn_rate
+    rules:
+      # Fast burn: 1h window, 14.4x burn rate (consumes 30-day budget in 2 days)
+      - alert: SLOBurnRateFastHigh
+        expr: |
+          (
+            1 - (
+              sum(rate(http_requests_total{status!~"5.."}[1h])) by (job)
+              / sum(rate(http_requests_total[1h])) by (job)
+            )
+          ) > (14.4 * 0.001)
+        for: 2m
+        labels:
+          severity: critical
+          slo: availability
+          window: 1h
+        annotations:
+          summary: "SLO burn rate critical for {{ $labels.job }} (1h window)"
+          description: "{{ $labels.job }} is burning error budget at 14.4x the sustainable rate over 1 hour. At this rate, the 30-day budget will be exhausted in ~2 days."
+
+      # Fast burn: 1h window, 6x burn rate (consumes 30-day budget in 5 days)
+      - alert: SLOBurnRateFastMedium
+        expr: |
+          (
+            1 - (
+              sum(rate(http_requests_total{status!~"5.."}[1h])) by (job)
+              / sum(rate(http_requests_total[1h])) by (job)
+            )
+          ) > (6 * 0.001)
+        for: 5m
+        labels:
+          severity: warning
+          slo: availability
+          window: 1h
+        annotations:
+          summary: "SLO burn rate elevated for {{ $labels.job }} (1h window)"
+          description: "{{ $labels.job }} is burning error budget at 6x the sustainable rate over 1 hour. At this rate, the 30-day budget will be exhausted in ~5 days."
+
+      # Slow burn: 6h window, 3x burn rate (consumes 30-day budget in 10 days)
+      - alert: SLOBurnRateSlowHigh
+        expr: |
+          (
+            1 - (
+              sum(rate(http_requests_total{status!~"5.."}[6h])) by (job)
+              / sum(rate(http_requests_total[6h])) by (job)
+            )
+          ) > (3 * 0.001)
+        for: 15m
+        labels:
+          severity: warning
+          slo: availability
+          window: 6h
+        annotations:
+          summary: "SLO burn rate elevated for {{ $labels.job }} (6h window)"
+          description: "{{ $labels.job }} is burning error budget at 3x the sustainable rate over 6 hours. Gradual degradation detected."
+
+      # Slow burn: 6h window, 1x burn rate (on track to exhaust budget)
+      - alert: SLOBurnRateSlowSteady
+        expr: |
+          (
+            1 - (
+              sum(rate(http_requests_total{status!~"5.."}[6h])) by (job)
+              / sum(rate(http_requests_total[6h])) by (job)
+            )
+          ) > (1 * 0.001)
+        for: 30m
+        labels:
+          severity: info
+          slo: availability
+          window: 6h
+        annotations:
+          summary: "SLO burn rate at budget limit for {{ $labels.job }} (6h window)"
+          description: "{{ $labels.job }} is consuming error budget at exactly the sustainable rate over 6 hours. Investigate before it worsens."
+
+      # Latency SLO: p99 latency burn rate (fast window)
+      - alert: SLOLatencyBurnRateFast
+        expr: |
+          (
+            1 - (
+              sum(rate(http_request_duration_seconds_bucket{le="1.0"}[1h])) by (job)
+              / sum(rate(http_request_duration_seconds_count[1h])) by (job)
+            )
+          ) > (14.4 * 0.001)
+        for: 2m
+        labels:
+          severity: critical
+          slo: latency
+          window: 1h
+        annotations:
+          summary: "Latency SLO burn rate critical for {{ $labels.job }} (1h window)"
+          description: "{{ $labels.job }} latency SLO burn rate exceeds 14.4x over 1 hour. Too many requests exceeding 1s p99 target."
+
+      # Latency SLO: p99 latency burn rate (slow window)
+      - alert: SLOLatencyBurnRateSlow
+        expr: |
+          (
+            1 - (
+              sum(rate(http_request_duration_seconds_bucket{le="1.0"}[6h])) by (job)
+              / sum(rate(http_request_duration_seconds_count[6h])) by (job)
+            )
+          ) > (3 * 0.001)
+        for: 15m
+        labels:
+          severity: warning
+          slo: latency
+          window: 6h
+        annotations:
+          summary: "Latency SLO burn rate elevated for {{ $labels.job }} (6h window)"
+          description: "{{ $labels.job }} latency SLO burn rate exceeds 3x over 6 hours. Gradual latency degradation detected."
+
+  # ─── Credit Depletion ──────────────────────────────────────────
+  - name: credit_depletion
+    rules:
+      - alert: CreditDepletionWarning
+        expr: |
+          predict_linear(prometheus_org_credits_remaining[1h], 3600) < 0
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Credits depleting rapidly for org {{ $labels.org_id }}"
+          description: "At current burn rate, org {{ $labels.org_id }} will exhaust credits within 1 hour."
+
+      - alert: CreditsDepleted
+        expr: prometheus_org_credits_remaining <= 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Credits depleted for org {{ $labels.org_id }}"
+          description: "Organization {{ $labels.org_id }} has no credits remaining. Operations will be blocked."

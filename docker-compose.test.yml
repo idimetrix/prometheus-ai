@@ -1,0 +1,16 @@
+# Lightweight services for integration testing
+services:
+  postgres-test:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: test
+      POSTGRES_PASSWORD: test
+      POSTGRES_DB: prometheus_test
+    ports:
+      - "5433:5432"
+    tmpfs:
+      - /var/lib/postgresql/data
+  redis-test:
+    image: redis:7-alpine
+    ports:
+      - "6380:6379"

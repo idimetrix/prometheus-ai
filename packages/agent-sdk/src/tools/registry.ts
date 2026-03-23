@@ -1,10 +1,17 @@
-import type { AgentToolDefinition } from "./types";
-import { fileTools } from "./file";
-import { terminalTools } from "./terminal";
-import { gitTools } from "./git";
-import { searchTools } from "./search";
-import { browserTools } from "./browser";
 import { agentMetaTools } from "./agent-tools";
+import { astGrepTools } from "./ast-grep";
+import { browserTools } from "./browser";
+import { browserAutomationTools } from "./browser-automation";
+import { fileTools } from "./file";
+import { gitTools } from "./git";
+import { lspTools } from "./lsp";
+import { openhandsEditTools } from "./openhands-edit";
+import { sandboxRollbackTools } from "./sandbox-rollback";
+import { searchTools } from "./search";
+import { semgrepTools } from "./semgrep";
+import { terminalTools } from "./terminal";
+import type { AgentToolDefinition } from "./types";
+import { zoektTools } from "./zoekt";
 
 export const TOOL_REGISTRY: Record<string, AgentToolDefinition> = {};
 
@@ -19,14 +26,21 @@ registerTools(terminalTools);
 registerTools(gitTools);
 registerTools(searchTools);
 registerTools(browserTools);
+registerTools(browserAutomationTools);
 registerTools(agentMetaTools);
+registerTools(lspTools);
+registerTools(astGrepTools);
+registerTools(zoektTools);
+registerTools(semgrepTools);
+registerTools(openhandsEditTools);
+registerTools(sandboxRollbackTools);
 
 /**
  * ToolRegistry class for programmatic tool management.
  * Provides methods to register, resolve, and execute tools with validation.
  */
 export class ToolRegistry {
-  private tools: Map<string, AgentToolDefinition> = new Map();
+  private readonly tools: Map<string, AgentToolDefinition> = new Map();
 
   constructor(initialTools?: AgentToolDefinition[]) {
     if (initialTools) {
@@ -66,19 +80,21 @@ export class ToolRegistry {
     const result: AgentToolDefinition[] = [];
     for (const name of names) {
       const tool = this.tools.get(name);
-      if (tool) result.push(tool);
+      if (tool) {
+        result.push(tool);
+      }
     }
     return result;
   }
 
   /**
    * Execute a tool by name with the given input and context.
-   * Validates that the tool exists and that required inputs are present.
+   * Validates inputs against both JSON Schema required fields and the Zod schema.
    */
   async execute(
     name: string,
     input: Record<string, unknown>,
-    ctx: import("./types").ToolExecutionContext,
+    ctx: import("./types").ToolExecutionContext
   ): Promise<import("./types").ToolResult> {
     const tool = this.tools.get(name);
     if (!tool) {
@@ -103,6 +119,21 @@ export class ToolRegistry {
             error: `Missing required parameter '${field}' for tool '${name}'`,
           };
         }
+      }
+    }
+
+    // Validate with Zod schema if available (provides richer type coercion & validation)
+    if (tool.zodSchema) {
+      const result = tool.zodSchema.safeParse(input);
+      if (!result.success) {
+        const issues = result.error.issues
+          .map((i) => `${i.path.join(".")}: ${i.message}`)
+          .join("; ");
+        return {
+          success: false,
+          output: "",
+          error: `Invalid input for tool '${name}': ${issues}`,
+        };
       }
     }
 
@@ -137,7 +168,11 @@ export class ToolRegistry {
    */
   getOpenAIToolDefs(): Array<{
     type: "function";
-    function: { name: string; description: string; parameters: Record<string, unknown> };
+    function: {
+      name: string;
+      description: string;
+      parameters: Record<string, unknown>;
+    };
   }> {
     return this.getAll().map((tool) => ({
       type: "function" as const,

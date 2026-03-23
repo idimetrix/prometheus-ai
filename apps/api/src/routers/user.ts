@@ -1,7 +1,8 @@
-import { z } from "zod";
+import { orgMembers, userSettings, users } from "@prometheus/db";
+import { TRPCError } from "@trpc/server";
 import { eq } from "drizzle-orm";
-import { router, protectedProcedure } from "../trpc";
-import { users, userSettings, orgMembers, organizations } from "@prometheus/db";
+import { z } from "zod";
+import { protectedProcedure, router } from "../trpc";
 
 export const userRouter = router({
   profile: protectedProcedure.query(async ({ ctx }) => {
@@ -12,25 +13,73 @@ export const userRouter = router({
     return user ?? null;
   }),
 
-  updateSettings: protectedProcedure
-    .input(z.object({
-      theme: z.enum(["light", "dark", "system"]).optional(),
-      defaultModel: z.string().nullable().optional(),
-      notificationsEnabled: z.boolean().optional(),
-    }))
+  updateProfile: protectedProcedure
+    .input(
+      z.object({
+        name: z.string().min(1),
+        notifyOnComplete: z.boolean(),
+        notifyOnFail: z.boolean(),
+      })
+    )
     .mutation(async ({ input, ctx }) => {
       const user = await ctx.db.query.users.findFirst({
         where: eq(users.clerkId, ctx.auth.userId),
         columns: { id: true },
       });
-      if (!user) throw new Error("User not found");
+      if (!user) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "User not found" });
+      }
+
+      await ctx.db
+        .update(users)
+        .set({ name: input.name })
+        .where(eq(users.clerkId, ctx.auth.userId));
 
       const existing = await ctx.db.query.userSettings.findFirst({
         where: eq(userSettings.userId, user.id),
       });
 
       if (existing) {
-        await ctx.db.update(userSettings)
+        await ctx.db
+          .update(userSettings)
+          .set({
+            notificationsEnabled: input.notifyOnComplete || input.notifyOnFail,
+          })
+          .where(eq(userSettings.userId, user.id));
+      } else {
+        await ctx.db.insert(userSettings).values({
+          userId: user.id,
+          notificationsEnabled: input.notifyOnComplete || input.notifyOnFail,
+        });
+      }
+
+      return { success: true };
+    }),
+
+  updateSettings: protectedProcedure
+    .input(
+      z.object({
+        theme: z.enum(["light", "dark", "system"]).optional(),
+        defaultModel: z.string().nullable().optional(),
+        notificationsEnabled: z.boolean().optional(),
+      })
+    )
+    .mutation(async ({ input, ctx }) => {
+      const user = await ctx.db.query.users.findFirst({
+        where: eq(users.clerkId, ctx.auth.userId),
+        columns: { id: true },
+      });
+      if (!user) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "User not found" });
+      }
+
+      const existing = await ctx.db.query.userSettings.findFirst({
+        where: eq(userSettings.userId, user.id),
+      });
+
+      if (existing) {
+        await ctx.db
+          .update(userSettings)
           .set(input)
           .where(eq(userSettings.userId, user.id));
       } else {
@@ -50,7 +99,9 @@ export const userRouter = router({
       where: eq(users.clerkId, ctx.auth.userId),
       columns: { id: true },
     });
-    if (!user) return { organizations: [] };
+    if (!user) {
+      return { organizations: [] };
+    }
 
     const memberships = await ctx.db.query.orgMembers.findMany({
       where: eq(orgMembers.userId, user.id),

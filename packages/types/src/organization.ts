@@ -1,19 +1,19 @@
 import type { PlanTier } from "./enums";
 
 export interface Organization {
+  createdAt: Date;
   id: string;
   name: string;
-  slug: string;
   planTier: PlanTier;
+  slug: string;
   stripeCustomerId: string | null;
-  createdAt: Date;
   updatedAt: Date;
 }
 
 export interface OrgMember {
-  orgId: string;
-  userId: string;
-  role: "owner" | "admin" | "member";
   invitedAt: Date;
   joinedAt: Date | null;
+  orgId: string;
+  role: "owner" | "admin" | "member";
+  userId: string;
 }

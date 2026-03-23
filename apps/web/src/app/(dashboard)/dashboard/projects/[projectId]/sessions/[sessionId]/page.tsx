@@ -1,6 +1,7 @@
 "use client";
-import { use } from "react";
+import type { Route } from "next";
 import { redirect } from "next/navigation";
+import { use } from "react";
 
 export default function SessionRedirectPage({
   params,
@@ -9,5 +10,5 @@ export default function SessionRedirectPage({
 }) {
   const { sessionId } = use(params);
   // Redirect to the canonical session URL
-  redirect(`/dashboard/sessions/${sessionId}`);
+  redirect(`/dashboard/sessions/${sessionId}` as Route);
 }

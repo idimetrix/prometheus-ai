@@ -1,0 +1,45 @@
+apiVersion: velero.io/v1
+kind: Schedule
+metadata:
+  name: prometheus-daily-backup
+  namespace: velero
+spec:
+  schedule: "0 3 * * *"  # Daily at 3 AM UTC
+  template:
+    includedNamespaces:
+      - prometheus
+    includedResources:
+      - deployments
+      - services
+      - configmaps
+      - secrets
+      - persistentvolumeclaims
+      - statefulsets
+      - ingresses
+      - horizontalpodautoscalers
+      - poddisruptionbudgets
+      - networkpolicies
+    storageLocation: default
+    volumeSnapshotLocations:
+      - default
+    ttl: 720h0m0s  # 30-day retention
+    snapshotVolumes: true
+  useOwnerReferencesInBackup: false
+---
+apiVersion: velero.io/v1
+kind: Schedule
+metadata:
+  name: prometheus-weekly-full-backup
+  namespace: velero
+spec:
+  schedule: "0 2 * * 0"  # Weekly on Sunday at 2 AM UTC
+  template:
+    includedNamespaces:
+      - prometheus
+      - prometheus-staging
+    storageLocation: default
+    volumeSnapshotLocations:
+      - default
+    ttl: 2160h0m0s  # 90-day retention
+    snapshotVolumes: true
+  useOwnerReferencesInBackup: false

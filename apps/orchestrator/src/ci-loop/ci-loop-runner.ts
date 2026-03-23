@@ -1,20 +1,30 @@
 import { createLogger } from "@prometheus/logger";
 import { EventPublisher, QueueEvents } from "@prometheus/queue";
-import { FailureAnalyzer, type FailureAnalysis } from "./failure-analyzer";
 import type { AgentLoop } from "../agent-loop";
+import {
+  FAILURE_PRIORITY,
+  type FailureAnalysis,
+  FailureAnalyzer,
+} from "./failure-analyzer";
+import { FiveWhyDebugger } from "./five-why-debugger";
 
 const logger = createLogger("orchestrator:ci-loop");
 
+const VITEST_SUMMARY_RE =
+  /Tests?\s+(\d+)\s+passed\s*\|\s*(\d+)\s+failed\s*\|\s*(\d+)\s+total/i;
+const JEST_SUMMARY_RE =
+  /Tests?:\s*(?:(\d+)\s+failed,?\s*)?(?:(\d+)\s+passed,?\s*)?(\d+)\s+total/i;
+
 export interface CILoopResult {
-  passed: boolean;
+  autoResolved: number;
+  failedTests: number;
   iterations: number;
   maxIterations: number;
+  passed: boolean;
   passRate: number;
-  totalTests: number;
-  failedTests: number;
-  autoResolved: number;
   remainingFailures: FailureAnalysis[];
   stuckFailures: string[];
+  totalTests: number;
 }
 
 /**
@@ -30,11 +40,14 @@ export class CILoopRunner {
   private readonly maxIterations: number;
   private readonly eventPublisher = new EventPublisher();
 
-  constructor(maxIterations: number = 20) {
+  constructor(maxIterations = 20) {
     this.maxIterations = maxIterations;
   }
 
-  async run(agentLoop: AgentLoop, testCommand: string = "pnpm test"): Promise<CILoopResult> {
+  async run(
+    agentLoop: AgentLoop,
+    testCommand = "pnpm test"
+  ): Promise<CILoopResult> {
     let iterations = 0;
     let autoResolved = 0;
     let lastFailures: FailureAnalysis[] = [];
@@ -43,11 +56,17 @@ export class CILoopRunner {
     let totalTests = 0;
     let passedTests = 0;
 
-    logger.info({ maxIterations: this.maxIterations, testCommand }, "Starting CI Loop");
+    logger.info(
+      { maxIterations: this.maxIterations, testCommand },
+      "Starting CI Loop"
+    );
 
     while (iterations < this.maxIterations) {
       iterations++;
-      logger.info({ iteration: iterations, maxIterations: this.maxIterations }, "CI Loop iteration");
+      logger.info(
+        { iteration: iterations, maxIterations: this.maxIterations },
+        "CI Loop iteration"
+      );
 
       // Run the test suite
       const testResult = await agentLoop.executeTask(
@@ -80,7 +99,8 @@ Run the command and return the complete output.`,
           totalTests,
           passedTests,
           failedTests: failures.length,
-          passRate: totalTests > 0 ? Math.round((passedTests / totalTests) * 100) : 0,
+          passRate:
+            totalTests > 0 ? Math.round((passedTests / totalTests) * 100) : 0,
         },
         timestamp: new Date().toISOString(),
       });
@@ -102,60 +122,57 @@ Run the command and return the complete output.`,
       }
 
       // Process each failure
-      const fixableFailures: FailureAnalysis[] = [];
-
-      for (const failure of failures) {
-        const count = (failureHistory.get(failure.testName) ?? 0) + 1;
-        failureHistory.set(failure.testName, count);
-
-        if (count >= 3) {
-          // This test has failed 3+ times, mark it as stuck
-          if (!stuckFailures.has(failure.testName)) {
-            stuckFailures.add(failure.testName);
-            logger.warn({
-              testName: failure.testName,
-              attempts: count,
-              failureType: failure.failureType,
-            }, "Stuck failure detected, escalating");
-          }
-          continue;
-        }
-
-        fixableFailures.push(failure);
-      }
+      const fixableFailures = await this.categorizeFailures(
+        failures,
+        failureHistory,
+        stuckFailures,
+        agentLoop
+      );
 
       // If all remaining failures are stuck, we can't make progress
       if (fixableFailures.length === 0 && failures.length > 0) {
-        logger.warn({
-          stuckCount: stuckFailures.size,
-          iterations,
-        }, "All remaining failures are stuck, stopping CI loop");
+        logger.warn(
+          {
+            stuckCount: stuckFailures.size,
+            iterations,
+          },
+          "All remaining failures are stuck, stopping CI loop"
+        );
         break;
       }
 
-      // Group fixable failures by agent role for batch fixing
-      const failuresByRole = this.groupByRole(fixableFailures);
+      // Split failures by priority tier: high-priority (1-2) vs low-priority (3+)
+      const highPriority = fixableFailures.filter(
+        (f) => (FAILURE_PRIORITY[f.failureType] ?? 99) <= 2
+      );
+      const lowPriority = fixableFailures.filter(
+        (f) => (FAILURE_PRIORITY[f.failureType] ?? 99) > 2
+      );
 
-      for (const [role, roleFailures] of Object.entries(failuresByRole)) {
-        // Build a combined fix prompt for all failures assigned to this role
-        const fixPrompt = this.buildFixPrompt(roleFailures);
+      // Fix high-priority errors first (syntax, type, import)
+      if (highPriority.length > 0) {
+        const resolved = await this.dispatchFixes(
+          agentLoop,
+          highPriority,
+          iterations
+        );
+        autoResolved += resolved;
 
-        logger.info({
-          role,
-          failureCount: roleFailures.length,
-          iteration: iterations,
-        }, "Dispatching fix agent");
-
-        const fixResult = await agentLoop.executeTask(fixPrompt, role);
-
-        if (fixResult.success) {
-          autoResolved += roleFailures.length;
-        } else {
-          logger.warn({
-            role,
-            error: fixResult.error,
-          }, "Fix agent failed to resolve failures");
+        // Re-run tests before attempting low-priority fixes
+        // (high-priority fixes may resolve cascading lower-priority issues)
+        if (lowPriority.length > 0) {
+          continue;
         }
+      }
+
+      // Fix lower-priority errors
+      if (lowPriority.length > 0) {
+        const resolved = await this.dispatchFixes(
+          agentLoop,
+          lowPriority,
+          iterations
+        );
+        autoResolved += resolved;
       }
 
       lastFailures = failures;
@@ -163,16 +180,20 @@ Run the command and return the complete output.`,
 
     // Calculate final pass rate
     const failedTests = lastFailures.length;
-    const passRate = totalTests > 0
-      ? Math.round(((totalTests - failedTests) / totalTests) * 100)
-      : 0;
+    const passRate =
+      totalTests > 0
+        ? Math.round(((totalTests - failedTests) / totalTests) * 100)
+        : 0;
 
-    logger.warn({
-      iterations,
-      remainingFailures: lastFailures.length,
-      stuckFailures: stuckFailures.size,
-      passRate,
-    }, "CI Loop completed");
+    logger.warn(
+      {
+        iterations,
+        remainingFailures: lastFailures.length,
+        stuckFailures: stuckFailures.size,
+        passRate,
+      },
+      "CI Loop completed"
+    );
 
     return {
       passed: false,
@@ -188,17 +209,148 @@ Run the command and return the complete output.`,
   }
 
   /**
+   * Dispatch fix agents grouped by role. Returns the count of resolved failures.
+   */
+  private async dispatchFixes(
+    agentLoop: AgentLoop,
+    failures: FailureAnalysis[],
+    iteration: number
+  ): Promise<number> {
+    let resolved = 0;
+    const failuresByRole = this.groupByRole(failures);
+
+    for (const [role, roleFailures] of Object.entries(failuresByRole)) {
+      const fixPrompt = this.buildFixPrompt(roleFailures);
+
+      logger.info(
+        {
+          role,
+          failureCount: roleFailures.length,
+          iteration,
+          priorities: roleFailures.map(
+            (f) => `${f.failureType}(${FAILURE_PRIORITY[f.failureType] ?? 99})`
+          ),
+        },
+        "Dispatching fix agent"
+      );
+
+      const fixResult = await agentLoop.executeTask(fixPrompt, role);
+
+      if (fixResult.success) {
+        resolved += roleFailures.length;
+      } else {
+        logger.warn(
+          { role, error: fixResult.error },
+          "Fix agent failed to resolve failures"
+        );
+      }
+    }
+
+    return resolved;
+  }
+
+  /**
+   * Categorize failures into fixable vs stuck, running root cause analysis
+   * on stuck failures.
+   */
+  private async categorizeFailures(
+    failures: FailureAnalysis[],
+    failureHistory: Map<string, number>,
+    stuckFailures: Set<string>,
+    agentLoop: AgentLoop
+  ): Promise<FailureAnalysis[]> {
+    const fixable: FailureAnalysis[] = [];
+
+    for (const failure of failures) {
+      const count = (failureHistory.get(failure.testName) ?? 0) + 1;
+      failureHistory.set(failure.testName, count);
+
+      if (count < 3) {
+        fixable.push(failure);
+        continue;
+      }
+
+      if (stuckFailures.has(failure.testName)) {
+        continue;
+      }
+
+      stuckFailures.add(failure.testName);
+      logger.warn(
+        {
+          testName: failure.testName,
+          attempts: count,
+          failureType: failure.failureType,
+        },
+        "Stuck failure detected, running root cause analysis"
+      );
+
+      const enhancedFailure = await this.runRootCauseAnalysis(
+        agentLoop,
+        failure,
+        count
+      );
+      if (enhancedFailure) {
+        fixable.push(enhancedFailure);
+      }
+    }
+
+    return fixable;
+  }
+
+  /**
+   * Run Five-Why root cause analysis on a stuck failure.
+   */
+  private async runRootCauseAnalysis(
+    agentLoop: AgentLoop,
+    failure: FailureAnalysis,
+    attemptCount: number
+  ): Promise<FailureAnalysis | null> {
+    try {
+      const fiveWhy = new FiveWhyDebugger();
+      const previousAttempts = Array.from(
+        { length: attemptCount },
+        (_, i) =>
+          `Attempt ${i + 1}: Fixed ${failure.failureType} error in ${failure.affectedFiles.join(", ") || "unknown files"}`
+      );
+      const rootCause = await fiveWhy.analyze(
+        agentLoop,
+        failure,
+        previousAttempts
+      );
+
+      if (rootCause?.suggestedFix) {
+        return {
+          ...failure,
+          suggestedFix: rootCause.suggestedFix,
+          rootCause: rootCause.rootCause ?? failure.rootCause,
+        };
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      logger.warn(
+        { testName: failure.testName, error: msg },
+        "Five-Why analysis failed"
+      );
+    }
+    return null;
+  }
+
+  /**
    * Build a combined fix prompt for multiple failures assigned to
    * the same agent role. This is more efficient than one call per failure.
    */
   private buildFixPrompt(failures: FailureAnalysis[]): string {
-    const failureDescriptions = failures.map((f, i) => `
+    const failureDescriptions = failures
+      .map(
+        (f, i) => `
 ### Failure ${i + 1}: ${f.testName}
 - Type: ${f.failureType}
 - Severity: ${f.severity}
 - Root Cause: ${f.rootCause}
 - Affected Files: ${f.affectedFiles.join(", ") || "unknown"}
-- Suggested Fix: ${f.suggestedFix}`).join("\n");
+- Suggested Fix: ${f.suggestedFix}`
+      )
+      .join("\n");
 
     return `Fix the following ${failures.length} test failure(s). Apply the minimal changes needed to resolve each failure.
 
@@ -218,14 +370,16 @@ Instructions:
   /**
    * Group failures by their assigned fix agent role.
    */
-  private groupByRole(failures: FailureAnalysis[]): Record<string, FailureAnalysis[]> {
+  private groupByRole(
+    failures: FailureAnalysis[]
+  ): Record<string, FailureAnalysis[]> {
     const grouped: Record<string, FailureAnalysis[]> = {};
     for (const failure of failures) {
       const role = failure.fixAgentRole;
       if (!grouped[role]) {
         grouped[role] = [];
       }
-      grouped[role]!.push(failure);
+      grouped[role]?.push(failure);
     }
     return grouped;
   }
@@ -234,24 +388,28 @@ Instructions:
    * Parse test count summary from test runner output.
    * Handles vitest, jest, and generic test runner formats.
    */
-  private parseTestCounts(output: string): { total: number; passed: number; failed: number } {
+  private parseTestCounts(output: string): {
+    total: number;
+    passed: number;
+    failed: number;
+  } {
     // Vitest format: "Tests  12 passed | 3 failed | 15 total"
-    const vitestMatch = output.match(/Tests?\s+(\d+)\s+passed\s*\|\s*(\d+)\s+failed\s*\|\s*(\d+)\s+total/i);
+    const vitestMatch = output.match(VITEST_SUMMARY_RE);
     if (vitestMatch) {
       return {
-        total: parseInt(vitestMatch[3]!, 10),
-        passed: parseInt(vitestMatch[1]!, 10),
-        failed: parseInt(vitestMatch[2]!, 10),
+        total: Number.parseInt(vitestMatch[3] as string, 10),
+        passed: Number.parseInt(vitestMatch[1] as string, 10),
+        failed: Number.parseInt(vitestMatch[2] as string, 10),
       };
     }
 
     // Jest format: "Tests: 3 failed, 12 passed, 15 total"
-    const jestMatch = output.match(/Tests?:\s*(?:(\d+)\s+failed,?\s*)?(?:(\d+)\s+passed,?\s*)?(\d+)\s+total/i);
+    const jestMatch = output.match(JEST_SUMMARY_RE);
     if (jestMatch) {
       return {
-        total: parseInt(jestMatch[3]!, 10),
-        passed: parseInt(jestMatch[2] ?? "0", 10),
-        failed: parseInt(jestMatch[1] ?? "0", 10),
+        total: Number.parseInt(jestMatch[3] as string, 10),
+        passed: Number.parseInt(jestMatch[2] ?? "0", 10),
+        failed: Number.parseInt(jestMatch[1] ?? "0", 10),
       };
     }
 

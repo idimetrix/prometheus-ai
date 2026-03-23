@@ -2,23 +2,36 @@ import { createLogger } from "@prometheus/logger";
 
 const logger = createLogger("agent-sdk:protocol:guardian");
 
+const TECH_STACK_SECTION_RE = /## Tech Stack\n([\s\S]*?)(?=\n##|$)/;
+const TSX_EXTENSION_RE = /\.tsx$/;
+const PASCAL_CASE_RE = /^[A-Z]/;
+const CONSOLE_LOG_RE = /console\.log\(/g;
+const EVAL_RE = /eval\(/g;
+const INNER_HTML_RE = /innerHTML\s*=/g;
+// This regex is for *detecting* usage, not for rendering untrusted HTML
+const DANGEROUSLY_SET_INNER_HTML_RE = /dangerouslySetInnerHTML/g;
+const PROCESS_ENV_RE = /process\.env\.\w+/g;
+const TEMPLATE_LITERAL_INTERPOLATION_RE = /`.*\$\{.*\}.*`/;
+const BOLD_MARKDOWN_PREFIX_RE = /- \*\*.*?\*\*:\s*/;
+const FILE_EXTENSION_RE = /\.[^.]+$/;
+
 export interface GuardianViolation {
-  type: "tech_stack" | "naming" | "architecture" | "security" | "compliance";
-  severity: "error" | "warning" | "info";
-  message: string;
   file?: string;
   line?: number;
+  message: string;
+  severity: "error" | "warning" | "info";
   suggestion?: string;
+  type: "tech_stack" | "naming" | "architecture" | "security" | "compliance";
 }
 
 export interface GuardianResult {
+  checkedAt: string;
   passed: boolean;
   violations: GuardianViolation[];
-  checkedAt: string;
 }
 
 export interface BlueprintRules {
-  techStack: string[];
+  forbidden: string[];
   namingConventions: {
     files: string; // e.g., "kebab-case"
     components: string; // e.g., "PascalCase"
@@ -31,8 +44,8 @@ export interface BlueprintRules {
     authentication: string;
     errorHandling: string;
   };
-  forbidden: string[];
   required: string[];
+  techStack: string[];
 }
 
 export class BusinessLogicGuardian {
@@ -64,10 +77,14 @@ export class BusinessLogicGuardian {
     };
 
     // Extract tech stack from blueprint
-    const techStackMatch = blueprintContent.match(/## Tech Stack\n([\s\S]*?)(?=\n##|$)/);
+    const techStackMatch = blueprintContent.match(TECH_STACK_SECTION_RE);
     if (techStackMatch) {
-      const lines = techStackMatch[1].split("\n").filter((l) => l.startsWith("- **"));
-      rules.techStack = lines.map((l) => l.replace(/- \*\*.*?\*\*:\s*/, "").trim());
+      const lines = techStackMatch[1]
+        ?.split("\n")
+        .filter((l) => l.startsWith("- **"));
+      rules.techStack = (lines ?? []).map((l) =>
+        l.replace(BOLD_MARKDOWN_PREFIX_RE, "").trim()
+      );
     }
 
     this.rules = rules;
@@ -78,7 +95,11 @@ export class BusinessLogicGuardian {
     const violations: GuardianViolation[] = [];
 
     if (!this.rules) {
-      return { passed: true, violations: [], checkedAt: new Date().toISOString() };
+      return {
+        passed: true,
+        violations: [],
+        checkedAt: new Date().toISOString(),
+      };
     }
 
     // Check naming conventions
@@ -104,29 +125,55 @@ export class BusinessLogicGuardian {
 
   private checkNaming(filePath: string, violations: GuardianViolation[]): void {
     const fileName = filePath.split("/").pop() ?? "";
-    const baseName = fileName.replace(/\.[^.]+$/, "");
+    const baseName = fileName.replace(FILE_EXTENSION_RE, "");
 
     // React components should be PascalCase
-    if (filePath.includes("/components/") && /\.tsx$/.test(fileName)) {
-      if (!/^[A-Z]/.test(baseName) && !baseName.includes(".")) {
-        violations.push({
-          type: "naming",
-          severity: "warning",
-          message: `Component file "${fileName}" should use PascalCase`,
-          file: filePath,
-          suggestion: `Rename to ${baseName.charAt(0).toUpperCase() + baseName.slice(1)}.tsx`,
-        });
-      }
+    if (
+      filePath.includes("/components/") &&
+      TSX_EXTENSION_RE.test(fileName) &&
+      !(PASCAL_CASE_RE.test(baseName) || baseName.includes("."))
+    ) {
+      violations.push({
+        type: "naming",
+        severity: "warning",
+        message: `Component file "${fileName}" should use PascalCase`,
+        file: filePath,
+        suggestion: `Rename to ${baseName.charAt(0).toUpperCase() + baseName.slice(1)}.tsx`,
+      });
     }
   }
 
-  private checkForbiddenPatterns(content: string, filePath: string, violations: GuardianViolation[]): void {
+  private checkForbiddenPatterns(
+    content: string,
+    filePath: string,
+    violations: GuardianViolation[]
+  ): void {
     const forbidden = [
-      { pattern: /console\.log\(/g, message: "Use structured logger instead of console.log", severity: "warning" as const },
-      { pattern: /eval\(/g, message: "eval() is forbidden for security reasons", severity: "error" as const },
-      { pattern: /innerHTML\s*=/g, message: "Direct innerHTML assignment is an XSS risk", severity: "error" as const },
-      { pattern: /dangerouslySetInnerHTML/g, message: "dangerouslySetInnerHTML requires security review", severity: "warning" as const },
-      { pattern: /process\.env\.\w+/g, message: "Direct process.env access; use typed config instead", severity: "info" as const },
+      {
+        pattern: CONSOLE_LOG_RE,
+        message: "Use structured logger instead of console.log",
+        severity: "warning" as const,
+      },
+      {
+        pattern: EVAL_RE,
+        message: "eval() is forbidden for security reasons",
+        severity: "error" as const,
+      },
+      {
+        pattern: INNER_HTML_RE,
+        message: "Direct innerHTML assignment is an XSS risk",
+        severity: "error" as const,
+      },
+      {
+        pattern: DANGEROUSLY_SET_INNER_HTML_RE,
+        message: "dangerouslySetInnerHTML requires security review",
+        severity: "warning" as const,
+      },
+      {
+        pattern: PROCESS_ENV_RE,
+        message: "Direct process.env access; use typed config instead",
+        severity: "info" as const,
+      },
     ];
 
     for (const rule of forbidden) {
@@ -142,9 +189,17 @@ export class BusinessLogicGuardian {
     }
   }
 
-  private checkSecurityPatterns(content: string, filePath: string, violations: GuardianViolation[]): void {
+  private checkSecurityPatterns(
+    content: string,
+    filePath: string,
+    violations: GuardianViolation[]
+  ): void {
     // SQL injection check
-    if (/`.*\$\{.*\}.*`/.test(content) && content.includes("query") || content.includes("sql")) {
+    if (
+      (TEMPLATE_LITERAL_INTERPOLATION_RE.test(content) &&
+        content.includes("query")) ||
+      content.includes("sql")
+    ) {
       violations.push({
         type: "security",
         severity: "error",
@@ -174,12 +229,19 @@ export class BusinessLogicGuardian {
     }
   }
 
-  private checkCompliancePatterns(content: string, filePath: string, violations: GuardianViolation[]): void {
+  private checkCompliancePatterns(
+    content: string,
+    filePath: string,
+    violations: GuardianViolation[]
+  ): void {
     // Check for PII logging
     if (content.includes("logger") || content.includes("console")) {
       const piiFields = ["email", "password", "ssn", "credit_card", "phone"];
       for (const field of piiFields) {
-        const pattern = new RegExp(`(?:log|info|debug|warn|error).*${field}`, "i");
+        const pattern = new RegExp(
+          `(?:log|info|debug|warn|error).*${field}`,
+          "i"
+        );
         if (pattern.test(content)) {
           violations.push({
             type: "compliance",

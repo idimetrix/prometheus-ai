@@ -8,19 +8,31 @@
   "scripts": {
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
+    "db:migrate:run": "tsx src/migrate.ts",
     "db:push": "drizzle-kit push",
+    "db:pull": "drizzle-kit pull",
+    "db:seed": "tsx src/seed.ts",
     "db:studio": "drizzle-kit studio",
+    "db:check": "drizzle-kit check",
+    "db:drop": "drizzle-kit drop",
+    "db:reset": "drizzle-kit push --force-reset",
+    "db:fresh": "pnpm db:drop && rm -rf drizzle && drizzle-kit push --force && pnpm db:seed",
+    "db:setup": "pnpm db:generate && pnpm db:migrate",
+    "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "clean": "rm -rf dist .turbo"
   },
   "dependencies": {
-    "drizzle-orm": "^0.39.0",
-    "postgres": "^3.4.0",
-    "drizzle-zod": "^0.7.0"
+    "@prometheus/logger": "workspace:*",
+    "@prometheus/utils": "workspace:*",
+    "drizzle-orm": "^0.45.1",
+    "drizzle-zod": "^0.8.3",
+    "postgres": "^3.4.8",
+    "prom-client": "^15.1.3"
   },
   "devDependencies": {
     "@prometheus/config-typescript": "workspace:*",
-    "drizzle-kit": "^0.30.0",
-    "typescript": "^5.7.0"
+    "drizzle-kit": "^0.31.10",
+    "typescript": "^6.0.2"
   }
 }

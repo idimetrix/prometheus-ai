@@ -11,10 +11,12 @@
     "clean": "rm -rf dist .turbo"
   },
   "dependencies": {
-    "nanoid": "^5.1.0"
+    "@prometheus/logger": "workspace:*",
+    "nanoid": "^5.1.7",
+    "zod": "^4.3.6"
   },
   "devDependencies": {
     "@prometheus/config-typescript": "workspace:*",
-    "typescript": "^5.7.0"
+    "typescript": "^6.0.2"
   }
 }

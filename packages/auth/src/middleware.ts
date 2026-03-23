@@ -1,5 +1,5 @@
-import { getAuthContext } from "./server";
 import type { AuthContext } from "./server";
+import { getAuthContext } from "./server";
 
 export interface AuthenticatedRequest {
   auth: AuthContext;

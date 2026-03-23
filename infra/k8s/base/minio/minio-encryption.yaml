@@ -1,0 +1,225 @@
+# ─── MinIO Server-Side Encryption (SSE-S3) ─────────────────────────────────────
+# Configures MinIO for automatic server-side encryption of all stored objects.
+# Uses KES (Key Encryption Service) backed by Kubernetes secrets for key management.
+# ---------------------------------------------------------------------------
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: prometheus
+  labels:
+    app.kubernetes.io/part-of: prometheus
+---
+# KES (MinIO Key Encryption Service) configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: minio-kes-config
+  namespace: prometheus
+  labels:
+    app.kubernetes.io/part-of: prometheus
+    app.kubernetes.io/component: minio
+data:
+  kes-config.yaml: |
+    address: 0.0.0.0:7373
+    admin:
+      identity: ${MINIO_KES_ADMIN_IDENTITY}
+    tls:
+      key: /certs/tls.key
+      cert: /certs/tls.crt
+    keystore:
+      fs:
+        path: /data/keys
+    policy:
+      minio-encryption:
+        allow:
+          - /v1/key/create/*
+          - /v1/key/generate/*
+          - /v1/key/decrypt/*
+          - /v1/key/bulk/decrypt/*
+          - /v1/key/list/*
+          - /v1/status
+        identities:
+          - ${MINIO_IDENTITY}
+    log:
+      error: "on"
+      audit: "on"
+---
+# MinIO encryption environment configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: minio-encryption-config
+  namespace: prometheus
+  labels:
+    app.kubernetes.io/part-of: prometheus
+    app.kubernetes.io/component: minio
+data:
+  # Auto-encrypt all objects with SSE-S3
+  MINIO_KMS_AUTO_ENCRYPTION: "on"
+  # KES endpoint for key management
+  MINIO_KMS_KES_ENDPOINT: "https://minio-kes.prometheus.svc.cluster.local:7373"
+  # Default encryption key name
+  MINIO_KMS_KES_KEY_NAME: "prometheus-default-key"
+  # Bucket versioning for compliance (prevents accidental overwrites)
+  MINIO_BUCKET_VERSIONING: "on"
+  # Object locking for WORM compliance
+  MINIO_OBJECT_LOCKING: "on"
+---
+# TLS certificate for KES
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: minio-kes-tls-cert
+  namespace: prometheus
+  labels:
+    app.kubernetes.io/part-of: prometheus
+    app.kubernetes.io/component: minio
+spec:
+  secretName: minio-kes-tls-secret
+  issuerRef:
+    name: prometheus-ca-issuer
+    kind: ClusterIssuer
+  commonName: minio-kes.prometheus.svc.cluster.local
+  dnsNames:
+    - minio-kes.prometheus.svc.cluster.local
+    - minio-kes
+  duration: 8760h
+  renewBefore: 720h
+  privateKey:
+    algorithm: ECDSA
+    size: 256
+---
+# KES Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: minio-kes
+  namespace: prometheus
+  labels:
+    app: minio-kes
+    app.kubernetes.io/part-of: prometheus
+    app.kubernetes.io/component: minio
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: minio-kes
+  template:
+    metadata:
+      labels:
+        app: minio-kes
+    spec:
+      containers:
+        - name: kes
+          image: minio/kes:2024-06-17T15-47-05Z
+          args:
+            - server
+            - --config
+            - /etc/kes/kes-config.yaml
+          ports:
+            - containerPort: 7373
+              name: kes
+              protocol: TCP
+          volumeMounts:
+            - name: kes-config
+              mountPath: /etc/kes
+              readOnly: true
+            - name: kes-tls-certs
+              mountPath: /certs
+              readOnly: true
+            - name: kes-data
+              mountPath: /data/keys
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi
+          livenessProbe:
+            httpGet:
+              path: /v1/status
+              port: 7373
+              scheme: HTTPS
+            initialDelaySeconds: 10
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /v1/status
+              port: 7373
+              scheme: HTTPS
+            initialDelaySeconds: 5
+            periodSeconds: 10
+      volumes:
+        - name: kes-config
+          configMap:
+            name: minio-kes-config
+        - name: kes-tls-certs
+          secret:
+            secretName: minio-kes-tls-secret
+        - name: kes-data
+          emptyDir: {}
+---
+# KES Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: minio-kes
+  namespace: prometheus
+  labels:
+    app: minio-kes
+    app.kubernetes.io/part-of: prometheus
+    app.kubernetes.io/component: minio
+spec:
+  selector:
+    app: minio-kes
+  ports:
+    - port: 7373
+      targetPort: 7373
+      name: kes
+      protocol: TCP
+  type: ClusterIP
+---
+# MinIO bucket encryption policy (applied via mc client or init job)
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: minio-encryption-init
+  namespace: prometheus
+  labels:
+    app.kubernetes.io/part-of: prometheus
+    app.kubernetes.io/component: minio
+  annotations:
+    description: >-
+      One-time job to initialize encryption settings on MinIO buckets.
+      Creates the default encryption key and enables SSE-S3 on all buckets.
+spec:
+  ttlSecondsAfterFinished: 300
+  template:
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: mc-init
+          image: minio/mc:latest
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -e
+              mc alias set prometheus http://minio.prometheus.svc.cluster.local:9000 \
+                "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD"
+
+              # Create encryption key in KES
+              mc admin kms key create prometheus prometheus-default-key || true
+
+              # Enable auto-encryption on all buckets
+              for bucket in prometheus-uploads prometheus-artifacts prometheus-exports; do
+                mc mb --ignore-existing "prometheus/$bucket"
+                mc encrypt set sse-s3 "prometheus/$bucket"
+                mc version enable "prometheus/$bucket"
+              done
+
+              echo "MinIO encryption initialization complete"
+          envFrom:
+            - secretRef:
+                name: minio-credentials

@@ -1,0 +1,175 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: patroni
+  labels:
+    app: patroni
+    cluster-name: prometheus-pg
+spec:
+  serviceName: patroni
+  replicas: 3
+  selector:
+    matchLabels:
+      app: patroni
+      cluster-name: prometheus-pg
+  template:
+    metadata:
+      labels:
+        app: patroni
+        cluster-name: prometheus-pg
+    spec:
+      containers:
+        - name: patroni
+          image: registry.opensource.zalan.do/acid/spilo-16:3.2-p2
+          ports:
+            - containerPort: 5432
+              name: postgresql
+            - containerPort: 8008
+              name: patroni-api
+          env:
+            - name: POD_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: PGPASSWORD_SUPERUSER
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-secrets
+                  key: superuser-password
+            - name: PGPASSWORD_REPLICATION
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-secrets
+                  key: replication-password
+            - name: SCOPE
+              value: prometheus-pg
+            - name: PATRONI_KUBERNETES_LABELS
+              value: "{app: patroni, cluster-name: prometheus-pg}"
+            - name: PATRONI_KUBERNETES_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: PATRONI_SUPERUSER_USERNAME
+              value: postgres
+            - name: PATRONI_REPLICATION_USERNAME
+              value: replicator
+            - name: PATRONI_POSTGRESQL_DATA_DIR
+              value: /home/postgres/pgdata/pgroot/data
+            - name: PATRONI_POSTGRESQL_PARAMETERS
+              value: |
+                max_connections: 400
+                shared_buffers: 2GB
+                work_mem: 16MB
+                effective_cache_size: 6GB
+                maintenance_work_mem: 512MB
+                wal_level: replica
+                max_wal_senders: 10
+                max_replication_slots: 10
+                hot_standby: "on"
+                hot_standby_feedback: "on"
+                wal_keep_size: 1GB
+                checkpoint_completion_target: 0.9
+                random_page_cost: 1.1
+                effective_io_concurrency: 200
+                default_statistics_target: 200
+                log_min_duration_statement: 500
+                idle_in_transaction_session_timeout: 60000
+                statement_timeout: 120000
+          resources:
+            requests:
+              cpu: "1"
+              memory: "4Gi"
+            limits:
+              cpu: "4"
+              memory: "8Gi"
+          volumeMounts:
+            - name: pgdata
+              mountPath: /home/postgres/pgdata
+          readinessProbe:
+            httpGet:
+              path: /readiness
+              port: 8008
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /liveness
+              port: 8008
+            initialDelaySeconds: 30
+            periodSeconds: 10
+  volumeClaimTemplates:
+    - metadata:
+        name: pgdata
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 100Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: patroni
+  labels:
+    app: patroni
+    cluster-name: prometheus-pg
+spec:
+  type: ClusterIP
+  ports:
+    - port: 5432
+      targetPort: 5432
+      name: postgresql
+  selector:
+    app: patroni
+    cluster-name: prometheus-pg
+    role: master
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: patroni-replica
+  labels:
+    app: patroni
+    cluster-name: prometheus-pg
+    role: replica
+spec:
+  type: ClusterIP
+  ports:
+    - port: 5432
+      targetPort: 5432
+      name: postgresql
+  selector:
+    app: patroni
+    cluster-name: prometheus-pg
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: patroni
+spec:
+  rules:
+    - apiGroups: [""]
+      resources: ["configmaps"]
+      verbs: ["create", "get", "list", "patch", "update", "watch", "delete"]
+    - apiGroups: [""]
+      resources: ["endpoints"]
+      verbs: ["create", "get", "list", "patch", "update", "watch", "delete"]
+    - apiGroups: [""]
+      resources: ["pods"]
+      verbs: ["get", "list", "watch", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: patroni
+subjects:
+  - kind: ServiceAccount
+    name: default
+roleRef:
+  kind: Role
+  name: patroni
+  apiGroup: rbac.authorization.k8s.io

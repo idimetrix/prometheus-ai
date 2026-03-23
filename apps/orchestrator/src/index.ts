@@ -1,30 +1,88 @@
 import { serve } from "@hono/node-server";
+import { createLogger } from "@prometheus/logger";
+import {
+  initSentry,
+  initTelemetry,
+  traceMiddleware,
+} from "@prometheus/telemetry";
+import type { AgentMode, AgentRole } from "@prometheus/types";
+import {
+  installShutdownHandlers,
+  isProcessShuttingDown,
+} from "@prometheus/utils";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
-import { createLogger } from "@prometheus/logger";
+import { CheckpointManager } from "./checkpoint";
+import { GovernanceEngine } from "./governance/governance-engine";
+import { TrustScorer } from "./governance/trust-scorer";
 import { SessionManager } from "./session-manager";
+import { TakeoverManager } from "./takeover";
 import { TaskRouter } from "./task-router";
-import type { AgentMode, AgentRole } from "@prometheus/types";
+
+await initTelemetry({ serviceName: "orchestrator" });
+initSentry({ serviceName: "orchestrator" });
+installShutdownHandlers();
 
 const logger = createLogger("orchestrator");
 
 const sessionManager = new SessionManager();
 const taskRouter = new TaskRouter(sessionManager);
+const checkpointManager = new CheckpointManager();
+const takeoverManager = new TakeoverManager();
+const trustScorer = new TrustScorer();
+const _governanceEngine = new GovernanceEngine(trustScorer);
 
 const app = new Hono();
 
 app.use("/*", cors());
+app.use("/*", traceMiddleware("orchestrator"));
 
 // ─── Health Check ────────────────────────────────────────────────
 
-app.get("/health", (c) =>
-  c.json({
-    status: "ok",
+app.get("/health", async (c) => {
+  if (isProcessShuttingDown()) {
+    return c.json({ status: "draining" }, 503);
+  }
+
+  const dependencies: Record<string, string> = {};
+
+  try {
+    const { db } = await import("@prometheus/db");
+    const { sql } = await import("drizzle-orm");
+    await db.execute(sql`SELECT 1`);
+    dependencies.db = "ok";
+  } catch {
+    dependencies.db = "unavailable";
+  }
+
+  try {
+    const { createRedisConnection } = await import("@prometheus/queue");
+    const redis = createRedisConnection();
+    await redis.ping();
+    await redis.quit();
+    dependencies.redis = "ok";
+  } catch {
+    dependencies.redis = "unavailable";
+  }
+
+  const allHealthy = Object.values(dependencies).every((v) => v === "ok");
+
+  return c.json({
+    status: allHealthy ? "ok" : "degraded",
     service: "orchestrator",
+    version: process.env.APP_VERSION ?? "0.0.0",
+    uptime: process.uptime(),
     activeSessions: sessionManager.getActiveSessionCount(),
     timestamp: new Date().toISOString(),
-  })
-);
+    dependencies,
+  });
+});
+
+// Liveness probe — lightweight, just confirms process is responsive
+app.get("/live", (c) => c.json({ status: "ok" }));
+
+// Readiness probe — can accept traffic
+app.get("/ready", (c) => c.json({ status: "ready" }));
 
 // ─── Process Task (called by queue worker) ──────────────────────
 
@@ -54,9 +112,14 @@ app.post("/process", async (c) => {
       agentRole: AgentRole | null;
     };
 
-    if (!taskId || !sessionId || !projectId || !orgId || !userId || !title || !mode) {
+    if (
+      !(taskId && sessionId && projectId && orgId && userId && title && mode)
+    ) {
       return c.json(
-        { error: "Missing required fields: taskId, sessionId, projectId, orgId, userId, title, mode" },
+        {
+          error:
+            "Missing required fields: taskId, sessionId, projectId, orgId, userId, title, mode",
+        },
         400
       );
     }
@@ -176,7 +239,10 @@ app.get("/sessions", (c) => {
 app.post("/route", async (c) => {
   try {
     const body = await c.req.json();
-    const { description, projectContext } = body as { description: string; projectContext?: string };
+    const { description, projectContext } = body as {
+      description: string;
+      projectContext?: string;
+    };
 
     if (!description) {
       return c.json({ error: "'description' is required" }, 400);
@@ -190,14 +256,159 @@ app.post("/route", async (c) => {
   }
 });
 
+// ─── Checkpoint Response ────────────────────────────────────────
+
+app.post("/checkpoints/:id/respond", async (c) => {
+  const checkpointId = c.req.param("id");
+
+  try {
+    const body = await c.req.json();
+    const { action, data, message, userId } = body as {
+      action: "approve" | "reject" | "modify" | "input";
+      data?: Record<string, unknown>;
+      message?: string;
+      userId: string;
+    };
+
+    const resolved = checkpointManager.respondToCheckpoint(checkpointId, {
+      action,
+      data,
+      message,
+      respondedBy: userId,
+      respondedAt: new Date(),
+    });
+
+    if (!resolved) {
+      return c.json({ error: "Checkpoint not found or already resolved" }, 404);
+    }
+
+    return c.json({ status: "resolved", checkpointId });
+  } catch (error) {
+    return c.json({ error: String(error) }, 500);
+  }
+});
+
+// ─── Pending Checkpoints ────────────────────────────────────────
+
+app.get("/sessions/:id/checkpoints", (c) => {
+  const sessionId = c.req.param("id");
+  const checkpoints = checkpointManager.getPendingCheckpoints(sessionId);
+  return c.json({ checkpoints });
+});
+
+// ─── Takeover Controls ──────────────────────────────────────────
+
+app.post("/sessions/:id/takeover", async (c) => {
+  const sessionId = c.req.param("id");
+  const body = await c.req.json();
+  const { userId } = body as { userId: string };
+
+  try {
+    const session = sessionManager.getSession(sessionId);
+    if (!session) {
+      return c.json({ error: "Session not found" }, 404);
+    }
+
+    await session.agentLoop.pause();
+    await takeoverManager.takeover(sessionId, userId);
+
+    return c.json({ status: "human_control", sessionId });
+  } catch (error) {
+    return c.json({ error: String(error) }, 500);
+  }
+});
+
+app.post("/sessions/:id/release", async (c) => {
+  const sessionId = c.req.param("id");
+  const body = await c.req.json();
+  const { userId, context } = body as { userId: string; context?: string };
+
+  try {
+    const session = sessionManager.getSession(sessionId);
+    if (!session) {
+      return c.json({ error: "Session not found" }, 404);
+    }
+
+    await takeoverManager.release(sessionId, userId, context);
+    await session.agentLoop.resume();
+
+    return c.json({ status: "agent_control", sessionId });
+  } catch (error) {
+    return c.json({ error: String(error) }, 500);
+  }
+});
+
+// ─── Prometheus Metrics ──────────────────────────────────────
+
+app.get("/metrics", async (c) => {
+  const { metricsRegistry, metrics } = await import("@prometheus/telemetry");
+  metrics.activeSessions.set({}, sessionManager.getActiveSessionCount());
+  return c.text(await metricsRegistry.render(), 200, {
+    "Content-Type": "text/plain; charset=utf-8",
+  });
+});
+
 // ─── Start Server ───────────────────────────────────────────────
 
-const port = Number(process.env.ORCHESTRATOR_PORT ?? 4003);
+const port = Number(process.env.ORCHESTRATOR_PORT ?? 4002);
 
 serve({ fetch: app.fetch, port }, () => {
   logger.info({ port }, "Orchestrator engine running");
 });
 
-export { SessionManager } from "./session-manager";
-export { TaskRouter } from "./task-router";
 export { AgentLoop } from "./agent-loop";
+export {
+  BlueprintEnforcer as OrchestratorBlueprintEnforcer,
+  type BlueprintViolation as OrcBlueprintViolation,
+} from "./blueprint-enforcer";
+export { CheckpointManager } from "./checkpoint";
+// Phase 7: CI-Loop enhancements
+export { FiveWhyDebugger } from "./ci-loop/five-why-debugger";
+export { FuzzTesting } from "./ci-loop/fuzz-testing";
+export { LivingRequirementsTracker } from "./ci-loop/living-requirements";
+export { PropertyTesting } from "./ci-loop/property-testing";
+export { SystemicAnalyzer } from "./ci-loop/systemic-analyzer";
+// Phase 9 exports
+export {
+  type ConfidenceResult,
+  ConfidenceScorer,
+  type IterationSignals,
+} from "./confidence";
+export { ContextManager } from "./context-manager";
+// Phase 7: Session continuity
+export { SessionMemory } from "./continuity/session-memory";
+export { CreditTracker } from "./credit-tracker";
+// Phase 2: Decision logging
+export { DecisionLogger } from "./decision-logger";
+export {
+  createExecutionContext,
+  type ExecutionContext,
+  ExecutionEngine,
+  type ExecutionEvent,
+  type ExecutionOptions,
+} from "./engine";
+export { FleetManager } from "./fleet-manager";
+export { GovernanceEngine } from "./governance/governance-engine";
+export { TrustScorer } from "./governance/trust-scorer";
+// Phase 7: Guardian
+export { BusinessLogicGuardian } from "./guardian/business-logic-guardian";
+export { MixtureOfAgents } from "./moa/parallel-generator";
+// Phase 7: MoA
+export { MoAVoting } from "./moa/voting";
+// Phase 2: Mode handlers
+export { getModeHandler } from "./modes";
+export type { ModeHandler, ModeHandlerParams, ModeResult } from "./modes/types";
+// Phase 2: Patterns
+export { AmbiguityResolver } from "./patterns/ambiguity-resolver";
+export { GeneratorEvaluator } from "./patterns/generator-evaluator";
+export { SpecFirst } from "./patterns/spec-first";
+export { AuditPhase } from "./phases/audit";
+export { IntegrationPhase } from "./phases/integration";
+// Phase 7: Pipeline phases
+export { PhaseGate } from "./phases/phase-gate";
+
+// Phase 7: Planning
+export { SeniorPlanner } from "./planning/senior-planner";
+export { SessionManager } from "./session-manager";
+export { TakeoverManager } from "./takeover";
+export { TaskRouter } from "./task-router";

@@ -1,0 +1,42 @@
+{
+  "common": {
+    "dashboard": "Panel",
+    "projects": "Proyectos",
+    "sessions": "Sesiones",
+    "settings": "Configuración",
+    "analytics": "Analítica",
+    "fleet": "Gestor de Flota",
+    "create": "Crear Proyecto",
+    "cancel": "Cancelar",
+    "save": "Guardar",
+    "delete": "Eliminar",
+    "loading": "Cargando...",
+    "error": "Algo salió mal",
+    "retry": "Reintentar",
+    "search": "Buscar...",
+    "noResults": "No se encontraron resultados"
+  },
+  "auth": {
+    "signIn": "Iniciar Sesión",
+    "signUp": "Registrarse",
+    "signOut": "Cerrar Sesión"
+  },
+  "agents": {
+    "title": "Agentes IA",
+    "orchestrator": "Orquestador",
+    "discovery": "Descubrimiento",
+    "architect": "Arquitecto",
+    "planner": "Planificador",
+    "frontendCoder": "Desarrollador Frontend",
+    "backendCoder": "Desarrollador Backend",
+    "testEngineer": "Ingeniero de Pruebas",
+    "securityAuditor": "Auditor de Seguridad",
+    "deployEngineer": "Ingeniero de Despliegue"
+  },
+  "billing": {
+    "credits": "Créditos",
+    "balance": "Saldo",
+    "usage": "Uso",
+    "upgrade": "Mejorar Plan"
+  }
+}

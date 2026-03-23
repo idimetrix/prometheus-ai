@@ -1,0 +1,63 @@
+{
+  "dashboard": {
+    "title": "Prometheus - Model Router",
+    "uid": "model-router",
+    "panels": [
+      {
+        "title": "Requests by Model",
+        "type": "timeseries",
+        "targets": [
+          {
+            "expr": "rate(prometheus_model_requests_total[5m])",
+            "legendFormat": "{{model}}"
+          }
+        ],
+        "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 }
+      },
+      {
+        "title": "Latency by Provider (p99)",
+        "type": "timeseries",
+        "targets": [
+          {
+            "expr": "histogram_quantile(0.99, prometheus_model_latency_seconds_bucket)",
+            "legendFormat": "{{provider}}"
+          }
+        ],
+        "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 }
+      },
+      {
+        "title": "Cost per Model ($/hr)",
+        "type": "timeseries",
+        "targets": [
+          {
+            "expr": "rate(prometheus_model_cost_usd_total[1h])",
+            "legendFormat": "{{model}}"
+          }
+        ],
+        "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 }
+      },
+      {
+        "title": "Fallback Rate",
+        "type": "stat",
+        "targets": [
+          {
+            "expr": "rate(prometheus_model_fallback_total[5m]) / rate(prometheus_model_requests_total[5m])",
+            "legendFormat": "fallback %"
+          }
+        ],
+        "gridPos": { "h": 4, "w": 6, "x": 12, "y": 8 }
+      },
+      {
+        "title": "Tokens Consumed per Slot",
+        "type": "timeseries",
+        "targets": [
+          {
+            "expr": "rate(prometheus_model_tokens_total[5m])",
+            "legendFormat": "{{slot}}"
+          }
+        ],
+        "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 }
+      }
+    ]
+  }
+}

@@ -5,29 +5,28 @@ import type { SoftwareRequirementsSpec } from "./discovery";
 const logger = createLogger("agent-sdk:protocol:architect");
 
 export interface Blueprint {
-  id: string;
-  projectId: string;
-  version: string;
-  techStack: TechStackDecision;
-  databaseSchema: SchemaDefinition[];
+  adrs: ArchitectureDecisionRecord[];
   apiContracts: APIContract[];
   componentTree: ComponentNode[];
-  adrs: ArchitectureDecisionRecord[];
-  parallelWorkstreams: Workstream[];
   content: string; // Full markdown content
+  databaseSchema: SchemaDefinition[];
+  id: string;
+  parallelWorkstreams: Workstream[];
+  projectId: string;
+  techStack: TechStackDecision;
+  version: string;
 }
 
 export interface TechStackDecision {
-  frontend: string[];
+  auth: string;
   backend: string[];
   database: string;
-  auth: string;
   deployment: string[];
+  frontend: string[];
   reasoning: string;
 }
 
 export interface SchemaDefinition {
-  tableName: string;
   columns: Array<{
     name: string;
     type: string;
@@ -35,47 +34,50 @@ export interface SchemaDefinition {
     references?: string;
   }>;
   indexes: string[];
+  tableName: string;
 }
 
 export interface APIContract {
-  path: string;
-  method: string;
+  auth: boolean;
   description: string;
   inputType: string;
+  method: string;
   outputType: string;
-  auth: boolean;
+  path: string;
 }
 
 export interface ComponentNode {
-  name: string;
-  type: "page" | "layout" | "component" | "hook" | "store" | "util";
   children: ComponentNode[];
   dependencies: string[];
+  name: string;
+  type: "page" | "layout" | "component" | "hook" | "store" | "util";
 }
 
 export interface ArchitectureDecisionRecord {
-  id: string;
-  title: string;
-  status: "proposed" | "accepted" | "deprecated" | "superseded";
-  context: string;
-  decision: string;
   consequences: string[];
+  context: string;
   date: string;
+  decision: string;
+  id: string;
+  status: "proposed" | "accepted" | "deprecated" | "superseded";
+  title: string;
 }
 
 export interface Workstream {
+  dependencies: string[];
+  estimatedCredits: number;
   id: string;
   name: string;
-  tasks: string[];
-  dependencies: string[];
   parallelizable: boolean;
-  estimatedCredits: number;
+  tasks: string[];
 }
 
 export class ArchitectProtocol {
-  private blueprint: Partial<Blueprint> = {};
+  private readonly blueprint: Partial<Blueprint> = {};
+  private readonly projectId: string;
 
-  constructor(private projectId: string) {
+  constructor(projectId: string) {
+    this.projectId = projectId;
     this.blueprint = {
       id: generateId("bp"),
       projectId,
@@ -85,8 +87,11 @@ export class ArchitectProtocol {
     };
   }
 
-  analyzeSRS(srs: SoftwareRequirementsSpec): void {
-    logger.info({ projectId: this.projectId }, "Analyzing SRS for architecture");
+  analyzeSRS(_srs: SoftwareRequirementsSpec): void {
+    logger.info(
+      { projectId: this.projectId },
+      "Analyzing SRS for architecture"
+    );
     // The LLM agent will use SRS to make decisions
     // This method sets up the context
   }
@@ -116,7 +121,9 @@ export class ArchitectProtocol {
     this.blueprint.componentTree = tree;
   }
 
-  addADR(adr: Omit<ArchitectureDecisionRecord, "id" | "status" | "date">): void {
+  addADR(
+    adr: Omit<ArchitectureDecisionRecord, "id" | "status" | "date">
+  ): void {
     this.blueprint.adrs ??= [];
     this.blueprint.adrs.push({
       id: generateId("adr"),
@@ -145,7 +152,9 @@ export class ArchitectProtocol {
       workstreams.push({
         id: generateId("ws"),
         name: "API Implementation",
-        tasks: this.blueprint.apiContracts.map((c) => `Implement ${c.method} ${c.path}`),
+        tasks: this.blueprint.apiContracts.map(
+          (c) => `Implement ${c.method} ${c.path}`
+        ),
         dependencies: ["Database & Schema"],
         parallelizable: true,
         estimatedCredits: 25,
@@ -156,7 +165,11 @@ export class ArchitectProtocol {
       workstreams.push({
         id: generateId("ws"),
         name: "Frontend Implementation",
-        tasks: ["Create layouts", "Build page components", "Wire up API client"],
+        tasks: [
+          "Create layouts",
+          "Build page components",
+          "Wire up API client",
+        ],
         dependencies: [],
         parallelizable: true,
         estimatedCredits: 25,
@@ -185,62 +198,81 @@ export class ArchitectProtocol {
     return workstreams;
   }
 
+  private renderTechStack(sections: string[]): void {
+    const ts = this.blueprint.techStack;
+    if (!ts) {
+      return;
+    }
+    sections.push("## Tech Stack\n");
+    sections.push(`- **Frontend:** ${ts.frontend.join(", ")}`);
+    sections.push(`- **Backend:** ${ts.backend.join(", ")}`);
+    sections.push(`- **Database:** ${ts.database}`);
+    sections.push(`- **Auth:** ${ts.auth}`);
+    sections.push(`- **Deployment:** ${ts.deployment.join(", ")}`);
+    sections.push(`\n> ${ts.reasoning}\n`);
+  }
+
+  private renderDatabaseSchema(sections: string[]): void {
+    if (!this.blueprint.databaseSchema?.length) {
+      return;
+    }
+    sections.push("## Database Schema\n");
+    for (const table of this.blueprint.databaseSchema) {
+      sections.push(`### ${table.tableName}`);
+      sections.push("| Column | Type | Nullable |");
+      sections.push("|--------|------|----------|");
+      for (const col of table.columns) {
+        sections.push(
+          `| ${col.name} | ${col.type} | ${col.nullable ? "Yes" : "No"} |`
+        );
+      }
+      sections.push("");
+    }
+  }
+
+  private renderApiContracts(sections: string[]): void {
+    if (!this.blueprint.apiContracts?.length) {
+      return;
+    }
+    sections.push("## API Contracts\n");
+    for (const api of this.blueprint.apiContracts) {
+      sections.push(`### ${api.method} ${api.path}`);
+      sections.push(`${api.description}`);
+      sections.push(`- Input: \`${api.inputType}\``);
+      sections.push(`- Output: \`${api.outputType}\``);
+      sections.push(`- Auth: ${api.auth ? "Required" : "Public"}\n`);
+    }
+  }
+
+  private renderAdrs(sections: string[]): void {
+    if (!this.blueprint.adrs?.length) {
+      return;
+    }
+    sections.push("## Architecture Decision Records\n");
+    for (const adr of this.blueprint.adrs) {
+      sections.push(`### ADR-${adr.id}: ${adr.title}`);
+      sections.push(`**Status:** ${adr.status} | **Date:** ${adr.date}`);
+      sections.push(`**Context:** ${adr.context}`);
+      sections.push(`**Decision:** ${adr.decision}`);
+      sections.push("**Consequences:**");
+      for (const c of adr.consequences) {
+        sections.push(`- ${c}`);
+      }
+      sections.push("");
+    }
+  }
+
   generateBlueprintMarkdown(): string {
-    const bp = this.blueprint;
     const sections: string[] = [];
 
     sections.push("# Project Blueprint\n");
-    sections.push(`Version: ${bp.version}`);
+    sections.push(`Version: ${this.blueprint.version}`);
     sections.push(`Generated: ${new Date().toISOString()}\n`);
 
-    if (bp.techStack) {
-      sections.push("## Tech Stack\n");
-      sections.push(`- **Frontend:** ${bp.techStack.frontend.join(", ")}`);
-      sections.push(`- **Backend:** ${bp.techStack.backend.join(", ")}`);
-      sections.push(`- **Database:** ${bp.techStack.database}`);
-      sections.push(`- **Auth:** ${bp.techStack.auth}`);
-      sections.push(`- **Deployment:** ${bp.techStack.deployment.join(", ")}`);
-      sections.push(`\n> ${bp.techStack.reasoning}\n`);
-    }
-
-    if (bp.databaseSchema?.length) {
-      sections.push("## Database Schema\n");
-      for (const table of bp.databaseSchema) {
-        sections.push(`### ${table.tableName}`);
-        sections.push("| Column | Type | Nullable |");
-        sections.push("|--------|------|----------|");
-        for (const col of table.columns) {
-          sections.push(`| ${col.name} | ${col.type} | ${col.nullable ? "Yes" : "No"} |`);
-        }
-        sections.push("");
-      }
-    }
-
-    if (bp.apiContracts?.length) {
-      sections.push("## API Contracts\n");
-      for (const api of bp.apiContracts) {
-        sections.push(`### ${api.method} ${api.path}`);
-        sections.push(`${api.description}`);
-        sections.push(`- Input: \`${api.inputType}\``);
-        sections.push(`- Output: \`${api.outputType}\``);
-        sections.push(`- Auth: ${api.auth ? "Required" : "Public"}\n`);
-      }
-    }
-
-    if (bp.adrs?.length) {
-      sections.push("## Architecture Decision Records\n");
-      for (const adr of bp.adrs) {
-        sections.push(`### ADR-${adr.id}: ${adr.title}`);
-        sections.push(`**Status:** ${adr.status} | **Date:** ${adr.date}`);
-        sections.push(`**Context:** ${adr.context}`);
-        sections.push(`**Decision:** ${adr.decision}`);
-        sections.push(`**Consequences:**`);
-        for (const c of adr.consequences) {
-          sections.push(`- ${c}`);
-        }
-        sections.push("");
-      }
-    }
+    this.renderTechStack(sections);
+    this.renderDatabaseSchema(sections);
+    this.renderApiContracts(sections);
+    this.renderAdrs(sections);
 
     const content = sections.join("\n");
     this.blueprint.content = content;

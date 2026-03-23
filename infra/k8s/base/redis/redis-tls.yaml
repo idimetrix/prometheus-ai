@@ -1,0 +1,124 @@
+# ─── Redis TLS Configuration ───────────────────────────────────────────────────
+# Enables in-transit encryption for Redis connections.
+# Certificates are managed via cert-manager and mounted as secrets.
+# ---------------------------------------------------------------------------
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: redis-tls-cert
+  namespace: prometheus
+  labels:
+    app.kubernetes.io/part-of: prometheus
+    app.kubernetes.io/component: redis
+spec:
+  secretName: redis-tls-secret
+  issuerRef:
+    name: prometheus-ca-issuer
+    kind: ClusterIssuer
+  commonName: redis.prometheus.svc.cluster.local
+  dnsNames:
+    - redis.prometheus.svc.cluster.local
+    - redis-master.prometheus.svc.cluster.local
+    - redis-sentinel.prometheus.svc.cluster.local
+    - "*.redis-headless.prometheus.svc.cluster.local"
+  duration: 8760h # 1 year
+  renewBefore: 720h # 30 days
+  privateKey:
+    algorithm: ECDSA
+    size: 256
+---
+# ConfigMap with Redis TLS configuration overlay
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: redis-tls-config
+  namespace: prometheus
+  labels:
+    app.kubernetes.io/part-of: prometheus
+    app.kubernetes.io/component: redis
+data:
+  redis-tls.conf: |
+    # ─── TLS Configuration ─────────────────────────────────────────────────
+    tls-port 6380
+    port 0
+
+    # Certificate files (mounted from redis-tls-secret)
+    tls-cert-file /tls/tls.crt
+    tls-key-file /tls/tls.key
+    tls-ca-cert-file /tls/ca.crt
+
+    # Require TLS for all client connections
+    tls-auth-clients optional
+
+    # TLS protocol version constraints
+    tls-protocols "TLSv1.2 TLSv1.3"
+
+    # Prefer server ciphers
+    tls-prefer-server-ciphers yes
+
+    # Replication TLS (for sentinel/replica communication)
+    tls-replication yes
+
+    # Sentinel TLS
+    tls-cluster yes
+---
+# Patch for the existing Redis deployment to mount TLS certs
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis-tls-patch
+  namespace: prometheus
+  labels:
+    app.kubernetes.io/part-of: prometheus
+    app.kubernetes.io/component: redis
+  annotations:
+    description: >-
+      Strategic merge patch for the Redis deployment to enable TLS.
+      Apply with: kubectl apply -k . (via kustomize overlay)
+spec:
+  template:
+    spec:
+      containers:
+        - name: redis
+          args:
+            - redis-server
+            - /etc/redis/redis.conf
+            - --include
+            - /etc/redis-tls/redis-tls.conf
+          ports:
+            - containerPort: 6380
+              name: redis-tls
+              protocol: TCP
+          volumeMounts:
+            - name: redis-tls-certs
+              mountPath: /tls
+              readOnly: true
+            - name: redis-tls-config
+              mountPath: /etc/redis-tls
+              readOnly: true
+      volumes:
+        - name: redis-tls-certs
+          secret:
+            secretName: redis-tls-secret
+        - name: redis-tls-config
+          configMap:
+            name: redis-tls-config
+---
+# Service exposing the TLS port
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis-tls
+  namespace: prometheus
+  labels:
+    app.kubernetes.io/part-of: prometheus
+    app.kubernetes.io/component: redis
+spec:
+  selector:
+    app: redis
+  ports:
+    - port: 6380
+      targetPort: 6380
+      name: redis-tls
+      protocol: TCP
+  type: ClusterIP

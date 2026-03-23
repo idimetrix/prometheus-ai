@@ -1,0 +1,138 @@
+{
+  "name": "prometheus-vscode",
+  "displayName": "Prometheus AI",
+  "description": "AI-powered engineering assistant for VS Code",
+  "version": "0.0.1",
+  "publisher": "prometheus",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.95.0"
+  },
+  "categories": [
+    "AI",
+    "Programming Languages",
+    "Other"
+  ],
+  "keywords": [
+    "ai",
+    "agent",
+    "engineering",
+    "prometheus"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "prometheus.startSession",
+        "title": "Prometheus: Start Session"
+      },
+      {
+        "command": "prometheus.openChat",
+        "title": "Prometheus: Open Chat"
+      },
+      {
+        "command": "prometheus.assignTask",
+        "title": "Prometheus: Assign Task"
+      },
+      {
+        "command": "prometheus.submitTask",
+        "title": "Prometheus: Submit Task"
+      },
+      {
+        "command": "prometheus.showDashboard",
+        "title": "Prometheus: Show Dashboard"
+      },
+      {
+        "command": "prometheus.approveCheckpoint",
+        "title": "Prometheus: Approve Checkpoint"
+      },
+      {
+        "command": "prometheus.viewStatus",
+        "title": "Prometheus: View Agent Status"
+      },
+      {
+        "command": "prometheus.stopSession",
+        "title": "Prometheus: Stop Session"
+      },
+      {
+        "command": "prometheus.configure",
+        "title": "Prometheus: Configure API Settings"
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "prometheus",
+          "title": "Prometheus",
+          "icon": "resources/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "prometheus": [
+        {
+          "type": "webview",
+          "id": "prometheus.chatPanel",
+          "name": "Agent Chat"
+        },
+        {
+          "id": "prometheus.sessions",
+          "name": "Active Sessions"
+        },
+        {
+          "id": "prometheus.agents",
+          "name": "Agent Status"
+        },
+        {
+          "id": "prometheus.tasks",
+          "name": "Recent Tasks"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Prometheus",
+      "properties": {
+        "prometheus.apiUrl": {
+          "type": "string",
+          "default": "http://localhost:4000",
+          "description": "URL of the Prometheus API server"
+        },
+        "prometheus.socketUrl": {
+          "type": "string",
+          "default": "ws://localhost:4001",
+          "description": "URL of the Prometheus WebSocket server"
+        },
+        "prometheus.apiToken": {
+          "type": "string",
+          "default": "",
+          "description": "API authentication token"
+        }
+      }
+    },
+    "keybindings": [
+      {
+        "command": "prometheus.openChat",
+        "key": "ctrl+shift+p",
+        "mac": "cmd+shift+p",
+        "when": "prometheus.sessionActive"
+      }
+    ]
+  },
+  "scripts": {
+    "build": "esbuild ./src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node",
+    "watch": "esbuild ./src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node --watch",
+    "typecheck": "tsc --noEmit",
+    "package": "vsce package",
+    "clean": "rm -rf dist .turbo"
+  },
+  "devDependencies": {
+    "@prometheus/config-typescript": "workspace:*",
+    "@types/vscode": "^1.110.0",
+    "@types/node": "^25.5.0",
+    "esbuild": "^0.27.4",
+    "typescript": "^6.0.2"
+  }
+}

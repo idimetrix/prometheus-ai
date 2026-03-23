@@ -9,5 +9,63 @@ data:
   CORS_ORIGIN: "https://app.prometheus.dev"
   NEXT_PUBLIC_API_URL: "https://api.prometheus.dev"
   NEXT_PUBLIC_SOCKET_URL: "https://ws.prometheus.dev"
-  MODEL_ROUTER_PORT: "4002"
-  SANDBOX_MANAGER_PORT: "4003"
+  # Service ports
+  WEB_PORT: "3000"
+  API_PORT: "4000"
+  SOCKET_SERVER_PORT: "4001"
+  ORCHESTRATOR_PORT: "4002"
+  PROJECT_BRAIN_PORT: "4003"
+  MODEL_ROUTER_PORT: "4004"
+  MCP_GATEWAY_PORT: "4005"
+  SANDBOX_MANAGER_PORT: "4006"
+  # Internal service URLs
+  API_URL: "http://api.prometheus.svc.cluster.local:4000"
+  SOCKET_SERVER_URL: "http://socket-server.prometheus.svc.cluster.local:4001"
+  ORCHESTRATOR_URL: "http://orchestrator.prometheus.svc.cluster.local:4002"
+  PROJECT_BRAIN_URL: "http://project-brain.prometheus.svc.cluster.local:4003"
+  MODEL_ROUTER_URL: "http://model-router.prometheus.svc.cluster.local:4004"
+  MCP_GATEWAY_URL: "http://mcp-gateway.prometheus.svc.cluster.local:4005"
+  SANDBOX_MANAGER_URL: "http://sandbox-manager.prometheus.svc.cluster.local:4006"
+  # Infrastructure
+  REDIS_URL: "redis://redis.prometheus.svc.cluster.local:6379"
+  DATABASE_HOST: "postgres.prometheus.svc.cluster.local"
+  DATABASE_PORT: "5432"
+  DATABASE_NAME: "prometheus"
+  # Read replica for read-heavy queries (Patroni HA)
+  DATABASE_READ_HOST: "patroni-replica.prometheus.svc.cluster.local"
+  DATABASE_READ_PORT: "5432"
+  DATABASE_READ_URL: "postgresql://prometheus:CHANGE_ME@patroni-replica.prometheus.svc.cluster.local:5432/prometheus"
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: app-secrets
+  namespace: prometheus
+type: Opaque
+stringData:
+  DATABASE_URL: "postgresql://prometheus:CHANGE_ME@postgres.prometheus.svc.cluster.local:5432/prometheus"
+  CLERK_SECRET_KEY: "CHANGE_ME"
+  ENCRYPTION_KEY: "CHANGE_ME"
+  OPENAI_API_KEY: "CHANGE_ME"
+  ANTHROPIC_API_KEY: "CHANGE_ME"
+  MINIO_ACCESS_KEY: "CHANGE_ME"
+  MINIO_SECRET_KEY: "CHANGE_ME"
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: postgres-secrets
+  namespace: prometheus
+type: Opaque
+stringData:
+  POSTGRES_USER: "prometheus"
+  POSTGRES_PASSWORD: "CHANGE_ME"
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: redis-auth
+  namespace: prometheus
+type: Opaque
+stringData:
+  password: ""

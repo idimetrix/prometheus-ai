@@ -7,28 +7,84 @@ spec:
   entryPoints:
     - websecure
   routes:
+    # Web frontend
     - match: Host(`app.prometheus.dev`)
       kind: Rule
       services:
         - name: web
           port: 3000
+      middlewares:
+        - name: ip-rate-limit
+    # API server
     - match: Host(`api.prometheus.dev`)
       kind: Rule
       services:
         - name: api
           port: 4000
-    - match: Host(`ws.prometheus.dev`)
-      kind: Rule
-      services:
-        - name: socket-server
-          port: 4001
+      middlewares:
+        - name: ip-rate-limit
+    # API SSE (streaming) - must be before generic api route
     - match: Host(`api.prometheus.dev`) && PathPrefix(`/api/sse`)
       kind: Rule
+      priority: 10
       services:
         - name: api
           port: 4000
       middlewares:
         - name: sse-headers
+    # WebSocket server
+    - match: Host(`ws.prometheus.dev`)
+      kind: Rule
+      services:
+        - name: socket-server
+          port: 4001
+          sticky:
+            cookie:
+              name: ws-session
+              secure: true
+              httpOnly: true
+      middlewares:
+        - name: ip-rate-limit
+    # Orchestrator (internal, exposed for admin)
+    - match: Host(`orchestrator.prometheus.dev`)
+      kind: Rule
+      services:
+        - name: orchestrator
+          port: 4002
+      middlewares:
+        - name: internal-only
+    # Project Brain (internal)
+    - match: Host(`brain.prometheus.dev`)
+      kind: Rule
+      services:
+        - name: project-brain
+          port: 4003
+      middlewares:
+        - name: internal-only
+    # Model Router (internal)
+    - match: Host(`models.prometheus.dev`)
+      kind: Rule
+      services:
+        - name: model-router
+          port: 4004
+      middlewares:
+        - name: internal-only
+    # MCP Gateway
+    - match: Host(`mcp.prometheus.dev`)
+      kind: Rule
+      services:
+        - name: mcp-gateway
+          port: 4005
+      middlewares:
+        - name: internal-only
+    # Sandbox Manager (internal)
+    - match: Host(`sandbox.prometheus.dev`)
+      kind: Rule
+      services:
+        - name: sandbox-manager
+          port: 4006
+      middlewares:
+        - name: internal-only
   tls:
     certResolver: letsencrypt
 ---
@@ -42,3 +98,26 @@ spec:
     customResponseHeaders:
       X-Accel-Buffering: "no"
       Cache-Control: "no-cache"
+---
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: internal-only
+  namespace: prometheus
+spec:
+  ipAllowList:
+    sourceRange:
+      - "10.0.0.0/8"
+      - "172.16.0.0/12"
+      - "192.168.0.0/16"
+---
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: ip-rate-limit
+  namespace: prometheus
+spec:
+  rateLimit:
+    average: 100
+    burst: 200
+    period: 1s

@@ -7,23 +7,25 @@
     "dev": "tsx watch src/index.ts",
     "build": "tsup src/index.ts --format esm",
     "start": "node dist/index.js",
+    "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "clean": "rm -rf dist .turbo"
   },
   "dependencies": {
-    "hono": "^4.7.0",
-    "@hono/node-server": "^1.14.0",
-    "dockerode": "^4.0.0",
+    "hono": "^4.12.9",
+    "@hono/node-server": "^1.19.11",
+    "dockerode": "^4.0.10",
     "@prometheus/logger": "workspace:*",
+    "@prometheus/telemetry": "workspace:*",
     "@prometheus/types": "workspace:*",
     "@prometheus/queue": "workspace:*",
     "@prometheus/utils": "workspace:*"
   },
   "devDependencies": {
     "@prometheus/config-typescript": "workspace:*",
-    "@types/dockerode": "^3.3.0",
-    "tsx": "^4.19.0",
-    "tsup": "^8.4.0",
-    "typescript": "^5.7.0"
+    "@types/dockerode": "^4.0.1",
+    "tsx": "^4.21.0",
+    "tsup": "^8.5.1",
+    "typescript": "^6.0.2"
   }
 }

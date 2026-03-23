@@ -1,42 +1,61 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+// Mock Redis
+const mockGet = vi.fn().mockResolvedValue(null);
+const mockPipeline = vi.fn().mockReturnValue({
+  incr: vi.fn().mockReturnThis(),
+  expire: vi.fn().mockReturnThis(),
+  exec: vi.fn().mockResolvedValue([]),
+});
+
+vi.mock("@prometheus/queue", () => ({
+  createRedisConnection: () => ({
+    get: mockGet,
+    pipeline: mockPipeline,
+  }),
+}));
+
 import { RateLimiter } from "../rate-limiter";
 
 describe("RateLimiter", () => {
   let limiter: RateLimiter;
 
   beforeEach(() => {
+    vi.clearAllMocks();
+    mockGet.mockResolvedValue(null);
     limiter = new RateLimiter();
   });
 
   it("should allow requests within limit", async () => {
+    mockGet.mockResolvedValue("0");
     const result = await limiter.checkRateLimit("org1", "pro");
     expect(result.allowed).toBe(true);
     expect(result.remaining).toBe(200);
   });
 
-  it("should track usage", async () => {
+  it("should track usage via Redis pipeline", async () => {
     await limiter.recordUsage("org1");
-    const result = await limiter.checkRateLimit("org1", "hobby");
-    expect(result.remaining).toBe(4); // 5 - 1
+    expect(mockPipeline).toHaveBeenCalled();
   });
 
   it("should deny when limit reached", async () => {
-    for (let i = 0; i < 5; i++) {
-      await limiter.recordUsage("org1");
-    }
+    mockGet.mockResolvedValue("5"); // 5 tasks used for hobby (limit 5)
     const result = await limiter.checkRateLimit("org1", "hobby");
     expect(result.allowed).toBe(false);
     expect(result.remaining).toBe(0);
   });
 
   it("should have different limits per tier", async () => {
+    mockGet.mockResolvedValue("0");
+
     const hobby = await limiter.checkRateLimit("org1", "hobby");
     const pro = await limiter.checkRateLimit("org2", "pro");
     const enterprise = await limiter.checkRateLimit("org3", "enterprise");
 
     expect(hobby.remaining).toBe(5);
     expect(pro.remaining).toBe(200);
-    expect(enterprise.remaining).toBe(Infinity);
+    expect(enterprise.allowed).toBe(true);
+    expect(enterprise.remaining).toBe(Number.POSITIVE_INFINITY);
   });
 
   it("should check concurrency limits", async () => {
@@ -61,5 +80,12 @@ describe("RateLimiter", () => {
     expect(limiter.getPriorityForTier("starter")).toBe(8);
     expect(limiter.getPriorityForTier("hobby")).toBe(10);
     expect(limiter.getPriorityForTier("unknown")).toBe(10);
+  });
+
+  it("should handle null Redis response as zero count", async () => {
+    mockGet.mockResolvedValue(null);
+    const result = await limiter.checkRateLimit("org1", "hobby");
+    expect(result.allowed).toBe(true);
+    expect(result.remaining).toBe(5);
   });
 });

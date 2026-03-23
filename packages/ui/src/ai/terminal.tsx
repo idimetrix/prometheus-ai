@@ -1,46 +1,58 @@
 "use client";
-import * as React from "react";
+import { useEffect, useRef } from "react";
 import { cn } from "../lib/utils";
 
-interface TerminalProps {
-  lines: Array<{ content: string; timestamp?: string }>;
-  className?: string;
-  autoScroll?: boolean;
+export interface TerminalLine {
+  content: string;
+  timestamp?: string;
 }
 
-export function Terminal({ lines, className, autoScroll = true }: TerminalProps) {
-  const containerRef = React.useRef<HTMLDivElement>(null);
+interface TerminalProps {
+  autoScroll?: boolean;
+  className?: string;
+  lines: TerminalLine[];
+}
 
-  React.useEffect(() => {
+export function Terminal({
+  lines,
+  className,
+  autoScroll = true,
+}: TerminalProps) {
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
     if (autoScroll && containerRef.current) {
       containerRef.current.scrollTop = containerRef.current.scrollHeight;
     }
-  }, [lines, autoScroll]);
+  }, [autoScroll]);
 
   return (
     <div
-      ref={containerRef}
       className={cn(
-        "rounded-lg border bg-zinc-950 p-4 font-mono text-sm text-green-400 overflow-auto",
+        "overflow-auto rounded-lg border bg-zinc-950 p-4 font-mono text-green-400 text-sm",
         className
       )}
+      ref={containerRef}
     >
-      {lines.map((line, i) => (
-        <div key={i} className="whitespace-pre-wrap break-all leading-relaxed">
+      {Array.from(lines.entries()).map(([lineNum, line]) => (
+        <div
+          className="whitespace-pre-wrap break-all leading-relaxed"
+          key={`terminal-${lineNum}`}
+        >
           {line.timestamp && (
-            <span className="text-zinc-600 mr-2 text-xs">{line.timestamp}</span>
+            <span className="mr-2 text-xs text-zinc-600">{line.timestamp}</span>
           )}
-          <span dangerouslySetInnerHTML={{ __html: escapeHtml(line.content) }} />
+          <span>{line.content}</span>
         </div>
       ))}
-      <div className="h-4 flex items-center">
-        <span className="inline-block w-2 h-4 bg-green-400 animate-pulse" />
+      <div className="flex h-4 items-center">
+        <span className="inline-block h-4 w-2 animate-pulse bg-green-400" />
       </div>
     </div>
   );
 }
 
-function escapeHtml(text: string): string {
+function _escapeHtml(text: string): string {
   return text
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")

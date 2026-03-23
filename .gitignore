@@ -36,5 +36,20 @@ pnpm-debug.log*
 # Docker
 docker-compose.override.yml
 
+# Secrets
+infra/secrets/age-key.txt
+infra/secrets/production.yaml
+infra/secrets/staging.yaml
+infra/secrets/dev.yaml
+
+# Load test results
+*-test-results.json
+
+# Playwright MCP
+.playwright-mcp
+
+# MCP config (contains env vars)
+.mcp.json
+
 # Misc
 *.tsbuildinfo

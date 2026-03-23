@@ -1,35 +1,36 @@
 name: Deploy Production
 
 on:
-  push:
-    branches: [main]
-
-concurrency:
-  group: deploy-production
-  cancel-in-progress: false
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Type "deploy" to confirm production deployment'
+        required: true
 
 jobs:
-  build-and-deploy:
+  validate:
+    name: Validate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Confirm deployment
+        env:
+          CONFIRM_INPUT: ${{ github.event.inputs.confirm }}
+        run: |
+          if [ "$CONFIRM_INPUT" != "deploy" ]; then
+            echo "Deployment not confirmed. Input was: $CONFIRM_INPUT"
+            exit 1
+          fi
+
+  deploy:
+    name: Deploy to Production
+    needs: [validate]
     runs-on: ubuntu-latest
     environment: production
-    permissions:
-      packages: write
-      contents: read
     steps:
       - uses: actions/checkout@v4
 
-      - uses: pnpm/action-setup@v4
-        with:
-          version: 10
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: pnpm
-
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm turbo typecheck
-      - run: pnpm turbo build
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
 
       - name: Login to GHCR
         uses: docker/login-action@v3
@@ -38,25 +39,41 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and push Docker images
+      - name: Build and push images
         run: |
-          SERVICES="web api queue-worker socket-server orchestrator project-brain model-router mcp-gateway sandbox-manager"
-          for service in $SERVICES; do
-            DOCKERFILE="infra/docker/Dockerfile.${service}"
-            if [ ! -f "$DOCKERFILE" ]; then
-              DOCKERFILE="infra/docker/Dockerfile.api"
-            fi
-            docker build -f "$DOCKERFILE" \
-              --build-arg SERVICE="${service}" \
-              -t "ghcr.io/${{ github.repository }}/${service}:${{ github.sha }}" \
-              -t "ghcr.io/${{ github.repository }}/${service}:latest" .
-            docker push "ghcr.io/${{ github.repository }}/${service}:${{ github.sha }}"
-            docker push "ghcr.io/${{ github.repository }}/${service}:latest"
+          VERSION=$(git rev-parse --short HEAD)
+          SERVICES="api web orchestrator project-brain model-router mcp-gateway sandbox-manager queue-worker socket-server"
+          for svc in $SERVICES; do
+            docker build -f infra/docker/Dockerfile.$svc -t ghcr.io/${{ github.repository }}/$svc:$VERSION -t ghcr.io/${{ github.repository }}/$svc:latest .
+            docker push ghcr.io/${{ github.repository }}/$svc:$VERSION
+            docker push ghcr.io/${{ github.repository }}/$svc:latest
           done
 
       - name: Deploy to production
-        run: |
-          chmod +x infra/scripts/deploy.sh
-          bash infra/scripts/deploy.sh production ${{ github.sha }}
         env:
-          KUBECONFIG: ${{ secrets.KUBECONFIG }}
+          SSH_KEY: ${{ secrets.PRODUCTION_SSH_KEY }}
+          PRODUCTION_HOST: ${{ secrets.PRODUCTION_HOST }}
+        run: |
+          mkdir -p ~/.ssh
+          echo "$SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh -o StrictHostKeyChecking=no -i ~/.ssh/deploy_key deploy@"$PRODUCTION_HOST" \
+            "cd /opt/prometheus && ./infra/scripts/deploy.sh production"
+
+      - name: Smoke tests
+        run: |
+          sleep 60
+          curl -sf https://prometheus.dev/api/health || exit 1
+
+      - name: Notify success
+        if: success()
+        run: echo "Production deployment successful"
+
+      - name: Auto-rollback on failure
+        if: failure()
+        env:
+          SSH_KEY: ${{ secrets.PRODUCTION_SSH_KEY }}
+          PRODUCTION_HOST: ${{ secrets.PRODUCTION_HOST }}
+        run: |
+          ssh -o StrictHostKeyChecking=no -i ~/.ssh/deploy_key deploy@"$PRODUCTION_HOST" \
+            "cd /opt/prometheus && ./infra/scripts/rollback.sh production"

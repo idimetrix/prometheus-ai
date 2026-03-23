@@ -4,6 +4,7 @@ namespace: prometheus
 resources:
   - ../../base/namespace.yaml
   - ../../base/configmap.yaml
+  # App services
   - ../../base/web/deployment.yaml
   - ../../base/web/service.yaml
   - ../../base/web/hpa.yaml
@@ -12,13 +13,25 @@ resources:
   - ../../base/api/hpa.yaml
   - ../../base/socket-server/deployment.yaml
   - ../../base/socket-server/service.yaml
+  - ../../base/orchestrator/deployment.yaml
+  - ../../base/project-brain/deployment.yaml
+  - ../../base/model-router/deployment.yaml
+  - ../../base/mcp-gateway/deployment.yaml
+  - ../../base/sandbox-manager/deployment.yaml
   - ../../base/queue-worker/deployment.yaml
+  # Infrastructure
   - ../../base/redis/deployment.yaml
   - ../../base/postgres/deployment.yaml
+  # Networking
   - ../../base/traefik/ingress.yaml
+  # Autoscaling
   - ../../base/keda/scaledobject-agent-worker.yaml
+  # Monitoring
   - ../../base/monitoring/alert-rules.yaml
+  # Secrets Management
+  - external-secrets.yaml
 patches:
+  # Production: scale up web and api
   - patch: |-
       - op: replace
         path: /spec/replicas
@@ -33,3 +46,26 @@ patches:
     target:
       kind: Deployment
       name: api
+  - patch: |-
+      - op: replace
+        path: /spec/replicas
+        value: 3
+    target:
+      kind: Deployment
+      name: orchestrator
+  # Production: larger PG storage
+  - patch: |-
+      - op: replace
+        path: /spec/volumeClaimTemplates/0/spec/resources/requests/storage
+        value: 50Gi
+    target:
+      kind: StatefulSet
+      name: postgres
+  # Production: more Redis memory
+  - patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/args
+        value: ["--maxmemory", "1600mb", "--maxmemory-policy", "allkeys-lru", "--appendonly", "yes"]
+    target:
+      kind: Deployment
+      name: redis

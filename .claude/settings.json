@@ -1,0 +1,100 @@
+{
+  "enabledMcpjsonServers": [
+    "playwright"
+  ],
+  "enableAllProjectMcpServers": true,
+  "permissions": {
+    "defaultMode": "bypassPermissions"
+  },
+  "env": {},
+  "companyAnnouncements": [
+    "🚨 FUNCTIONALITY ONLY - NO DOCUMENTATION! Focus 100% on working code. Move to next task immediately when done. NEVER create docs unless explicitly asked! 🚨",
+    "🤖 AUTONOMOUS MODE ACTIVE: Work through ALL tasks without stopping. NEVER ask 'Should I continue?' or 'Ready for next task?'. Keep going until 100% complete! 🚀"
+  ],
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash -c 'export NVM_DIR=\"${HOME}/.nvm\"; [ -s \"$NVM_DIR/nvm.sh\" ] && source \"$NVM_DIR/nvm.sh\"; nvm use 24 2>/dev/null || nvm install 24 2>/dev/null || echo \"Node version already set or nvm not available\"'",
+            "statusMessage": "Setting up Node 24 via nvm..."
+          },
+          {
+            "type": "command",
+            "command": "echo '\n🚨 FUNCTIONALITY ONLY - NO DOCUMENTATION!\n   Focus 100% on working code. Move to next task immediately.\n   NEVER create README, CHANGELOG, or docs unless explicitly asked!\n'",
+            "statusMessage": "Setting priority: FUNCTIONALITY FIRST..."
+          },
+          {
+            "type": "command",
+            "command": "echo '🤖 AUTONOMOUS MODE: Work through ALL tasks without stopping.\n   Do not pause between tasks. Keep going until 100% complete!\n'",
+            "statusMessage": "Initializing autonomous mode..."
+          },
+          {
+            "type": "command",
+            "command": "echo '✅ VALIDATION REQUIRED: After completing work, ALWAYS run:\n   1. pnpm unsafe (fix linting/formatting)\n   2. pnpm typecheck (fix TypeScript errors)\n   3. Keep iterating until BOTH pass with zero issues\n'",
+            "statusMessage": "Setting validation requirements..."
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "matcher": ".*",
+        "hooks": [
+          {
+            "type": "prompt",
+            "prompt": "Analyze the user's request: '$ARGUMENTS'. If it contains multiple tasks (e.g., 'do task A, B, C' or 'implement features 1-50'), respond with: AUTONOMOUS_MODE_DETECTED: Work through all tasks sequentially without stopping. Otherwise if the request is a simple question or greeting respond with: Condition not met. Otherwise respond with: Condition met",
+            "statusMessage": "Analyzing request...",
+            "model": "claude-haiku-4-5-20251001"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash -c 'FILE=$(echo \"$TOOL_INPUT\" | jq -r \".file_path // empty\"); if [ -n \"$FILE\" ] && [[ \"$FILE\" == *.env* ]] || [[ \"$FILE\" == *secret* ]] || [[ \"$FILE\" == *credential* ]]; then echo \"BLOCKED: Attempted to write to sensitive file: $FILE\" >&2; exit 2; fi; exit 0'",
+            "statusMessage": "Checking file safety..."
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash -c 'FILE=$(echo \"$TOOL_INPUT\" | jq -r \".file_path // empty\"); if [ -n \"$FILE\" ] && { [[ \"$FILE\" == *.ts ]] || [[ \"$FILE\" == *.tsx ]] || [[ \"$FILE\" == *.js ]] || [[ \"$FILE\" == *.jsx ]] || [[ \"$FILE\" == *.json ]] || [[ \"$FILE\" == *.css ]]; }; then pnpm dlx ultracite fix 2>/dev/null || true; fi; exit 0'",
+            "statusMessage": "Auto-formatting..."
+          }
+        ]
+      },
+      {
+        "matcher": "Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash -c 'FILE=$(echo \"$TOOL_INPUT\" | jq -r \".file_path // empty\"); if [ -n \"$FILE\" ] && { [[ \"$FILE\" == *.ts ]] || [[ \"$FILE\" == *.tsx ]] || [[ \"$FILE\" == *.js ]] || [[ \"$FILE\" == *.jsx ]] || [[ \"$FILE\" == *.json ]] || [[ \"$FILE\" == *.css ]]; }; then cd \"$(git rev-parse --show-toplevel)\" && pnpm dlx ultracite fix 2>/dev/null || true; fi; exit 0'",
+            "statusMessage": "Auto-formatting..."
+          }
+        ]
+      }
+    ],
+    "Notification": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash -c 'notify-send \"Claude Code\" \"Claude needs your attention\" 2>/dev/null || true'",
+            "statusMessage": "Sending notification..."
+          }
+        ]
+      }
+    ]
+  }
+}
