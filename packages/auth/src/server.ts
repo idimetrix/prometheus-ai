@@ -41,12 +41,62 @@ export interface AuthContext {
   userId: string;
 }
 
+// ---------------------------------------------------------------------------
+// Dev auth bypass — allows testing without Clerk credentials
+// ---------------------------------------------------------------------------
+
+const DEV_TOKEN_PREFIX = "dev_token_";
+
+/**
+ * Parse a dev-mode token of the form `dev_token_<userId>` or
+ * `dev_token_<userId>__<orgId>` into a synthetic AuthContext.
+ *
+ * Only active when `DEV_AUTH_BYPASS=true` and `NODE_ENV !== "production"`.
+ */
+function tryDevAuthBypass(token: string): AuthContext | null {
+  if (
+    process.env.DEV_AUTH_BYPASS !== "true" ||
+    process.env.NODE_ENV === "production"
+  ) {
+    return null;
+  }
+
+  if (!token.startsWith(DEV_TOKEN_PREFIX)) {
+    return null;
+  }
+
+  const payload = token.slice(DEV_TOKEN_PREFIX.length);
+  if (!payload) {
+    return null;
+  }
+
+  // Format: <userId> or <userId>__<orgId>
+  const [userId, orgId] = payload.split("__");
+
+  return {
+    userId: userId ?? "usr_seed_dev001",
+    orgId: orgId ?? "org_seed_dev001",
+    orgRole: "owner",
+    sessionId: `dev-session-${userId ?? "usr_seed_dev001"}`,
+  };
+}
+
 export async function getAuthContext(
   token: string
 ): Promise<AuthContext | null> {
+  // Check for dev auth bypass first
+  const devAuth = tryDevAuthBypass(token);
+  if (devAuth) {
+    return devAuth;
+  }
+
   try {
     const secretKey = process.env.CLERK_SECRET_KEY;
     if (!secretKey) {
+      if (process.env.NODE_ENV !== "production") {
+        // In development, return null instead of crashing when Clerk is not configured
+        return null;
+      }
       throw new Error("CLERK_SECRET_KEY is required");
     }
 

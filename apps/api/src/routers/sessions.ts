@@ -4,6 +4,7 @@ import {
   sessionEvents,
   sessionMessages,
   sessions,
+  tasks,
 } from "@prometheus/db";
 import { createLogger } from "@prometheus/logger";
 import { agentTaskQueue } from "@prometheus/queue";
@@ -84,9 +85,25 @@ export const sessionsRouter = router({
         "Session created"
       );
 
-      // If there's a prompt, queue the initial task
+      // If there's a prompt, create a task record and queue it
       if (input.prompt) {
         const taskId = generateId("task");
+
+        // Insert task record so queue-worker can update its status
+        await ctx.db.insert(tasks).values({
+          id: taskId,
+          sessionId: id,
+          projectId: input.projectId,
+          orgId: ctx.orgId,
+          title: input.prompt.slice(0, 200),
+          description: input.prompt,
+          status: "pending",
+          priority: 50,
+          agentRole: null,
+          creditsReserved: 0,
+          creditsConsumed: 0,
+        });
+
         await agentTaskQueue.add(
           "agent-task",
           {

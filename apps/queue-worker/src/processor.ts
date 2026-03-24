@@ -307,6 +307,15 @@ export class TaskProcessor {
     taskId: string,
     amount: number
   ): Promise<void> {
+    // Skip credit operations in dev bypass mode
+    if (process.env.DEV_AUTH_BYPASS === "true") {
+      this.logger.debug(
+        { taskId, amount },
+        "Skipping credit consumption (dev bypass)"
+      );
+      return;
+    }
+
     try {
       // Find active reservation for this task
       const reservation = await db.query.creditReservations.findFirst({
@@ -364,6 +373,11 @@ export class TaskProcessor {
   }
 
   private async releaseCredits(orgId: string, taskId: string): Promise<void> {
+    // Skip credit operations in dev bypass mode
+    if (process.env.DEV_AUTH_BYPASS === "true") {
+      return;
+    }
+
     try {
       const reservation = await db.query.creditReservations.findFirst({
         where: and(

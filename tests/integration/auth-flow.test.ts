@@ -46,7 +46,7 @@ function createAuthContext(
     userId,
     orgId,
     role,
-    sessionToken: `tok_${userId}_${Date.now()}`,
+    sessionToken: `tok_${userId}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
     expiresAt: new Date(Date.now() + expiresInMs),
   };
 }

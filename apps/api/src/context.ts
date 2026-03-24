@@ -44,6 +44,13 @@ export async function createContext(
     return { auth: null, db, apiKeyId: null };
   }
 
+  // Dev auth bypass uses user IDs directly (not Clerk IDs)
+  const isDevAuth =
+    process.env.DEV_AUTH_BYPASS === "true" && token.startsWith("dev_token_");
+  if (isDevAuth) {
+    return { auth, db, apiKeyId: null };
+  }
+
   // Auto-create or sync user record in DB.
   // Clerk webhook (clerk.ts) handles the full profile sync; this is a
   // fallback so that the user row exists before any query references it.

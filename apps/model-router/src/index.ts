@@ -9,12 +9,13 @@ import {
   installShutdownHandlers,
   isProcessShuttingDown,
 } from "@prometheus/utils";
-import { Hono } from "hono";
+import { Hono, type Context as HonoContext } from "hono";
 import { cors } from "hono/cors";
 import { streamSSE } from "hono/streaming";
 import { BYOModelManager } from "./byo-model";
 import { CascadeRouter } from "./cascade";
 import { CostOptimizer } from "./cost-optimizer";
+import { isMockLLMEnabled, mockRoute, mockRouteStream } from "./mock-provider";
 import { PromptCacheManager } from "./prompt-cache";
 import { RateLimitManager } from "./rate-limiter";
 import { NearIdenticalCoalescer } from "./request-coalescer";
@@ -44,6 +45,21 @@ app.get("/health", async (c) => {
   if (isProcessShuttingDown()) {
     return c.json({ status: "draining" }, 503);
   }
+
+  // In mock mode, always report healthy — no real providers needed
+  if (isMockLLMEnabled()) {
+    return c.json({
+      status: "ok",
+      checks: { providers: true, redis: true },
+      uptime: Math.floor(process.uptime()),
+      version: "0.1.0",
+      service: "model-router",
+      mode: "mock",
+      providers: { mock: { healthy: true, latencyMs: 0 } },
+      timestamp: new Date().toISOString(),
+    });
+  }
+
   try {
     const checks: Record<string, boolean> = {};
 
@@ -112,6 +128,56 @@ app.get("/models", (c) => {
   return c.json({ data: models });
 });
 
+// ─── Mock LLM Handler ───────────────────────────────────────────
+
+/**
+ * Handle a mock LLM request — returns canned responses without calling
+ * real providers. Used when DEV_MOCK_LLM=true.
+ */
+function handleMockRoute(
+  c: HonoContext,
+  slot: string,
+  messages: Array<{ role: string; content: string }>,
+  wantsStream: boolean | undefined,
+  options?: Record<string, unknown>
+) {
+  const mockReq = { slot, messages, options };
+
+  if (wantsStream && !(options?.tools as unknown[] | undefined)?.length) {
+    return streamSSE(c, async (sseStream) => {
+      const streamResult = mockRouteStream(mockReq);
+      for await (const chunk of streamResult.stream) {
+        await sseStream.writeSSE({
+          data: JSON.stringify({
+            id: streamResult.id,
+            model: streamResult.model,
+            provider: streamResult.provider,
+            choices: [
+              {
+                delta: { content: chunk.content },
+                finish_reason: chunk.finishReason,
+              },
+            ],
+          }),
+        });
+      }
+      const done = await streamResult.done;
+      await sseStream.writeSSE({
+        data: JSON.stringify({
+          id: streamResult.id,
+          model: streamResult.model,
+          provider: streamResult.provider,
+          choices: [{ delta: {}, finish_reason: "stop" }],
+          usage: done.usage,
+        }),
+      });
+      await sseStream.writeSSE({ data: "[DONE]" });
+    });
+  }
+
+  return c.json(mockRoute(mockReq));
+}
+
 // ─── Slot-Based Route (Primary API) ─────────────────────────────
 
 app.post("/route", async (c) => {
@@ -126,6 +192,11 @@ app.post("/route", async (c) => {
         },
         400
       );
+    }
+
+    // Mock LLM mode — return canned responses without calling real providers
+    if (isMockLLMEnabled()) {
+      return handleMockRoute(c, slot, messages, wantsStream, body.options);
     }
 
     const options = {
@@ -233,6 +304,22 @@ app.post("/v1/embeddings", async (c) => {
       );
     }
 
+    // Mock embeddings — return a zero vector for dev/testing
+    if (isMockLLMEnabled()) {
+      const dimensions = 1536;
+      const inputs = Array.isArray(input) ? input : [input];
+      return c.json({
+        data: inputs.map((_, idx) => ({
+          embedding: new Array(dimensions)
+            .fill(0)
+            .map(() => Math.random() * 0.01 - 0.005),
+          index: idx,
+        })),
+        model: "mock/embedding-model",
+        usage: { prompt_tokens: 10, total_tokens: 10 },
+      });
+    }
+
     const result = await routeEmbedding(input);
     return c.json({
       data: [{ embedding: result.embedding, index: 0 }],
@@ -250,6 +337,24 @@ app.post("/v1/embeddings", async (c) => {
 app.post("/v1/chat/completions", async (c) => {
   try {
     const body = await c.req.json();
+
+    // Mock mode for legacy completions endpoint
+    if (isMockLLMEnabled()) {
+      const messages = body.messages ?? [];
+      const result = mockRoute({
+        slot: "default",
+        messages,
+        options: { tools: body.tools },
+      });
+      return c.json({
+        id: result.id,
+        model: result.model,
+        provider: result.provider,
+        choices: result.choices,
+        usage: result.usage,
+      });
+    }
+
     const result = await routerService.routeCompletion(body);
     return c.json(result);
   } catch (error) {
@@ -528,6 +633,7 @@ export type { OptimalModelResult } from "./cost-monitor";
 export { CostMonitor } from "./cost-monitor";
 export type { CostOptimizationResult, CostProfile } from "./cost-optimizer";
 export { CostOptimizer } from "./cost-optimizer";
+export { isMockLLMEnabled, mockRoute, mockRouteStream } from "./mock-provider";
 export { PromptCacheManager } from "./prompt-cache";
 export { RateLimitManager } from "./rate-limiter";
 export type { CoalescingStats } from "./request-coalescer";
