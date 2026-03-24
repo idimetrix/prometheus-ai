@@ -9,6 +9,7 @@ import { blueprintsEnhancedRouter } from "./blueprints-enhanced";
 import { brainRouter } from "./brain";
 import { brandingRouter } from "./branding";
 import { codeAnalysisRouter } from "./code-analysis";
+import { costAnalyticsRouter } from "./cost-analytics";
 import { costPredictionRouter } from "./cost-prediction";
 import { deploymentsRouter } from "./deployments";
 import { fleetRouter } from "./fleet";
@@ -24,6 +25,7 @@ import { settingsRouter } from "./settings";
 import { tasksRouter } from "./tasks";
 import { userRouter } from "./user";
 import { webhooksOutboundRouter } from "./webhooks-outbound";
+import { workspacesRouter } from "./workspaces";
 
 export const appRouter = router({
   health: healthRouter,
@@ -50,7 +52,9 @@ export const appRouter = router({
   webhooks: webhooksOutboundRouter,
   branding: brandingRouter,
   costPrediction: costPredictionRouter,
+  costAnalytics: costAnalyticsRouter,
   deployments: deploymentsRouter,
+  workspaces: workspacesRouter,
 });
 
 export type AppRouter = typeof appRouter;
