@@ -512,22 +512,39 @@ export class StripeService {
   }
 
   // -----------------------------------------------------------------------
-  // Metered billing (stub for usage reporting)
+  // Metered billing via Stripe Billing Meter Events API
   // -----------------------------------------------------------------------
 
-  reportMeteredUsage(params: {
-    subscriptionItemId: string;
+  async reportMeteredUsage(params: {
+    /** Event name registered in the Stripe Billing Meter */
+    eventName: string;
+    /** Stripe customer ID */
+    customerId: string;
+    /** Usage value to report */
     quantity: number;
+    /** Unix timestamp for the event */
     timestamp: number;
+    /** @deprecated Ignored in Stripe v20+. Kept for backward compatibility. */
     action?: "set" | "increment";
-  }): void {
+    /** @deprecated Use eventName + customerId instead. Kept for backward compatibility. */
+    subscriptionItemId?: string;
+  }): Promise<void> {
+    await this.stripe.billing.meterEvents.create({
+      event_name: params.eventName,
+      payload: {
+        stripe_customer_id: params.customerId,
+        value: String(params.quantity),
+      },
+      timestamp: params.timestamp,
+    });
+
     logger.info(
       {
-        subscriptionItemId: params.subscriptionItemId,
+        eventName: params.eventName,
+        customerId: params.customerId,
         quantity: params.quantity,
-        action: params.action ?? "set",
       },
-      "Metered usage reported to Stripe (stub)"
+      "Metered usage reported to Stripe via Billing Meter Events"
     );
   }
 

@@ -1,6 +1,7 @@
 import { serve } from "@hono/node-server";
 import { createLogger } from "@prometheus/logger";
 import {
+  createServiceMetrics,
   initSentry,
   initTelemetry,
   traceMiddleware,
@@ -23,6 +24,8 @@ await initTelemetry({ serviceName: "orchestrator" });
 initSentry({ serviceName: "orchestrator" });
 installShutdownHandlers();
 
+const serviceMetrics = createServiceMetrics("orchestrator");
+
 const logger = createLogger("orchestrator");
 
 const sessionManager = new SessionManager();
@@ -36,6 +39,24 @@ const app = new Hono();
 
 app.use("/*", cors());
 app.use("/*", traceMiddleware("orchestrator"));
+
+// Record request latency and errors via service metrics
+app.use("/*", async (c, next) => {
+  const start = performance.now();
+  await next();
+  const durationSec = (performance.now() - start) / 1000;
+  const status = String(c.res.status);
+
+  serviceMetrics.api.requestLatencySeconds
+    .labels({ router: "http", method: c.req.method, status })
+    .observe(durationSec);
+
+  if (c.res.status >= 500) {
+    serviceMetrics.generic.errorRate
+      .labels({ error_type: "http_5xx", severity: "error" })
+      .inc();
+  }
+});
 
 // ─── Health Check ────────────────────────────────────────────────
 

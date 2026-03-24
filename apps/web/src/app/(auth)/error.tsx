@@ -4,6 +4,7 @@ import { Button, Card, CardContent } from "@prometheus/ui";
 import { AlertTriangle, RefreshCw } from "lucide-react";
 import Link from "next/link";
 import { useEffect } from "react";
+import { logger } from "@/lib/logger";
 
 interface ErrorPageProps {
   error: Error & { digest?: string };
@@ -12,7 +13,7 @@ interface ErrorPageProps {
 
 export default function AuthError({ error, reset }: ErrorPageProps) {
   useEffect(() => {
-    console.error("[Auth Error]", error);
+    logger.error("[Auth Error]", error);
   }, [error]);
 
   return (

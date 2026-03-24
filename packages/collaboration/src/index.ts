@@ -14,7 +14,9 @@ export {
   type CursorPresenceState,
 } from "./cursor-presence";
 export {
+  type PresenceEvent,
   type RTCIceServerConfig,
+  type SignalingTransport,
   VoiceChannel,
   type VoiceChannelConfig,
   type VoiceChannelEventMap,

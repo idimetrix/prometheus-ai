@@ -4,6 +4,7 @@ import { Button, Card, CardContent } from "@prometheus/ui";
 import { AlertTriangle, ArrowLeft, RefreshCw } from "lucide-react";
 import Link from "next/link";
 import { useEffect } from "react";
+import { logger } from "@/lib/logger";
 
 interface ErrorPageProps {
   error: Error & { digest?: string };
@@ -12,7 +13,7 @@ interface ErrorPageProps {
 
 export default function SessionsError({ error, reset }: ErrorPageProps) {
   useEffect(() => {
-    console.error("[Sessions Error]", error);
+    logger.error("[Sessions Error]", error);
   }, [error]);
 
   return (

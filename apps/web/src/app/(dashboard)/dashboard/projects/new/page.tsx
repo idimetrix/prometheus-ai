@@ -15,6 +15,7 @@ import type { Route } from "next";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { toast } from "sonner";
+import { logger } from "@/lib/logger";
 import { trpc } from "@/lib/trpc";
 
 const PRESETS = [
@@ -85,7 +86,7 @@ export default function NewProjectPage() {
       toast.success("Project created!");
       router.push(`/dashboard/projects/${project?.id}/brain` as Route);
     } catch (err) {
-      console.error("Failed to create project:", err);
+      logger.error("Failed to create project:", err);
       toast.error("Failed to create project");
       setIsCreating(false);
     }

@@ -3,6 +3,7 @@
 import { Button, Card, CardContent } from "@prometheus/ui";
 import { AlertTriangle, RefreshCw } from "lucide-react";
 import { useEffect } from "react";
+import { logger } from "@/lib/logger";
 
 interface ErrorPageProps {
   error: Error & { digest?: string };
@@ -11,7 +12,7 @@ interface ErrorPageProps {
 
 export default function ErrorPage({ error, reset }: ErrorPageProps) {
   useEffect(() => {
-    console.error("[App Error]", error);
+    logger.error("[App Error]", error);
   }, [error]);
 
   return (

@@ -2,8 +2,10 @@
  * Product Analytics — PostHog integration.
  *
  * Self-hosted or cloud PostHog. Only initializes when
- * NEXT_PUBLIC_POSTHOG_KEY is set. Falls back to console.debug in dev.
+ * NEXT_PUBLIC_POSTHOG_KEY is set. Falls back to logger.debug in dev.
  */
+
+import { logger } from "@/lib/logger";
 
 type EventProperties = Record<
   string,
@@ -38,24 +40,16 @@ export async function initAnalytics(): Promise<void> {
     // Dev mode — log to console
     client = {
       capture: (event, props) => {
-        if (process.env.NODE_ENV === "development") {
-          console.debug("[analytics]", event, props);
-        }
+        logger.debug("[analytics]", event, props);
       },
       identify: (userId, traits) => {
-        if (process.env.NODE_ENV === "development") {
-          console.debug("[analytics] identify", userId, traits);
-        }
+        logger.debug("[analytics] identify", userId, traits);
       },
       group: (type, id) => {
-        if (process.env.NODE_ENV === "development") {
-          console.debug("[analytics] group", type, id);
-        }
+        logger.debug("[analytics] group", type, id);
       },
       page: (name) => {
-        if (process.env.NODE_ENV === "development") {
-          console.debug("[analytics] page", name);
-        }
+        logger.debug("[analytics] page", name);
       },
       reset: () => {
         /* no-op in dev */

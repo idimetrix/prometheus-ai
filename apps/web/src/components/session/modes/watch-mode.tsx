@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { logger } from "@/lib/logger";
 import { trpc } from "@/lib/trpc";
 import { useSessionStore } from "@/stores/session.store";
 
@@ -40,11 +41,12 @@ export function WatchMode({ sessionId }: WatchModeProps) {
       return acc;
     }, []);
 
+  const lineCount = terminalLines.length;
   useEffect(() => {
-    if (scrollRef.current) {
+    if (lineCount > 0 && scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
-  }, []);
+  }, [lineCount]);
 
   async function handleTakeover() {
     try {
@@ -54,7 +56,7 @@ export function WatchMode({ sessionId }: WatchModeProps) {
       });
       setHasControl(true);
     } catch (err) {
-      console.error("Failed to take control:", err);
+      logger.error("Failed to take control:", err);
     }
   }
 
@@ -63,7 +65,7 @@ export function WatchMode({ sessionId }: WatchModeProps) {
       await releaseMutation.mutateAsync({ sessionId });
       setHasControl(false);
     } catch (err) {
-      console.error("Failed to release control:", err);
+      logger.error("Failed to release control:", err);
     }
   }
 

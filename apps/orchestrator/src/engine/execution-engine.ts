@@ -20,11 +20,17 @@ import { SpanStatusCode, startSpan } from "@prometheus/telemetry";
 import type { AgentRole } from "@prometheus/types";
 import { AgentError, modelRouterClient } from "@prometheus/utils";
 import { BlueprintEnforcer } from "../blueprint-enforcer";
+import { CheckpointManager } from "../checkpoint";
 import {
   CheckpointPersistence,
   type CheckpointState,
 } from "../checkpoint-persistence";
-import { type ConfidenceResult, ConfidenceScorer } from "../confidence";
+import {
+  type ConfidenceResult,
+  ConfidenceScorer,
+  ModelEscalator,
+  type ModelSlot,
+} from "../confidence";
 import { ContextCompressor } from "../context/context-compressor";
 import { SecretsScanner } from "../guardian/secrets-scanner";
 import { SelfReview } from "../self-review";
@@ -122,7 +128,7 @@ function resolveActionType(
  * destructive command detection, RBAC) on a tool call.
  * Returns null if all guards pass, or a rejection result with events.
  */
-function runToolCallGuards(
+async function runToolCallGuards(
   tc: { id: string; name: string; args: Record<string, unknown> },
   secretsScanner: SecretsScanner,
   blueprintEnforcer: BlueprintEnforcer,
@@ -130,11 +136,13 @@ function runToolCallGuards(
   agentRole: string,
   makeEvent: <T extends ExecutionEvent>(
     partial: Omit<T, "sessionId" | "agentRole" | "sequence" | "timestamp">
-  ) => T
-): {
+  ) => T,
+  checkpointManager?: CheckpointManager,
+  sessionId?: string
+): Promise<{
   toolResponse: { success: false; error: string };
   events: ExecutionEvent[];
-} | null {
+} | null> {
   // Secrets scanning
   if (
     (tc.name === "file_write" || tc.name === "file_edit") &&
@@ -190,25 +198,38 @@ function runToolCallGuards(
     }
   }
 
-  // Destructive command detection
+  // Destructive command detection — pause and wait for human approval
   if (
     tc.name === "terminal_exec" &&
     tc.args.command &&
     isDestructiveCommand(String(tc.args.command))
   ) {
+    const checkpointEvent = makeEvent<CheckpointEvent>({
+      type: "checkpoint",
+      checkpointType: "large_change",
+      reason: `Destructive command detected: ${tc.args.command}`,
+      affectedFiles: [],
+    });
+
+    if (checkpointManager && sessionId) {
+      const response = await checkpointManager.requestHighStakesApproval(
+        sessionId,
+        "destructive_command",
+        { command: String(tc.args.command) }
+      );
+
+      if (response.action === "approve") {
+        // User approved — allow execution to proceed
+        return null;
+      }
+    }
+
     return {
       toolResponse: {
         success: false,
         error: "Destructive command blocked: requires human approval.",
       },
-      events: [
-        makeEvent<CheckpointEvent>({
-          type: "checkpoint",
-          checkpointType: "large_change",
-          reason: `Destructive command detected: ${tc.args.command}`,
-          affectedFiles: [],
-        }),
-      ],
+      events: [checkpointEvent],
     };
   }
 
@@ -692,15 +713,17 @@ async function injectBlueprintContext(
   }
 }
 
-function generateCheckpointEvents(
+async function generateCheckpointEvents(
   filesChanged: Set<string>,
   iteration: number,
   totalCreditsConsumed: number,
   agent: { addUserMessage: (msg: string) => void },
   makeEvent: <T extends ExecutionEvent>(
     partial: Omit<T, "sessionId" | "agentRole" | "sequence" | "timestamp">
-  ) => T
-): ExecutionEvent[] {
+  ) => T,
+  checkpointManager: CheckpointManager,
+  sessionId: string
+): Promise<ExecutionEvent[]> {
   const events: ExecutionEvent[] = [];
   if (filesChanged.size > 5 && iteration > 3) {
     events.push(
@@ -711,9 +734,33 @@ function generateCheckpointEvents(
         affectedFiles: Array.from(filesChanged),
       })
     );
-    agent.addUserMessage(
-      "[System] A strategic checkpoint was triggered. Continue with your current approach unless directed otherwise."
+
+    // Actually pause and wait for user confirmation
+    const response = await checkpointManager.requestPlanConfirmation(
+      sessionId,
+      {
+        steps: Array.from(filesChanged).map((f, idx) => ({
+          id: `file-${idx}`,
+          title: `Modified: ${f}`,
+          description: "File changed during execution",
+          estimatedCredits: 0,
+        })),
+      }
     );
+
+    if (response.action === "reject") {
+      agent.addUserMessage(
+        "[System] User rejected the current plan. Stop and await further instructions."
+      );
+    } else if (response.action === "modify" && response.message) {
+      agent.addUserMessage(
+        `[System] User requests modifications: ${response.message}`
+      );
+    } else {
+      agent.addUserMessage(
+        "[System] A strategic checkpoint was triggered. User approved — continue with your current approach."
+      );
+    }
   }
   if (totalCreditsConsumed > 50 && iteration > 10) {
     events.push(
@@ -724,6 +771,19 @@ function generateCheckpointEvents(
         affectedFiles: [],
       })
     );
+
+    // Pause and wait for approval to continue spending credits
+    const response = await checkpointManager.requestHighStakesApproval(
+      sessionId,
+      "high_credit_consumption",
+      { creditsConsumed: totalCreditsConsumed, iterations: iteration }
+    );
+
+    if (response.action === "reject") {
+      agent.addUserMessage(
+        "[System] User rejected continued execution due to high cost. Stop and summarize work so far."
+      );
+    }
   }
   return events;
 }
@@ -806,6 +866,7 @@ interface ToolCallDeps {
   };
   allowedTools: Set<string>;
   blueprintEnforcer: BlueprintEnforcer;
+  checkpointManager: CheckpointManager;
   ctx: ExecutionContext;
   healthWatchdog: HealthWatchdog;
   logger: ReturnType<typeof createLogger>;
@@ -846,13 +907,15 @@ async function executeSingleToolCall(
     })
   );
 
-  const guardResult = runToolCallGuards(
+  const guardResult = await runToolCallGuards(
     tc,
     deps.secretsScanner,
     deps.blueprintEnforcer,
     deps.allowedTools,
     deps.ctx.agentRole,
-    deps.makeEvent
+    deps.makeEvent,
+    deps.checkpointManager,
+    deps.ctx.sessionId
   );
   if (guardResult) {
     deps.agent.addToolResult(tc.id, JSON.stringify(guardResult.toolResponse));
@@ -1417,6 +1480,7 @@ async function processToolCallsAndConfidence(
   ctx: ExecutionContext,
   filesChanged: Set<string>,
   deps: {
+    checkpointManager: CheckpointManager;
     confidenceScorer: ConfidenceScorer;
     secretsScanner: SecretsScanner;
     blueprintEnforcer: BlueprintEnforcer;
@@ -1452,6 +1516,7 @@ async function processToolCallsAndConfidence(
   const toolExecDeps: ToolCallDeps = {
     ctx,
     agent,
+    checkpointManager: deps.checkpointManager,
     secretsScanner: deps.secretsScanner,
     blueprintEnforcer: deps.blueprintEnforcer,
     allowedTools: deps.allowedTools,
@@ -1550,13 +1615,15 @@ async function processToolCallsAndConfidence(
   }
 
   events.push(
-    ...generateCheckpointEvents(
+    ...(await generateCheckpointEvents(
       filesChanged,
       step,
       updated.totalCreditsConsumed,
       agent,
-      deps.makeEvent
-    )
+      deps.makeEvent,
+      deps.checkpointManager,
+      ctx.sessionId
+    ))
   );
 
   if (confResult.confidence.action === "escalate") {
@@ -1805,6 +1872,7 @@ async function runIterationBody(
   ctx: ExecutionContext,
   filesChanged: Set<string>,
   iterDeps: {
+    checkpointManager: CheckpointManager;
     confidenceScorer: ConfidenceScorer;
     secretsScanner: SecretsScanner;
     blueprintEnforcer: BlueprintEnforcer;
@@ -1886,6 +1954,48 @@ async function runIterationBody(
  * When PROMETHEUS_USE_AI_SDK=true, delegates to AI SDK 6 streaming;
  * otherwise uses the default model router HTTP path.
  */
+function finalizeExecution(
+  ctx: ExecutionContext,
+  iterState: IterationState,
+  initialSlot: string,
+  filesChanged: Set<string>,
+  selfReview: SelfReview,
+  modelEscalator: ModelEscalator,
+  checkpointManager: CheckpointManager,
+  healthWatchdog: HealthWatchdog,
+  logger: ReturnType<typeof createLogger>
+): void {
+  healthWatchdog.stopMonitoring(ctx.sessionId);
+  checkpointManager.cancelSessionCheckpoints(ctx.sessionId);
+
+  // Generate post-task reflection
+  const reflection = selfReview.generateReflection(
+    ctx.taskDescription,
+    iterState.lastOutput,
+    Array.from(filesChanged)
+  );
+  logger.info(
+    {
+      strengths: reflection.strengths.length,
+      improvements: reflection.improvements.length,
+      decisions: reflection.decisions.length,
+    },
+    "Post-task reflection generated"
+  );
+
+  // Record outcome for model escalation learning
+  const finalSlot = iterState.slot;
+  if (finalSlot !== initialSlot) {
+    modelEscalator.recordOutcome(
+      ctx.agentRole,
+      initialSlot as ModelSlot,
+      finalSlot as ModelSlot,
+      iterState.lastConfidence?.score ?? 0.5,
+      true
+    );
+  }
+}
+
 function resolveExecutionStrategy(
   ctx: ExecutionContext
 ): AsyncGenerator<ExecutionEvent, void, undefined> {
@@ -1939,6 +2049,8 @@ export const ExecutionEngine = {
     const { agent, allowedTools, toolDefs } = setup;
 
     const confidenceScorer = new ConfidenceScorer();
+    const modelEscalator = new ModelEscalator();
+    const checkpointManager = new CheckpointManager();
     const blueprintEnforcer = new BlueprintEnforcer();
     const secretsScanner = new SecretsScanner();
     const selfReview = new SelfReview();
@@ -1969,7 +2081,9 @@ export const ExecutionEngine = {
       recoveryAttempts: 0,
     };
 
+    const initialSlot = resolveInitialSlot(ctx);
     const iterDeps = {
+      checkpointManager,
       confidenceScorer,
       secretsScanner,
       blueprintEnforcer,
@@ -2055,7 +2169,17 @@ export const ExecutionEngine = {
       }
     }
 
-    healthWatchdog.stopMonitoring(ctx.sessionId);
+    finalizeExecution(
+      ctx,
+      iterState,
+      initialSlot,
+      filesChanged,
+      selfReview,
+      modelEscalator,
+      checkpointManager,
+      healthWatchdog,
+      logger
+    );
 
     yield makeEvent<CompleteEvent>({
       type: "complete",

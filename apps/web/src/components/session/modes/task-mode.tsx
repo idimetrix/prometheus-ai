@@ -145,11 +145,12 @@ function TerminalPanel() {
   const { terminalLines } = useSessionStore();
   const scrollRef = useRef<HTMLDivElement>(null);
 
+  const lineCount = terminalLines.length;
   useEffect(() => {
-    if (scrollRef.current) {
+    if (lineCount > 0 && scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
-  }, []);
+  }, [lineCount]);
 
   return (
     <div className="flex h-full flex-col rounded-xl border border-zinc-800 bg-zinc-950">

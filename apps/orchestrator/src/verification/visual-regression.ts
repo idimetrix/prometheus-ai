@@ -65,20 +65,18 @@ export class VisualRegressionTester {
    * Capture a screenshot of the given URL at the specified viewport.
    * Delegates rendering to the sandbox browser service.
    */
-  captureScreenshot(url: string, viewport: Viewport): ScreenshotCapture {
+  async captureScreenshot(
+    url: string,
+    viewport: Viewport
+  ): Promise<ScreenshotCapture> {
     logger.info(`Capturing screenshot: ${url}`);
 
-    // In production this calls the sandbox browser API.
-    // We encode the request so the sandbox can render and return a base64 PNG.
-    const screenshotRequest = {
+    const base64 = await this.renderInSandbox({
       url,
       viewport,
       format: "png" as const,
       fullPage: true,
-    };
-
-    // Simulate capture — real implementation calls sandbox browser endpoint
-    const base64 = this.renderInSandbox(screenshotRequest);
+    });
 
     return {
       base64,
@@ -173,20 +171,58 @@ export class VisualRegressionTester {
   // ---- Private helpers ----
 
   private detectChangedRegions(
-    _baseline: string,
-    _current: string
+    baseline: string,
+    current: string
   ): ChangedRegion[] {
-    // Placeholder — real implementation uses pixel diffing to find bounding boxes
-    return [];
+    // Simple pixel comparison: compare base64 encoded images by chunks
+    // to identify approximate changed regions. For production, integrate
+    // a proper pixel-diff library like pixelmatch.
+    if (baseline === current) {
+      return [];
+    }
+
+    // If images differ, report the full viewport as changed
+    // (fine-grained region detection requires pixelmatch/sharp integration)
+    return [{ x: 0, y: 0, width: 1920, height: 1080 }];
   }
 
-  private renderInSandbox(_request: {
+  private async renderInSandbox(request: {
     format: "png";
     fullPage: boolean;
     url: string;
     viewport: Viewport;
-  }): string {
-    // Placeholder — real implementation calls sandbox browser HTTP API
+  }): Promise<string> {
+    const sandboxManagerUrl =
+      process.env.SANDBOX_MANAGER_URL ?? "http://localhost:4006";
+
+    try {
+      const res = await fetch(`${sandboxManagerUrl}/screenshot`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          url: request.url,
+          viewport: request.viewport,
+          fullPage: request.fullPage,
+          format: request.format,
+        }),
+        signal: AbortSignal.timeout(30_000),
+      });
+
+      if (res.ok) {
+        const result = (await res.json()) as { screenshot?: string };
+        return result.screenshot ?? "";
+      }
+
+      logger.warn(
+        { url: request.url, status: res.status },
+        "Screenshot capture returned non-OK status"
+      );
+    } catch (err) {
+      logger.warn(
+        { url: request.url, error: err },
+        "Failed to capture screenshot via sandbox-manager"
+      );
+    }
     return "";
   }
 }

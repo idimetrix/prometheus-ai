@@ -10,6 +10,7 @@ import {
   useState,
 } from "react";
 import type { Socket } from "socket.io-client";
+import { logger } from "@/lib/logger";
 import { connectSocket, disconnectSocket } from "@/lib/socket";
 
 // ---------------------------------------------------------------------------
@@ -194,7 +195,7 @@ export function RealtimeProvider({ children }: { children: ReactNode }) {
       clearTimeout(heartbeatTimeoutRef.current);
     }
     heartbeatTimeoutRef.current = setTimeout(() => {
-      console.warn("[Realtime] Heartbeat timeout - reconnecting");
+      logger.warn("[Realtime] Heartbeat timeout - reconnecting");
       // Force disconnect current transport, trigger reconnect
       if (socketRef.current?.connected) {
         socketRef.current.disconnect();
@@ -265,7 +266,7 @@ export function RealtimeProvider({ children }: { children: ReactNode }) {
           }
         },
         onError: (err) => {
-          console.error("[Realtime] WebSocket error:", err.message);
+          logger.error("[Realtime] WebSocket error:", err.message);
         },
       });
 
@@ -385,7 +386,7 @@ export function RealtimeProvider({ children }: { children: ReactNode }) {
 
   const scheduleReconnect = useCallback(() => {
     if (reconnectAttemptsRef.current >= MAX_RECONNECT_ATTEMPTS) {
-      console.warn("[Realtime] Max reconnect attempts reached");
+      logger.warn("[Realtime] Max reconnect attempts reached");
       return;
     }
 

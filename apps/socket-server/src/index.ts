@@ -16,6 +16,7 @@ import { authMiddleware } from "./auth";
 import { setupFleetNamespace } from "./namespaces/fleet";
 import { setupNotificationNamespace } from "./namespaces/notifications";
 import { setupSessionNamespace } from "./namespaces/sessions";
+import { mountYjsServer } from "./yjs-server";
 
 initSentry({ serviceName: "socket-server" });
 installShutdownHandlers();
@@ -208,9 +209,13 @@ function setupGlobalSubscriber() {
 const port = Number(process.env.SOCKET_PORT ?? 4001);
 
 Promise.all([setupRedisAdapter(), setupGlobalSubscriber()]).then(() => {
+  // Mount Yjs CRDT collaboration WebSocket server on /yjs/:docId
+  mountYjsServer(httpServer);
+
   httpServer.listen(port, () => {
     logger.info(`Socket.io server running on port ${port}`);
     logger.info("Namespaces: /sessions, /fleet, /notifications");
+    logger.info("Yjs collaboration server mounted on /yjs/:docId");
   });
 });
 

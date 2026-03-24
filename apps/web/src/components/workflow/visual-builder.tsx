@@ -256,14 +256,27 @@ export function VisualBuilder() {
     []
   );
 
-  const handleRun = useCallback(() => {
-    // TODO: Send pipeline to orchestrator API
-    const _pipeline = blocks.map((b) => ({
+  const handleRun = useCallback(async () => {
+    const pipeline = blocks.map((b) => ({
       id: b.id,
       kind: b.kind,
       title: b.title,
       config: b.config,
     }));
+
+    const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000";
+    try {
+      await fetch(`${apiUrl}/api/sse/sessions/workflow/events`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          type: "workflow_run",
+          data: { pipeline, triggeredAt: new Date().toISOString() },
+        }),
+      });
+    } catch {
+      // Workflow execution is best-effort from the UI; the orchestrator handles retries
+    }
   }, [blocks]);
 
   return (

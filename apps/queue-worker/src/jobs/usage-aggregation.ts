@@ -1,3 +1,4 @@
+import { StripeService } from "@prometheus/billing";
 import {
   creditBalances,
   creditTransactions,
@@ -5,6 +6,7 @@ import {
   modelUsage,
   modelUsageLogs,
   organizations,
+  subscriptions,
   usageRollups,
 } from "@prometheus/db";
 import { createLogger } from "@prometheus/logger";
@@ -130,6 +132,24 @@ async function aggregateOrgUsage(
       )
     );
 
+  // Aggregate sandbox minutes from task durations in model_usage_logs
+  const [durationAgg] = await db
+    .select({
+      totalDurationMs: sql<number>`COALESCE(SUM(${modelUsageLogs.durationMs}), 0)`,
+    })
+    .from(modelUsageLogs)
+    .where(
+      and(
+        eq(modelUsageLogs.orgId, orgId),
+        gte(modelUsageLogs.createdAt, start),
+        lt(modelUsageLogs.createdAt, end)
+      )
+    );
+
+  const sandboxMinutes = Math.ceil(
+    Number(durationAgg?.totalDurationMs ?? 0) / 60_000
+  );
+
   return {
     orgId,
     periodStart: start,
@@ -141,44 +161,102 @@ async function aggregateOrgUsage(
     costUsd: Number(modelAgg?.costUsd ?? 0) + Number(legacyAgg?.costUsd ?? 0),
     apiCalls: Number(modelAgg?.apiCalls ?? 0),
     creditsUsed: Number(creditAgg?.creditsUsed ?? 0),
-    sandboxMinutes: 0, // Placeholder: sandbox time tracking not yet instrumented
-    storageBytes: 0, // Placeholder: storage metering not yet instrumented
+    sandboxMinutes,
+    storageBytes: 0, // Storage metering not yet instrumented
   };
 }
 
 // ---------------------------------------------------------------------------
-// Stripe metered billing (stub)
+// Stripe metered billing
 // ---------------------------------------------------------------------------
 
 /**
  * Report usage to Stripe for metered billing.
- * This is a stub that logs the usage report. In production, this would call
- * stripe.subscriptionItems.createUsageRecord().
+ * Gracefully skips when STRIPE_SECRET_KEY is not set (dev mode).
  */
-function reportUsageToStripe(_orgId: string, usage: AggregatedUsage): boolean {
-  // TODO: Implement actual Stripe metered billing API call:
-  // const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
-  // await stripe.subscriptionItems.createUsageRecord(subscriptionItemId, {
-  //   quantity: usage.creditsUsed,
-  //   timestamp: Math.floor(usage.periodEnd.getTime() / 1000),
-  //   action: 'set',
-  // });
+async function reportUsageToStripe(
+  orgId: string,
+  usage: AggregatedUsage
+): Promise<boolean> {
+  if (!process.env.STRIPE_SECRET_KEY) {
+    logger.debug(
+      { orgId },
+      "Skipping Stripe usage report — STRIPE_SECRET_KEY not set"
+    );
+    return false;
+  }
 
-  logger.info(
-    {
-      orgId: _orgId,
-      creditsUsed: usage.creditsUsed,
-      tokensIn: usage.tokensIn,
-      tokensOut: usage.tokensOut,
-      apiCalls: usage.apiCalls,
-      costUsd: usage.costUsd,
-      periodStart: usage.periodStart.toISOString(),
-      periodEnd: usage.periodEnd.toISOString(),
-    },
-    "Usage reported to Stripe (stub)"
-  );
+  // Look up the org's active subscription to get the Stripe subscription item ID
+  const sub = await db.query.subscriptions.findFirst({
+    where: and(
+      eq(subscriptions.orgId, orgId),
+      eq(subscriptions.status, "active")
+    ),
+  });
 
-  return true;
+  if (!sub?.stripeSubscriptionId) {
+    logger.warn(
+      { orgId },
+      "No active subscription found — skipping Stripe usage report"
+    );
+    return false;
+  }
+
+  try {
+    const stripeService = new StripeService();
+    const stripeSub = await stripeService.getSubscription(
+      sub.stripeSubscriptionId
+    );
+    const subscriptionItemId = stripeSub.items.data[0]?.id;
+
+    if (!subscriptionItemId) {
+      logger.warn(
+        { orgId, stripeSubscriptionId: sub.stripeSubscriptionId },
+        "No subscription item found on Stripe subscription"
+      );
+      return false;
+    }
+
+    const customerId =
+      typeof stripeSub.customer === "string"
+        ? stripeSub.customer
+        : stripeSub.customer.id;
+
+    await stripeService.reportMeteredUsage({
+      eventName: "prometheus_credits_used",
+      customerId,
+      subscriptionItemId,
+      quantity: usage.creditsUsed,
+      timestamp: Math.floor(usage.periodEnd.getTime() / 1000),
+      action: "set",
+    });
+
+    logger.info(
+      {
+        orgId,
+        creditsUsed: usage.creditsUsed,
+        tokensIn: usage.tokensIn,
+        tokensOut: usage.tokensOut,
+        apiCalls: usage.apiCalls,
+        costUsd: usage.costUsd,
+        sandboxMinutes: usage.sandboxMinutes,
+        periodStart: usage.periodStart.toISOString(),
+        periodEnd: usage.periodEnd.toISOString(),
+      },
+      "Usage reported to Stripe"
+    );
+
+    return true;
+  } catch (error) {
+    logger.error(
+      {
+        orgId,
+        error: error instanceof Error ? error.message : String(error),
+      },
+      "Failed to report usage to Stripe"
+    );
+    return false;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -280,7 +358,7 @@ export async function runUsageAggregation(
         });
 
         if (org?.stripeCustomerId) {
-          const reported = reportUsageToStripe(orgId, usage);
+          const reported = await reportUsageToStripe(orgId, usage);
           if (reported) {
             reportedToStripe++;
           }

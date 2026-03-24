@@ -1,5 +1,7 @@
 "use client";
 
+import { logger } from "@/lib/logger";
+
 // ---------------------------------------------------------------------------
 // Service Worker Registration for the Next.js web app
 // ---------------------------------------------------------------------------
@@ -36,14 +38,14 @@ export async function registerServiceWorker(): Promise<
           navigator.serviceWorker.controller
         ) {
           // New service worker activated — could prompt user to refresh
-          console.info("[SW] New version available");
+          logger.info("[SW] New version available");
         }
       });
     });
 
     return registration;
   } catch (err) {
-    console.error("[SW] Registration failed:", err);
+    logger.error("[SW] Registration failed:", err);
     return undefined;
   }
 }
@@ -156,7 +158,7 @@ export async function subscribeToPushNotifications(): Promise<
     }
 
     if (!VAPID_PUBLIC_KEY) {
-      console.warn("[SW] No VAPID public key configured");
+      logger.warn("[SW] No VAPID public key configured");
       return undefined;
     }
 
@@ -169,7 +171,7 @@ export async function subscribeToPushNotifications(): Promise<
 
     return subscription;
   } catch (err) {
-    console.error("[SW] Push subscription failed:", err);
+    logger.error("[SW] Push subscription failed:", err);
     return undefined;
   }
 }

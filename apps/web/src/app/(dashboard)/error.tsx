@@ -3,6 +3,7 @@
 import { Button, Card, CardContent } from "@prometheus/ui";
 import { AlertTriangle, Home, RefreshCw } from "lucide-react";
 import { useEffect } from "react";
+import { logger } from "@/lib/logger";
 
 interface ErrorPageProps {
   error: Error & { digest?: string };
@@ -11,7 +12,7 @@ interface ErrorPageProps {
 
 export default function DashboardError({ error, reset }: ErrorPageProps) {
   useEffect(() => {
-    console.error("[Dashboard Error]", error);
+    logger.error("[Dashboard Error]", error);
   }, [error]);
 
   return (

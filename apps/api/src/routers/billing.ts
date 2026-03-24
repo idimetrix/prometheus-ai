@@ -21,16 +21,14 @@ import { protectedProcedure, router } from "../trpc";
 
 const logger = createLogger("api:billing");
 const stripe = new StripeService();
-const _creditService = new CreditService();
+const creditService = new CreditService();
 
 export const billingRouter = router({
   // ---------------------------------------------------------------------------
   // Credit balance
   // ---------------------------------------------------------------------------
   getBalance: protectedProcedure.query(async ({ ctx }) => {
-    const balance = await ctx.db.query.creditBalances.findFirst({
-      where: eq(creditBalances.orgId, ctx.orgId),
-    });
+    const balance = await creditService.getBalance(ctx.orgId);
 
     const org = await ctx.db.query.organizations.findFirst({
       where: eq(organizations.id, ctx.orgId),
@@ -38,9 +36,9 @@ export const billingRouter = router({
     });
 
     return {
-      balance: balance?.balance ?? 0,
-      reserved: balance?.reserved ?? 0,
-      available: (balance?.balance ?? 0) - (balance?.reserved ?? 0),
+      balance: balance.balance,
+      reserved: balance.reserved,
+      available: balance.available,
       planTier: org?.planTier ?? "hobby",
     };
   }),

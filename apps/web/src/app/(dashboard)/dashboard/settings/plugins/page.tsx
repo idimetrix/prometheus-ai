@@ -213,14 +213,43 @@ export default function PluginsPage() {
   );
   const [togglingId, setTogglingId] = useState<string | null>(null);
 
-  // Simulated health check
+  const buildLocalHealth = useCallback(
+    () =>
+      Object.fromEntries(
+        plugins.map((p) => [p.id, p.status === "active" && !p.error])
+      ),
+    [plugins]
+  );
+
   const runHealthCheck = useCallback(async () => {
-    const results: Record<string, boolean> = {};
-    for (const p of plugins) {
-      results[p.id] = p.status === "active" && !p.error;
+    const mcpUrl =
+      process.env.NEXT_PUBLIC_MCP_GATEWAY_URL ?? "http://localhost:4005";
+
+    try {
+      const res = await fetch(`${mcpUrl}/health`, {
+        signal: AbortSignal.timeout(5000),
+      });
+      if (!res.ok) {
+        setHealthResults(buildLocalHealth());
+        return;
+      }
+      const data = (await res.json()) as {
+        adapters?: Record<string, { healthy: boolean }>;
+      };
+      if (!data.adapters) {
+        setHealthResults(buildLocalHealth());
+        return;
+      }
+      const results: Record<string, boolean> = {};
+      for (const p of plugins) {
+        const ah = data.adapters[p.id];
+        results[p.id] = ah ? ah.healthy : p.status === "active" && !p.error;
+      }
+      setHealthResults(results);
+    } catch {
+      setHealthResults(buildLocalHealth());
     }
-    setHealthResults(results);
-  }, [plugins]);
+  }, [plugins, buildLocalHealth]);
 
   useEffect(() => {
     runHealthCheck();
@@ -229,15 +258,29 @@ export default function PluginsPage() {
   const handleToggle = async (pluginId: string) => {
     setTogglingId(pluginId);
 
-    // Simulate API call delay
-    await new Promise((r) => setTimeout(r, 300));
+    const currentPlugin = plugins.find((p) => p.id === pluginId);
+    const newStatus =
+      currentPlugin?.status === "active" ? "inactive" : "active";
+
+    // Try calling the real MCP Gateway toggle endpoint
+    const mcpGatewayUrl =
+      process.env.NEXT_PUBLIC_MCP_GATEWAY_URL ?? "http://localhost:4005";
+    try {
+      await fetch(`${mcpGatewayUrl}/adapters/${pluginId}/toggle`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ enabled: newStatus === "active" }),
+        signal: AbortSignal.timeout(5000),
+      });
+    } catch {
+      // MCP Gateway unavailable — update locally
+    }
 
     setPlugins((prev) =>
       prev.map((p) => {
         if (p.id !== pluginId) {
           return p;
         }
-        const newStatus = p.status === "active" ? "inactive" : "active";
         return {
           ...p,
           status: newStatus,

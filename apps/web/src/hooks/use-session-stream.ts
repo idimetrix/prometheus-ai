@@ -5,6 +5,39 @@ import { useSessionStore } from "../stores/session.store";
 const RECONNECT_DELAY_MS = 3000;
 const MAX_RECONNECT_ATTEMPTS = 10;
 
+/**
+ * Synchronously get an auth token for SSE connections.
+ * EventSource doesn't support async setup, so we read from Clerk's
+ * window global or fall back to the dev bypass token.
+ */
+function getAuthTokenSync(): string | null {
+  if (typeof window === "undefined") {
+    return null;
+  }
+
+  // Try Clerk session token from window global
+  try {
+    const clerkSession = (
+      window as unknown as {
+        Clerk?: { session?: { lastToken?: { getRawString?: () => string } } };
+      }
+    ).Clerk?.session;
+    const raw = clerkSession?.lastToken?.getRawString?.();
+    if (raw) {
+      return raw;
+    }
+  } catch {
+    // Clerk not ready
+  }
+
+  // Dev auth bypass
+  if (process.env.NEXT_PUBLIC_DEV_AUTH_BYPASS === "true") {
+    return "dev_token_usr_seed_dev001__org_seed_dev001";
+  }
+
+  return null;
+}
+
 export function useSessionStream(sessionId: string | null) {
   const eventSourceRef = useRef<EventSource | null>(null);
   const reconnectAttempts = useRef(0);
@@ -24,7 +57,12 @@ export function useSessionStream(sessionId: string | null) {
     }
 
     const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000";
-    const url = `${apiUrl}/api/sse/sessions/${sessionId}/stream`;
+
+    // Build URL with auth token — EventSource doesn't support custom headers,
+    // so we pass the token as a query parameter.
+    const token = getAuthTokenSync();
+    const params = token ? `?token=${encodeURIComponent(token)}` : "";
+    const url = `${apiUrl}/api/sse/sessions/${sessionId}/stream${params}`;
 
     const es = new EventSource(url);
     eventSourceRef.current = es;

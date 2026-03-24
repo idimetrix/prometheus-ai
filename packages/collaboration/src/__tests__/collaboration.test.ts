@@ -237,6 +237,7 @@ describe("VoiceChannel", () => {
   const config: VoiceChannelConfig = {
     roomId: "room-1",
     displayName: "Alice",
+    userId: "user-alice-1",
     iceServers: [{ urls: "stun:stun.example.com" }],
   };
 
@@ -302,10 +303,13 @@ describe("VoiceChannel", () => {
     expect(() => vc.unmute()).not.toThrow();
   });
 
-  it("getParticipants returns empty array for stub", () => {
+  it("getParticipants returns local participant after join", () => {
     const vc = new VoiceChannel(config);
     vc.join();
-    expect(vc.getParticipants()).toEqual([]);
+    const participants = vc.getParticipants();
+    expect(participants).toHaveLength(1);
+    expect(participants[0]?.id).toBe("user-alice-1");
+    expect(participants[0]?.displayName).toBe("Alice");
   });
 
   it("getParticipants returns empty when not configured", () => {

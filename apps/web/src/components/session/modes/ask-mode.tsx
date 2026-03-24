@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { logger } from "@/lib/logger";
 import { trpc } from "@/lib/trpc";
 import { useSessionStore } from "@/stores/session.store";
 
@@ -37,11 +38,12 @@ export function AskMode({ sessionId }: AskModeProps) {
       timestamp: e.timestamp,
     }));
 
+  const messageCount = messages.length;
   useEffect(() => {
-    if (scrollRef.current) {
+    if (messageCount > 0 && scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
-  }, []);
+  }, [messageCount]);
 
   const handleSend = useCallback(async () => {
     if (!input.trim() || isSending) {
@@ -58,7 +60,7 @@ export function AskMode({ sessionId }: AskModeProps) {
         content: text,
       });
     } catch (err) {
-      console.error("Failed to send message:", err);
+      logger.error("Failed to send message:", err);
     } finally {
       setIsSending(false);
       inputRef.current?.focus();

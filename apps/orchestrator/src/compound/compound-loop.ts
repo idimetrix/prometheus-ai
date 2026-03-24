@@ -375,7 +375,6 @@ export class CompoundLoop {
         pool.startWorker(worker.id);
 
         try {
-          // Simulate worker execution (actual execution would call AgentLoop)
           const result = await this.executeWorker(worker, subtask, ctx);
           pool.releaseWorker(worker.id);
 
@@ -434,10 +433,10 @@ export class CompoundLoop {
 
   /**
    * Execute a single worker's subtask.
-   * In a real implementation, this would invoke the AgentLoop with the
-   * appropriate role and task description in the worker's sandbox.
+   * Executes a subtask in a dedicated AgentLoop with the assigned
+   * role and task description.
    */
-  private executeWorker(
+  private async executeWorker(
     worker: Worker,
     subtask: {
       id: string;
@@ -445,18 +444,46 @@ export class CompoundLoop {
       description: string;
       agentRole: string;
     },
-    _ctx: CompoundContext
-  ): WorkerResult {
-    // Placeholder: in production this calls agentLoop.executeTask()
-    // within the worker's sandbox and worktree
-    return {
-      workerId: worker.id,
-      taskId: subtask.id,
-      agentRole: subtask.agentRole,
-      success: true,
-      output: `Executed: ${subtask.title}`,
-      filesChanged: [],
-    };
+    ctx: CompoundContext
+  ): Promise<WorkerResult> {
+    try {
+      // Create an AgentLoop for this worker's subtask execution
+      const { AgentLoop } = await import("../agent-loop");
+      const agentLoop = new AgentLoop(
+        ctx.sessionId,
+        ctx.projectId,
+        ctx.orgId,
+        ctx.userId
+      );
+
+      const result = await agentLoop.executeTask(
+        subtask.description,
+        subtask.agentRole
+      );
+
+      return {
+        workerId: worker.id,
+        taskId: subtask.id,
+        agentRole: subtask.agentRole,
+        success: result.success,
+        output: result.output,
+        filesChanged: result.filesChanged,
+      };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      logger.error(
+        { workerId: worker.id, taskId: subtask.id, error: msg },
+        "Worker execution failed"
+      );
+      return {
+        workerId: worker.id,
+        taskId: subtask.id,
+        agentRole: subtask.agentRole,
+        success: false,
+        output: `Worker failed: ${msg}`,
+        filesChanged: [],
+      };
+    }
   }
 
   private createEvent(

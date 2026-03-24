@@ -3,7 +3,13 @@ import { trpcServer } from "@hono/trpc-server";
 import type { AuthContext } from "@prometheus/auth";
 import { db, modelUsageLogs } from "@prometheus/db";
 import { createLogger } from "@prometheus/logger";
-import { initSentry, initTelemetry } from "@prometheus/telemetry";
+import {
+  createServiceMetrics,
+  DEFAULT_SLOS,
+  initSentry,
+  initTelemetry,
+  SLOMonitor,
+} from "@prometheus/telemetry";
 import {
   generateId,
   installShutdownHandlers,
@@ -13,6 +19,9 @@ import {
 await initTelemetry({ serviceName: "api" });
 initSentry({ serviceName: "api" });
 installShutdownHandlers();
+
+const sloMonitor = new SLOMonitor(DEFAULT_SLOS);
+const serviceMetrics = createServiceMetrics("api");
 
 import { traceMiddleware } from "@prometheus/telemetry";
 import { Hono } from "hono";
@@ -59,6 +68,32 @@ app.use("/*", requestIdMiddleware());
 // 2. Request logging — logs method, path, status, duration
 // ---------------------------------------------------------------------------
 app.use("/*", requestLoggingMiddleware());
+
+// ---------------------------------------------------------------------------
+// 2b. SLO + service metrics — record latency and error counts per request
+// ---------------------------------------------------------------------------
+app.use("/*", async (c, next) => {
+  const start = performance.now();
+  await next();
+  const durationMs = performance.now() - start;
+  const durationSec = durationMs / 1000;
+  const status = String(c.res.status);
+
+  // SLO: record request latency for P99 tracking
+  sloMonitor.record("api_p99_latency_ms", durationMs);
+
+  // Prometheus histogram: request latency
+  serviceMetrics.api.requestLatencySeconds
+    .labels({ router: "http", method: c.req.method, status })
+    .observe(durationSec);
+
+  // Prometheus counter: errors
+  if (c.res.status >= 500) {
+    serviceMetrics.generic.errorRate
+      .labels({ error_type: "http_5xx", severity: "error" })
+      .inc();
+  }
+});
 
 // ---------------------------------------------------------------------------
 // 3. Security headers — CSP, HSTS, X-Frame-Options, etc.
@@ -159,6 +194,9 @@ app.get("/health", async (c) => {
     allHealthy ? 200 : 503
   );
 });
+
+// SLO report — returns current SLO burn rates and violation status
+app.get("/slo", (c) => c.json(sloMonitor.getSummary()));
 
 // Liveness probe — lightweight, just confirms process is responsive
 app.get("/live", (c) => c.json({ status: "ok" }));

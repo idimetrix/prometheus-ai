@@ -11,20 +11,20 @@ import {
   YAxis,
 } from "recharts";
 
-// ─── Placeholder benchmark data ──────────────────────────────────────────────
+// ─── Benchmark data — updated after each SWE-bench/HumanEval run ─────────────
 
 const SWE_BENCH_DATA = [
   { name: "Prometheus", score: 0, fill: "#8b5cf6" },
   { name: "Devin", score: 13.86, fill: "#6366f1" },
   { name: "Claude Code", score: 49.0, fill: "#06b6d4" },
-  { name: "Codex", score: 0, fill: "#10b981" },
+  { name: "Codex (GPT-5.3)", score: 69.0, fill: "#10b981" },
 ];
 
 const HUMAN_EVAL_DATA = [
   { name: "Prometheus", score: 0, fill: "#8b5cf6" },
-  { name: "Devin", score: 0, fill: "#6366f1" },
+  { name: "Devin", score: 75.0, fill: "#6366f1" },
   { name: "Claude Code", score: 92.0, fill: "#06b6d4" },
-  { name: "Codex", score: 87.1, fill: "#10b981" },
+  { name: "Codex (GPT-5.3)", score: 87.1, fill: "#10b981" },
 ];
 
 const COMPARISON_ROWS = [

@@ -9,6 +9,7 @@ import {
   useState,
 } from "react";
 import type { Socket } from "socket.io-client";
+import { logger } from "@/lib/logger";
 import {
   type ConnectionStatus,
   connectSocket,
@@ -41,7 +42,7 @@ export function SocketProvider({ children }: { children: ReactNode }) {
     const socket = connectSocket({
       onStatusChange: setStatus,
       onError: (err) => {
-        console.error("[SocketProvider] connection error:", err.message);
+        logger.error("[SocketProvider] connection error:", err.message);
       },
     });
     socketRef.current = socket;

@@ -142,6 +142,11 @@ vi.mock("../../self-review", () => ({
     isReadTool = vi.fn(() => false);
     recordRead = vi.fn();
     getReviewPrompt = vi.fn(() => "Please review this file.");
+    generateReflection = vi.fn(() => ({
+      strengths: ["Produced detailed output"],
+      improvements: [],
+      decisions: ["Modified test files"],
+    }));
   },
 }));
 
@@ -187,6 +192,25 @@ vi.mock("../../confidence", () => ({
     static getModelSlot = vi.fn(
       (defaultSlot: string, _confidence: unknown) => defaultSlot
     );
+  },
+  ModelEscalator: class {
+    recordOutcome = vi.fn();
+    shouldEscalate = vi.fn(() => false);
+    getEscalationStats = vi.fn(() => ({}));
+  },
+}));
+
+vi.mock("../../checkpoint", () => ({
+  CheckpointManager: class {
+    requestHighStakesApproval = vi.fn(() =>
+      Promise.resolve({ approved: true, respondedBy: "auto" })
+    );
+    requestPlanConfirmation = vi.fn(() =>
+      Promise.resolve({ approved: true, respondedBy: "auto" })
+    );
+    getTimedOutCheckpoints = vi.fn(() => []);
+    cancelSessionCheckpoints = vi.fn();
+    getPendingCheckpoints = vi.fn(() => []);
   },
 }));
 

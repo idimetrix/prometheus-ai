@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { logger } from "@/lib/logger";
 import { trpc } from "@/lib/trpc";
 import { useSessionStore } from "@/stores/session.store";
 
@@ -24,7 +25,7 @@ export function PlanMode({ sessionId }: PlanModeProps) {
     try {
       await sendMessage.mutateAsync({ sessionId, content: "[APPROVE_PLAN]" });
     } catch (err) {
-      console.error("Failed to approve plan:", err);
+      logger.error("Failed to approve plan:", err);
     } finally {
       setIsApproving(false);
     }
@@ -38,7 +39,7 @@ export function PlanMode({ sessionId }: PlanModeProps) {
         content: `[REJECT_PLAN] ${feedback || ""}`.trim(),
       });
     } catch (err) {
-      console.error("Failed to reject plan:", err);
+      logger.error("Failed to reject plan:", err);
     } finally {
       setIsRejecting(false);
     }
@@ -56,7 +57,7 @@ export function PlanMode({ sessionId }: PlanModeProps) {
       setEditingStepId(null);
       setEditText("");
     } catch (err) {
-      console.error("Failed to modify step:", err);
+      logger.error("Failed to modify step:", err);
     }
   }
 

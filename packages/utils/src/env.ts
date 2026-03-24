@@ -19,6 +19,26 @@ const requiredString = z
   .string()
   .min(1, "This environment variable is required and cannot be empty");
 
+/**
+ * Helper: returns true when running in dev mode with auth bypass enabled.
+ * Used to relax third-party key requirements (Clerk, Stripe) so developers
+ * can start services without needing external accounts.
+ */
+function isDevBypassMode(): boolean {
+  return (
+    process.env.DEV_AUTH_BYPASS === "true" &&
+    process.env.NODE_ENV !== "production"
+  );
+}
+
+/** Build a schema field that is required in production, optional in dev bypass mode. */
+function requiredInProd(description: string) {
+  if (isDevBypassMode()) {
+    return z.string().default("").describe(description);
+  }
+  return requiredString.describe(description);
+}
+
 // ============================================================================
 // Base schema — vars shared across most services
 // ============================================================================
@@ -50,7 +70,7 @@ const redisSchema = z.object({
 // ============================================================================
 
 const clerkSchema = z.object({
-  CLERK_SECRET_KEY: requiredString.describe(
+  CLERK_SECRET_KEY: requiredInProd(
     "Clerk secret key — get from https://clerk.com → API Keys"
   ),
   CLERK_WEBHOOK_SECRET: optionalString.describe(
@@ -59,7 +79,7 @@ const clerkSchema = z.object({
 });
 
 const clerkPublicSchema = z.object({
-  NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: requiredString.describe(
+  NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: requiredInProd(
     "Clerk publishable key — get from https://clerk.com → API Keys"
   ),
   NEXT_PUBLIC_CLERK_SIGN_IN_URL: z.string().default("/sign-in"),
@@ -71,7 +91,7 @@ const clerkPublicSchema = z.object({
 // ============================================================================
 
 const stripeSchema = z.object({
-  STRIPE_SECRET_KEY: requiredString.describe(
+  STRIPE_SECRET_KEY: requiredInProd(
     "Stripe secret key — get from https://stripe.com → Developers → API Keys"
   ),
   STRIPE_WEBHOOK_SECRET: optionalString.describe(

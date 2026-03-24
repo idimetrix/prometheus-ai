@@ -3,6 +3,7 @@
 import type { Route } from "next";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
+import { logger } from "@/lib/logger";
 import { trpc } from "@/lib/trpc";
 
 const MODES = [
@@ -157,7 +158,7 @@ export default function NewTaskPage() {
       });
       router.push(`/dashboard/sessions/${session?.id}` as Route);
     } catch (err) {
-      console.error("Failed to create session:", err);
+      logger.error("Failed to create session:", err);
       setIsSubmitting(false);
     }
   }

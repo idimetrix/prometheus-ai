@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { logger } from "@/lib/logger";
 import { useNotificationStore } from "@/stores/notification.store";
 import { useSessionStore } from "@/stores/session.store";
 
@@ -208,7 +209,7 @@ export function useSSEStream(sessionId: string | null) {
     }
     heartbeatTimer.current = setTimeout(() => {
       // No heartbeat received in 15s - reconnect
-      console.warn("[SSE] Heartbeat timeout, reconnecting...");
+      logger.warn("[SSE] Heartbeat timeout, reconnecting...");
       eventSourceRef.current?.close();
       eventSourceRef.current = null;
       setIsConnected(false);

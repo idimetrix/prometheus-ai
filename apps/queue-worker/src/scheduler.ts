@@ -170,7 +170,7 @@ export async function setupScheduledJobs(): Promise<void> {
   // Credit reconciliation — daily at 3am UTC
   await reconciliationQueue.add(
     "scheduled:credit-reconciliation",
-    {},
+    { trigger: "scheduled" },
     {
       repeat: { pattern: "0 3 * * *" },
       jobId: "scheduled:credit-reconciliation",

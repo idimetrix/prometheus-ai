@@ -100,14 +100,27 @@ export class DockerProvider implements SandboxProvider {
       "prometheus.sandbox=true",
       "--label",
       `prometheus.sandbox.id=${id}`,
-      "--storage-opt",
-      `size=${diskMb}M`,
       this.image,
       "sleep",
       "infinity",
     ];
 
-    const createResult = await this.spawnDocker(args);
+    // Try with storage-opt first (requires overlay2 + quota), fall back without
+    let createResult = await this.spawnDocker([
+      ...args.slice(0, args.indexOf(this.image)),
+      "--storage-opt",
+      `size=${diskMb}M`,
+      ...args.slice(args.indexOf(this.image)),
+    ]);
+    if (
+      createResult.exitCode !== 0 &&
+      createResult.stderr.includes("storage-opt")
+    ) {
+      logger.warn(
+        "Docker storage-opt not supported, creating sandbox without disk quota"
+      );
+      createResult = await this.spawnDocker(args);
+    }
     if (createResult.exitCode !== 0) {
       throw new Error(`Failed to create container: ${createResult.stderr}`);
     }
