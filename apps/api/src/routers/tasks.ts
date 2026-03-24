@@ -45,45 +45,58 @@ async function verifyTaskAccess(db: Database, taskId: string, orgId: string) {
 
 /**
  * Reserve credits for a task. Returns the reservation ID or throws if insufficient.
+ * Uses SELECT ... FOR UPDATE to prevent concurrent over-booking.
  */
 async function reserveCredits(
-  db: Database,
+  database: Database,
   orgId: string,
   taskId: string,
   amount: number
 ): Promise<string> {
-  // Fetch current balance
-  const balance = await db.query.creditBalances.findFirst({
-    where: eq(creditBalances.orgId, orgId),
-  });
-
-  const available = (balance?.balance ?? 0) - (balance?.reserved ?? 0);
-  if (available < amount) {
-    throw new TRPCError({
-      code: "PRECONDITION_FAILED",
-      message: `Insufficient credits: need ${amount}, have ${available} available`,
-    });
-  }
-
-  // Create reservation
   const reservationId = generateId("cres");
-  await db.insert(creditReservations).values({
-    id: reservationId,
-    orgId,
-    taskId,
-    amount,
-    status: "active",
-    expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000), // 24h expiry
-  });
 
-  // Update reserved amount on balance
-  await db
-    .update(creditBalances)
-    .set({
-      reserved: sql`${creditBalances.reserved} + ${amount}`,
-      updatedAt: new Date(),
-    })
-    .where(eq(creditBalances.orgId, orgId));
+  await database.transaction(async (tx) => {
+    // Lock the balance row to prevent concurrent over-booking
+    const [locked] = await tx
+      .select()
+      .from(creditBalances)
+      .where(eq(creditBalances.orgId, orgId))
+      .for("update");
+
+    if (!locked) {
+      throw new TRPCError({
+        code: "PRECONDITION_FAILED",
+        message: "No credit balance found for this organization",
+      });
+    }
+
+    const available = locked.balance - locked.reserved;
+    if (available < amount) {
+      throw new TRPCError({
+        code: "PRECONDITION_FAILED",
+        message: `Insufficient credits: need ${amount}, have ${available} available`,
+      });
+    }
+
+    // Increment reserved amount
+    await tx
+      .update(creditBalances)
+      .set({
+        reserved: sql`${creditBalances.reserved} + ${amount}`,
+        updatedAt: new Date(),
+      })
+      .where(eq(creditBalances.orgId, orgId));
+
+    // Create reservation record
+    await tx.insert(creditReservations).values({
+      id: reservationId,
+      orgId,
+      taskId,
+      amount,
+      status: "active",
+      expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000), // 24h expiry
+    });
+  });
 
   return reservationId;
 }

@@ -1,6 +1,7 @@
 import {
   agents,
   creditBalances,
+  creditReservations,
   creditTransactions,
   db,
   modelUsage,
@@ -12,7 +13,7 @@ import type { AgentTaskData } from "@prometheus/queue";
 import { EventPublisher } from "@prometheus/queue";
 import { withSpan } from "@prometheus/telemetry";
 import { generateId, orchestratorClient } from "@prometheus/utils";
-import { eq, sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 
 interface ProcessResult {
   creditsConsumed: number;
@@ -251,8 +252,11 @@ export class TaskProcessor {
       // Update task status to failed
       await db
         .update(tasks)
-        .set({ status: "failed" })
+        .set({ status: "failed", completedAt: new Date() })
         .where(eq(tasks.id, taskId));
+
+      // Release reserved credits on failure
+      await this.releaseCredits(orgId, taskId);
 
       await this.publisher.publishSessionEvent(sessionId, {
         type: "task_status",
@@ -304,13 +308,42 @@ export class TaskProcessor {
     amount: number
   ): Promise<void> {
     try {
-      await db
-        .update(creditBalances)
-        .set({
-          balance: sql`GREATEST(${creditBalances.balance} - ${amount}, 0)`,
-          updatedAt: new Date(),
-        })
-        .where(eq(creditBalances.orgId, orgId));
+      // Find active reservation for this task
+      const reservation = await db.query.creditReservations.findFirst({
+        where: and(
+          eq(creditReservations.taskId, taskId),
+          eq(creditReservations.orgId, orgId),
+          eq(creditReservations.status, "active")
+        ),
+      });
+
+      if (reservation) {
+        // Commit the reservation: deduct consumed amount from balance,
+        // release the full reserved amount from the reserved counter
+        await db
+          .update(creditBalances)
+          .set({
+            balance: sql`GREATEST(${creditBalances.balance} - ${amount}, 0)`,
+            reserved: sql`GREATEST(${creditBalances.reserved} - ${reservation.amount}, 0)`,
+            updatedAt: new Date(),
+          })
+          .where(eq(creditBalances.orgId, orgId));
+
+        // Mark reservation as committed
+        await db
+          .update(creditReservations)
+          .set({ status: "committed" })
+          .where(eq(creditReservations.id, reservation.id));
+      } else {
+        // No reservation found — just deduct from balance directly
+        await db
+          .update(creditBalances)
+          .set({
+            balance: sql`GREATEST(${creditBalances.balance} - ${amount}, 0)`,
+            updatedAt: new Date(),
+          })
+          .where(eq(creditBalances.orgId, orgId));
+      }
 
       const balance = await db.query.creditBalances.findFirst({
         where: eq(creditBalances.orgId, orgId),
@@ -327,6 +360,60 @@ export class TaskProcessor {
       });
     } catch (error) {
       this.logger.error({ orgId, amount, error }, "Failed to consume credits");
+    }
+  }
+
+  private async releaseCredits(orgId: string, taskId: string): Promise<void> {
+    try {
+      const reservation = await db.query.creditReservations.findFirst({
+        where: and(
+          eq(creditReservations.taskId, taskId),
+          eq(creditReservations.orgId, orgId),
+          eq(creditReservations.status, "active")
+        ),
+      });
+
+      if (!reservation) {
+        return;
+      }
+
+      // Release reserved amount (no balance deduction — task failed)
+      await db
+        .update(creditBalances)
+        .set({
+          reserved: sql`GREATEST(${creditBalances.reserved} - ${reservation.amount}, 0)`,
+          updatedAt: new Date(),
+        })
+        .where(eq(creditBalances.orgId, orgId));
+
+      await db
+        .update(creditReservations)
+        .set({ status: "released" })
+        .where(eq(creditReservations.id, reservation.id));
+
+      const balance = await db.query.creditBalances.findFirst({
+        where: eq(creditBalances.orgId, orgId),
+      });
+
+      await db.insert(creditTransactions).values({
+        id: generateId("ctx"),
+        orgId,
+        type: "refund",
+        amount: reservation.amount,
+        balanceAfter: balance?.balance ?? 0,
+        taskId,
+        description: `Credit reservation released for failed task ${taskId}`,
+      });
+
+      this.logger.info(
+        { orgId, taskId, amount: reservation.amount },
+        "Credits released for failed task"
+      );
+    } catch (error) {
+      this.logger.error(
+        { orgId, taskId, error },
+        "Failed to release credits for failed task"
+      );
     }
   }
 

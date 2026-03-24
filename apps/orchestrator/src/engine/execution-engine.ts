@@ -753,13 +753,19 @@ function handleWatchdog(
     return { abort: true, recoveryAttempts };
   }
 
-  if (watchdogAction !== "escalate") {
+  if (watchdogAction !== "escalate" && watchdogAction !== "reset") {
     return { abort: false, recoveryAttempts };
   }
 
-  const reason = healthWatchdog.getStatus(ctx.sessionId)?.isLooping
-    ? "infinite_loop"
-    : "extended_stale";
+  const status = healthWatchdog.getStatus(ctx.sessionId);
+  let reason: string;
+  if (status?.isLooping) {
+    reason = "infinite_loop";
+  } else if (watchdogAction === "escalate") {
+    reason = "extended_stale";
+  } else {
+    reason = "stale_timeout";
+  }
   const strategy = recoveryStrategy.handleStuckAgent(ctx.sessionId, reason, {
     attemptCount: recoveryAttempts,
     currentModelSlot: slot,
