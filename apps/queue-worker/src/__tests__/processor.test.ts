@@ -101,10 +101,21 @@ describe("TaskProcessor", () => {
     mockOrchestratorPost.mockResolvedValueOnce({
       data: {
         success: true,
-        output: "Fixed the bug",
-        filesChanged: ["src/login.ts"],
-        tokensUsed: { input: 100, output: 50 },
-        creditsConsumed: 5,
+        taskId: "task_1",
+        sessionId: "ses_1",
+        mode: "task",
+        totalCreditsConsumed: 5,
+        results: [
+          {
+            success: true,
+            output: "Fixed the bug",
+            filesChanged: ["src/login.ts"],
+            tokensUsed: { input: 100, output: 50 },
+            creditsConsumed: 5,
+            steps: 3,
+            toolCalls: 2,
+          },
+        ],
       },
     });
     mockFindMany.mockResolvedValueOnce([{ status: "completed" }]); // checkSessionCompletion
@@ -121,10 +132,21 @@ describe("TaskProcessor", () => {
     mockOrchestratorPost.mockResolvedValueOnce({
       data: {
         success: true,
-        output: "Done",
-        filesChanged: [],
-        tokensUsed: { input: 0, output: 0 },
-        creditsConsumed: 0,
+        taskId: "task_1",
+        sessionId: "ses_1",
+        mode: "task",
+        totalCreditsConsumed: 0,
+        results: [
+          {
+            success: true,
+            output: "Done",
+            filesChanged: [],
+            tokensUsed: { input: 0, output: 0 },
+            creditsConsumed: 0,
+            steps: 1,
+            toolCalls: 0,
+          },
+        ],
       },
     });
     mockFindMany.mockResolvedValueOnce([{ status: "completed" }]);
@@ -144,10 +166,21 @@ describe("TaskProcessor", () => {
     mockOrchestratorPost.mockResolvedValueOnce({
       data: {
         success: true,
-        output: "Done",
-        filesChanged: [],
-        tokensUsed: { input: 0, output: 0 },
-        creditsConsumed: 0,
+        taskId: "task_1",
+        sessionId: "ses_1",
+        mode: "task",
+        totalCreditsConsumed: 0,
+        results: [
+          {
+            success: true,
+            output: "Done",
+            filesChanged: [],
+            tokensUsed: { input: 0, output: 0 },
+            creditsConsumed: 0,
+            steps: 1,
+            toolCalls: 0,
+          },
+        ],
       },
     });
     mockFindMany.mockResolvedValueOnce([{ status: "completed" }]);
@@ -162,10 +195,21 @@ describe("TaskProcessor", () => {
     mockOrchestratorPost.mockResolvedValueOnce({
       data: {
         success: true,
-        output: "Fixed login bug by adding null check",
-        filesChanged: ["src/login.ts"],
-        tokensUsed: { input: 500, output: 200 },
-        creditsConsumed: 5,
+        taskId: "task_1",
+        sessionId: "ses_1",
+        mode: "task",
+        totalCreditsConsumed: 5,
+        results: [
+          {
+            success: true,
+            output: "Fixed login bug by adding null check",
+            filesChanged: ["src/login.ts"],
+            tokensUsed: { input: 500, output: 200 },
+            creditsConsumed: 5,
+            steps: 4,
+            toolCalls: 3,
+          },
+        ],
       },
     });
     mockFindMany.mockResolvedValueOnce([{ status: "completed" }]);
@@ -228,10 +272,21 @@ describe("TaskProcessor", () => {
     mockOrchestratorPost.mockResolvedValueOnce({
       data: {
         success: true,
-        output: "Done",
-        filesChanged: [],
-        tokensUsed: { input: 100, output: 50 },
-        creditsConsumed: 3,
+        taskId: "task_1",
+        sessionId: "ses_1",
+        mode: "task",
+        totalCreditsConsumed: 3,
+        results: [
+          {
+            success: true,
+            output: "Done",
+            filesChanged: [],
+            tokensUsed: { input: 100, output: 50 },
+            creditsConsumed: 3,
+            steps: 2,
+            toolCalls: 1,
+          },
+        ],
       },
     });
     mockFindMany.mockResolvedValueOnce([{ status: "completed" }]);
@@ -248,10 +303,21 @@ describe("TaskProcessor", () => {
     mockOrchestratorPost.mockResolvedValueOnce({
       data: {
         success: true,
-        output: "All tests pass",
-        filesChanged: ["src/test.ts"],
-        tokensUsed: { input: 200, output: 100 },
-        creditsConsumed: 4,
+        taskId: "task_1",
+        sessionId: "ses_1",
+        mode: "task",
+        totalCreditsConsumed: 4,
+        results: [
+          {
+            success: true,
+            output: "All tests pass",
+            filesChanged: ["src/test.ts"],
+            tokensUsed: { input: 200, output: 100 },
+            creditsConsumed: 4,
+            steps: 3,
+            toolCalls: 2,
+          },
+        ],
       },
     });
     mockFindMany.mockResolvedValueOnce([{ status: "completed" }]);
@@ -275,10 +341,21 @@ describe("TaskProcessor", () => {
     mockOrchestratorPost.mockResolvedValueOnce({
       data: {
         success: true,
-        output: "Done",
-        filesChanged: [],
-        tokensUsed: { input: 100, output: 50 },
-        creditsConsumed: 5,
+        taskId: "task_1",
+        sessionId: "ses_1",
+        mode: "task",
+        totalCreditsConsumed: 5,
+        results: [
+          {
+            success: true,
+            output: "Done",
+            filesChanged: [],
+            tokensUsed: { input: 100, output: 50 },
+            creditsConsumed: 5,
+            steps: 2,
+            toolCalls: 1,
+          },
+        ],
       },
     });
     mockFindMany.mockResolvedValueOnce([{ status: "completed" }]);
@@ -294,10 +371,21 @@ describe("TaskProcessor", () => {
     mockOrchestratorPost.mockResolvedValueOnce({
       data: {
         success: true,
-        output: "Done",
-        filesChanged: [],
-        tokensUsed: { input: 500, output: 250 },
-        creditsConsumed: 3,
+        taskId: "task_1",
+        sessionId: "ses_1",
+        mode: "task",
+        totalCreditsConsumed: 3,
+        results: [
+          {
+            success: true,
+            output: "Done",
+            filesChanged: [],
+            tokensUsed: { input: 500, output: 250 },
+            creditsConsumed: 3,
+            steps: 2,
+            toolCalls: 1,
+          },
+        ],
       },
     });
     mockFindMany.mockResolvedValueOnce([{ status: "completed" }]);
@@ -312,10 +400,21 @@ describe("TaskProcessor", () => {
     mockOrchestratorPost.mockResolvedValueOnce({
       data: {
         success: true,
-        output: "Done",
-        filesChanged: [],
-        tokensUsed: { input: 0, output: 0 },
-        creditsConsumed: 0,
+        taskId: "task_1",
+        sessionId: "ses_1",
+        mode: "task",
+        totalCreditsConsumed: 0,
+        results: [
+          {
+            success: true,
+            output: "Done",
+            filesChanged: [],
+            tokensUsed: { input: 0, output: 0 },
+            creditsConsumed: 0,
+            steps: 1,
+            toolCalls: 0,
+          },
+        ],
       },
     });
     // All tasks are done
@@ -334,10 +433,21 @@ describe("TaskProcessor", () => {
     mockOrchestratorPost.mockResolvedValueOnce({
       data: {
         success: true,
-        output: "Done",
-        filesChanged: [],
-        tokensUsed: { input: 0, output: 0 },
-        creditsConsumed: 0,
+        taskId: "task_1",
+        sessionId: "ses_1",
+        mode: "task",
+        totalCreditsConsumed: 0,
+        results: [
+          {
+            success: true,
+            output: "Done",
+            filesChanged: [],
+            tokensUsed: { input: 0, output: 0 },
+            creditsConsumed: 0,
+            steps: 1,
+            toolCalls: 0,
+          },
+        ],
       },
     });
     mockFindMany.mockResolvedValueOnce([
@@ -355,10 +465,21 @@ describe("TaskProcessor", () => {
     mockOrchestratorPost.mockResolvedValueOnce({
       data: {
         success: true,
-        output: "Done",
-        filesChanged: [],
-        tokensUsed: { input: 0, output: 0 },
-        creditsConsumed: 0,
+        taskId: "task_1",
+        sessionId: "ses_1",
+        mode: "task",
+        totalCreditsConsumed: 0,
+        results: [
+          {
+            success: true,
+            output: "Done",
+            filesChanged: [],
+            tokensUsed: { input: 0, output: 0 },
+            creditsConsumed: 0,
+            steps: 1,
+            toolCalls: 0,
+          },
+        ],
       },
     });
     mockFindMany.mockResolvedValueOnce([

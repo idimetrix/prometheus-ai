@@ -22,6 +22,47 @@ interface ProcessResult {
   tokensUsed: { input: number; output: number };
 }
 
+/**
+ * Shape returned by the orchestrator's /process endpoint (TaskProcessingResult).
+ * Contains an array of AgentExecutionResult objects that must be aggregated.
+ */
+interface OrchestratorResponse {
+  mode: string;
+  results: Array<{
+    creditsConsumed: number;
+    error?: string;
+    filesChanged: string[];
+    output: string;
+    success: boolean;
+    tokensUsed: { input: number; output: number };
+  }>;
+  sessionId: string;
+  success: boolean;
+  taskId: string;
+  totalCreditsConsumed: number;
+}
+
+/**
+ * Map the orchestrator's TaskProcessingResult into the flat ProcessResult
+ * the queue-worker pipeline expects.
+ */
+function mapOrchestratorResponse(data: OrchestratorResponse): ProcessResult {
+  const results = data.results ?? [];
+  return {
+    success: data.success,
+    creditsConsumed: data.totalCreditsConsumed,
+    filesChanged: results.flatMap((r) => r.filesChanged),
+    output: results.map((r) => r.output).join("\n") || "Task processed",
+    tokensUsed: results.reduce(
+      (acc, r) => ({
+        input: acc.input + (r.tokensUsed?.input ?? 0),
+        output: acc.output + (r.tokensUsed?.output ?? 0),
+      }),
+      { input: 0, output: 0 }
+    ),
+  };
+}
+
 export class TaskProcessor {
   private readonly logger = createLogger("queue-worker:processor");
   private readonly publisher = new EventPublisher();
@@ -103,7 +144,7 @@ export class TaskProcessor {
       let result: ProcessResult;
 
       try {
-        const response = await orchestratorClient.post<ProcessResult>(
+        const response = await orchestratorClient.post<OrchestratorResponse>(
           "/process",
           {
             taskId,
@@ -118,7 +159,7 @@ export class TaskProcessor {
             agentId,
           }
         );
-        result = response.data;
+        result = mapOrchestratorResponse(response.data);
       } catch (_fetchError) {
         this.logger.warn(
           { taskId },
