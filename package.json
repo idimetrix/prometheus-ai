@@ -28,7 +28,9 @@
     "test:contract": "vitest run --config tests/contract/vitest.config.ts",
     "gen:package": "tsx scripts/gen-package.ts",
     "gen:router": "tsx scripts/gen-router.ts",
-    "gen:table": "tsx scripts/gen-table.ts"
+    "gen:table": "tsx scripts/gen-table.ts",
+    "dev:reset": "tsx scripts/dev-reset.ts",
+    "smoke-test": "tsx scripts/smoke-test.ts"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.4.8",

@@ -25,6 +25,7 @@ const VALID_EVENT_TYPES = new Set([
   "plan_update",
   "plan_step_update",
   "task_status",
+  "task_progress",
   "credit_update",
   "checkpoint",
   "error",
@@ -35,6 +36,8 @@ const VALID_EVENT_TYPES = new Set([
   "browser_screenshot",
   "pr_created",
   "queue_position",
+  "tool_call",
+  "tool_result",
 ]);
 
 /**

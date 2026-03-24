@@ -27,6 +27,12 @@ async function getClerkToken(): Promise<string | null> {
   } catch {
     // Clerk not loaded yet
   }
+
+  // Dev auth bypass — use a dev token when Clerk is not configured
+  if (process.env.NEXT_PUBLIC_DEV_AUTH_BYPASS === "true") {
+    return "dev_token_usr_seed_dev001__org_seed_dev001";
+  }
+
   return null;
 }
 
