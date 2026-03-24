@@ -11,6 +11,13 @@ export { registerDebugEndpoints } from "./debug";
 export { serviceAuthMiddleware, traceMiddleware } from "./hono-middleware";
 export type { InitTelemetryConfig } from "./init";
 export { initTelemetry as initTelemetryV2 } from "./init";
+export type {
+  GenerationParams,
+  LangfuseConfig,
+  SpanParams,
+  TraceParams,
+} from "./langfuse";
+export { LangfuseTracer } from "./langfuse";
 export { metrics, metricsRegistry } from "./metrics";
 export { metricsHandler, metricsMiddleware } from "./metrics-middleware";
 export {

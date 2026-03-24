@@ -14,6 +14,7 @@ import { cors } from "hono/cors";
 import { streamSSE } from "hono/streaming";
 import { BYOModelManager } from "./byo-model";
 import { CascadeRouter } from "./cascade";
+import { CostOptimizer } from "./cost-optimizer";
 import { PromptCacheManager } from "./prompt-cache";
 import { RateLimitManager } from "./rate-limiter";
 import { NearIdenticalCoalescer } from "./request-coalescer";
@@ -35,6 +36,7 @@ const cascadeRouter = new CascadeRouter(routerService);
 const byoManager = new BYOModelManager();
 const promptCacheManager = new PromptCacheManager();
 const requestCoalescer = new NearIdenticalCoalescer();
+const costOptimizer = new CostOptimizer();
 
 // ─── Health Check (verifies connectivity to all configured providers) ──
 
@@ -418,6 +420,47 @@ app.get("/v1/byo/providers", (c) => {
   return c.json({ data: providers });
 });
 
+// ─── Cost Report ────────────────────────────────────────────
+
+/**
+ * GET /v1/cost-report - Cost breakdown showing free vs paid model usage
+ * and estimated savings compared to an all-premium approach.
+ */
+app.get("/v1/cost-report", (c) => {
+  const dailySpend = costOptimizer.getDailySpend();
+  const profiles = costOptimizer.getProfiles();
+  const promptCacheStats = promptCacheManager.getCacheHitRates();
+  const cascadeMetrics = cascadeRouter.getMetrics();
+
+  // Estimate all-premium cost: assume every request at $9/M tokens (Sonnet pricing)
+  const totalRequests =
+    Math.round(dailySpend.freePercentage + dailySpend.paidPercentage) || 0;
+  const estimatedPremiumCostPerRequest = 0.018; // ~2K tokens at $9/M
+  const allPremiumEstimate = totalRequests * estimatedPremiumCostPerRequest;
+  const actualCost = dailySpend.totalUsd;
+  const savingsUsd = Math.max(0, allPremiumEstimate - actualCost);
+  const savingsPercent =
+    allPremiumEstimate > 0 ? (savingsUsd / allPremiumEstimate) * 100 : 0;
+
+  return c.json({
+    daily: {
+      totalCostUsd: Math.round(actualCost * 10_000) / 10_000,
+      freePercent: Math.round(dailySpend.freePercentage * 10) / 10,
+      freeCloudPercent: 0,
+      paidPercent: Math.round(dailySpend.paidPercentage * 10) / 10,
+    },
+    savings: {
+      allPremiumEstimateUsd: Math.round(allPremiumEstimate * 10_000) / 10_000,
+      actualCostUsd: Math.round(actualCost * 10_000) / 10_000,
+      savingsUsd: Math.round(savingsUsd * 10_000) / 10_000,
+      savingsPercent: Math.round(savingsPercent * 10) / 10,
+    },
+    promptCache: promptCacheStats,
+    cascade: cascadeMetrics,
+    profiles: profiles.slice(0, 20),
+  });
+});
+
 // ─── Cascade Routing ─────────────────────────────────────────
 
 app.post("/v1/cascade/route", async (c) => {
@@ -483,6 +526,8 @@ export type { QualityAssessment } from "./cascade";
 export { CascadeRouter } from "./cascade";
 export type { OptimalModelResult } from "./cost-monitor";
 export { CostMonitor } from "./cost-monitor";
+export type { CostOptimizationResult, CostProfile } from "./cost-optimizer";
+export { CostOptimizer } from "./cost-optimizer";
 export { PromptCacheManager } from "./prompt-cache";
 export { RateLimitManager } from "./rate-limiter";
 export type { CoalescingStats } from "./request-coalescer";
