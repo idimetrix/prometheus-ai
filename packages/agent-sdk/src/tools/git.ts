@@ -6,6 +6,20 @@ import type { AgentToolDefinition } from "./types";
 // Zod Schemas
 // ---------------------------------------------------------------------------
 
+export const gitCloneSchema = z
+  .object({
+    repoUrl: z.string().describe("Repository URL to clone"),
+    branch: z
+      .string()
+      .optional()
+      .describe("Specific branch to clone (default: default branch)"),
+    depth: z
+      .number()
+      .optional()
+      .describe("Shallow clone depth (e.g. 1 for latest commit only)"),
+  })
+  .strict();
+
 export const gitStatusSchema = z.object({}).strict();
 
 export const gitDiffSchema = z
@@ -62,6 +76,41 @@ export const gitCreatePrSchema = z
 // ---------------------------------------------------------------------------
 
 export const gitTools: AgentToolDefinition[] = [
+  {
+    name: "git_clone",
+    description:
+      "Clone a Git repository into the sandbox workspace. Optionally specify a branch or shallow depth.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        repoUrl: { type: "string", description: "Repository URL to clone" },
+        branch: {
+          type: "string",
+          description: "Specific branch to clone (default: default branch)",
+        },
+        depth: {
+          type: "number",
+          description: "Shallow clone depth (e.g. 1 for latest commit only)",
+        },
+      },
+      required: ["repoUrl"],
+    },
+    zodSchema: gitCloneSchema,
+    permissionLevel: "write",
+    creditCost: 2,
+    execute: async (input, ctx) => {
+      const parsed = gitCloneSchema.parse(input);
+      const parts = ["git", "clone"];
+      if (parsed.depth && parsed.depth > 0) {
+        parts.push(`--depth ${parsed.depth}`);
+      }
+      if (parsed.branch) {
+        parts.push(`--branch "${parsed.branch}"`);
+      }
+      parts.push(`"${parsed.repoUrl}"`, "/workspace/repo");
+      return await execInSandbox(parts.join(" "), ctx, 120_000);
+    },
+  },
   {
     name: "git_status",
     description:

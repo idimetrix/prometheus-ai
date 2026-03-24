@@ -3,6 +3,8 @@ import { createLogger } from "@prometheus/logger";
 import {
   initSentry,
   initTelemetry,
+  metricsHandler,
+  metricsMiddleware,
   traceMiddleware,
 } from "@prometheus/telemetry";
 import {
@@ -27,6 +29,7 @@ const app = new Hono();
 
 app.use("/*", cors());
 app.use("/*", traceMiddleware("sandbox-manager"));
+app.use("/*", metricsMiddleware());
 
 const containerManager = new ContainerManager();
 const sandboxPool = new SandboxPool(containerManager);
@@ -49,6 +52,9 @@ app.get("/live", (c) => c.json({ status: "ok" }));
 
 // Readiness probe — can accept traffic
 app.get("/ready", (c) => c.json({ status: "ready" }));
+
+// ---- Metrics ----
+app.get("/metrics", metricsHandler);
 
 // ---- Pool stats ----
 
