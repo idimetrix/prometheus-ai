@@ -50,7 +50,8 @@ export const SLOT_CONFIGS: Record<RoutingSlot, SlotConfig> = {
     slot: "default",
     description: "General code generation and routine coding tasks",
     chain: [
-      "ollama/qwen3-coder-next",
+      "ollama/qwen2.5-coder:32b",
+      "ollama/qwen2.5-coder:14b",
       "cerebras/qwen3-235b",
       "groq/llama-3.3-70b-versatile",
     ],
@@ -65,8 +66,8 @@ export const SLOT_CONFIGS: Record<RoutingSlot, SlotConfig> = {
     slot: "think",
     description: "Deep reasoning, planning, and architecture decisions",
     chain: [
-      "ollama/deepseek-r1:32b",
-      "ollama/qwen3.5:27b",
+      "ollama/qwen2.5-coder:32b",
+      "ollama/qwen2.5:14b",
       "anthropic/claude-sonnet-4-6",
     ],
     defaultTemperature: 0.5,
@@ -82,7 +83,7 @@ export const SLOT_CONFIGS: Record<RoutingSlot, SlotConfig> = {
     chain: [
       "gemini/gemini-2.5-flash",
       "anthropic/claude-sonnet-4-6",
-      "ollama/qwen3-coder-next",
+      "ollama/qwen2.5-coder:32b",
     ],
     defaultTemperature: 0.3,
     preferStreaming: true,
@@ -98,7 +99,7 @@ export const SLOT_CONFIGS: Record<RoutingSlot, SlotConfig> = {
     chain: [
       "ollama/qwen2.5-coder:7b",
       "ollama/qwen2.5-coder:14b",
-      "ollama/qwen3-coder-next",
+      "ollama/qwen2.5-coder:32b",
     ],
     defaultTemperature: 0.3,
     preferStreaming: false,
@@ -123,8 +124,8 @@ export const SLOT_CONFIGS: Record<RoutingSlot, SlotConfig> = {
     description: "Code review, security audits, and quality analysis",
     chain: [
       "anthropic/claude-sonnet-4-6",
-      "ollama/deepseek-r1:32b",
-      "ollama/qwen3.5:27b",
+      "ollama/qwen2.5-coder:32b",
+      "ollama/qwen2.5:14b",
     ],
     defaultTemperature: 0.3,
     preferStreaming: true,
@@ -139,7 +140,7 @@ export const SLOT_CONFIGS: Record<RoutingSlot, SlotConfig> = {
     chain: [
       "cerebras/qwen3-235b",
       "groq/llama-3.3-70b-versatile",
-      "ollama/qwen3-coder-next",
+      "ollama/qwen2.5-coder:14b",
     ],
     defaultTemperature: 0.5,
     preferStreaming: true,
@@ -155,7 +156,7 @@ export const SLOT_CONFIGS: Record<RoutingSlot, SlotConfig> = {
     chain: [
       "anthropic/claude-opus-4-6",
       "anthropic/claude-sonnet-4-6",
-      "ollama/deepseek-r1:32b",
+      "ollama/qwen2.5-coder:32b",
     ],
     defaultTemperature: 0.5,
     preferStreaming: true,

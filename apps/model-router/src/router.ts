@@ -1,12 +1,14 @@
 import type { ModelProvider } from "@prometheus/ai";
 import {
   createLLMClient,
+  createVercelProvider,
   MODEL_REGISTRY,
   PROVIDER_ENDPOINTS,
 } from "@prometheus/ai";
 import { createLogger } from "@prometheus/logger";
 import { withSpan } from "@prometheus/telemetry";
 import { generateId } from "@prometheus/utils";
+import { generateText, streamText } from "ai";
 import { ResponseCache } from "./cache";
 import { type CascadeMessage, ModelCascade } from "./model-cascade";
 import { ModelScorer } from "./model-scorer";
@@ -25,23 +27,27 @@ export interface SlotConfig {
 
 const SLOT_CONFIGS: Record<string, SlotConfig> = {
   default: {
-    primary: "ollama/qwen3-coder-next",
-    fallbacks: ["cerebras/qwen3-235b", "groq/llama-3.3-70b-versatile"],
+    primary: "ollama/qwen2.5-coder:32b",
+    fallbacks: [
+      "ollama/qwen2.5-coder:14b",
+      "cerebras/qwen3-235b",
+      "groq/llama-3.3-70b-versatile",
+    ],
     description: "General coding tasks",
   },
   think: {
-    primary: "ollama/deepseek-r1:32b",
-    fallbacks: ["ollama/qwen3.5:27b", "anthropic/claude-sonnet-4-6"],
+    primary: "ollama/qwen2.5-coder:32b",
+    fallbacks: ["ollama/qwen2.5:14b", "anthropic/claude-sonnet-4-6"],
     description: "Deep reasoning and planning",
   },
   longContext: {
     primary: "gemini/gemini-2.5-flash",
-    fallbacks: ["anthropic/claude-sonnet-4-6", "ollama/qwen3-coder-next"],
+    fallbacks: ["anthropic/claude-sonnet-4-6", "ollama/qwen2.5-coder:32b"],
     description: "Long context windows (>32K tokens)",
   },
   background: {
-    primary: "ollama/qwen2.5-coder:14b",
-    fallbacks: ["ollama/qwen3-coder-next"],
+    primary: "ollama/qwen2.5-coder:7b",
+    fallbacks: ["ollama/qwen2.5-coder:14b"],
     description: "Background indexing and lightweight tasks",
   },
   vision: {
@@ -51,17 +57,17 @@ const SLOT_CONFIGS: Record<string, SlotConfig> = {
   },
   review: {
     primary: "anthropic/claude-sonnet-4-6",
-    fallbacks: ["ollama/deepseek-r1:32b", "ollama/qwen3.5:27b"],
+    fallbacks: ["ollama/qwen2.5-coder:32b", "ollama/qwen2.5:14b"],
     description: "Code review and quality analysis",
   },
   fastLoop: {
     primary: "cerebras/qwen3-235b",
-    fallbacks: ["groq/llama-3.3-70b-versatile", "ollama/qwen3-coder-next"],
+    fallbacks: ["groq/llama-3.3-70b-versatile", "ollama/qwen2.5-coder:14b"],
     description: "Fast CI loop iterations",
   },
   premium: {
     primary: "anthropic/claude-opus-4-6",
-    fallbacks: ["anthropic/claude-sonnet-4-6", "ollama/deepseek-r1:32b"],
+    fallbacks: ["anthropic/claude-sonnet-4-6", "ollama/qwen2.5-coder:32b"],
     description: "Premium tier for complex tasks",
   },
   speculate: {
@@ -720,8 +726,10 @@ export class ModelRouterService {
   }
 
   /**
-   * Attempt to call a specific model. Returns null on failure so the
-   * caller can try the next candidate in the chain.
+   * Attempt to call a specific model via the Vercel AI SDK 6.
+   * Uses generateText() for type-safe, unified completions across all
+   * providers. Returns null on failure so the caller can try the next
+   * candidate in the chain.
    */
   private async tryModel(
     modelKey: string,
@@ -737,11 +745,6 @@ export class ModelRouterService {
       SLOT_CONFIGS.default) as SlotConfig;
     const userApiKey = request.options?.userApiKeys?.[config.provider];
 
-    const client = createLLMClient({
-      provider: config.provider,
-      apiKey: userApiKey,
-    });
-
     this.logger.info(
       {
         model: modelKey,
@@ -750,7 +753,7 @@ export class ModelRouterService {
         messageCount: request.messages.length,
         attempt: attemptNumber,
       },
-      "Routing completion request"
+      "Routing completion request via AI SDK"
     );
 
     // Circuit breaker check — skip providers whose circuit is open
@@ -767,24 +770,28 @@ export class ModelRouterService {
 
     const requestStartMs = Date.now();
     try {
-      const response = await client.chat.completions.create({
-        model: config.id,
-        messages: request.messages as Parameters<
-          typeof client.chat.completions.create
-        >[0]["messages"],
-        tools: request.options?.tools as Parameters<
-          typeof client.chat.completions.create
-        >[0]["tools"],
-        temperature:
-          request.options?.temperature ??
-          SLOT_TEMPERATURES[request.slot] ??
-          0.1,
-        max_tokens: request.options?.maxTokens ?? 4096,
-        stream: false,
+      // Create a Vercel AI SDK language model instance
+      const model = createVercelProvider({
+        provider: config.provider,
+        modelId: config.id,
+        apiKey: userApiKey,
       });
 
-      const promptTokens = response.usage?.prompt_tokens ?? 0;
-      const completionTokens = response.usage?.completion_tokens ?? 0;
+      const temperature =
+        request.options?.temperature ?? SLOT_TEMPERATURES[request.slot] ?? 0.1;
+
+      const response = await generateText({
+        model,
+        messages: request.messages.map((m) => ({
+          role: m.role as "system" | "user" | "assistant",
+          content: m.content,
+        })),
+        temperature,
+        maxOutputTokens: request.options?.maxTokens ?? 4096,
+      });
+
+      const promptTokens = response.usage?.inputTokens ?? 0;
+      const completionTokens = response.usage?.outputTokens ?? 0;
       const totalTokens = promptTokens + completionTokens;
 
       // Record token usage for rate limiting
@@ -807,7 +814,7 @@ export class ModelRouterService {
           completionTokens,
           costUsd: costUsd.toFixed(6),
         },
-        "Completion succeeded"
+        "AI SDK completion succeeded"
       );
 
       // Record success in circuit breaker
@@ -828,19 +835,26 @@ export class ModelRouterService {
         /* fire-and-forget */
       });
 
+      // Extract tool calls from AI SDK response if present
+      const toolCalls = response.toolCalls?.length
+        ? (response.toolCalls as unknown[])
+        : undefined;
+
       return {
-        id: response.id ?? generateId("cmpl"),
+        id: response.response?.id ?? generateId("cmpl"),
         model: modelKey,
         provider: config.provider,
         slot: request.slot,
-        choices: response.choices.map((c) => ({
-          message: {
-            role: c.message.role,
-            content: c.message.content ?? "",
-            tool_calls: c.message.tool_calls as unknown[] | undefined,
+        choices: [
+          {
+            message: {
+              role: "assistant",
+              content: response.text,
+              tool_calls: toolCalls,
+            },
+            finish_reason: response.finishReason ?? "stop",
           },
-          finish_reason: c.finish_reason ?? "stop",
-        })),
+        ],
         usage: {
           prompt_tokens: promptTokens,
           completion_tokens: completionTokens,
@@ -858,7 +872,7 @@ export class ModelRouterService {
       const msg = error instanceof Error ? error.message : String(error);
       this.logger.error(
         { model: modelKey, error: msg, attempt: attemptNumber },
-        "Completion request failed"
+        "AI SDK completion request failed"
       );
       // Record failure in circuit breaker
       this.recordProviderFailure(config.provider, Date.now() - requestStartMs);
@@ -867,8 +881,9 @@ export class ModelRouterService {
   }
 
   /**
-   * Attempt to start a streaming completion with a specific model.
-   * Returns null on connection/setup failure so the caller can try fallbacks.
+   * Attempt to start a streaming completion with a specific model via
+   * Vercel AI SDK 6's streamText(). Returns null on connection/setup
+   * failure so the caller can try fallbacks.
    */
   private async tryModelStream(
     modelKey: string,
@@ -884,11 +899,6 @@ export class ModelRouterService {
       SLOT_CONFIGS.default) as SlotConfig;
     const userApiKey = request.options?.userApiKeys?.[config.provider];
 
-    const client = createLLMClient({
-      provider: config.provider,
-      apiKey: userApiKey,
-    });
-
     this.logger.info(
       {
         model: modelKey,
@@ -898,27 +908,30 @@ export class ModelRouterService {
         attempt: attemptNumber,
         stream: true,
       },
-      "Routing streaming completion request"
+      "Routing streaming completion request via AI SDK"
     );
 
     await this.rateLimiter.recordRequest(config.provider, modelKey);
 
     try {
-      const stream = await client.chat.completions.create({
-        model: config.id,
-        messages: request.messages as Parameters<
-          typeof client.chat.completions.create
-        >[0]["messages"],
-        tools: request.options?.tools as Parameters<
-          typeof client.chat.completions.create
-        >[0]["tools"],
-        temperature:
-          request.options?.temperature ??
-          SLOT_TEMPERATURES[request.slot] ??
-          0.1,
-        max_tokens: request.options?.maxTokens ?? 4096,
-        stream: true,
-        stream_options: { include_usage: true },
+      // Create a Vercel AI SDK language model instance
+      const model = createVercelProvider({
+        provider: config.provider,
+        modelId: config.id,
+        apiKey: userApiKey,
+      });
+
+      const temperature =
+        request.options?.temperature ?? SLOT_TEMPERATURES[request.slot] ?? 0.1;
+
+      const result = streamText({
+        model,
+        messages: request.messages.map((m) => ({
+          role: m.role as "system" | "user" | "assistant",
+          content: m.content,
+        })),
+        temperature,
+        maxOutputTokens: request.options?.maxTokens ?? 4096,
       });
 
       const id = generateId("cmpl");
@@ -938,27 +951,17 @@ export class ModelRouterService {
 
       async function* iterate(): AsyncIterable<StreamChunk> {
         try {
-          for await (const chunk of stream) {
-            const choice = chunk.choices[0];
-            if (!choice) {
-              continue;
-            }
-
-            const content = choice.delta?.content ?? "";
-
-            if (chunk.usage) {
-              promptTokens = chunk.usage.prompt_tokens ?? 0;
-              completionTokens = chunk.usage.completion_tokens ?? 0;
-            }
-
-            if (content) {
-              yield { content, finishReason: choice.finish_reason ?? null };
-            }
-
-            if (choice.finish_reason) {
-              yield { content: "", finishReason: choice.finish_reason };
+          for await (const textPart of result.textStream) {
+            if (textPart) {
+              yield { content: textPart, finishReason: null };
             }
           }
+          // Emit a final chunk with the finish reason
+          const usage = await result.usage;
+          promptTokens = usage?.inputTokens ?? 0;
+          completionTokens = usage?.outputTokens ?? 0;
+          const finishReason = await result.finishReason;
+          yield { content: "", finishReason: finishReason ?? "stop" };
         } finally {
           self.finalizeStream(
             config,
@@ -985,7 +988,7 @@ export class ModelRouterService {
       const msg = error instanceof Error ? error.message : String(error);
       this.logger.error(
         { model: modelKey, error: msg, attempt: attemptNumber, stream: true },
-        "Streaming request failed"
+        "AI SDK streaming request failed"
       );
       return null;
     }

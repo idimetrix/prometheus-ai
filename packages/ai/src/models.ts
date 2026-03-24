@@ -174,6 +174,19 @@ export const MODEL_REGISTRY: Record<string, ModelConfig> = {
     null,
     8192
   ),
+  "ollama/qwen2.5-coder:32b": m(
+    "ollama",
+    "qwen2.5-coder:32b",
+    "Qwen 2.5 Coder 32B",
+    0,
+    32_768,
+    0,
+    0,
+    ["chat", "code", "reasoning", "review", "architecture"],
+    null,
+    null,
+    8192
+  ),
   "ollama/qwen2.5-coder:14b": m(
     "ollama",
     "qwen2.5-coder:14b",
@@ -199,6 +212,19 @@ export const MODEL_REGISTRY: Record<string, ModelConfig> = {
     null,
     null,
     4096
+  ),
+  "ollama/qwen2.5:14b": m(
+    "ollama",
+    "qwen2.5:14b",
+    "Qwen 2.5 14B",
+    0,
+    32_768,
+    0,
+    0,
+    ["chat", "code", "reasoning", "planning"],
+    null,
+    null,
+    8192
   ),
   "ollama/nomic-embed-text": m(
     "ollama",

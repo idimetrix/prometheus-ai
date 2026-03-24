@@ -4,6 +4,7 @@ import type { RateLimitManager } from "../rate-limiter";
 // ── Mocks ────────────────────────────────────────────────────────────────────
 
 const mockCreate = vi.fn();
+const mockGenerateText = vi.fn();
 
 vi.mock("@prometheus/ai", () => ({
   PROVIDER_ENDPOINTS: {
@@ -18,11 +19,44 @@ vi.mock("@prometheus/ai", () => ({
     openai: "https://api.openai.com/v1",
   },
   MODEL_REGISTRY: {
-    "ollama/qwen3-coder-next": {
-      id: "qwen3-coder-next",
+    "ollama/qwen2.5-coder:32b": {
+      id: "qwen2.5-coder:32b",
       provider: "ollama",
       tier: 0,
-      capabilities: ["coding", "chat"],
+      capabilities: ["coding", "chat", "reasoning"],
+      contextWindow: 32_768,
+      costPerInputToken: 0,
+      costPerOutputToken: 0,
+      supportsStreaming: true,
+      maxOutputTokens: 8192,
+    },
+    "ollama/qwen2.5-coder:14b": {
+      id: "qwen2.5-coder:14b",
+      provider: "ollama",
+      tier: 0,
+      capabilities: ["coding"],
+      contextWindow: 32_768,
+      costPerInputToken: 0,
+      costPerOutputToken: 0,
+      supportsStreaming: true,
+      maxOutputTokens: 8192,
+    },
+    "ollama/qwen2.5-coder:7b": {
+      id: "qwen2.5-coder:7b",
+      provider: "ollama",
+      tier: 0,
+      capabilities: ["coding"],
+      contextWindow: 32_768,
+      costPerInputToken: 0,
+      costPerOutputToken: 0,
+      supportsStreaming: true,
+      maxOutputTokens: 4096,
+    },
+    "ollama/qwen2.5:14b": {
+      id: "qwen2.5:14b",
+      provider: "ollama",
+      tier: 0,
+      capabilities: ["reasoning"],
       contextWindow: 32_768,
       costPerInputToken: 0,
       costPerOutputToken: 0,
@@ -50,28 +84,6 @@ vi.mock("@prometheus/ai", () => ({
       costPerOutputToken: 0.0002,
       supportsStreaming: true,
       maxOutputTokens: 32_768,
-    },
-    "ollama/deepseek-r1:32b": {
-      id: "deepseek-r1:32b",
-      provider: "ollama",
-      tier: 0,
-      capabilities: ["reasoning"],
-      contextWindow: 32_768,
-      costPerInputToken: 0,
-      costPerOutputToken: 0,
-      supportsStreaming: true,
-      maxOutputTokens: 8192,
-    },
-    "ollama/qwen3.5:27b": {
-      id: "qwen3.5:27b",
-      provider: "ollama",
-      tier: 0,
-      capabilities: ["reasoning"],
-      contextWindow: 32_768,
-      costPerInputToken: 0,
-      costPerOutputToken: 0,
-      supportsStreaming: true,
-      maxOutputTokens: 8192,
     },
     "gemini/gemini-2.5-flash": {
       id: "gemini-2.5-flash",
@@ -106,17 +118,6 @@ vi.mock("@prometheus/ai", () => ({
       supportsStreaming: true,
       maxOutputTokens: 4096,
     },
-    "ollama/qwen2.5-coder:14b": {
-      id: "qwen2.5-coder:14b",
-      provider: "ollama",
-      tier: 0,
-      capabilities: ["coding"],
-      contextWindow: 16_384,
-      costPerInputToken: 0,
-      costPerOutputToken: 0,
-      supportsStreaming: true,
-      maxOutputTokens: 8192,
-    },
   },
   createLLMClient: vi.fn().mockReturnValue({
     chat: {
@@ -125,6 +126,16 @@ vi.mock("@prometheus/ai", () => ({
       },
     },
   }),
+  createVercelProvider: vi.fn().mockReturnValue({
+    specificationVersion: "v1",
+    modelId: "mock-model",
+    provider: "mock",
+  }),
+}));
+
+vi.mock("ai", () => ({
+  generateText: (...args: unknown[]) => mockGenerateText(...args),
+  streamText: vi.fn(),
 }));
 
 vi.mock("@prometheus/utils", () => ({
@@ -188,14 +199,14 @@ describe("ModelRouterService", () => {
       expect(configs).toHaveProperty("premium");
     });
 
-    it("default slot uses ollama/qwen3-coder-next as primary", () => {
+    it("default slot uses ollama/qwen2.5-coder:32b as primary", () => {
       const configs = service.getSlotConfigs();
-      expect(configs.default?.primary).toBe("ollama/qwen3-coder-next");
+      expect(configs.default?.primary).toBe("ollama/qwen2.5-coder:32b");
     });
 
-    it("think slot uses ollama/deepseek-r1:32b as primary", () => {
+    it("think slot uses ollama/qwen2.5-coder:32b as primary", () => {
       const configs = service.getSlotConfigs();
-      expect(configs.think?.primary).toBe("ollama/deepseek-r1:32b");
+      expect(configs.think?.primary).toBe("ollama/qwen2.5-coder:32b");
     });
 
     it("premium slot uses claude-opus as primary", () => {
@@ -219,7 +230,7 @@ describe("ModelRouterService", () => {
       messages: [{ role: "user", content: "Hello" }],
     };
 
-    it("routes to primary model successfully", async () => {
+    it("routes to primary model successfully via cascade", async () => {
       // Cascade routing starts with the cheap tier (qwen2.5-coder:14b)
       // for default slot non-streaming requests
       mockCreate.mockResolvedValueOnce({
@@ -243,8 +254,7 @@ describe("ModelRouterService", () => {
     });
 
     it("calculates usage tokens correctly", async () => {
-      // Cascade routing zeroes out individual token counts and
-      // computes cost from total tokens * tier costPerToken
+      // Cascade routing zeroes out individual token counts
       mockCreate.mockResolvedValueOnce({
         choices: [
           {
@@ -280,27 +290,24 @@ describe("ModelRouterService", () => {
 
       const result = await service.route(baseRequest);
 
-      // Cascade escalates to standard tier (qwen3-coder-next)
-      expect(result.model).toBe("ollama/qwen3-coder-next");
+      // Cascade escalates to standard tier (qwen2.5-coder:32b)
+      expect(result.model).toBe("ollama/qwen2.5-coder:32b");
       expect(result.routing.wasFallback).toBe(true);
       expect(result.routing.attemptsCount).toBe(1);
     });
 
     it("falls back when primary is rate limited", async () => {
-      // Use a non-cascade slot (e.g. "think") to test rate-limit fallback
-      // since cascade routing bypasses the rate limiter
+      // Use think slot (non-cascade path) to test rate-limit fallback
       mockRateLimiter.canMakeRequest
         .mockResolvedValueOnce(false) // primary rate limited
         .mockResolvedValueOnce(true); // fallback OK
 
-      mockCreate.mockResolvedValueOnce({
-        choices: [
-          {
-            message: { role: "assistant", content: "OK" },
-            finish_reason: "stop",
-          },
-        ],
-        usage: { prompt_tokens: 10, completion_tokens: 5 },
+      mockGenerateText.mockResolvedValueOnce({
+        text: "OK",
+        finishReason: "stop",
+        usage: { inputTokens: 10, outputTokens: 5 },
+        toolCalls: [],
+        response: { id: "resp_1" },
       });
 
       const result = await service.route({
@@ -308,8 +315,8 @@ describe("ModelRouterService", () => {
         messages: [{ role: "user", content: "Hello" }],
       });
 
-      // think slot: primary=deepseek-r1:32b (rate limited), fallback=qwen3.5:27b
-      expect(result.model).toBe("ollama/qwen3.5:27b");
+      // think slot: primary=qwen2.5-coder:32b (rate limited), fallback=qwen2.5:14b
+      expect(result.model).toBe("ollama/qwen2.5:14b");
       expect(result.routing.wasFallback).toBe(true);
     });
 
@@ -328,16 +335,13 @@ describe("ModelRouterService", () => {
     });
 
     it("records rate limit data for each attempt", async () => {
-      // Use a non-cascade slot to test rate limit recording
-      // since cascade routing bypasses the rate limiter
-      mockCreate.mockResolvedValueOnce({
-        choices: [
-          {
-            message: { role: "assistant", content: "OK" },
-            finish_reason: "stop",
-          },
-        ],
-        usage: { prompt_tokens: 50, completion_tokens: 25 },
+      // Use think slot (non-cascade) to test rate limit recording via AI SDK
+      mockGenerateText.mockResolvedValueOnce({
+        text: "OK",
+        finishReason: "stop",
+        usage: { inputTokens: 50, outputTokens: 25 },
+        toolCalls: [],
+        response: { id: "resp_1" },
       });
 
       await service.route({
@@ -347,25 +351,23 @@ describe("ModelRouterService", () => {
 
       expect(mockRateLimiter.recordRequest).toHaveBeenCalledWith(
         "ollama",
-        "ollama/deepseek-r1:32b"
+        "ollama/qwen2.5-coder:32b"
       );
       expect(mockRateLimiter.recordTokenUsage).toHaveBeenCalledWith(
         "ollama",
-        "ollama/deepseek-r1:32b",
+        "ollama/qwen2.5-coder:32b",
         50,
         25
       );
     });
 
     it("uses explicit model override when provided and exists in registry", async () => {
-      mockCreate.mockResolvedValueOnce({
-        choices: [
-          {
-            message: { role: "assistant", content: "Claude response" },
-            finish_reason: "stop",
-          },
-        ],
-        usage: { prompt_tokens: 20, completion_tokens: 10 },
+      mockGenerateText.mockResolvedValueOnce({
+        text: "Claude response",
+        finishReason: "stop",
+        usage: { inputTokens: 20, outputTokens: 10 },
+        toolCalls: [],
+        response: { id: "resp_1" },
       });
 
       const result = await service.route({
@@ -380,19 +382,16 @@ describe("ModelRouterService", () => {
 
     it("falls through to slot routing when override model fails", async () => {
       // Override fails, then cascade routing kicks in for default slot
-      // Cascade starts with cheap tier (qwen2.5-coder:14b)
-      mockCreate
-        .mockRejectedValueOnce(new Error("Override failed")) // override fails
-        .mockResolvedValueOnce({
-          // cascade cheap tier succeeds
-          choices: [
-            {
-              message: { role: "assistant", content: "Primary" },
-              finish_reason: "stop",
-            },
-          ],
-          usage: { prompt_tokens: 10, completion_tokens: 5 },
-        });
+      mockGenerateText.mockRejectedValueOnce(new Error("Override failed"));
+      mockCreate.mockResolvedValueOnce({
+        choices: [
+          {
+            message: { role: "assistant", content: "Primary" },
+            finish_reason: "stop",
+          },
+        ],
+        usage: { prompt_tokens: 10, completion_tokens: 5 },
+      });
 
       const result = await service.route({
         slot: "default",
@@ -405,14 +404,12 @@ describe("ModelRouterService", () => {
     });
 
     it("calculates cost based on model pricing", async () => {
-      mockCreate.mockResolvedValueOnce({
-        choices: [
-          {
-            message: { role: "assistant", content: "Response" },
-            finish_reason: "stop",
-          },
-        ],
-        usage: { prompt_tokens: 1000, completion_tokens: 500 },
+      mockGenerateText.mockResolvedValueOnce({
+        text: "Response",
+        finishReason: "stop",
+        usage: { inputTokens: 1000, outputTokens: 500 },
+        toolCalls: [],
+        response: { id: "resp_1" },
       });
 
       const result = await service.route({
@@ -426,19 +423,15 @@ describe("ModelRouterService", () => {
     });
 
     it("returns zero cost for local models", async () => {
-      // Use a non-cascade slot to test local model zero cost
-      // since cascade has its own cost calculation
-      mockCreate.mockResolvedValueOnce({
-        choices: [
-          {
-            message: { role: "assistant", content: "Local" },
-            finish_reason: "stop",
-          },
-        ],
-        usage: { prompt_tokens: 1000, completion_tokens: 500 },
+      // Use background slot (non-cascade) to test local model zero cost
+      mockGenerateText.mockResolvedValueOnce({
+        text: "Local",
+        finishReason: "stop",
+        usage: { inputTokens: 1000, outputTokens: 500 },
+        toolCalls: [],
+        response: { id: "resp_1" },
       });
 
-      // background slot primary = ollama/qwen2.5-coder:14b (local, cost=0)
       const result = await service.route({
         slot: "background",
         messages: [{ role: "user", content: "Hello" }],
@@ -447,15 +440,13 @@ describe("ModelRouterService", () => {
     });
 
     it("reports routing metadata correctly for primary model", async () => {
-      // Use a non-cascade slot to test standard routing metadata
-      mockCreate.mockResolvedValueOnce({
-        choices: [
-          {
-            message: { role: "assistant", content: "OK" },
-            finish_reason: "stop",
-          },
-        ],
-        usage: { prompt_tokens: 10, completion_tokens: 5 },
+      // Use think slot (non-cascade) to test standard routing metadata
+      mockGenerateText.mockResolvedValueOnce({
+        text: "OK",
+        finishReason: "stop",
+        usage: { inputTokens: 10, outputTokens: 5 },
+        toolCalls: [],
+        response: { id: "resp_1" },
       });
 
       const result = await service.route({
@@ -463,8 +454,8 @@ describe("ModelRouterService", () => {
         messages: [{ role: "user", content: "Hello" }],
       });
 
-      expect(result.routing.primaryModel).toBe("ollama/deepseek-r1:32b");
-      expect(result.routing.modelUsed).toBe("ollama/deepseek-r1:32b");
+      expect(result.routing.primaryModel).toBe("ollama/qwen2.5-coder:32b");
+      expect(result.routing.modelUsed).toBe("ollama/qwen2.5-coder:32b");
       expect(result.routing.wasFallback).toBe(false);
       expect(result.routing.attemptsCount).toBe(1);
     });

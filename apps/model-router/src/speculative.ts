@@ -26,7 +26,7 @@ export interface SpeculativeConfig {
 const DEFAULT_CONFIG: SpeculativeConfig = {
   models: [
     { key: "cerebras/qwen3-235b", slot: "fastLoop", timeoutMs: 3000 },
-    { key: "ollama/qwen3-coder-next", slot: "default", timeoutMs: 8000 },
+    { key: "ollama/qwen2.5-coder:14b", slot: "default", timeoutMs: 8000 },
     { key: "anthropic/claude-sonnet-4-6", slot: "review", timeoutMs: 15_000 },
   ],
   qualityThreshold: 0.5,

@@ -32,10 +32,10 @@ export interface CostOptimizationResult {
 
 /** Models that are completely free (local or free-tier APIs) */
 const FREE_MODELS = new Set([
-  "ollama/qwen3-coder-next",
-  "ollama/qwen3.5:27b",
-  "ollama/deepseek-r1:32b",
+  "ollama/qwen2.5-coder:32b",
+  "ollama/qwen2.5:14b",
   "ollama/qwen2.5-coder:14b",
+  "ollama/qwen2.5-coder:7b",
   "cerebras/qwen3-235b",
   "cerebras/llama-3.3-70b",
   "groq/llama-3.3-70b-versatile",
@@ -66,10 +66,10 @@ const MODEL_SLOT_MAP: Record<string, string> = {
   "cerebras/qwen3-235b": "fastLoop",
   "groq/llama-3.3-70b-versatile": "fastLoop",
   "groq/mixtral-8x7b-32768": "fastLoop",
-  "ollama/qwen3-coder-next": "default",
-  "ollama/qwen3.5:27b": "think",
-  "ollama/deepseek-r1:32b": "think",
+  "ollama/qwen2.5-coder:32b": "default",
+  "ollama/qwen2.5:14b": "think",
   "ollama/qwen2.5-coder:14b": "background",
+  "ollama/qwen2.5-coder:7b": "background",
   "cerebras/llama-3.3-70b": "fastLoop",
   "deepseek/deepseek-coder": "default",
   "deepseek/deepseek-r1": "think",

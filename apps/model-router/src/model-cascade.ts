@@ -109,7 +109,7 @@ const DEFAULT_TIERS: CascadeTierConfig[] = [
   },
   {
     name: "standard",
-    model: "ollama/qwen3-coder-next",
+    model: "ollama/qwen2.5-coder:32b",
     costPerToken: 0.000_001,
   },
   {

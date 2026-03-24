@@ -9,8 +9,8 @@ vi.mock("@prometheus/ai", () => ({
     anthropic: "https://api.anthropic.com/v1",
   },
   MODEL_REGISTRY: {
-    "ollama/qwen3-coder-next": {
-      id: "qwen3-coder-next",
+    "ollama/qwen2.5-coder:32b": {
+      id: "qwen2.5-coder:32b",
       provider: "ollama",
       tier: 0,
       capabilities: ["coding"],
@@ -19,6 +19,72 @@ vi.mock("@prometheus/ai", () => ({
       costPerOutputToken: 0,
       supportsStreaming: true,
       maxOutputTokens: 8192,
+    },
+    "ollama/qwen2.5-coder:14b": {
+      id: "qwen2.5-coder:14b",
+      provider: "ollama",
+      tier: 0,
+      capabilities: ["coding"],
+      contextWindow: 32_768,
+      costPerInputToken: 0,
+      costPerOutputToken: 0,
+      supportsStreaming: true,
+      maxOutputTokens: 8192,
+    },
+    "ollama/qwen2.5-coder:7b": {
+      id: "qwen2.5-coder:7b",
+      provider: "ollama",
+      tier: 0,
+      capabilities: ["coding"],
+      contextWindow: 32_768,
+      costPerInputToken: 0,
+      costPerOutputToken: 0,
+      supportsStreaming: true,
+      maxOutputTokens: 4096,
+    },
+    "ollama/qwen2.5:14b": {
+      id: "qwen2.5:14b",
+      provider: "ollama",
+      tier: 0,
+      capabilities: ["reasoning"],
+      contextWindow: 32_768,
+      costPerInputToken: 0,
+      costPerOutputToken: 0,
+      supportsStreaming: true,
+      maxOutputTokens: 8192,
+    },
+    "cerebras/qwen3-235b": {
+      id: "qwen3-235b",
+      provider: "cerebras",
+      tier: 1,
+      capabilities: ["coding"],
+      contextWindow: 8192,
+      costPerInputToken: 0,
+      costPerOutputToken: 0,
+      supportsStreaming: true,
+      maxOutputTokens: 8192,
+    },
+    "groq/llama-3.3-70b-versatile": {
+      id: "llama-3.3-70b-versatile",
+      provider: "groq",
+      tier: 1,
+      capabilities: ["coding"],
+      contextWindow: 128_000,
+      costPerInputToken: 0,
+      costPerOutputToken: 0,
+      supportsStreaming: true,
+      maxOutputTokens: 32_768,
+    },
+    "gemini/gemini-2.5-flash": {
+      id: "gemini-2.5-flash",
+      provider: "gemini",
+      tier: 2,
+      capabilities: ["coding", "longContext"],
+      contextWindow: 1_000_000,
+      costPerInputToken: 0,
+      costPerOutputToken: 0,
+      supportsStreaming: true,
+      maxOutputTokens: 65_536,
     },
     "anthropic/claude-sonnet-4-6": {
       id: "claude-sonnet-4-6",
@@ -31,6 +97,17 @@ vi.mock("@prometheus/ai", () => ({
       supportsStreaming: true,
       maxOutputTokens: 8192,
     },
+    "anthropic/claude-opus-4-6": {
+      id: "claude-opus-4-6",
+      provider: "anthropic",
+      tier: 4,
+      capabilities: ["coding", "reasoning"],
+      contextWindow: 200_000,
+      costPerInputToken: 0.015,
+      costPerOutputToken: 0.075,
+      supportsStreaming: true,
+      maxOutputTokens: 4096,
+    },
   },
   createLLMClient: vi.fn().mockReturnValue({
     chat: {
@@ -39,6 +116,16 @@ vi.mock("@prometheus/ai", () => ({
       },
     },
   }),
+  createVercelProvider: vi.fn().mockReturnValue({
+    specificationVersion: "v1",
+    modelId: "mock-model",
+    provider: "mock",
+  }),
+}));
+
+vi.mock("ai", () => ({
+  generateText: vi.fn(),
+  streamText: vi.fn(),
 }));
 
 vi.mock("@prometheus/utils", () => ({
