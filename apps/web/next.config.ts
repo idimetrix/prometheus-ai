@@ -49,6 +49,7 @@ const cspDirectives = [
 const ContentSecurityPolicy = cspDirectives.join("; ");
 
 const nextConfig: NextConfig = {
+  output: "standalone",
   transpilePackages: [
     "@prometheus/ui",
     "@prometheus/types",
@@ -58,6 +59,44 @@ const nextConfig: NextConfig = {
   typescript: { ignoreBuildErrors: true },
   typedRoutes: true,
   headers: async () => [
+    {
+      // Cache static assets at the CDN edge for 1 year (immutable)
+      source: "/_next/static/(.*)",
+      headers: [
+        {
+          key: "Cache-Control",
+          value: "public, max-age=31536000, immutable",
+        },
+        {
+          key: "CDN-Cache-Control",
+          value: "public, max-age=31536000, immutable",
+        },
+      ],
+    },
+    {
+      // Cache optimized images at the CDN edge for 1 day with revalidation
+      source: "/_next/image(.*)",
+      headers: [
+        {
+          key: "Cache-Control",
+          value: "public, max-age=86400, stale-while-revalidate=43200",
+        },
+        {
+          key: "CDN-Cache-Control",
+          value: "public, max-age=86400",
+        },
+      ],
+    },
+    {
+      // Cache public fonts for 30 days
+      source: "/fonts/(.*)",
+      headers: [
+        {
+          key: "Cache-Control",
+          value: "public, max-age=2592000, immutable",
+        },
+      ],
+    },
     {
       source: "/(.*)",
       headers: [

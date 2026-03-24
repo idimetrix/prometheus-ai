@@ -27,7 +27,8 @@
       "!**/coverage",
       "!**/*.min.js",
       "!infra/k6",
-      "!infra/scripts/load-tests"
+      "!infra/scripts/load-tests",
+      "!tests/load"
     ]
   },
   "formatter": {

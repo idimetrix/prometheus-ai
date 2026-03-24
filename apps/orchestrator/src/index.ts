@@ -454,6 +454,14 @@ export { GovernanceEngine } from "./governance/governance-engine";
 export { TrustScorer } from "./governance/trust-scorer";
 // Phase 7: Guardian
 export { BusinessLogicGuardian } from "./guardian/business-logic-guardian";
+// Phase 7: Meta-learning
+export {
+  type LearnedPattern,
+  MetaLearner,
+  type MetaLearnerStats,
+  type RoleAdjustment,
+  type SessionOutcome,
+} from "./meta-learning/meta-learner";
 export { MixtureOfAgents } from "./moa/parallel-generator";
 // Phase 7: MoA
 export { MoAVoting } from "./moa/voting";

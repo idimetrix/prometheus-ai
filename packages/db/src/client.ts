@@ -1,6 +1,38 @@
+import type { Logger } from "drizzle-orm/logger";
 import { drizzle } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
 import * as schema from "./schema";
+
+// ---------------------------------------------------------------------------
+// Query Timing Configuration
+// ---------------------------------------------------------------------------
+
+const SLOW_QUERY_THRESHOLD_MS = Number(
+  process.env.DB_SLOW_QUERY_THRESHOLD_MS ?? "500"
+);
+const enableQueryLogging = process.env.DB_QUERY_LOGGING === "true";
+
+/**
+ * Custom Drizzle logger that tracks query execution time and warns on slow queries.
+ */
+class QueryTimingLogger implements Logger {
+  logQuery(query: string, params: unknown[]): void {
+    if (enableQueryLogging) {
+      const truncated =
+        query.length > 200 ? `${query.slice(0, 200)}...` : query;
+      const paramCount = params.length;
+      console.debug(
+        `[db:query] executing — ${truncated} (${paramCount} params)`
+      );
+    }
+  }
+}
+
+const queryLogger = new QueryTimingLogger();
+
+// ---------------------------------------------------------------------------
+// Connection Configuration
+// ---------------------------------------------------------------------------
 
 // Prefer PGBOUNCER_URL for pooled connections (transaction mode),
 // fall back to DATABASE_URL for direct connections or dev mode.
@@ -32,7 +64,7 @@ const client = postgres(connectionString, {
   },
 });
 
-export const db = drizzle(client, { schema });
+export const db = drizzle(client, { schema, logger: queryLogger });
 export type Database = typeof db;
 
 // Read replica for analytics/list queries — falls back to primary when not configured
@@ -48,7 +80,7 @@ export const dbReadOnly: Database = readReplicaUrl
           /* suppress notice messages */
         },
       }),
-      { schema }
+      { schema, logger: queryLogger }
     )
   : db;
 
@@ -57,6 +89,49 @@ export const dbReadOnly: Database = readReplicaUrl
  * Not for normal application use — use `db` with Drizzle ORM instead.
  */
 export const rawClient = client;
+
+// ---------------------------------------------------------------------------
+// Query Timing Wrapper
+// ---------------------------------------------------------------------------
+
+/**
+ * Execute an async database operation with precise timing measurement.
+ * Logs a warning if the operation exceeds the slow-query threshold.
+ *
+ * @example
+ * const users = await withQueryTiming("users.findAll", () =>
+ *   db.select().from(usersTable)
+ * );
+ */
+export async function withQueryTiming<T>(
+  label: string,
+  operation: () => Promise<T>
+): Promise<T> {
+  const start = performance.now();
+  try {
+    const result = await operation();
+    const durationMs = performance.now() - start;
+
+    if (durationMs >= SLOW_QUERY_THRESHOLD_MS) {
+      console.warn(`[db:slow-query] ${durationMs.toFixed(1)}ms — ${label}`);
+    } else if (enableQueryLogging) {
+      console.debug(`[db:query] ${durationMs.toFixed(1)}ms — ${label}`);
+    }
+
+    return result;
+  } catch (error) {
+    const durationMs = performance.now() - start;
+    console.error(
+      `[db:query-error] ${durationMs.toFixed(1)}ms — ${label}`,
+      error
+    );
+    throw error;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Pool Statistics
+// ---------------------------------------------------------------------------
 
 /** Pool statistics snapshot */
 export interface PoolStats {

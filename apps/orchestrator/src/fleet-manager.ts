@@ -297,6 +297,77 @@ export class FleetManager {
     });
   }
 
+  /**
+   * Execute a full project generation pipeline: discovery -> architect -> planner
+   * -> coder -> tester -> deploy. Each phase runs sequentially, feeding its
+   * output as context into the next phase.
+   */
+  async fullProjectPipeline(
+    projectDescription: string,
+    options?: { skipDeploy?: boolean }
+  ): Promise<AgentExecutionResult[]> {
+    const phases: Array<{ role: string; title: string }> = [
+      { role: "discovery", title: "Discover project requirements" },
+      { role: "architect", title: "Design system architecture" },
+      { role: "planner", title: "Create implementation plan" },
+      { role: "backend_coder", title: "Implement backend code" },
+      { role: "frontend_coder", title: "Implement frontend code" },
+      { role: "tester", title: "Write and run tests" },
+    ];
+
+    if (!options?.skipDeploy) {
+      phases.push({ role: "devops", title: "Configure deployment" });
+    }
+
+    logger.info(
+      {
+        sessionId: this.sessionId,
+        phases: phases.length,
+        description: projectDescription.slice(0, 120),
+      },
+      "Starting full project pipeline"
+    );
+
+    const results: AgentExecutionResult[] = [];
+    let previousContext = projectDescription;
+
+    for (const phase of phases) {
+      const task: SchedulableTask = {
+        id: generateId("fpp"),
+        title: `${phase.title}: ${projectDescription.slice(0, 80)}`,
+        agentRole: phase.role,
+        dependencies: [],
+        effort: "medium",
+      };
+
+      const enrichedBlueprint = `Project: ${projectDescription}\n\nPrevious phase output:\n${previousContext}`;
+      const result = await this.executeFleetTask(task, enrichedBlueprint);
+      results.push(result);
+
+      if (!result.success) {
+        logger.warn(
+          { phase: phase.role, error: result.error },
+          "Pipeline phase failed, stopping"
+        );
+        break;
+      }
+
+      previousContext = result.output || previousContext;
+      await this.publishFleetStatus();
+    }
+
+    logger.info(
+      {
+        totalPhases: phases.length,
+        completed: results.filter((r) => r.success).length,
+        failed: results.filter((r) => !r.success).length,
+      },
+      "Full project pipeline complete"
+    );
+
+    return results;
+  }
+
   private chunkArray<T>(arr: T[], size: number): T[][] {
     const chunks: T[][] = [];
     for (let i = 0; i < arr.length; i += size) {

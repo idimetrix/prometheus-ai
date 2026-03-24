@@ -10,3 +10,9 @@ export {
   type SpeechRecognizerOptions,
   type SpeechRecognizerResult,
 } from "./speech-recognizer";
+export {
+  type SpeechResult,
+  type TranscriptionResult,
+  type VoiceConfig,
+  VoiceInterface,
+} from "./voice-interface";
