@@ -160,7 +160,7 @@ export const searchTools: AgentToolDefinition[] = [
       const limit = parsed.limit || 10;
 
       // Call the project-brain service for vector search
-      const brainUrl = process.env.PROJECT_BRAIN_URL || "http://localhost:4006";
+      const brainUrl = process.env.PROJECT_BRAIN_URL || "http://localhost:4003";
       try {
         const response = await fetch(`${brainUrl}/api/search`, {
           method: "POST",

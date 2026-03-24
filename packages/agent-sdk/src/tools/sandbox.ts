@@ -16,7 +16,8 @@ export async function execInSandbox(
   ctx: ToolExecutionContext,
   timeoutMs: number = DEFAULT_TIMEOUT_MS
 ): Promise<ToolResult> {
-  const sandboxManagerUrl = process.env.SANDBOX_MANAGER_URL;
+  const sandboxManagerUrl =
+    ctx.sandboxManagerUrl || process.env.SANDBOX_MANAGER_URL;
 
   if (sandboxManagerUrl) {
     return await execRemoteSandbox(sandboxManagerUrl, command, ctx, timeoutMs);

@@ -63,6 +63,7 @@ export class MultiBranchSpeculator {
     sessionId: string;
     projectId: string;
     sandboxId: string;
+    sandboxManagerUrl?: string;
     workDir: string;
     orgId: string;
     userId: string;
@@ -77,6 +78,7 @@ export class MultiBranchSpeculator {
     sessionId: string;
     projectId: string;
     sandboxId: string;
+    sandboxManagerUrl?: string;
     workDir: string;
     orgId: string;
     userId: string;

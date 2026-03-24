@@ -4,6 +4,8 @@ export interface ToolExecutionContext {
   orgId?: string;
   projectId: string;
   sandboxId: string;
+  /** URL of the sandbox-manager service (e.g. http://localhost:4006). Falls back to SANDBOX_MANAGER_URL env var. */
+  sandboxManagerUrl?: string;
   sessionId: string;
   userId?: string;
   workDir: string;

@@ -877,7 +877,8 @@ async function executeSingleToolCall(
     const toolResult = await toolDef.execute(tc.args, {
       sessionId: deps.ctx.sessionId,
       projectId: deps.ctx.projectId,
-      sandboxId: deps.ctx.sessionId,
+      sandboxId: deps.ctx.sandboxId,
+      sandboxManagerUrl: deps.ctx.sandboxManagerUrl,
       workDir: deps.ctx.workDir,
       orgId: deps.ctx.orgId,
       userId: deps.ctx.userId,

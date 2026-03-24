@@ -28,6 +28,10 @@ export interface ExecutionContext {
   readonly projectContext: string | null;
   readonly projectId: string;
   readonly recentCIResults: string | null;
+  /** ID of the sandbox container assigned to this execution */
+  readonly sandboxId: string;
+  /** URL of the sandbox-manager service */
+  readonly sandboxManagerUrl: string;
   readonly sessionId: string;
   readonly sprintState: string | null;
   readonly taskDescription: string;
@@ -44,6 +48,8 @@ const DEFAULT_OPTIONS: Required<ExecutionOptions> = {
   maxTokens: 4096,
 };
 
+const DEFAULT_SANDBOX_MANAGER_URL = "http://localhost:4006";
+
 export function createExecutionContext(params: {
   sessionId: string;
   projectId: string;
@@ -51,6 +57,8 @@ export function createExecutionContext(params: {
   userId: string;
   agentRole: AgentRole;
   taskDescription: string;
+  sandboxId: string;
+  sandboxManagerUrl?: string;
   options?: ExecutionOptions;
   blueprintContent?: string | null;
   projectContext?: string | null;
@@ -70,6 +78,11 @@ export function createExecutionContext(params: {
     userId: params.userId,
     agentRole: params.agentRole,
     taskDescription: params.taskDescription,
+    sandboxId: params.sandboxId,
+    sandboxManagerUrl:
+      params.sandboxManagerUrl ||
+      process.env.SANDBOX_MANAGER_URL ||
+      DEFAULT_SANDBOX_MANAGER_URL,
     options: Object.freeze(mergedOptions),
     blueprintContent: params.blueprintContent ?? null,
     projectContext: params.projectContext ?? null,

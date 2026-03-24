@@ -320,6 +320,7 @@ function makeCtx(overrides?: Partial<ExecutionContext>): ExecutionContext {
     userId: user.id,
     agentRole: "backend_coder",
     taskDescription: "Implement a REST endpoint for /users",
+    sandboxId: `sbx_${session.id}`,
     options: { maxIterations: 5, slot: "default" },
     ...overrides,
   });
@@ -774,6 +775,7 @@ describe("ExecutionEngine", () => {
       userId: "usr_abc",
       agentRole: "backend_coder",
       taskDescription: "Build a feature",
+      sandboxId: "sbx_test_123",
     });
 
     expect(ctx.options.maxIterations).toBe(50);
@@ -786,6 +788,8 @@ describe("ExecutionEngine", () => {
     expect(ctx.sprintState).toBeNull();
     expect(ctx.recentCIResults).toBeNull();
     expect(ctx.priorSessionContext).toBeNull();
+    expect(ctx.sandboxId).toBe("sbx_test_123");
+    expect(ctx.sandboxManagerUrl).toBe("http://localhost:4006");
   });
 
   it("merges option overrides correctly", () => {
@@ -796,6 +800,7 @@ describe("ExecutionEngine", () => {
       userId: "usr_abc",
       agentRole: "backend_coder",
       taskDescription: "Build a feature",
+      sandboxId: "sbx_test_456",
       options: { maxIterations: 10, temperature: 0.5 },
     });
 

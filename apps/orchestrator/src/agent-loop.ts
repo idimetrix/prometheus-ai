@@ -60,6 +60,7 @@ export class AgentLoop {
   private readonly projectId: string;
   private readonly orgId: string;
   private readonly userId: string;
+  private sandboxId: string | null = null;
   private status: AgentLoopStatus = "idle";
   private readonly iterations: LoopIteration[] = [];
   private readonly eventPublisher: EventPublisher;
@@ -108,6 +109,14 @@ export class AgentLoop {
 
   getSessionId(): string {
     return this.sessionId;
+  }
+
+  setSandboxId(id: string): void {
+    this.sandboxId = id;
+  }
+
+  getSandboxId(): string | null {
+    return this.sandboxId;
   }
 
   getCreditsConsumed(): number {
@@ -227,6 +236,7 @@ export class AgentLoop {
       userId: this.userId,
       agentRole: agentRole as AgentRole,
       taskDescription: enrichedDescription,
+      sandboxId: this.sandboxId ?? this.sessionId,
       blueprintContent: brainContext.blueprintContent,
       projectContext: brainContext.projectSummary,
       sprintState: brainContext.sprintState,
