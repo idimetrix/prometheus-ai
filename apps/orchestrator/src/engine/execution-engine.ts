@@ -1881,8 +1881,35 @@ async function runIterationBody(
   };
 }
 
+/**
+ * Resolve the appropriate execution strategy based on feature flags.
+ * When PROMETHEUS_USE_AI_SDK=true, delegates to AI SDK 6 streaming;
+ * otherwise uses the default model router HTTP path.
+ */
+function resolveExecutionStrategy(
+  ctx: ExecutionContext
+): AsyncGenerator<ExecutionEvent, void, undefined> {
+  if (USE_AI_SDK_STREAMING) {
+    return ExecutionEngine.streamWithAISDK(ctx);
+  }
+  return ExecutionEngine._executeViaModelRouter(ctx);
+}
+
 export const ExecutionEngine = {
+  /**
+   * Primary entry point: routes to AI SDK streaming or HTTP model router
+   * depending on the PROMETHEUS_USE_AI_SDK feature flag.
+   */
   async *execute(
+    ctx: ExecutionContext
+  ): AsyncGenerator<ExecutionEvent, void, undefined> {
+    yield* resolveExecutionStrategy(ctx);
+  },
+
+  /**
+   * Default execution path: streams via the model router HTTP endpoint.
+   */
+  async *_executeViaModelRouter(
     ctx: ExecutionContext
   ): AsyncGenerator<ExecutionEvent, void, undefined> {
     const logger = createLogger(`engine:${ctx.sessionId}`);
@@ -2357,8 +2384,8 @@ export const ExecutionEngine = {
         "AI SDK 6 execution failed, falling back to SSE streaming"
       );
 
-      // Fall back to the standard execute() path
-      yield* ExecutionEngine.execute(ctx);
+      // Fall back to the HTTP model router path
+      yield* ExecutionEngine._executeViaModelRouter(ctx);
     }
   },
 };

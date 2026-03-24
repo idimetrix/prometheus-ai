@@ -338,6 +338,68 @@ app.post("/sessions/:id/release", async (c) => {
   }
 });
 
+// ─── Benchmark Endpoints (SWE-bench) ────────────────────────
+
+app.post("/benchmark/run", async (c) => {
+  try {
+    const body = await c.req.json();
+    const { filePath, commitHash } = body as {
+      filePath: string;
+      commitHash?: string;
+    };
+
+    if (!filePath) {
+      return c.json({ error: "'filePath' is required" }, 400);
+    }
+
+    const { loadFromFile } = await import("./benchmarks/swe-bench");
+    const { SWEBenchRunner } = await import("./benchmarks/swe-bench-runner");
+
+    const sweTasks = await loadFromFile(filePath);
+    const instances = sweTasks.map((t) => ({
+      instanceId: t.instance_id,
+      repo: t.repo,
+      baseCommit: t.base_commit,
+      problemStatement: t.problem_statement,
+      goldPatch: t.patch,
+      testPatch: t.test_patch,
+    }));
+
+    const runner = new SWEBenchRunner();
+    const report = await runner.runBenchmark(instances, commitHash ?? "HEAD");
+
+    return c.json(report);
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    logger.error({ error: msg }, "Benchmark run failed");
+    return c.json({ error: msg }, 500);
+  }
+});
+
+app.post("/benchmark/suite", async (c) => {
+  try {
+    const body = await c.req.json();
+    const { caseIds, commitHash } = body as {
+      caseIds: string[];
+      commitHash?: string;
+    };
+
+    if (!caseIds?.length) {
+      return c.json({ error: "'caseIds' is required" }, 400);
+    }
+
+    const { SWEBenchRunner } = await import("./benchmarks/swe-bench-runner");
+    const runner = new SWEBenchRunner();
+    const report = await runner.runSuite(caseIds, commitHash ?? "HEAD");
+
+    return c.json(report);
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    logger.error({ error: msg }, "Benchmark suite failed");
+    return c.json({ error: msg }, 500);
+  }
+});
+
 // ─── Prometheus Metrics ──────────────────────────────────────
 
 app.get("/metrics", async (c) => {

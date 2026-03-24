@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { Command } from "commander";
+import { benchmarkCommand } from "./commands/benchmark";
 import { chatCommand } from "./commands/chat";
 import { fleetCommand } from "./commands/fleet";
 import { initCommand } from "./commands/init";
@@ -25,5 +26,6 @@ program.addCommand(fleetCommand);
 program.addCommand(reviewCommand);
 program.addCommand(searchCommand);
 program.addCommand(initCommand);
+program.addCommand(benchmarkCommand);
 
 program.parse();

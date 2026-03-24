@@ -34,6 +34,11 @@ export {
 } from "./queues";
 export { OrgRateLimiter, type RateLimitResult } from "./rate-limiter";
 export {
+  type ScheduledTaskConfig,
+  ScheduledTaskManager,
+  type ScheduledTaskStatus,
+} from "./scheduled-tasks";
+export {
   type AgentTaskData,
   type BillingEventData,
   type CleanupSandboxData,
