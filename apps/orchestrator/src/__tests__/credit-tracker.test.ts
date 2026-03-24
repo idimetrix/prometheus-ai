@@ -17,7 +17,7 @@ vi.mock("@prometheus/queue", () => ({
       mockPublishSessionEvent(...args);
   },
   QueueEvents: {
-    CREDIT_UPDATE: "credit:update",
+    CREDIT_UPDATE: "credit_update",
   },
 }));
 
@@ -165,7 +165,7 @@ describe("CreditTracker", () => {
       expect(mockPublishSessionEvent).toHaveBeenCalledWith(
         "ses_1",
         expect.objectContaining({
-          type: "credit:update",
+          type: "credit_update",
           data: expect.objectContaining({
             consumed: 1,
             totalConsumed: 1,

@@ -45,7 +45,7 @@ describe("EventPublisher", () => {
 
     it("serializes event data as JSON", async () => {
       const event: SessionEvent = {
-        type: "agent:output",
+        type: "agent_output",
         data: { content: "Hello world" },
         agentRole: "backend_coder",
         timestamp: "2025-01-01T00:00:00.000Z",
@@ -54,7 +54,7 @@ describe("EventPublisher", () => {
       await publisher.publishSessionEvent("ses_1", event);
 
       const publishedData = JSON.parse(mockPublish.mock.calls[0]?.[1]);
-      expect(publishedData.type).toBe("agent:output");
+      expect(publishedData.type).toBe("agent_output");
       expect(publishedData.data.content).toBe("Hello world");
       expect(publishedData.agentRole).toBe("backend_coder");
     });
@@ -93,7 +93,7 @@ describe("EventPublisher", () => {
   describe("publishFleetEvent", () => {
     it("publishes to fleet:events channel", async () => {
       const event: SessionEvent = {
-        type: "agent:status",
+        type: "agent_status",
         data: { agentId: "agt_1", status: "working" },
         timestamp: new Date().toISOString(),
       };
@@ -108,7 +108,7 @@ describe("EventPublisher", () => {
 
     it("includes orgId in the published event data", async () => {
       const event: SessionEvent = {
-        type: "agent:status",
+        type: "agent_status",
         data: { agentId: "agt_1" },
         timestamp: "2025-06-01T00:00:00.000Z",
       };
@@ -117,7 +117,7 @@ describe("EventPublisher", () => {
 
       const publishedData = JSON.parse(mockPublish.mock.calls[0]?.[1]);
       expect(publishedData.orgId).toBe("org_456");
-      expect(publishedData.type).toBe("agent:status");
+      expect(publishedData.type).toBe("agent_status");
       expect(publishedData.data.agentId).toBe("agt_1");
     });
 

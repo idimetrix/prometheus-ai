@@ -660,7 +660,25 @@ export class AgentLoop {
         }
         break;
 
-      // self_review and complete events don't need separate Redis publishing
+      case "complete":
+        await this.eventPublisher.publishSessionEvent(this.sessionId, {
+          type: "session_complete",
+          data: {
+            success: event.success,
+            output: event.output.slice(0, 2000),
+            filesChanged: event.filesChanged,
+            tokensUsed: event.tokensUsed,
+            toolCalls: event.toolCalls,
+            steps: event.steps,
+            status: event.success ? "completed" : "failed",
+            agentRole,
+          },
+          agentRole,
+          timestamp: event.timestamp,
+        });
+        break;
+
+      // self_review events don't need separate Redis publishing
       default:
         break;
     }

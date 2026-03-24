@@ -132,6 +132,7 @@ export function useSSEStream(sessionId: string | null) {
             timestamp: nowTs,
           });
           break;
+        case "agent_status":
         case "checkpoint":
         case "credit_update":
           addSimpleEvent(type);
@@ -267,6 +268,7 @@ export function useSSEStream(sessionId: string | null) {
     // All known event types
     const eventTypes = [
       "agent_output",
+      "agent_status",
       "terminal_output",
       "plan_update",
       "plan_step_update",

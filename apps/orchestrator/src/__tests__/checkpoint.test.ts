@@ -17,7 +17,7 @@ vi.mock("@prometheus/queue", () => ({
   },
   QueueEvents: {
     CHECKPOINT: "checkpoint",
-    AGENT_STATUS: "agent:status",
+    AGENT_STATUS: "agent_status",
   },
 }));
 

@@ -83,19 +83,19 @@ describe("Redis Connection", () => {
 
 describe("QueueEvents constants", () => {
   it("has AGENT_OUTPUT event", () => {
-    expect(QueueEvents.AGENT_OUTPUT).toBe("agent:output");
+    expect(QueueEvents.AGENT_OUTPUT).toBe("agent_output");
   });
 
   it("has AGENT_STATUS event", () => {
-    expect(QueueEvents.AGENT_STATUS).toBe("agent:status");
+    expect(QueueEvents.AGENT_STATUS).toBe("agent_status");
   });
 
   it("has TASK_STATUS event", () => {
-    expect(QueueEvents.TASK_STATUS).toBe("task:status");
+    expect(QueueEvents.TASK_STATUS).toBe("task_status");
   });
 
   it("has FILE_CHANGE event", () => {
-    expect(QueueEvents.FILE_CHANGE).toBe("file:change");
+    expect(QueueEvents.FILE_CHANGE).toBe("file_change");
   });
 
   it("has ERROR event", () => {

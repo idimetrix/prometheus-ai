@@ -33,10 +33,10 @@ vi.mock("@prometheus/queue", () => ({
     publishSessionEvent = vi.fn().mockResolvedValue(undefined);
   },
   QueueEvents: {
-    TASK_STATUS: "task:status",
-    PLAN_UPDATE: "plan:update",
-    AGENT_STATUS: "agent:status",
-    SESSION_RESUME: "session:resume",
+    TASK_STATUS: "task_status",
+    PLAN_UPDATE: "plan_update",
+    AGENT_STATUS: "agent_status",
+    SESSION_RESUME: "session_resume",
   },
 }));
 

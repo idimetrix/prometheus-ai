@@ -36,8 +36,8 @@ vi.mock("@prometheus/queue", () => ({
     publishSessionEvent: vi.fn(),
   })),
   QueueEvents: {
-    TASK_STATUS: "task:status",
-    PLAN_UPDATE: "plan:update",
+    TASK_STATUS: "task_status",
+    PLAN_UPDATE: "plan_update",
   },
   indexingQueue: { add: vi.fn() },
 }));

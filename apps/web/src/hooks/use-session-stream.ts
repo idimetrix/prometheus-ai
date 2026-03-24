@@ -136,6 +136,21 @@ export function useSessionStream(sessionId: string | null) {
       }
     });
 
+    // Agent status
+    es.addEventListener("agent_status", (e) => {
+      try {
+        const data = JSON.parse(e.data);
+        store.addEvent({
+          id: crypto.randomUUID(),
+          type: "agent_status",
+          data,
+          timestamp: new Date().toISOString(),
+        });
+      } catch {
+        /* ignore */
+      }
+    });
+
     // Queue position
     es.addEventListener("queue_position", (e) => {
       try {

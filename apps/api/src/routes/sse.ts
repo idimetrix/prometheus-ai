@@ -18,6 +18,7 @@ const publisher = new EventPublisher();
  */
 const VALID_EVENT_TYPES = new Set([
   "agent_output",
+  "agent_status",
   "file_change",
   "file_diff",
   "code_change",
@@ -30,6 +31,7 @@ const VALID_EVENT_TYPES = new Set([
   "reasoning",
   "terminal_output",
   "session_complete",
+  "session_resume",
   "browser_screenshot",
   "pr_created",
   "queue_position",

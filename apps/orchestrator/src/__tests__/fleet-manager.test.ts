@@ -16,7 +16,7 @@ vi.mock("@prometheus/queue", () => ({
     publishSessionEvent = mockPublishSessionEvent;
   },
   QueueEvents: {
-    AGENT_STATUS: "agent:status",
+    AGENT_STATUS: "agent_status",
   },
 }));
 

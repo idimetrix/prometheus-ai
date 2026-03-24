@@ -33,7 +33,7 @@ vi.mock("@prometheus/queue", () => ({
   EventPublisher: class {
     publishSessionEvent = vi.fn();
   },
-  QueueEvents: { AGENT_STATUS: "agent:status" },
+  QueueEvents: { AGENT_STATUS: "agent_status" },
   createRedisConnection: vi.fn(),
 }));
 

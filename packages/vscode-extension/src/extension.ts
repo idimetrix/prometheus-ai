@@ -53,7 +53,7 @@ export function activate(context: ExtensionContext): void {
   // Connect WebSocket for real-time updates
   prometheusClient.connectWebSocket();
   prometheusClient.onEvent((event, data) => {
-    if (event === "agent:status") {
+    if (event === "agent_status") {
       const agents = Array.isArray(data) ? data : [data];
       agentProvider?.updateAgents(
         agents as Array<{
