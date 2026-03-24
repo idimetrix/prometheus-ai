@@ -988,23 +988,16 @@ async function executeToolGroups(
 }
 
 function scoreIterationConfidence(
-  toolCalls: Array<{
-    id: string;
-    function: { name: string; arguments: string };
-  }>,
+  actualToolResults: Array<{ success: boolean; name: string }>,
   assistantContent: string,
   filesChangedCount: number,
   staleIterations: number,
   lastOutputLength: number,
   confidenceScorer: ConfidenceScorer
 ): { confidence: ConfidenceResult; staleIterations: number } {
-  const iterationToolResults = toolCalls.map((tc) => {
-    const toolDef = TOOL_REGISTRY[tc.function.name];
-    return { success: !!toolDef, name: tc.function.name };
-  });
   const signals = ConfidenceScorer.extractSignals(
     assistantContent,
-    iterationToolResults,
+    actualToolResults,
     filesChangedCount,
     staleIterations,
     lastOutputLength
@@ -1521,9 +1514,12 @@ async function processToolCallsAndConfidence(
     )
   );
 
-  // Confidence
+  // Confidence — use actual tool execution results, not just registry lookups
+  const actualToolResults = toolExecResult.events
+    .filter((evt): evt is ToolResultEvent => evt.type === "tool_result")
+    .map((evt) => ({ success: evt.success, name: evt.toolName }));
   const confResult = scoreIterationConfidence(
-    toolCalls,
+    actualToolResults,
     assistantContent,
     filesChanged.size,
     updated.staleIterations,
