@@ -124,6 +124,25 @@ export const projectsRouter = router({
         role: "owner",
       });
 
+      // If a repo URL was provided, enqueue an indexing job
+      if (input.repoUrl) {
+        await indexingQueue.add(
+          "index-project",
+          {
+            projectId: id,
+            orgId: ctx.orgId,
+            filePaths: [],
+            fullReindex: true,
+            triggeredBy: "manual",
+          },
+          { jobId: `index-${id}-init` }
+        );
+        logger.info(
+          { projectId: id, repoUrl: input.repoUrl },
+          "Repo clone/index job enqueued"
+        );
+      }
+
       logger.info({ projectId: id, orgId: ctx.orgId }, "Project created");
       return project as NonNullable<typeof project>;
     }),

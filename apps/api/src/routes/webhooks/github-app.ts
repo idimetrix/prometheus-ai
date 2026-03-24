@@ -6,16 +6,20 @@
  * - New issues with specific labels (e.g., "prometheus-auto")
  * - PR review requests
  * - PR comments mentioning @prometheus-bot
+ * - Push events (trigger re-index)
  */
 
-import { db, projects, tasks } from "@prometheus/db";
+import { createHmac, timingSafeEqual } from "node:crypto";
+import { db, processedWebhookEvents, projects, tasks } from "@prometheus/db";
 import { createLogger } from "@prometheus/logger";
-import { agentTaskQueue } from "@prometheus/queue";
+import { agentTaskQueue, indexingQueue } from "@prometheus/queue";
 import { generateId } from "@prometheus/utils";
 import { eq } from "drizzle-orm";
 import type { Context } from "hono";
 
 const logger = createLogger("api:webhooks:github-app");
+
+const GITHUB_WEBHOOK_SECRET = process.env.GITHUB_WEBHOOK_SECRET ?? "";
 
 interface GitHubWebhookPayload {
   action: string;
@@ -23,6 +27,12 @@ interface GitHubWebhookPayload {
     body: string;
     user: { login: string };
   };
+  commits?: Array<{
+    id: string;
+    added: string[];
+    removed: string[];
+    modified: string[];
+  }>;
   installation?: { id: number };
   issue?: {
     number: number;
@@ -39,6 +49,7 @@ interface GitHubWebhookPayload {
     base: { ref: string };
     user: { login: string };
   };
+  ref?: string;
   repository: {
     full_name: string;
     clone_url: string;
@@ -49,32 +60,123 @@ interface GitHubWebhookPayload {
 const AUTO_LABEL = "prometheus-auto";
 const BOT_MENTION = "@prometheus-bot";
 
+// ---------------------------------------------------------------------------
+// Signature verification
+// ---------------------------------------------------------------------------
+
+function verifyGitHubSignature(
+  payload: string,
+  signatureHeader: string | undefined
+): boolean {
+  if (!GITHUB_WEBHOOK_SECRET) {
+    logger.warn("GITHUB_WEBHOOK_SECRET not set — skipping verification");
+    return true;
+  }
+
+  if (!signatureHeader) {
+    return false;
+  }
+
+  const expectedSignature = `sha256=${createHmac("sha256", GITHUB_WEBHOOK_SECRET).update(payload).digest("hex")}`;
+
+  try {
+    const expected = Buffer.from(expectedSignature);
+    const actual = Buffer.from(signatureHeader);
+    return (
+      expected.length === actual.length && timingSafeEqual(expected, actual)
+    );
+  } catch {
+    return false;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Idempotency
+// ---------------------------------------------------------------------------
+
+async function isEventAlreadyProcessed(eventId: string): Promise<boolean> {
+  const existing = await db.query.processedWebhookEvents.findFirst({
+    where: eq(processedWebhookEvents.eventId, eventId),
+  });
+  return !!existing;
+}
+
+async function recordProcessedEvent(
+  eventId: string,
+  eventType: string
+): Promise<void> {
+  await db
+    .insert(processedWebhookEvents)
+    .values({
+      eventId,
+      eventType,
+      processedAt: new Date(),
+      expiresAt: new Date(Date.now() + 48 * 60 * 60 * 1000),
+    })
+    .onConflictDoNothing();
+}
+
+// ---------------------------------------------------------------------------
+// Webhook handler
+// ---------------------------------------------------------------------------
+
 export async function handleGitHubAppWebhook(c: Context): Promise<Response> {
+  const rawBody = await c.req.text();
+
+  // Verify GitHub signature
+  const verified = verifyGitHubSignature(
+    rawBody,
+    c.req.header("X-Hub-Signature-256")
+  );
+  if (!verified) {
+    logger.warn("GitHub webhook signature verification failed");
+    return c.json({ error: "Invalid signature" }, 401);
+  }
+
+  const payload = JSON.parse(rawBody) as GitHubWebhookPayload;
   const event = c.req.header("X-GitHub-Event");
-  const payload = (await c.req.json()) as GitHubWebhookPayload;
+  const deliveryId = c.req.header("X-GitHub-Delivery") ?? `gh_${Date.now()}`;
+
+  // Idempotency check
+  if (await isEventAlreadyProcessed(deliveryId)) {
+    logger.debug({ deliveryId, event }, "Duplicate GitHub webhook — skipping");
+    return c.json({ ok: true, duplicate: true });
+  }
 
   logger.info(
     {
       event,
       action: payload.action,
       repo: payload.repository.full_name,
+      deliveryId,
     },
     "GitHub App webhook received"
   );
 
-  switch (event) {
-    case "issues":
-      await handleIssueEvent(payload);
-      break;
-    case "pull_request":
-      await handlePREvent(payload);
-      break;
-    case "issue_comment":
-    case "pull_request_review_comment":
-      await handleCommentEvent(payload);
-      break;
-    default:
-      logger.debug({ event }, "Unhandled GitHub event type");
+  try {
+    switch (event) {
+      case "issues":
+        await handleIssueEvent(payload);
+        break;
+      case "pull_request":
+        await handlePREvent(payload);
+        break;
+      case "issue_comment":
+      case "pull_request_review_comment":
+        await handleCommentEvent(payload);
+        break;
+      case "push":
+        await handlePushEvent(payload);
+        break;
+      default:
+        logger.debug({ event }, "Unhandled GitHub event type");
+    }
+
+    await recordProcessedEvent(deliveryId, `github.${event}`);
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    logger.error({ error: msg, event, deliveryId }, "GitHub webhook failed");
+    return c.json({ error: "Webhook processing failed" }, 500);
   }
 
   return c.json({ ok: true });
@@ -236,6 +338,52 @@ async function handleCommentEvent(
   logger.info(
     { taskId, sender: payload.sender.login },
     "Task created from GitHub comment"
+  );
+}
+
+async function handlePushEvent(payload: GitHubWebhookPayload): Promise<void> {
+  const project = await findProjectByRepo(payload.repository.full_name);
+  if (!project) {
+    return;
+  }
+
+  // Collect all changed file paths from push commits
+  const changedFiles = new Set<string>();
+  if (payload.commits) {
+    for (const commit of payload.commits) {
+      for (const f of commit.added) {
+        changedFiles.add(f);
+      }
+      for (const f of commit.modified) {
+        changedFiles.add(f);
+      }
+      for (const f of commit.removed) {
+        changedFiles.add(f);
+      }
+    }
+  }
+
+  const filePaths = Array.from(changedFiles);
+
+  await indexingQueue.add(
+    "index-project",
+    {
+      projectId: project.id,
+      orgId: project.orgId,
+      filePaths,
+      fullReindex: filePaths.length === 0,
+      triggeredBy: "push",
+    },
+    { jobId: `index-${project.id}-push-${Date.now()}` }
+  );
+
+  logger.info(
+    {
+      projectId: project.id,
+      ref: payload.ref,
+      changedFileCount: filePaths.length,
+    },
+    "Re-index triggered from GitHub push event"
   );
 }
 

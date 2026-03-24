@@ -1,8 +1,10 @@
+import { createHmac, timingSafeEqual } from "node:crypto";
 import {
   creditBalances,
   db,
   organizations,
   orgMembers,
+  processedWebhookEvents,
   users,
 } from "@prometheus/db";
 import { createLogger } from "@prometheus/logger";
@@ -12,6 +14,101 @@ import { Hono } from "hono";
 
 const logger = createLogger("api:webhooks:clerk");
 const clerkWebhookApp = new Hono();
+
+const CLERK_WEBHOOK_SECRET = process.env.CLERK_WEBHOOK_SECRET ?? "";
+
+// ---------------------------------------------------------------------------
+// Svix signature verification
+// ---------------------------------------------------------------------------
+
+function verifySvixSignature(
+  payload: string,
+  headers: {
+    svixId: string | undefined;
+    svixTimestamp: string | undefined;
+    svixSignature: string | undefined;
+  }
+): boolean {
+  if (!CLERK_WEBHOOK_SECRET) {
+    logger.warn("CLERK_WEBHOOK_SECRET not set — skipping verification");
+    return true;
+  }
+
+  const { svixId, svixTimestamp, svixSignature } = headers;
+  if (!(svixId && svixTimestamp && svixSignature)) {
+    return false;
+  }
+
+  // Reject timestamps older than 5 minutes to prevent replay attacks
+  const ts = Number.parseInt(svixTimestamp, 10);
+  const now = Math.floor(Date.now() / 1000);
+  if (Number.isNaN(ts) || Math.abs(now - ts) > 300) {
+    return false;
+  }
+
+  // Svix secret is base64-encoded with "whsec_" prefix
+  const secretBytes = Buffer.from(
+    CLERK_WEBHOOK_SECRET.startsWith("whsec_")
+      ? CLERK_WEBHOOK_SECRET.slice(6)
+      : CLERK_WEBHOOK_SECRET,
+    "base64"
+  );
+
+  const signedContent = `${svixId}.${svixTimestamp}.${payload}`;
+  const expectedSignature = createHmac("sha256", secretBytes)
+    .update(signedContent)
+    .digest("base64");
+
+  // Svix sends multiple signatures separated by spaces, each prefixed with "v1,"
+  const signatures = svixSignature.split(" ");
+  for (const sig of signatures) {
+    const sigValue = sig.startsWith("v1,") ? sig.slice(3) : sig;
+    try {
+      const expected = Buffer.from(expectedSignature, "base64");
+      const actual = Buffer.from(sigValue, "base64");
+      if (
+        expected.length === actual.length &&
+        timingSafeEqual(expected, actual)
+      ) {
+        return true;
+      }
+    } catch {
+      // Skip invalid signatures
+    }
+  }
+
+  return false;
+}
+
+// ---------------------------------------------------------------------------
+// Idempotency
+// ---------------------------------------------------------------------------
+
+async function isEventAlreadyProcessed(eventId: string): Promise<boolean> {
+  const existing = await db.query.processedWebhookEvents.findFirst({
+    where: eq(processedWebhookEvents.eventId, eventId),
+  });
+  return !!existing;
+}
+
+async function recordProcessedEvent(
+  eventId: string,
+  eventType: string
+): Promise<void> {
+  await db
+    .insert(processedWebhookEvents)
+    .values({
+      eventId,
+      eventType,
+      processedAt: new Date(),
+      expiresAt: new Date(Date.now() + 48 * 60 * 60 * 1000),
+    })
+    .onConflictDoNothing();
+}
+
+// ---------------------------------------------------------------------------
+// Event handlers
+// ---------------------------------------------------------------------------
 
 async function handleUserCreated(data: Record<string, unknown>) {
   const id = generateId("usr");
@@ -91,14 +188,28 @@ async function handleMembershipCreated(data: Record<string, unknown>) {
   });
 
   if (!user) {
+    logger.warn(
+      { userId: publicUserData?.user_id },
+      "User not found for membership — skipping"
+    );
     return;
   }
 
-  const org = await db.query.organizations.findFirst({
-    columns: { id: true },
-  });
+  // Look up org by slug from the Clerk organization data
+  const orgSlug = (data.organization as Record<string, unknown> | undefined)
+    ?.slug as string | undefined;
+  const org = orgSlug
+    ? await db.query.organizations.findFirst({
+        where: eq(organizations.slug, orgSlug),
+        columns: { id: true },
+      })
+    : null;
 
   if (!org) {
+    logger.warn(
+      { orgSlug },
+      "Organization not found for membership — skipping"
+    );
     return;
   }
 
@@ -132,21 +243,49 @@ const EVENT_HANDLERS: Record<
 };
 
 clerkWebhookApp.post("/", async (c) => {
-  const body = await c.req.json();
-  const eventType = body.type as string;
+  const rawBody = await c.req.text();
+
+  // Verify Svix signature
+  const verified = verifySvixSignature(rawBody, {
+    svixId: c.req.header("svix-id"),
+    svixTimestamp: c.req.header("svix-timestamp"),
+    svixSignature: c.req.header("svix-signature"),
+  });
+
+  if (!verified) {
+    logger.warn("Clerk webhook signature verification failed");
+    return c.json({ error: "Invalid signature" }, 401);
+  }
+
+  const body = JSON.parse(rawBody) as {
+    type: string;
+    data: Record<string, unknown>;
+  };
+  const eventType = body.type;
+
+  // Idempotency: use svix-id as event identifier
+  const eventId = c.req.header("svix-id") ?? `clerk_${Date.now()}`;
+  if (await isEventAlreadyProcessed(eventId)) {
+    logger.debug(
+      { eventId, type: eventType },
+      "Duplicate Clerk webhook — skipping"
+    );
+    return c.json({ received: true, duplicate: true });
+  }
 
   try {
     const handler = EVENT_HANDLERS[eventType];
     if (handler) {
-      await handler(body.data as Record<string, unknown>);
+      await handler(body.data);
     } else {
       logger.debug({ type: eventType }, "Unhandled Clerk webhook");
     }
 
+    await recordProcessedEvent(eventId, eventType);
     return c.json({ received: true });
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);
-    logger.error({ error: msg }, "Clerk webhook failed");
+    logger.error({ error: msg, eventType }, "Clerk webhook failed");
     return c.json({ error: "Webhook processing failed" }, 400);
   }
 });
