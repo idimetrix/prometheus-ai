@@ -1,5 +1,4 @@
 "use strict";
-const _path = require("node:path");
 const fs = require("node:fs");
 
 // Load .env file manually
@@ -19,70 +18,44 @@ for (const rawLine of envFile.split("\n")) {
   env[key] = val;
 }
 
+const commonOpts = {
+  max_memory_restart: "2G",
+  restart_delay: 3000,
+  max_restarts: 10,
+  merge_logs: true,
+};
+
+const tsxService = (name, entryPath, extraEnv = {}) => ({
+  name,
+  cwd: "/root/prometheus",
+  script: "/usr/bin/tsx",
+  args: entryPath,
+  env: { ...env, NODE_ENV: "production", ...extraEnv },
+  out_file: `/root/prometheus/logs/${name.replace("prometheus-", "")}-out.log`,
+  error_file: `/root/prometheus/logs/${name.replace("prometheus-", "")}-error.log`,
+  ...commonOpts,
+});
+
 module.exports = {
   apps: [
     {
       name: "prometheus-web",
-      cwd: "/root/prometheus/apps/web",
-      script: "node_modules/next/dist/bin/next",
-      args: "start -p 3000",
-      env: { ...env, NODE_ENV: "production", PORT: 3000 },
+      cwd: "/root/prometheus/apps/web/.next/standalone/apps/web",
+      script: "server.js",
+      env: { ...env, NODE_ENV: "production", PORT: 3000, HOSTNAME: "0.0.0.0" },
+      out_file: "/root/prometheus/logs/web-out.log",
+      error_file: "/root/prometheus/logs/web-error.log",
+      ...commonOpts,
     },
-    {
-      name: "prometheus-api",
-      cwd: "/root/prometheus",
-      script: "/usr/bin/tsx",
-      args: "apps/api/src/index.ts",
-      env: { ...env, NODE_ENV: "production" },
-    },
-    {
-      name: "prometheus-socket",
-      cwd: "/root/prometheus",
-      script: "/usr/bin/tsx",
-      args: "apps/socket-server/src/index.ts",
-      env: { ...env, NODE_ENV: "production" },
-    },
-    {
-      name: "prometheus-orchestrator",
-      cwd: "/root/prometheus",
-      script: "/usr/bin/tsx",
-      args: "apps/orchestrator/src/index.ts",
-      env: { ...env, NODE_ENV: "production" },
-    },
-    {
-      name: "prometheus-brain",
-      cwd: "/root/prometheus",
-      script: "/usr/bin/tsx",
-      args: "apps/project-brain/src/index.ts",
-      env: { ...env, NODE_ENV: "production" },
-    },
-    {
-      name: "prometheus-model-router",
-      cwd: "/root/prometheus",
-      script: "/usr/bin/tsx",
-      args: "apps/model-router/src/index.ts",
-      env: { ...env, NODE_ENV: "production" },
-    },
-    {
-      name: "prometheus-mcp-gateway",
-      cwd: "/root/prometheus",
-      script: "/usr/bin/tsx",
-      args: "apps/mcp-gateway/src/index.ts",
-      env: { ...env, NODE_ENV: "production" },
-    },
-    {
-      name: "prometheus-sandbox",
-      cwd: "/root/prometheus",
-      script: "/usr/bin/tsx",
-      args: "apps/sandbox-manager/src/index.ts",
-      env: { ...env, NODE_ENV: "production" },
-    },
-    {
-      name: "prometheus-worker",
-      cwd: "/root/prometheus",
-      script: "/usr/bin/tsx",
-      args: "apps/queue-worker/src/index.ts",
-      env: { ...env, NODE_ENV: "production" },
-    },
+    tsxService("prometheus-api", "apps/api/src/index.ts"),
+    tsxService("prometheus-socket", "apps/socket-server/src/index.ts"),
+    tsxService("prometheus-orchestrator", "apps/orchestrator/src/index.ts"),
+    tsxService("prometheus-brain", "apps/project-brain/src/index.ts"),
+    tsxService("prometheus-model-router", "apps/model-router/src/index.ts"),
+    tsxService("prometheus-mcp-gateway", "apps/mcp-gateway/src/index.ts"),
+    tsxService("prometheus-sandbox", "apps/sandbox-manager/src/index.ts", {
+      SANDBOX_MODE: "dev",
+    }),
+    tsxService("prometheus-worker", "apps/queue-worker/src/index.ts"),
   ],
 };

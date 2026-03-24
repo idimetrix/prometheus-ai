@@ -10,10 +10,15 @@ import type {
   UsageRollupData,
 } from "@prometheus/queue";
 import { createRedisConnection } from "@prometheus/queue";
-import { initSentry, initTelemetry } from "@prometheus/telemetry";
+import {
+  initSentry,
+  initTelemetry,
+  metricsRegistry,
+} from "@prometheus/telemetry";
 import {
   installShutdownHandlers,
   isProcessShuttingDown,
+  registerShutdownHandler,
 } from "@prometheus/utils";
 import { Queue, Worker } from "bullmq";
 import { processCleanupSandbox } from "./jobs/cleanup-sandbox";
@@ -30,6 +35,7 @@ initSentry({ serviceName: "queue-worker" });
 installShutdownHandlers();
 
 const logger = createLogger("queue-worker");
+const healthRedis = createRedisConnection();
 const processor = new TaskProcessor();
 
 // Register scheduled/repeatable jobs
@@ -317,9 +323,7 @@ const healthServer = createServer((req, res) => {
     (async () => {
       const dependencies: Record<string, string> = {};
       try {
-        const redis = createRedisConnection();
-        await redis.ping();
-        await redis.quit();
+        await healthRedis.ping();
         dependencies.redis = "ok";
       } catch {
         dependencies.redis = "unavailable";
@@ -350,6 +354,19 @@ const healthServer = createServer((req, res) => {
     res.end(JSON.stringify({ status: "ready" }));
     return;
   }
+  if (req.url === "/metrics") {
+    metricsRegistry
+      .render()
+      .then((body) => {
+        res.writeHead(200, { "Content-Type": "text/plain; charset=utf-8" });
+        res.end(body);
+      })
+      .catch(() => {
+        res.writeHead(500);
+        res.end("Failed to render metrics");
+      });
+    return;
+  }
   res.writeHead(404);
   res.end();
 });
@@ -358,15 +375,11 @@ healthServer.listen(healthPort, () => {
 });
 
 // ========== Graceful Shutdown ==========
-const shutdown = async () => {
+registerShutdownHandler("queue-worker", async () => {
   logger.info("Shutting down workers...");
   healthServer.close();
   await Promise.allSettled(
     Object.values(workers).map(({ worker }) => worker.close())
   );
   logger.info("All workers closed");
-  process.exit(0);
-};
-
-process.on("SIGTERM", shutdown);
-process.on("SIGINT", shutdown);
+});

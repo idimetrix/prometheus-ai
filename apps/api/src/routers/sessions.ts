@@ -1,5 +1,6 @@
 import type { Database } from "@prometheus/db";
 import {
+  organizations,
   projects,
   sessionEvents,
   sessionMessages,
@@ -27,6 +28,17 @@ const logger = createLogger("sessions-router");
 
 const ORCHESTRATOR_URL =
   process.env.ORCHESTRATOR_URL ?? "http://localhost:4002";
+
+type PlanTier = "hobby" | "starter" | "pro" | "team" | "studio" | "enterprise";
+
+/** Look up the org's actual plan tier, falling back to "hobby". */
+async function getOrgPlanTier(db: Database, orgId: string): Promise<PlanTier> {
+  const org = await db.query.organizations.findFirst({
+    where: eq(organizations.id, orgId),
+    columns: { planTier: true },
+  });
+  return (org?.planTier ?? "hobby") as PlanTier;
+}
 
 /**
  * Verify that a session belongs to the caller's org.
@@ -88,6 +100,7 @@ export const sessionsRouter = router({
       // If there's a prompt, create a task record and queue it
       if (input.prompt) {
         const taskId = generateId("task");
+        const planTier = await getOrgPlanTier(ctx.db, ctx.orgId);
 
         // Insert task record so queue-worker can update its status
         await ctx.db.insert(tasks).values({
@@ -116,7 +129,7 @@ export const sessionsRouter = router({
             description: input.prompt,
             mode: input.mode,
             agentRole: null,
-            planTier: "hobby",
+            planTier,
             creditsReserved: 0,
           },
           {
@@ -235,7 +248,10 @@ export const sessionsRouter = router({
       }
       if (input.cursor) {
         const cursorSession = await ctx.db.query.sessions.findFirst({
-          where: eq(sessions.id, input.cursor),
+          where: and(
+            eq(sessions.id, input.cursor),
+            inArray(sessions.projectId, projectIds)
+          ),
           columns: { startedAt: true },
         });
         if (cursorSession) {
@@ -350,6 +366,7 @@ export const sessionsRouter = router({
       // If a prompt is provided on resume, queue a new task
       if (input.prompt) {
         const taskId = generateId("task");
+        const planTier = await getOrgPlanTier(ctx.db, ctx.orgId);
         await agentTaskQueue.add(
           "agent-task",
           {
@@ -362,7 +379,7 @@ export const sessionsRouter = router({
             description: input.prompt,
             mode: updated.mode,
             agentRole: null,
-            planTier: "hobby",
+            planTier,
             creditsReserved: 0,
           },
           { priority: 50 }
@@ -452,6 +469,7 @@ export const sessionsRouter = router({
 
       // Queue the message as a task for the agent to process
       const taskId = generateId("task");
+      const planTier = await getOrgPlanTier(ctx.db, ctx.orgId);
       await agentTaskQueue.add(
         "agent-task",
         {
@@ -464,7 +482,7 @@ export const sessionsRouter = router({
           description: input.content,
           mode: session.mode,
           agentRole: null,
-          planTier: "hobby",
+          planTier,
           creditsReserved: 0,
         },
         { priority: 50 }

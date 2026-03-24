@@ -3,8 +3,14 @@ import { createLogger } from "@prometheus/logger";
 
 const logger = createLogger("model-router:byo-store");
 
-const ENCRYPTION_KEY =
-  process.env.MODEL_KEY_ENCRYPTION_KEY ?? "prometheus-dev-key-32-chars-long!";
+const ENCRYPTION_KEY = process.env.MODEL_KEY_ENCRYPTION_KEY;
+if (!ENCRYPTION_KEY && process.env.NODE_ENV === "production") {
+  throw new Error(
+    "MODEL_KEY_ENCRYPTION_KEY must be set in production to encrypt user API keys"
+  );
+}
+const EFFECTIVE_ENCRYPTION_KEY =
+  ENCRYPTION_KEY ?? "prometheus-dev-key-32-chars-long!";
 const ALGORITHM = "aes-256-gcm";
 
 interface StoredModelKey {
@@ -140,7 +146,11 @@ export class BYOModelStore {
     iv: string;
     authTag: string;
   } {
-    const key = crypto.scryptSync(ENCRYPTION_KEY, "prometheus-salt", 32);
+    const key = crypto.scryptSync(
+      EFFECTIVE_ENCRYPTION_KEY,
+      "prometheus-salt",
+      32
+    );
     const iv = crypto.randomBytes(16);
     const cipher = crypto.createCipheriv(ALGORITHM, key, iv);
 
@@ -156,7 +166,11 @@ export class BYOModelStore {
     ivHex: string,
     authTagHex: string
   ): string {
-    const key = crypto.scryptSync(ENCRYPTION_KEY, "prometheus-salt", 32);
+    const key = crypto.scryptSync(
+      EFFECTIVE_ENCRYPTION_KEY,
+      "prometheus-salt",
+      32
+    );
     const iv = Buffer.from(ivHex, "hex");
     const authTag = Buffer.from(authTagHex, "hex");
     const decipher = crypto.createDecipheriv(ALGORITHM, key, iv);

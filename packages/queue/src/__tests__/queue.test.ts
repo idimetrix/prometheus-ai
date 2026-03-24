@@ -276,32 +276,32 @@ describe("TIER_CONCURRENCY", () => {
 describe("routeTaskToQueue", () => {
   it("routes enterprise to priority queue", () => {
     const result = routeTaskToQueue("enterprise");
-    expect(result.queueName).toBe("tasks:priority");
+    expect(result.queueName).toBe("tasks-priority");
     expect(result.priority).toBe(1);
     expect(result.concurrency).toBe(50);
   });
 
   it("routes studio to priority queue", () => {
     const result = routeTaskToQueue("studio");
-    expect(result.queueName).toBe("tasks:priority");
+    expect(result.queueName).toBe("tasks-priority");
     expect(result.priority).toBe(5);
   });
 
   it("routes pro to standard queue", () => {
     const result = routeTaskToQueue("pro");
-    expect(result.queueName).toBe("tasks:standard");
+    expect(result.queueName).toBe("tasks-standard");
     expect(result.priority).toBe(20);
   });
 
   it("routes hobby to default queue", () => {
     const result = routeTaskToQueue("hobby");
-    expect(result.queueName).toBe("tasks:default");
+    expect(result.queueName).toBe("tasks-default");
     expect(result.priority).toBe(100);
   });
 
   it("routes unknown tiers to default queue", () => {
     const result = routeTaskToQueue("unknown");
-    expect(result.queueName).toBe("tasks:default");
+    expect(result.queueName).toBe("tasks-default");
   });
 });
 

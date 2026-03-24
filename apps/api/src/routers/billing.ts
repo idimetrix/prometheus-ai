@@ -15,7 +15,7 @@ import {
 } from "@prometheus/db";
 import { createLogger } from "@prometheus/logger";
 import { TRPCError } from "@trpc/server";
-import { and, desc, eq, gte, lt, type SQL, sql } from "drizzle-orm";
+import { and, desc, eq, gte, lt, lte, type SQL, sql } from "drizzle-orm";
 import { z } from "zod";
 import { protectedProcedure, router } from "../trpc";
 
@@ -444,7 +444,7 @@ export const billingRouter = router({
       const start = input.periodStart
         ? new Date(input.periodStart)
         : new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
-      const _end = input.periodEnd ? new Date(input.periodEnd) : new Date();
+      const end = input.periodEnd ? new Date(input.periodEnd) : new Date();
 
       const usage = await ctx.db
         .select({
@@ -455,7 +455,11 @@ export const billingRouter = router({
         })
         .from(modelUsage)
         .where(
-          and(eq(modelUsage.orgId, ctx.orgId), gte(modelUsage.createdAt, start))
+          and(
+            eq(modelUsage.orgId, ctx.orgId),
+            gte(modelUsage.createdAt, start),
+            lte(modelUsage.createdAt, end)
+          )
         );
 
       const byModel = await ctx.db
@@ -468,7 +472,11 @@ export const billingRouter = router({
         })
         .from(modelUsage)
         .where(
-          and(eq(modelUsage.orgId, ctx.orgId), gte(modelUsage.createdAt, start))
+          and(
+            eq(modelUsage.orgId, ctx.orgId),
+            gte(modelUsage.createdAt, start),
+            lte(modelUsage.createdAt, end)
+          )
         )
         .groupBy(modelUsage.model, modelUsage.provider);
 
@@ -523,6 +531,20 @@ export const billingRouter = router({
       })
     )
     .mutation(async ({ input, ctx }) => {
+      const appUrl =
+        process.env.APP_URL ??
+        process.env.NEXT_PUBLIC_APP_URL ??
+        "http://localhost:3000";
+
+      for (const urlField of [input.successUrl, input.cancelUrl] as const) {
+        if (!urlField.startsWith(appUrl)) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: `URL must start with ${appUrl}`,
+          });
+        }
+      }
+
       const plan = PRICING_TIERS[input.planTier];
       if (!plan?.stripePriceId) {
         throw new TRPCError({

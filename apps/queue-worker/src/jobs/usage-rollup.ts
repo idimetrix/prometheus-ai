@@ -16,7 +16,28 @@ export async function processUsageRollup(
 ): Promise<{ rollupId: string; metrics: UsageRollupData["metrics"] }> {
   const { orgId, periodStart, periodEnd, metrics: providedMetrics } = data;
 
-  logger.info({ orgId, periodStart, periodEnd }, "Processing usage rollup");
+  // Calculate period bounds if not provided (scheduled jobs pass empty strings)
+  let effectiveStart: Date;
+  let effectiveEnd: Date;
+  if (periodStart && periodEnd) {
+    effectiveStart = new Date(periodStart);
+    effectiveEnd = new Date(periodEnd);
+  } else {
+    // Default to the previous hour
+    effectiveEnd = new Date();
+    effectiveEnd.setMinutes(0, 0, 0);
+    effectiveStart = new Date(effectiveEnd);
+    effectiveStart.setHours(effectiveStart.getHours() - 1);
+  }
+
+  logger.info(
+    {
+      orgId,
+      periodStart: effectiveStart.toISOString(),
+      periodEnd: effectiveEnd.toISOString(),
+    },
+    "Processing usage rollup"
+  );
 
   // If metrics are pre-computed (from a scheduler), use them directly
   // Otherwise, aggregate from the database
@@ -29,8 +50,8 @@ export async function processUsageRollup(
       finalMetrics.tokensIn === 0)
   ) {
     // Aggregate from model_usage and credit_transactions tables
-    const start = new Date(periodStart);
-    const end = new Date(periodEnd);
+    const start = effectiveStart;
+    const end = effectiveEnd;
 
     const [usageAgg, creditAgg] = await Promise.all([
       db
@@ -82,7 +103,7 @@ export async function processUsageRollup(
     .where(
       and(
         eq(usageRollups.orgId, orgId),
-        eq(usageRollups.periodStart, new Date(periodStart))
+        eq(usageRollups.periodStart, effectiveStart)
       )
     )
     .limit(1);
@@ -105,8 +126,8 @@ export async function processUsageRollup(
   await db.insert(usageRollups).values({
     id: rollupId,
     orgId,
-    periodStart: new Date(periodStart),
-    periodEnd: new Date(periodEnd),
+    periodStart: effectiveStart,
+    periodEnd: effectiveEnd,
     tasksCompleted: finalMetrics.tasksCompleted,
     creditsUsed: finalMetrics.creditsUsed,
     costUsd: finalMetrics.costUsd,

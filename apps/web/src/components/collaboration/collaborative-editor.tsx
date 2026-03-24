@@ -1,5 +1,7 @@
 "use client";
 
+const _HTTP_TO_WS_RE = /^http/;
+
 /**
  * Real-time collaborative code editor with human + AI cursor presence.
  *
@@ -19,6 +21,8 @@
  */
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+
+const HTTP_TO_WS_RE = /^http/;
 
 // ─── Types ─────────────────────────────────────────────────────────────────
 
@@ -324,7 +328,8 @@ export function CollaborativeEditor({
   initialContent = "",
   readOnly = false,
   onChange,
-  wsUrl: _wsUrl = "ws://localhost:4001/yjs",
+  wsUrl:
+    _wsUrl = `${(process.env.NEXT_PUBLIC_SOCKET_URL ?? "ws://localhost:4001").replace(HTTP_TO_WS_RE, "ws")}/yjs`,
 }: CollaborativeEditorProps) {
   const [content, setContent] = useState(initialContent);
   const [collaborators, setCollaborators] = useState<CollaboratorPresence[]>(
@@ -337,7 +342,9 @@ export function CollaborativeEditor({
 
   // Initialize Yjs document and WebSocket provider for real-time collaboration
   useEffect(() => {
-    const wsUrl = process.env.NEXT_PUBLIC_SOCKET_URL ?? "ws://localhost:4001";
+    const wsUrl = (
+      process.env.NEXT_PUBLIC_SOCKET_URL ?? "ws://localhost:4001"
+    ).replace(HTTP_TO_WS_RE, "ws");
 
     let provider: { destroy: () => void; awareness: unknown } | null = null;
 

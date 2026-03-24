@@ -156,12 +156,12 @@ export default function FleetPage() {
 
   const sessionsQuery = trpc.sessions.list.useQuery(
     { status: "active", limit: 20 },
-    { retry: false }
+    { retry: 2 }
   );
 
   const fleetQuery = trpc.fleet.status.useQuery(
     { sessionId: selectedSessionId },
-    { enabled: !!selectedSessionId, refetchInterval: 5000, retry: false }
+    { enabled: !!selectedSessionId, refetchInterval: 5000, retry: 2 }
   );
 
   const stopMutation = trpc.fleet.stop.useMutation();
@@ -220,34 +220,56 @@ export default function FleetPage() {
     if (!selectedSessionId) {
       return;
     }
-    await stopMutation.mutateAsync({ sessionId: selectedSessionId, agentId });
-    fleetQuery.refetch();
-    toast.info("Agent stopped");
+    try {
+      await stopMutation.mutateAsync({ sessionId: selectedSessionId, agentId });
+      fleetQuery.refetch();
+      toast.info("Agent stopped");
+    } catch {
+      toast.error("Failed to stop agent");
+    }
   }
 
   async function handlePauseAgent(agentId: string) {
     if (!selectedSessionId) {
       return;
     }
-    await pauseMutation.mutateAsync({ sessionId: selectedSessionId, agentId });
-    fleetQuery.refetch();
+    try {
+      await pauseMutation.mutateAsync({
+        sessionId: selectedSessionId,
+        agentId,
+      });
+      fleetQuery.refetch();
+    } catch {
+      toast.error("Failed to pause agent");
+    }
   }
 
   async function handleResumeAgent(agentId: string) {
     if (!selectedSessionId) {
       return;
     }
-    await resumeMutation.mutateAsync({ sessionId: selectedSessionId, agentId });
-    fleetQuery.refetch();
+    try {
+      await resumeMutation.mutateAsync({
+        sessionId: selectedSessionId,
+        agentId,
+      });
+      fleetQuery.refetch();
+    } catch {
+      toast.error("Failed to resume agent");
+    }
   }
 
   async function handleStopAll() {
     if (!selectedSessionId) {
       return;
     }
-    await stopMutation.mutateAsync({ sessionId: selectedSessionId });
-    fleetQuery.refetch();
-    toast.info("All agents stopped");
+    try {
+      await stopMutation.mutateAsync({ sessionId: selectedSessionId });
+      fleetQuery.refetch();
+      toast.info("All agents stopped");
+    } catch {
+      toast.error("Failed to stop all agents");
+    }
   }
 
   return (

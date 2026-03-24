@@ -28,7 +28,7 @@ let _embeddingServiceVerified = false;
  */
 export async function verifyEmbeddingService(): Promise<boolean> {
   try {
-    const response = await fetch(`${MODEL_ROUTER_URL}/embeddings`, {
+    const response = await fetch(`${MODEL_ROUTER_URL}/v1/embeddings`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ input: "health check" }),
@@ -36,15 +36,15 @@ export async function verifyEmbeddingService(): Promise<boolean> {
     });
 
     if (response.ok) {
-      const data = (await response.json()) as {
-        embedding: number[];
-        dimensions: number;
-        model: string;
+      const body = (await response.json()) as {
+        data?: Array<{ embedding: number[] }>;
+        model?: string;
       };
-      if (data.embedding?.length > 0) {
+      const embedding = body.data?.[0]?.embedding;
+      if (embedding && embedding.length > 0) {
         _embeddingServiceVerified = true;
         logger.info(
-          { model: data.model, dimensions: data.dimensions },
+          { model: body.model, dimensions: embedding.length },
           "Embedding service verified via model-router"
         );
         return true;
@@ -80,7 +80,7 @@ async function generateEmbedding(text: string): Promise<number[]> {
 
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
     try {
-      const response = await fetch(`${MODEL_ROUTER_URL}/embeddings`, {
+      const response = await fetch(`${MODEL_ROUTER_URL}/v1/embeddings`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ input: text }),
@@ -88,14 +88,14 @@ async function generateEmbedding(text: string): Promise<number[]> {
       });
 
       if (response.ok) {
-        const data = (await response.json()) as {
-          embedding: number[];
-          model: string;
-          dimensions: number;
+        const body = (await response.json()) as {
+          data?: Array<{ embedding: number[] }>;
+          model?: string;
         };
-        if (data.embedding?.length > 0) {
+        const embedding = body.data?.[0]?.embedding;
+        if (embedding && embedding.length > 0) {
           _embeddingServiceVerified = true;
-          return data.embedding;
+          return embedding;
         }
         lastError = "Model-router returned empty embedding vector";
       } else {

@@ -174,6 +174,9 @@ export function getNamespaceSocket(
     transports: ["websocket", "polling"],
     // Share the transport by using the same multiplex flag
     multiplex: true,
+    reconnection: true,
+    reconnectionAttempts: 5,
+    reconnectionDelay: 2000,
     auth: async (cb) => {
       const token = await getClerkToken();
       cb({ token });

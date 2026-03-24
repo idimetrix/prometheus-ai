@@ -7,6 +7,8 @@
  * - Autonomous (>0.85): No human oversight needed
  * - Supervised (0.6-0.85): Human review on significant changes
  * - Restricted (<0.6): Human approval for all file writes
+ *
+ * Supports optional Redis persistence to survive restarts.
  */
 
 import { createLogger } from "@prometheus/logger";
@@ -35,8 +37,74 @@ interface AgentHistory {
   violations: number;
 }
 
+interface TrustPersistence {
+  get(key: string): Promise<string | null>;
+  set(key: string, value: string): Promise<void>;
+}
+
+const REDIS_KEY_PREFIX = "trust:history:";
+
 export class TrustScorer {
   private readonly history = new Map<string, AgentHistory>();
+  private persistence: TrustPersistence | null = null;
+  private loaded = false;
+
+  /**
+   * Optionally attach a Redis-compatible persistence layer.
+   * If not set, scores are in-memory only.
+   */
+  setPersistence(persistence: TrustPersistence): void {
+    this.persistence = persistence;
+  }
+
+  /**
+   * Load persisted history from Redis on startup.
+   */
+  async loadFromPersistence(): Promise<void> {
+    if (!this.persistence || this.loaded) {
+      return;
+    }
+    try {
+      const raw = await this.persistence.get(`${REDIS_KEY_PREFIX}all`);
+      if (raw) {
+        const data = JSON.parse(raw) as Record<string, AgentHistory>;
+        for (const [role, history] of Object.entries(data)) {
+          this.history.set(role, history);
+        }
+        logger.info(
+          { roles: Object.keys(data).length },
+          "Trust scores loaded from persistence"
+        );
+      }
+      this.loaded = true;
+    } catch (error) {
+      logger.warn(
+        { error: error instanceof Error ? error.message : String(error) },
+        "Failed to load trust scores from persistence"
+      );
+    }
+  }
+
+  private async saveToPersistence(): Promise<void> {
+    if (!this.persistence) {
+      return;
+    }
+    try {
+      const data: Record<string, AgentHistory> = {};
+      for (const [role, history] of this.history.entries()) {
+        data[role] = history;
+      }
+      await this.persistence.set(
+        `${REDIS_KEY_PREFIX}all`,
+        JSON.stringify(data)
+      );
+    } catch (error) {
+      logger.warn(
+        { error: error instanceof Error ? error.message : String(error) },
+        "Failed to persist trust scores"
+      );
+    }
+  }
 
   recordOutcome(
     agentRole: string,
@@ -76,6 +144,9 @@ export class TrustScorer {
     if (violation) {
       h.violations++;
     }
+
+    // Fire-and-forget persistence
+    this.saveToPersistence();
   }
 
   getTrustLevel(agentRole: string): TrustScore {

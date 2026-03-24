@@ -332,7 +332,12 @@ export const settingsRouter = router({
 
       await ctx.db
         .delete(modelConfigs)
-        .where(eq(modelConfigs.id, input.configId));
+        .where(
+          and(
+            eq(modelConfigs.id, input.configId),
+            eq(modelConfigs.orgId, ctx.orgId)
+          )
+        );
 
       logger.info(
         { orgId: ctx.orgId, configId: input.configId },
@@ -412,7 +417,7 @@ export const settingsRouter = router({
         await ctx.db
           .update(modelConfigs)
           .set({
-            modelId: input.modelId ?? "",
+            ...(input.modelId === undefined ? {} : { modelId: input.modelId }),
             isDefault: input.isDefault ?? false,
             ...(apiKeyEncrypted ? { apiKeyEncrypted } : {}),
           })

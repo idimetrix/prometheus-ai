@@ -145,9 +145,12 @@ export class Greeter {
       ok: true,
       json: () =>
         Promise.resolve({
-          embedding: Array.from({ length: 768 }, () => Math.random()),
+          data: [
+            {
+              embedding: Array.from({ length: 768 }, () => Math.random()),
+            },
+          ],
           model: "test-model",
-          dimensions: 768,
         }),
     }) as unknown as typeof fetch;
 

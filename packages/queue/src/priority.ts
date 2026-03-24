@@ -90,11 +90,11 @@ export function routeTaskToQueue(
   // High-priority tiers get their own queue for isolation
   let queueName: string;
   if (priority <= 5) {
-    queueName = "tasks:priority";
+    queueName = "tasks-priority";
   } else if (priority <= 20) {
-    queueName = "tasks:standard";
+    queueName = "tasks-standard";
   } else {
-    queueName = "tasks:default";
+    queueName = "tasks-default";
   }
 
   logger.debug(

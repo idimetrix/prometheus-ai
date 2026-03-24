@@ -15,6 +15,7 @@ import {
   Cpu,
   FolderOpen,
   LayoutDashboard,
+  MessageSquare,
   Plus,
   Search,
   Settings,
@@ -25,6 +26,7 @@ import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 import { CommandPalette } from "@/components/command-palette";
 import { MobileLayout } from "@/components/layout/mobile-layout";
+import { NotificationBell } from "@/components/notifications/notification-bell";
 import { useIsMobile } from "@/hooks/use-breakpoint";
 import { useDashboardStore } from "@/stores/dashboard.store";
 
@@ -47,6 +49,11 @@ const NAV_ITEMS: Array<{
     href: "/dashboard/projects",
     label: "Projects",
     icon: <FolderOpen className="h-4 w-4" />,
+  },
+  {
+    href: "/dashboard/sessions" as Route,
+    label: "Sessions",
+    icon: <MessageSquare className="h-4 w-4" />,
   },
   {
     href: "/dashboard/fleet",
@@ -188,6 +195,7 @@ export default function DashboardLayout({
               </h1>
             </div>
             <div className="flex items-center gap-2 md:gap-3">
+              <NotificationBell />
               {/* Active agents badge */}
               <Badge variant={activeAgents > 0 ? "success" : "outline"}>
                 <span

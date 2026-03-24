@@ -227,8 +227,12 @@ export default function OnboardingPage() {
             <h2 className="mb-4 font-semibold text-white text-xl">
               Create Your Organization
             </h2>
+            <label className="sr-only" htmlFor="org-name">
+              Organization name
+            </label>
             <input
               className="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-4 py-3 text-white placeholder-zinc-500 focus:border-indigo-500 focus:outline-none"
+              id="org-name"
               onChange={(e) => setOrgName(e.target.value)}
               placeholder="Organization name"
               value={orgName}
@@ -317,8 +321,13 @@ export default function OnboardingPage() {
             <h2 className="mb-4 font-semibold text-white text-xl">
               Run Your First Task
             </h2>
+            <label className="sr-only" htmlFor="first-task-input">
+              Task description
+            </label>
             <textarea
+              aria-label="Task description"
               className="mb-4 w-full rounded-lg border border-zinc-700 bg-zinc-950 px-4 py-3 text-white placeholder-zinc-500 focus:border-indigo-500 focus:outline-none"
+              id="first-task-input"
               onChange={(e) => setTaskInput(e.target.value)}
               placeholder="Describe what you want to build..."
               rows={3}

@@ -152,5 +152,22 @@ export function installShutdownHandlers(): void {
   process.on("SIGTERM", () => handler("SIGTERM"));
   process.on("SIGINT", () => handler("SIGINT"));
 
+  // Catch unhandled promise rejections to prevent silent crashes
+  process.on("unhandledRejection", (reason) => {
+    logger.error(
+      { error: reason instanceof Error ? reason.message : String(reason) },
+      "Unhandled promise rejection"
+    );
+  });
+
+  // Catch uncaught exceptions - log and exit gracefully
+  process.on("uncaughtException", (error) => {
+    logger.error(
+      { error: error.message, stack: error.stack },
+      "Uncaught exception - initiating shutdown"
+    );
+    handler("uncaughtException");
+  });
+
   logger.info("Graceful shutdown signal handlers installed");
 }

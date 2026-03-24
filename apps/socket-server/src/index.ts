@@ -1,10 +1,15 @@
 import { createServer } from "node:http";
 import { createLogger } from "@prometheus/logger";
 import { createRedisConnection } from "@prometheus/queue";
-import { initSentry } from "@prometheus/telemetry";
+import {
+  initSentry,
+  initTelemetry,
+  metricsRegistry,
+} from "@prometheus/telemetry";
 import {
   installShutdownHandlers,
   isProcessShuttingDown,
+  registerShutdownHandler,
 } from "@prometheus/utils";
 import { createAdapter } from "@socket.io/redis-adapter";
 // MessagePack binary protocol for improved WebSocket performance (Phase 5.3)
@@ -18,10 +23,12 @@ import { setupNotificationNamespace } from "./namespaces/notifications";
 import { setupSessionNamespace } from "./namespaces/sessions";
 import { mountYjsServer } from "./yjs-server";
 
+await initTelemetry({ serviceName: "socket-server" });
 initSentry({ serviceName: "socket-server" });
 installShutdownHandlers();
 
 const logger = createLogger("socket-server");
+const healthRedis = createRedisConnection();
 const httpServer = createServer((req, res) => {
   if (req.url === "/health") {
     if (isProcessShuttingDown()) {
@@ -33,9 +40,7 @@ const httpServer = createServer((req, res) => {
     (async () => {
       const dependencies: Record<string, string> = {};
       try {
-        const redis = createRedisConnection();
-        await redis.ping();
-        await redis.quit();
+        await healthRedis.ping();
         dependencies.redis = "ok";
       } catch {
         dependencies.redis = "unavailable";
@@ -63,6 +68,19 @@ const httpServer = createServer((req, res) => {
   if (req.url === "/ready") {
     res.writeHead(200, { "Content-Type": "application/json" });
     res.end(JSON.stringify({ status: "ready" }));
+    return;
+  }
+  if (req.url === "/metrics") {
+    metricsRegistry
+      .render()
+      .then((body) => {
+        res.writeHead(200, { "Content-Type": "text/plain; charset=utf-8" });
+        res.end(body);
+      })
+      .catch(() => {
+        res.writeHead(500);
+        res.end("Failed to render metrics");
+      });
     return;
   }
 });
@@ -219,13 +237,10 @@ Promise.all([setupRedisAdapter(), setupGlobalSubscriber()]).then(() => {
   });
 });
 
-// Graceful shutdown
-const shutdown = () => {
+// Register custom cleanup with the centralized shutdown handler
+registerShutdownHandler("socket-server", () => {
   logger.info("Shutting down socket server...");
   io.close();
   httpServer.close();
-  process.exit(0);
-};
-
-process.on("SIGTERM", shutdown);
-process.on("SIGINT", shutdown);
+  return Promise.resolve();
+});

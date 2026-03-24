@@ -84,6 +84,16 @@ export async function initTelemetry(config: TelemetryConfig): Promise<void> {
 
   initialized = true;
 
+  try {
+    await _initTelemetryInternal(config);
+  } catch (error) {
+    // Telemetry failure should never crash the service
+    const msg = error instanceof Error ? error.message : String(error);
+    console.error(`[telemetry] Failed to initialize: ${msg}`);
+  }
+}
+
+async function _initTelemetryInternal(config: TelemetryConfig): Promise<void> {
   const isDev = process.env.NODE_ENV === "development";
   const endpoint =
     config.endpoint ??

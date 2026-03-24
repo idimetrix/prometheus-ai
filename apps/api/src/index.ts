@@ -8,6 +8,7 @@ import {
   DEFAULT_SLOS,
   initSentry,
   initTelemetry,
+  metricsMiddleware,
   SLOMonitor,
 } from "@prometheus/telemetry";
 import {
@@ -30,6 +31,7 @@ import { cors } from "hono/cors";
 import {
   apiKeyAuthMiddleware,
   orgContextMiddleware,
+  perUserRateLimitMiddleware,
   rateLimitMiddleware,
   requestIdMiddleware,
   requestLoggingMiddleware,
@@ -53,6 +55,7 @@ const app = new Hono();
 // 0. Distributed tracing — extract W3C TraceContext from incoming requests
 // ---------------------------------------------------------------------------
 app.use("/*", traceMiddleware("api"));
+app.use("/*", metricsMiddleware());
 
 // ---------------------------------------------------------------------------
 // 0b. Body size limit — reject payloads larger than 1MB
@@ -96,12 +99,7 @@ app.use("/*", async (c, next) => {
 });
 
 // ---------------------------------------------------------------------------
-// 3. Security headers — CSP, HSTS, X-Frame-Options, etc.
-// ---------------------------------------------------------------------------
-app.use("/*", securityHeaders());
-
-// ---------------------------------------------------------------------------
-// 4. CORS — whitelist frontend origin, allow credentials
+// 3. CORS — whitelist frontend origin, allow credentials (MUST be before security headers)
 // ---------------------------------------------------------------------------
 const corsOrigin = process.env.CORS_ORIGIN ?? "http://localhost:3000";
 app.use(
@@ -127,6 +125,11 @@ app.use(
 );
 
 // ---------------------------------------------------------------------------
+// 4. Security headers — CSP, HSTS, X-Frame-Options, etc.
+// ---------------------------------------------------------------------------
+app.use("/*", securityHeaders());
+
+// ---------------------------------------------------------------------------
 // 5. API key auth — alternative to Clerk JWT for programmatic access
 // ---------------------------------------------------------------------------
 app.use("/*", apiKeyAuthMiddleware());
@@ -142,6 +145,19 @@ app.use("/*", orgContextMiddleware());
 // 7. Rate limiting — applied globally. Skips requests without orgId.
 // ---------------------------------------------------------------------------
 app.use("/*", rateLimitMiddleware());
+
+// ---------------------------------------------------------------------------
+// 7b. Per-user rate limiting — DDoS burst detection and per-user quotas.
+// ---------------------------------------------------------------------------
+app.use("/*", perUserRateLimitMiddleware());
+
+// ---------------------------------------------------------------------------
+// Global error handler — catch unhandled errors and return safe responses
+// ---------------------------------------------------------------------------
+app.onError((err, c) => {
+  logger.error({ error: err.message, stack: err.stack }, "Unhandled error");
+  return c.json({ error: "Internal server error" }, 500);
+});
 
 // ---------------------------------------------------------------------------
 // Health check
@@ -248,6 +264,9 @@ app.post("/internal/model-usage", async (c) => {
     if (provided !== internalSecret) {
       return c.json({ error: "Unauthorized" }, 401);
     }
+  } else if (process.env.NODE_ENV === "production") {
+    // In production, reject all requests if secret is not configured
+    return c.json({ error: "Unauthorized" }, 401);
   }
 
   try {

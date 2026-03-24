@@ -3,6 +3,7 @@ import { createLogger } from "@prometheus/logger";
 import {
   initSentry,
   initTelemetry,
+  metricsMiddleware,
   traceMiddleware,
 } from "@prometheus/telemetry";
 import {
@@ -15,6 +16,7 @@ import { streamSSE } from "hono/streaming";
 import { BYOModelManager } from "./byo-model";
 import { CascadeRouter } from "./cascade";
 import { CostOptimizer } from "./cost-optimizer";
+import { initLangfuse } from "./langfuse";
 import { isMockLLMEnabled, mockRoute, mockRouteStream } from "./mock-provider";
 import { PromptCacheManager } from "./prompt-cache";
 import { RateLimitManager } from "./rate-limiter";
@@ -23,6 +25,7 @@ import { ModelRouterService, routeEmbedding } from "./router";
 
 await initTelemetry({ serviceName: "model-router" });
 initSentry({ serviceName: "model-router" });
+initLangfuse();
 installShutdownHandlers();
 
 const logger = createLogger("model-router");
@@ -30,6 +33,30 @@ const app = new Hono();
 
 app.use("/*", cors());
 app.use("/*", traceMiddleware("model-router"));
+app.use("/*", metricsMiddleware());
+
+// Shared-secret auth middleware for internal service-to-service calls
+app.use("/*", async (c, next) => {
+  if (
+    c.req.path === "/health" ||
+    c.req.path === "/live" ||
+    c.req.path === "/ready" ||
+    c.req.path === "/metrics"
+  ) {
+    return next();
+  }
+  const secret = process.env.INTERNAL_SERVICE_SECRET;
+  if (secret) {
+    const provided = c.req.header("x-internal-secret");
+    if (provided !== secret) {
+      return c.json({ error: "Unauthorized" }, 401);
+    }
+  } else if (process.env.NODE_ENV === "production") {
+    return c.json({ error: "Unauthorized" }, 401);
+  }
+  await next();
+  return;
+});
 
 const rateLimiter = new RateLimitManager();
 const routerService = new ModelRouterService(rateLimiter);
@@ -99,7 +126,7 @@ app.get("/health", async (c) => {
       },
       statusCode
     );
-  } catch (error) {
+  } catch (_error) {
     return c.json(
       {
         status: "unhealthy",
@@ -107,7 +134,7 @@ app.get("/health", async (c) => {
         uptime: Math.floor(process.uptime()),
         version: "0.1.0",
         service: "model-router",
-        error: error instanceof Error ? error.message : String(error),
+        error: "Health check failed",
         timestamp: new Date().toISOString(),
       },
       503
@@ -286,7 +313,7 @@ app.post("/route", async (c) => {
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);
     logger.error({ error: msg }, "Route request failed");
-    return c.json({ error: msg }, 500);
+    return c.json({ error: "Internal server error" }, 500);
   }
 });
 
@@ -328,7 +355,7 @@ app.post("/v1/embeddings", async (c) => {
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);
     logger.error({ error: msg }, "Embedding request failed");
-    return c.json({ error: msg }, 500);
+    return c.json({ error: "Internal server error" }, 500);
   }
 });
 
@@ -360,7 +387,7 @@ app.post("/v1/chat/completions", async (c) => {
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);
     logger.error({ error: msg }, "Completion request failed");
-    return c.json({ error: msg }, 500);
+    return c.json({ error: "Internal server error" }, 500);
   }
 });
 
@@ -400,7 +427,8 @@ app.post("/v1/estimate-tokens", async (c) => {
     });
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);
-    return c.json({ error: msg }, 400);
+    logger.error({ error: msg }, "Token estimation failed");
+    return c.json({ error: "Internal server error" }, 400);
   }
 });
 
@@ -436,7 +464,8 @@ app.post("/v1/byo/keys", async (c) => {
     });
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);
-    return c.json({ error: msg }, 500);
+    logger.error({ error: msg }, "Failed to register BYO key");
+    return c.json({ error: "Internal server error" }, 500);
   }
 });
 
@@ -492,7 +521,8 @@ app.post("/v1/byo/test", async (c) => {
     return c.json(result);
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);
-    return c.json({ error: msg }, 500);
+    logger.error({ error: msg }, "Failed to test BYO model");
+    return c.json({ error: "Internal server error" }, 500);
   }
 });
 
@@ -513,7 +543,8 @@ app.post("/v1/byo/verify/:provider", async (c) => {
     return c.json(result);
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);
-    return c.json({ error: msg }, 500);
+    logger.error({ error: msg }, "Failed to verify BYO key");
+    return c.json({ error: "Internal server error" }, 500);
   }
 });
 
@@ -589,7 +620,7 @@ app.post("/v1/cascade/route", async (c) => {
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);
     logger.error({ error: msg }, "Cascade route request failed");
-    return c.json({ error: msg }, 500);
+    return c.json({ error: "Internal server error" }, 500);
   }
 });
 

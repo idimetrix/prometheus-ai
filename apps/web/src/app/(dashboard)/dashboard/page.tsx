@@ -195,23 +195,18 @@ function StatsGrid({
 }
 
 export default function DashboardPage() {
-  const { creditBalance, activeAgents, setStats } = useDashboardStore();
+  const { creditBalance, activeAgents, recentActivity, setStats } =
+    useDashboardStore();
 
-  const projectsQuery = trpc.projects.list.useQuery(
-    { limit: 6 },
-    { retry: false }
-  );
+  const projectsQuery = trpc.projects.list.useQuery({ limit: 6 }, { retry: 2 });
   const sessionsQuery = trpc.sessions.list.useQuery(
     { limit: 10 },
-    { retry: false }
+    { retry: 2 }
   );
   const balanceQuery = trpc.billing.getBalance.useQuery(undefined, {
-    retry: false,
+    retry: 2,
   });
-  const overviewQuery = trpc.stats.overview.useQuery(
-    { days: 1 },
-    { retry: false }
-  );
+  const overviewQuery = trpc.stats.overview.useQuery({ days: 1 }, { retry: 2 });
 
   useEffect(() => {
     if (balanceQuery.data) {
@@ -231,10 +226,38 @@ export default function DashboardPage() {
     balanceQuery.isLoading ||
     overviewQuery.isLoading;
 
+  const hasError =
+    !isLoading &&
+    (projectsQuery.isError ||
+      sessionsQuery.isError ||
+      balanceQuery.isError ||
+      overviewQuery.isError);
+
+  const handleRetryAll = () => {
+    projectsQuery.refetch();
+    sessionsQuery.refetch();
+    balanceQuery.refetch();
+    overviewQuery.refetch();
+  };
+
   return (
     <div className="space-y-8">
       {/* Header */}
       <DashboardHeader />
+
+      {/* Error state */}
+      {hasError && (
+        <Card className="border-red-500/30 bg-red-500/5 p-6">
+          <CardContent className="flex items-center justify-between p-0">
+            <p className="text-red-400 text-sm">
+              Failed to load dashboard data. Please refresh the page.
+            </p>
+            <Button onClick={handleRetryAll} size="sm" variant="outline">
+              Retry
+            </Button>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Quick stats */}
       {isLoading ? (
@@ -290,7 +313,7 @@ export default function DashboardPage() {
                 Start a new task to see agent sessions here
               </p>
               <Button asChild className="mt-4">
-                <Link href="/dashboard/projects/new">New Task</Link>
+                <Link href="/new">New Task</Link>
               </Button>
             </CardContent>
           </Card>
@@ -300,7 +323,11 @@ export default function DashboardPage() {
             {sessions.slice(0, 6).map((session) => (
               <Link
                 className="group rounded-xl border border-zinc-800 bg-zinc-900/50 p-4 transition-colors hover:border-zinc-700 hover:bg-zinc-900"
-                href={`/dashboard/projects/${session.projectId}/sessions/${session.id}`}
+                href={
+                  session.projectId
+                    ? `/dashboard/projects/${session.projectId}/sessions/${session.id}`
+                    : `/dashboard/sessions/${session.id}`
+                }
                 key={session.id}
               >
                 <div className="flex items-center justify-between">
@@ -324,13 +351,14 @@ export default function DashboardPage() {
                   </span>
                 </div>
                 <div className="mt-2 font-medium text-sm text-zinc-200 group-hover:text-zinc-100">
-                  {(session as Record<string, unknown>).project
-                    ? (
-                        (session as Record<string, unknown>).project as {
-                          name: string;
-                        }
-                      ).name
-                    : "Untitled Session"}
+                  {("project" in session &&
+                  session.project &&
+                  typeof session.project === "object" &&
+                  "name" in session.project &&
+                  typeof (session.project as { name: unknown }).name ===
+                    "string"
+                    ? (session.project as { name: string }).name
+                    : null) || "Untitled Session"}
                 </div>
                 <div className="mt-1 text-xs text-zinc-500">
                   Mode: {session.mode ?? "task"}
@@ -433,29 +461,26 @@ export default function DashboardPage() {
         </h2>
         <Card className="border-zinc-800 bg-zinc-900/50">
           <CardContent className="p-0">
-            {useDashboardStore.getState().recentActivity.length === 0 ? (
+            {recentActivity.length === 0 ? (
               <div className="p-8 text-center text-sm text-zinc-500">
                 No recent activity. Start a task to see updates here.
               </div>
             ) : (
               <div className="divide-y divide-zinc-800">
-                {useDashboardStore
-                  .getState()
-                  .recentActivity.slice(0, 10)
-                  .map((activity) => (
-                    <div
-                      className="flex items-center gap-3 px-4 py-3"
-                      key={activity.id}
-                    >
-                      <div className="h-1.5 w-1.5 rounded-full bg-violet-500" />
-                      <span className="flex-1 text-sm text-zinc-300">
-                        {activity.message}
-                      </span>
-                      <span className="text-xs text-zinc-600">
-                        {new Date(activity.timestamp).toLocaleTimeString()}
-                      </span>
-                    </div>
-                  ))}
+                {recentActivity.slice(0, 10).map((activity) => (
+                  <div
+                    className="flex items-center gap-3 px-4 py-3"
+                    key={activity.id}
+                  >
+                    <div className="h-1.5 w-1.5 rounded-full bg-violet-500" />
+                    <span className="flex-1 text-sm text-zinc-300">
+                      {activity.message}
+                    </span>
+                    <span className="text-xs text-zinc-600">
+                      {new Date(activity.timestamp).toLocaleTimeString()}
+                    </span>
+                  </div>
+                ))}
               </div>
             )}
           </CardContent>

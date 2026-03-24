@@ -1,6 +1,12 @@
 import { serve } from "@hono/node-server";
 import { createLogger } from "@prometheus/logger";
-import { initSentry, traceMiddleware } from "@prometheus/telemetry";
+import {
+  initSentry,
+  initTelemetry,
+  metricsHandler,
+  metricsMiddleware,
+  traceMiddleware,
+} from "@prometheus/telemetry";
 import {
   installShutdownHandlers,
   isProcessShuttingDown,
@@ -21,6 +27,7 @@ import { registerVercelAdapter } from "./adapters/vercel";
 import { CredentialStore } from "./credential-store";
 import { ToolRegistry } from "./registry";
 
+await initTelemetry({ serviceName: "mcp-gateway" });
 initSentry({ serviceName: "mcp-gateway" });
 installShutdownHandlers();
 
@@ -36,6 +43,30 @@ credentialStore.loadAll().catch((err) => {
 
 app.use("/*", cors());
 app.use("/*", traceMiddleware("mcp-gateway"));
+app.use("/*", metricsMiddleware());
+
+// Shared-secret auth middleware for internal service-to-service calls
+app.use("/*", async (c, next) => {
+  if (
+    c.req.path === "/health" ||
+    c.req.path === "/live" ||
+    c.req.path === "/ready" ||
+    c.req.path === "/metrics"
+  ) {
+    return next();
+  }
+  const secret = process.env.INTERNAL_SERVICE_SECRET;
+  if (secret) {
+    const provided = c.req.header("x-internal-secret");
+    if (provided !== secret) {
+      return c.json({ error: "Unauthorized" }, 401);
+    }
+  } else if (process.env.NODE_ENV === "production") {
+    return c.json({ error: "Unauthorized" }, 401);
+  }
+  await next();
+  return;
+});
 
 // Register all adapters
 registerGitHubAdapter(registry);
@@ -128,6 +159,9 @@ app.get("/live", (c) => c.json({ status: "ok" }));
 
 // Readiness probe — can accept traffic
 app.get("/ready", (c) => c.json({ status: "ready" }));
+
+// Prometheus metrics
+app.get("/metrics", metricsHandler);
 
 // ---- Tool Discovery ----
 

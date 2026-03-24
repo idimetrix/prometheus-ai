@@ -29,25 +29,29 @@ const STATUS_VARIANTS: Record<string, "success" | "warning" | "outline"> = {
 };
 
 export default function ProjectsPage() {
-  const [statusFilter, setStatusFilter] = useState<string | undefined>(
-    undefined
-  );
+  const [statusFilter, setStatusFilter] = useState<
+    "active" | "archived" | "setup" | undefined
+  >(undefined);
 
   const projectsQuery = trpc.projects.list.useQuery(
     {
       limit: 50,
-      status: statusFilter as "active" | "archived" | "setup" | undefined,
+      status: statusFilter,
     },
-    { retry: false }
+    { retry: 2 }
   );
   const deleteMutation = trpc.projects.delete.useMutation();
 
   const projects = projectsQuery.data?.projects ?? [];
 
   async function handleArchive(projectId: string) {
-    await deleteMutation.mutateAsync({ projectId });
-    projectsQuery.refetch();
-    toast.success("Project archived");
+    try {
+      await deleteMutation.mutateAsync({ projectId });
+      projectsQuery.refetch();
+      toast.success("Project archived");
+    } catch {
+      toast.error("Failed to archive project");
+    }
   }
 
   return (
@@ -68,12 +72,14 @@ export default function ProjectsPage() {
       </div>
 
       <div className="flex gap-2">
-        {[
-          { value: undefined, label: "All" },
-          { value: "active", label: "Active" },
-          { value: "setup", label: "Setup" },
-          { value: "archived", label: "Archived" },
-        ].map((filter) => (
+        {(
+          [
+            { value: undefined, label: "All" },
+            { value: "active", label: "Active" },
+            { value: "setup", label: "Setup" },
+            { value: "archived", label: "Archived" },
+          ] as const
+        ).map((filter) => (
           <Button
             key={filter.label}
             onClick={() => setStatusFilter(filter.value)}
@@ -85,7 +91,21 @@ export default function ProjectsPage() {
         ))}
       </div>
 
-      {projects.length === 0 ? (
+      {projectsQuery.isLoading && (
+        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+          {Array.from({ length: 6 }).map((_, i) => (
+            <Card key={`skeleton-${i.toString()}`}>
+              <CardContent className="p-5">
+                <div className="h-4 w-16 animate-pulse rounded bg-muted" />
+                <div className="mt-3 h-5 w-40 animate-pulse rounded bg-muted" />
+                <div className="mt-2 h-3 w-full animate-pulse rounded bg-muted" />
+                <div className="mt-4 h-3 w-24 animate-pulse rounded bg-muted" />
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+      )}
+      {!projectsQuery.isLoading && projects.length === 0 && (
         <Card className="border-dashed">
           <CardContent className="p-12 text-center">
             <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-muted">
@@ -102,7 +122,8 @@ export default function ProjectsPage() {
             </Button>
           </CardContent>
         </Card>
-      ) : (
+      )}
+      {!projectsQuery.isLoading && projects.length > 0 && (
         <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
           {projects.map((project) => {
             const badgeVariant = STATUS_VARIANTS[project.status] ?? "outline";

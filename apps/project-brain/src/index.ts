@@ -3,6 +3,7 @@ import { createLogger } from "@prometheus/logger";
 import {
   initSentry,
   initTelemetry,
+  metricsMiddleware,
   traceMiddleware,
 } from "@prometheus/telemetry";
 import {
@@ -41,6 +42,30 @@ const logger = createLogger("project-brain");
 const app = new Hono();
 
 app.use("/*", traceMiddleware("project-brain"));
+app.use("/*", metricsMiddleware());
+
+// Shared-secret auth middleware for internal service-to-service calls
+app.use("/*", async (c, next) => {
+  if (
+    c.req.path === "/health" ||
+    c.req.path === "/live" ||
+    c.req.path === "/ready" ||
+    c.req.path === "/metrics"
+  ) {
+    return next();
+  }
+  const secret = process.env.INTERNAL_SERVICE_SECRET;
+  if (secret) {
+    const provided = c.req.header("x-internal-secret");
+    if (provided !== secret) {
+      return c.json({ error: "Unauthorized" }, 401);
+    }
+  } else if (process.env.NODE_ENV === "production") {
+    return c.json({ error: "Unauthorized" }, 401);
+  }
+  await next();
+  return;
+});
 
 // Initialize layers
 const semantic = new SemanticLayer();
@@ -663,7 +688,7 @@ app.onError((err, c) => {
     { err, path: c.req.path, method: c.req.method },
     "Unhandled error"
   );
-  return c.json({ error: "Internal server error", message: err.message }, 500);
+  return c.json({ error: "Internal server error" }, 500);
 });
 
 // ---- Start server ----

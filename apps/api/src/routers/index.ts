@@ -16,6 +16,7 @@ import { fleetRouter } from "./fleet";
 import { gdprRouter } from "./gdpr";
 import { healthRouter } from "./health";
 import { integrationsRouter } from "./integrations";
+import { notificationsRouter } from "./notifications";
 import { pluginsRouter } from "./plugins";
 import { pmRouter } from "./pm";
 import { projectsRouter } from "./projects";
@@ -41,6 +42,7 @@ export const appRouter = router({
   fleet: fleetRouter,
   user: userRouter,
   integrations: integrationsRouter,
+  notifications: notificationsRouter,
   apiKeys: apiKeysRouter,
   plugins: pluginsRouter,
   architecture: architectureRouter,

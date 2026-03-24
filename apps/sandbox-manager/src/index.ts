@@ -10,6 +10,7 @@ import {
 import {
   installShutdownHandlers,
   isProcessShuttingDown,
+  registerShutdownHandler,
 } from "@prometheus/utils";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
@@ -30,6 +31,29 @@ const app = new Hono();
 app.use("/*", cors());
 app.use("/*", traceMiddleware("sandbox-manager"));
 app.use("/*", metricsMiddleware());
+
+// Shared-secret auth middleware for internal service-to-service calls
+app.use("/*", async (c, next) => {
+  if (
+    c.req.path === "/health" ||
+    c.req.path === "/live" ||
+    c.req.path === "/ready" ||
+    c.req.path === "/metrics"
+  ) {
+    return next();
+  }
+  const secret = process.env.INTERNAL_SERVICE_SECRET;
+  if (secret) {
+    const provided = c.req.header("x-internal-secret");
+    if (provided !== secret) {
+      return c.json({ error: "Unauthorized" }, 401);
+    }
+  } else if (process.env.NODE_ENV === "production") {
+    return c.json({ error: "Unauthorized" }, 401);
+  }
+  await next();
+  return;
+});
 
 const containerManager = new ContainerManager();
 const sandboxPool = new SandboxPool(containerManager);
@@ -372,15 +396,11 @@ async function start() {
     );
   });
 
-  // Graceful shutdown
-  const shutdown = async () => {
+  // Register custom cleanup with the centralized shutdown handler
+  registerShutdownHandler("sandbox-manager", async () => {
     logger.info("Shutting down...");
     await sandboxPool.shutdown();
-    process.exit(0);
-  };
-
-  process.on("SIGTERM", shutdown);
-  process.on("SIGINT", shutdown);
+  });
 }
 
 start().catch((err) => {

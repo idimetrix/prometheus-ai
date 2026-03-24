@@ -1,8 +1,10 @@
 "use client";
 
 import type { Route } from "next";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
+import { toast } from "sonner";
 import { logger } from "@/lib/logger";
 import { trpc } from "@/lib/trpc";
 
@@ -138,7 +140,7 @@ export default function NewTaskPage() {
 
   const projectsQuery = trpc.projects.list.useQuery(
     { limit: 50 },
-    { retry: false }
+    { retry: 2 }
   );
   const createSession = trpc.sessions.create.useMutation();
 
@@ -159,6 +161,7 @@ export default function NewTaskPage() {
       router.push(`/dashboard/sessions/${session?.id}` as Route);
     } catch (err) {
       logger.error("Failed to create session:", err);
+      toast.error("Failed to create task. Please try again.");
       setIsSubmitting(false);
     }
   }
@@ -223,12 +226,12 @@ export default function NewTaskPage() {
         {projects.length === 0 && !projectsQuery.isLoading && (
           <p className="mt-1.5 text-xs text-zinc-500">
             No projects yet.{" "}
-            <a
+            <Link
               className="text-violet-400 hover:text-violet-300"
               href="/dashboard/projects/new"
             >
               Create one first
-            </a>
+            </Link>
           </p>
         )}
       </div>

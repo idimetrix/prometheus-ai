@@ -30,7 +30,7 @@ export default function BrainPage({
 
   const graphQuery = trpc.brain.graph.useQuery(
     { projectId, query: searchQuery || undefined },
-    { retry: false }
+    { retry: 2 }
   );
   const memoriesQuery = trpc.brain.getMemories.useQuery(
     {
@@ -46,11 +46,11 @@ export default function BrainPage({
               | "convention"),
       limit: 50,
     },
-    { retry: false }
+    { retry: 2 }
   );
   const searchMutation = trpc.brain.search.useQuery(
     { projectId, query: searchQuery, limit: 20 },
-    { enabled: searchQuery.length > 2, retry: false }
+    { enabled: searchQuery.length > 2, retry: 2 }
   );
 
   const nodes = graphQuery.data?.nodes ?? [];

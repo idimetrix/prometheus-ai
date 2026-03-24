@@ -4,6 +4,7 @@ import {
   createServiceMetrics,
   initSentry,
   initTelemetry,
+  metricsMiddleware,
   traceMiddleware,
 } from "@prometheus/telemetry";
 import type { AgentMode, AgentRole } from "@prometheus/types";
@@ -33,12 +34,52 @@ const taskRouter = new TaskRouter(sessionManager);
 const checkpointManager = new CheckpointManager();
 const takeoverManager = new TakeoverManager();
 const trustScorer = new TrustScorer();
+
+// Initialize trust scorer persistence via Redis
+try {
+  const { redis } = await import("@prometheus/queue");
+  trustScorer.setPersistence({
+    get: (key: string) => redis.get(key),
+    set: (key: string, value: string) =>
+      redis.set(key, value).then(() => undefined),
+  });
+  await trustScorer.loadFromPersistence();
+} catch {
+  logger.warn(
+    "Redis unavailable for trust score persistence — using in-memory only"
+  );
+}
+
 const _governanceEngine = new GovernanceEngine(trustScorer);
 
 const app = new Hono();
 
 app.use("/*", cors());
 app.use("/*", traceMiddleware("orchestrator"));
+app.use("/*", metricsMiddleware());
+
+// Shared-secret auth middleware for internal service-to-service calls
+app.use("/*", async (c, next) => {
+  if (
+    c.req.path === "/health" ||
+    c.req.path === "/live" ||
+    c.req.path === "/ready" ||
+    c.req.path === "/metrics"
+  ) {
+    return next();
+  }
+  const secret = process.env.INTERNAL_SERVICE_SECRET;
+  if (secret) {
+    const provided = c.req.header("x-internal-secret");
+    if (provided !== secret) {
+      return c.json({ error: "Unauthorized" }, 401);
+    }
+  } else if (process.env.NODE_ENV === "production") {
+    return c.json({ error: "Unauthorized" }, 401);
+  }
+  await next();
+  return;
+});
 
 // Record request latency and errors via service metrics
 app.use("/*", async (c, next) => {
@@ -163,7 +204,7 @@ app.post("/process", async (c) => {
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);
     logger.error({ error: msg }, "Failed to process task");
-    return c.json({ error: msg }, 500);
+    return c.json({ error: "Internal server error" }, 500);
   }
 });
 
@@ -199,9 +240,10 @@ app.post("/sessions/:id/pause", async (c) => {
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);
     if (msg.includes("not found")) {
-      return c.json({ error: msg }, 404);
+      return c.json({ error: "Session not found" }, 404);
     }
-    return c.json({ error: msg }, 500);
+    logger.error({ error: msg }, "Failed to pause session");
+    return c.json({ error: "Internal server error" }, 500);
   }
 });
 
@@ -216,9 +258,10 @@ app.post("/sessions/:id/resume", async (c) => {
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);
     if (msg.includes("not found")) {
-      return c.json({ error: msg }, 404);
+      return c.json({ error: "Session not found" }, 404);
     }
-    return c.json({ error: msg }, 500);
+    logger.error({ error: msg }, "Failed to resume session");
+    return c.json({ error: "Internal server error" }, 500);
   }
 });
 
@@ -233,9 +276,10 @@ app.post("/sessions/:id/cancel", async (c) => {
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);
     if (msg.includes("not found")) {
-      return c.json({ error: msg }, 404);
+      return c.json({ error: "Session not found" }, 404);
     }
-    return c.json({ error: msg }, 500);
+    logger.error({ error: msg }, "Failed to cancel session");
+    return c.json({ error: "Internal server error" }, 500);
   }
 });
 
@@ -273,7 +317,8 @@ app.post("/route", async (c) => {
     return c.json(routing);
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);
-    return c.json({ error: msg }, 500);
+    logger.error({ error: msg }, "Failed to route task");
+    return c.json({ error: "Internal server error" }, 500);
   }
 });
 
@@ -305,7 +350,8 @@ app.post("/checkpoints/:id/respond", async (c) => {
 
     return c.json({ status: "resolved", checkpointId });
   } catch (error) {
-    return c.json({ error: String(error) }, 500);
+    logger.error({ error: String(error) }, "Failed to respond to checkpoint");
+    return c.json({ error: "Internal server error" }, 500);
   }
 });
 
@@ -335,7 +381,8 @@ app.post("/sessions/:id/takeover", async (c) => {
 
     return c.json({ status: "human_control", sessionId });
   } catch (error) {
-    return c.json({ error: String(error) }, 500);
+    logger.error({ error: String(error) }, "Failed to takeover session");
+    return c.json({ error: "Internal server error" }, 500);
   }
 });
 
@@ -355,7 +402,8 @@ app.post("/sessions/:id/release", async (c) => {
 
     return c.json({ status: "agent_control", sessionId });
   } catch (error) {
-    return c.json({ error: String(error) }, 500);
+    logger.error({ error: String(error) }, "Failed to release session");
+    return c.json({ error: "Internal server error" }, 500);
   }
 });
 
@@ -393,7 +441,7 @@ app.post("/benchmark/run", async (c) => {
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);
     logger.error({ error: msg }, "Benchmark run failed");
-    return c.json({ error: msg }, 500);
+    return c.json({ error: "Internal server error" }, 500);
   }
 });
 
@@ -417,7 +465,7 @@ app.post("/benchmark/suite", async (c) => {
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);
     logger.error({ error: msg }, "Benchmark suite failed");
-    return c.json({ error: msg }, 500);
+    return c.json({ error: "Internal server error" }, 500);
   }
 });
 

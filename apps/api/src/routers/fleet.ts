@@ -1,4 +1,4 @@
-import { agents, sessions, tasks } from "@prometheus/db";
+import { agents, organizations, sessions, tasks } from "@prometheus/db";
 import { createLogger } from "@prometheus/logger";
 import { agentTaskQueue } from "@prometheus/queue";
 import type { AgentRole } from "@prometheus/types";
@@ -44,6 +44,12 @@ export const fleetRouter = router({
 
       const dispatched: (typeof tasks.$inferSelect)[] = [];
 
+      const org = await ctx.db.query.organizations.findFirst({
+        where: eq(organizations.id, ctx.orgId),
+        columns: { planTier: true },
+      });
+      const planTier = org?.planTier ?? "hobby";
+
       for (const task of input.tasks) {
         const taskId = generateId("task");
         const [created] = await ctx.db
@@ -73,7 +79,7 @@ export const fleetRouter = router({
             description: task.description ?? null,
             mode: "fleet",
             agentRole: (task.agentRole as AgentRole) ?? null,
-            planTier: "hobby",
+            planTier,
             creditsReserved: 0,
           },
           {
@@ -106,6 +112,7 @@ export const fleetRouter = router({
       const activeAgents = await ctx.db.query.agents.findMany({
         where: eq(agents.sessionId, input.sessionId),
         orderBy: [desc(agents.startedAt)],
+        limit: 100,
       });
 
       const sessionTasks = await ctx.db.query.tasks.findMany({
@@ -114,6 +121,7 @@ export const fleetRouter = router({
           eq(tasks.orgId, ctx.orgId)
         ),
         orderBy: [desc(tasks.createdAt)],
+        limit: 100,
       });
 
       return {

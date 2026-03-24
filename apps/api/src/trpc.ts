@@ -76,17 +76,19 @@ export const protectedProcedure = t.procedure
         message: "Authentication required",
       });
     }
-    if (!ctx.auth.orgId) {
+    // Use orgId if available, otherwise fall back to userId as personal workspace
+    const orgId = ctx.auth.orgId ?? ctx.auth.userId;
+    if (!orgId) {
       throw new TRPCError({
         code: "FORBIDDEN",
-        message: "Organization context required",
+        message: "Organization or user context required",
       });
     }
     return await next({
       ctx: {
         auth: ctx.auth,
         db: ctx.db,
-        orgId: ctx.auth.orgId,
+        orgId,
         apiKeyId: ctx.apiKeyId,
       } satisfies ProtectedContext,
     });
@@ -106,13 +108,15 @@ export const orgAdminProcedure = t.procedure
         message: "Authentication required",
       });
     }
-    if (!ctx.auth.orgId) {
+    const orgId = ctx.auth.orgId ?? ctx.auth.userId;
+    if (!orgId) {
       throw new TRPCError({
         code: "FORBIDDEN",
-        message: "Organization context required",
+        message: "Organization or user context required",
       });
     }
-    if (!hasOrgRole(ctx.auth.orgRole, "admin")) {
+    // For personal workspaces (no org), treat user as admin
+    if (ctx.auth.orgId && !hasOrgRole(ctx.auth.orgRole, "admin")) {
       throw new TRPCError({
         code: "FORBIDDEN",
         message: "Admin or owner role required",
@@ -122,7 +126,7 @@ export const orgAdminProcedure = t.procedure
       ctx: {
         auth: ctx.auth,
         db: ctx.db,
-        orgId: ctx.auth.orgId,
+        orgId,
         apiKeyId: ctx.apiKeyId,
       } satisfies ProtectedContext,
     });
@@ -138,13 +142,15 @@ export const orgOwnerProcedure = t.procedure
         message: "Authentication required",
       });
     }
-    if (!ctx.auth.orgId) {
+    const orgId = ctx.auth.orgId ?? ctx.auth.userId;
+    if (!orgId) {
       throw new TRPCError({
         code: "FORBIDDEN",
-        message: "Organization context required",
+        message: "Organization or user context required",
       });
     }
-    if (!hasOrgRole(ctx.auth.orgRole, "owner")) {
+    // For personal workspaces (no org), treat user as owner
+    if (ctx.auth.orgId && !hasOrgRole(ctx.auth.orgRole, "owner")) {
       throw new TRPCError({
         code: "FORBIDDEN",
         message: "Owner role required",
@@ -154,7 +160,7 @@ export const orgOwnerProcedure = t.procedure
       ctx: {
         auth: ctx.auth,
         db: ctx.db,
-        orgId: ctx.auth.orgId,
+        orgId,
         apiKeyId: ctx.apiKeyId,
       } satisfies ProtectedContext,
     });

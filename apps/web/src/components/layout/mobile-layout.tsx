@@ -93,10 +93,13 @@ export function MobileLayout({ children }: MobileLayoutProps) {
     setMenuOpen((prev) => !prev);
   }, []);
 
-  // Close menu on route change — pathname in deps ensures menu closes on navigation
+  // Close menu on route change
+  const currentPath = pathname;
   useEffect(() => {
-    setMenuOpen(false);
-  }, []);
+    if (currentPath) {
+      setMenuOpen(false);
+    }
+  }, [currentPath]);
 
   // Close menu on Escape key
   useEffect(() => {

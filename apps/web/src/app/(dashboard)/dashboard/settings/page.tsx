@@ -96,24 +96,24 @@ export default function SettingsPage() {
   const [modelApiKey, setModelApiKey] = useState("");
 
   const apiKeysQuery = trpc.settings.getApiKeys.useQuery(undefined, {
-    retry: false,
+    retry: 2,
   });
   const integrationsQuery = trpc.integrations.list.useQuery(undefined, {
-    retry: false,
+    retry: 2,
   });
   const modelPrefsQuery = trpc.settings.getModelPreferences.useQuery(
     undefined,
-    { retry: false }
+    { retry: 2 }
   );
   const balanceQuery = trpc.billing.getBalance.useQuery(undefined, {
-    retry: false,
+    retry: 2,
   });
-  const planQuery = trpc.billing.getPlan.useQuery(undefined, { retry: false });
+  const planQuery = trpc.billing.getPlan.useQuery(undefined, { retry: 2 });
   const transactionsQuery = trpc.billing.getTransactions.useQuery(
     { limit: 20 },
-    { retry: false }
+    { retry: 2 }
   );
-  const profileQuery = trpc.user.profile.useQuery(undefined, { retry: false });
+  const profileQuery = trpc.user.profile.useQuery(undefined, { retry: 2 });
   const updateProfileMutation = trpc.user.updateProfile.useMutation();
 
   const profileForm = useForm<ProfileFormValues>({
@@ -163,59 +163,88 @@ export default function SettingsPage() {
     if (!newKeyName.trim()) {
       return;
     }
-    const result = await createKeyMutation.mutateAsync({
-      name: newKeyName.trim(),
-    });
-    setCreatedKey(result.key);
-    setNewKeyName("");
-    apiKeysQuery.refetch();
-    toast.success("API key created");
-  }
-
-  async function handleRevokeKey(keyId: string) {
-    await revokeKeyMutation.mutateAsync({ keyId });
-    apiKeysQuery.refetch();
-    toast.success("API key revoked");
-  }
-
-  async function handleConnectIntegration(provider: string) {
-    await connectIntMutation.mutateAsync({
-      provider: provider as
-        | "github"
-        | "gitlab"
-        | "linear"
-        | "jira"
-        | "slack"
-        | "vercel"
-        | "figma"
-        | "notion",
-      credentials: { token: "placeholder" },
-    });
-    integrationsQuery.refetch();
-    toast.success(`${provider} connected`);
-  }
-
-  async function handleDisconnectIntegration(provider: string) {
-    await disconnectIntMutation.mutateAsync({ provider });
-    integrationsQuery.refetch();
-    toast.info(`${provider} disconnected`);
-  }
-
-  async function handleUpgrade(tier: "starter" | "pro" | "team" | "studio") {
-    const result = await createCheckoutMutation.mutateAsync({ planTier: tier });
-    if (result.checkoutUrl) {
-      window.location.href = result.checkoutUrl;
+    try {
+      const result = await createKeyMutation.mutateAsync({
+        name: newKeyName.trim(),
+      });
+      setCreatedKey(result.key);
+      setNewKeyName("");
+      apiKeysQuery.refetch();
+      toast.success("API key created");
+    } catch {
+      toast.error("Failed to create API key. Please try again.");
     }
   }
 
-  function handleModelKeySubmit() {
-    if (modelKeyProvider && modelApiKey) {
-      setModelPrefMutation.mutate({
-        provider: modelKeyProvider.provider,
-        apiKey: modelApiKey,
-        modelId: modelKeyProvider.modelId,
+  async function handleRevokeKey(keyId: string) {
+    try {
+      await revokeKeyMutation.mutateAsync({ keyId });
+      apiKeysQuery.refetch();
+      toast.success("API key revoked");
+    } catch {
+      toast.error("Failed to revoke API key. Please try again.");
+    }
+  }
+
+  async function handleConnectIntegration(provider: string) {
+    try {
+      await connectIntMutation.mutateAsync({
+        provider: provider as
+          | "github"
+          | "gitlab"
+          | "linear"
+          | "jira"
+          | "slack"
+          | "vercel"
+          | "figma"
+          | "notion",
+        credentials: {},
       });
-      toast.success(`${modelKeyProvider.name} API key saved`);
+      integrationsQuery.refetch();
+      toast.success(`${provider} connected`);
+      toast.info(
+        "Configure credentials in Settings > Integrations for your provider."
+      );
+    } catch {
+      toast.error(`Failed to connect ${provider}. Please try again.`);
+    }
+  }
+
+  async function handleDisconnectIntegration(provider: string) {
+    try {
+      await disconnectIntMutation.mutateAsync({ provider });
+      integrationsQuery.refetch();
+      toast.info(`${provider} disconnected`);
+    } catch {
+      toast.error(`Failed to disconnect ${provider}. Please try again.`);
+    }
+  }
+
+  async function handleUpgrade(tier: "starter" | "pro" | "team" | "studio") {
+    try {
+      const result = await createCheckoutMutation.mutateAsync({
+        planTier: tier,
+      });
+      if (result.checkoutUrl) {
+        window.location.href = result.checkoutUrl;
+      }
+    } catch {
+      toast.error("Failed to start checkout. Please try again.");
+    }
+  }
+
+  async function handleModelKeySubmit() {
+    if (modelKeyProvider && modelApiKey) {
+      try {
+        await setModelPrefMutation.mutateAsync({
+          provider: modelKeyProvider.provider,
+          apiKey: modelApiKey,
+          modelId: modelKeyProvider.modelId,
+        });
+        toast.success(`${modelKeyProvider.name} API key saved`);
+      } catch {
+        toast.error(`Failed to save ${modelKeyProvider.name} API key`);
+      }
     }
     setModelKeyDialogOpen(false);
     setModelApiKey("");

@@ -12,12 +12,12 @@ const socketHost = (
  */
 const cspDirectives = [
   "default-src 'self'",
-  // Scripts: allow self + nonce-based inline
-  "script-src 'self' 'unsafe-eval' 'unsafe-inline'",
-  // Styles: allow self + inline (Next.js requires it)
+  // Scripts: allow self + inline + Clerk (includes *.clerk.accounts.dev for dev instances)
+  "script-src 'self' 'unsafe-eval' 'unsafe-inline' blob: https://*.clerk.com https://*.clerk.dev https://*.clerk.accounts.dev",
+  // Styles: allow self + inline
   "style-src 'self' 'unsafe-inline'",
-  // Images: allow self + data URIs + blob
-  "img-src 'self' data: blob: https://*.clerk.com https://img.clerk.com",
+  // Images: allow self + data URIs + blob + Clerk
+  "img-src 'self' data: blob: https://*.clerk.com https://img.clerk.com https://*.clerk.accounts.dev",
   // Fonts
   "font-src 'self' data:",
   // Connect: API + WebSocket + SSE
@@ -34,10 +34,14 @@ const cspDirectives = [
     // SSE endpoints (same as API)
     `${process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000"}/events`,
     "https://api.prometheus.dev/events",
-    // Clerk auth
+    // Clerk auth + telemetry
     "https://*.clerk.com",
     "https://*.clerk.dev",
+    "https://*.clerk.accounts.dev",
+    "https://clerk-telemetry.com",
   ].join(" "),
+  // Workers: allow blob for Clerk telemetry
+  "worker-src 'self' blob:",
   // Frame ancestors
   "frame-ancestors 'none'",
   // Form action
@@ -56,7 +60,6 @@ const nextConfig: NextConfig = {
     "@prometheus/validators",
     "@prometheus/api",
   ],
-  typescript: { ignoreBuildErrors: true },
   typedRoutes: true,
   headers: async () => [
     {

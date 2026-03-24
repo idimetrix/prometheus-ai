@@ -48,7 +48,7 @@ interface CollaborativeEditorProps {
   userId: string;
   /** Current user's display name */
   userName: string;
-  /** WebSocket server URL (defaults to ws://localhost:4001/yjs) */
+  /** WebSocket server URL (derived from NEXT_PUBLIC_SOCKET_URL env var) */
   wsUrl?: string;
 }
 
@@ -73,6 +73,9 @@ const COLLAB_COLORS = [
   "#c084fc",
   "#f472b6",
 ] as const;
+
+const HTTPS_PROTOCOL_RE = /^https:\/\//;
+const HTTP_PROTOCOL_RE = /^http:\/\//;
 
 function getColorForUser(userId: string): string {
   let hash = 0;
@@ -349,7 +352,13 @@ export function CollaborativeEditor({
   content: initialContent,
   language,
   userColor,
-  wsUrl = "ws://localhost:4001/yjs",
+  wsUrl = (() => {
+    const base = process.env.NEXT_PUBLIC_SOCKET_URL ?? "http://localhost:4001";
+    const wsBase = base
+      .replace(HTTPS_PROTOCOL_RE, "wss://")
+      .replace(HTTP_PROTOCOL_RE, "ws://");
+    return `${wsBase}/yjs`;
+  })(),
   modifications = [],
   onChange,
   onSave,

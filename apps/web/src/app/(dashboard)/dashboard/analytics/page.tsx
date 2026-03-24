@@ -39,22 +39,158 @@ import { trpc } from "@/lib/trpc";
 
 const CHART_COLORS = ["#a78bfa", "#22d3ee", "#fb923c", "#4ade80", "#f472b6"];
 
+interface TaskDataPoint {
+  completed: number;
+  credits: number;
+  date: string;
+  failed: number;
+}
+
+function TaskHistoryTable({ taskMetrics }: { taskMetrics: TaskDataPoint[] }) {
+  if (taskMetrics.length === 0) {
+    return (
+      <div className="p-8 text-center text-sm text-zinc-500">
+        No task data yet. Complete tasks to see metrics here.
+      </div>
+    );
+  }
+  return (
+    <Table>
+      <TableHeader>
+        <TableRow>
+          <TableHead>Date</TableHead>
+          <TableHead className="text-right">Completed</TableHead>
+          <TableHead className="text-right">Failed</TableHead>
+          <TableHead className="text-right">Credits</TableHead>
+          <TableHead>Success</TableHead>
+        </TableRow>
+      </TableHeader>
+      <TableBody>
+        {taskMetrics.map((dp) => {
+          const total = dp.completed + dp.failed;
+          const rate =
+            total > 0 ? ((dp.completed / total) * 100).toFixed(0) : "--";
+          return (
+            <TableRow key={dp.date}>
+              <TableCell className="font-mono text-xs text-zinc-300">
+                {new Date(dp.date).toLocaleDateString()}
+              </TableCell>
+              <TableCell className="text-right text-green-400">
+                {dp.completed}
+              </TableCell>
+              <TableCell className="text-right text-red-400">
+                {dp.failed}
+              </TableCell>
+              <TableCell className="text-right font-mono text-xs text-zinc-400">
+                {dp.credits}
+              </TableCell>
+              <TableCell>
+                <div className="flex items-center gap-2">
+                  <div className="h-1.5 flex-1 rounded-full bg-zinc-800">
+                    <div
+                      className="h-1.5 rounded-full bg-green-500"
+                      style={{
+                        width: `${total > 0 ? (dp.completed / total) * 100 : 0}%`,
+                      }}
+                    />
+                  </div>
+                  <span className="w-8 text-right text-xs text-zinc-500">
+                    {rate}%
+                  </span>
+                </div>
+              </TableCell>
+            </TableRow>
+          );
+        })}
+      </TableBody>
+    </Table>
+  );
+}
+
+function ModelUsageTable({
+  modelUsage,
+  totalModelTokens,
+}: {
+  modelUsage: Array<{
+    cost: number;
+    model: string;
+    requests: number;
+    tokens: number;
+  }>;
+  totalModelTokens: number;
+}) {
+  if (modelUsage.length === 0) {
+    return (
+      <div className="p-8 text-center text-sm text-zinc-500">
+        No model usage data yet.
+      </div>
+    );
+  }
+  return (
+    <Table>
+      <TableHeader>
+        <TableRow>
+          <TableHead>Model</TableHead>
+          <TableHead className="text-right">Requests</TableHead>
+          <TableHead className="text-right">Tokens</TableHead>
+          <TableHead className="text-right">Cost</TableHead>
+          <TableHead>Share</TableHead>
+        </TableRow>
+      </TableHeader>
+      <TableBody>
+        {modelUsage.map((model) => {
+          const share =
+            totalModelTokens > 0 ? (model.tokens / totalModelTokens) * 100 : 0;
+          return (
+            <TableRow key={model.model}>
+              <TableCell>
+                <span className="font-mono text-xs text-zinc-300">
+                  {model.model}
+                </span>
+              </TableCell>
+              <TableCell className="text-right text-zinc-400">
+                {model.requests.toLocaleString()}
+              </TableCell>
+              <TableCell className="text-right font-mono text-xs text-zinc-400">
+                {model.tokens.toLocaleString()}
+              </TableCell>
+              <TableCell className="text-right font-mono text-xs text-zinc-400">
+                ${model.cost.toFixed(4)}
+              </TableCell>
+              <TableCell>
+                <div className="flex items-center gap-2">
+                  <div className="h-1.5 flex-1 rounded-full bg-zinc-800">
+                    <div
+                      className="h-1.5 rounded-full bg-violet-500"
+                      style={{ width: `${share}%` }}
+                    />
+                  </div>
+                  <span className="w-10 text-right text-xs text-zinc-500">
+                    {share.toFixed(1)}%
+                  </span>
+                </div>
+              </TableCell>
+            </TableRow>
+          );
+        })}
+      </TableBody>
+    </Table>
+  );
+}
+
 export default function AnalyticsPage() {
   const [days, setDays] = useState(30);
 
-  const overviewQuery = trpc.stats.overview.useQuery(
-    { days },
-    { retry: false }
-  );
+  const overviewQuery = trpc.stats.overview.useQuery({ days }, { retry: 2 });
   const taskMetricsQuery = trpc.stats.taskMetrics.useQuery(
     { days, groupBy: "day" },
-    { retry: false }
+    { retry: 2 }
   );
   const modelUsageQuery = trpc.stats.modelUsage.useQuery(
     { days },
-    { retry: false }
+    { retry: 2 }
   );
-  const roiQuery = trpc.stats.roi.useQuery(undefined, { retry: false });
+  const roiQuery = trpc.stats.roi.useQuery(undefined, { retry: 2 });
 
   const overview = overviewQuery.data;
   const taskMetrics = taskMetricsQuery.data?.dataPoints ?? [];
@@ -81,14 +217,67 @@ export default function AnalyticsPage() {
     [modelUsage]
   );
 
+  const isLoading =
+    overviewQuery.isLoading ||
+    taskMetricsQuery.isLoading ||
+    modelUsageQuery.isLoading ||
+    roiQuery.isLoading;
+
   const handleExport = () => {
+    const rows = [
+      ["Date", "Completed", "Failed", "Credits"],
+      ...taskMetrics.map((dp) => [
+        dp.date,
+        dp.completed,
+        dp.failed,
+        dp.credits,
+      ]),
+    ];
+    const csvContent = rows.map((row) => row.join(",")).join("\n");
+    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `prometheus-analytics-${days}d.csv`;
+    link.click();
+    URL.revokeObjectURL(url);
     toast.success("Analytics data exported");
   };
+
+  function getSuccessRateValue(): string | number {
+    if (isLoading) {
+      return "--";
+    }
+    if (overview?.successRate) {
+      return `${(overview.successRate * 100).toFixed(1)}%`;
+    }
+    return "--";
+  }
+
+  function getRoiValue(): string | number {
+    if (isLoading) {
+      return "--";
+    }
+    if (roi?.roiMultiplier) {
+      return `${roi.roiMultiplier}x`;
+    }
+    return "--";
+  }
+
+  function getRoiSubtitle(): string {
+    if (isLoading) {
+      return "Loading...";
+    }
+    if (roi?.estimatedHoursSaved) {
+      return `${roi.estimatedHoursSaved}h saved`;
+    }
+    return "No data yet";
+  }
 
   const statCards = [
     {
       label: "Tasks Completed",
-      value: overview?.tasksCompleted ?? 0,
+      value: isLoading ? "--" : (overview?.tasksCompleted ?? 0),
       subtitle: `in the last ${days} days`,
       icon: CheckCircle,
       iconColor: "text-blue-500",
@@ -96,7 +285,9 @@ export default function AnalyticsPage() {
     },
     {
       label: "Credits Used",
-      value: overview?.creditsUsed?.toLocaleString() ?? "0",
+      value: isLoading
+        ? "--"
+        : (overview?.creditsUsed?.toLocaleString() ?? "0"),
       subtitle: `in the last ${days} days`,
       icon: Coins,
       iconColor: "text-yellow-500",
@@ -104,9 +295,7 @@ export default function AnalyticsPage() {
     },
     {
       label: "Success Rate",
-      value: overview?.successRate
-        ? `${(overview.successRate * 100).toFixed(1)}%`
-        : "--",
+      value: getSuccessRateValue(),
       subtitle: "task completion rate",
       icon: Target,
       iconColor: "text-green-500",
@@ -114,10 +303,8 @@ export default function AnalyticsPage() {
     },
     {
       label: "ROI",
-      value: roi?.roiMultiplier ? `${roi.roiMultiplier}x` : "--",
-      subtitle: roi?.estimatedHoursSaved
-        ? `${roi.estimatedHoursSaved}h saved`
-        : "No data yet",
+      value: getRoiValue(),
+      subtitle: getRoiSubtitle(),
       icon: TrendingUp,
       iconColor: "text-violet-500",
       iconBg: "bg-violet-500/10",
@@ -486,63 +673,7 @@ export default function AnalyticsPage() {
           <CardTitle>Task History</CardTitle>
         </CardHeader>
         <CardContent>
-          {taskMetrics.length === 0 ? (
-            <div className="p-8 text-center text-sm text-zinc-500">
-              No task data yet. Complete tasks to see metrics here.
-            </div>
-          ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Date</TableHead>
-                  <TableHead className="text-right">Completed</TableHead>
-                  <TableHead className="text-right">Failed</TableHead>
-                  <TableHead className="text-right">Credits</TableHead>
-                  <TableHead>Success</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {taskMetrics.map((dp) => {
-                  const total = dp.completed + dp.failed;
-                  const rate =
-                    total > 0
-                      ? ((dp.completed / total) * 100).toFixed(0)
-                      : "--";
-                  return (
-                    <TableRow key={dp.date}>
-                      <TableCell className="font-mono text-xs text-zinc-300">
-                        {new Date(dp.date).toLocaleDateString()}
-                      </TableCell>
-                      <TableCell className="text-right text-green-400">
-                        {dp.completed}
-                      </TableCell>
-                      <TableCell className="text-right text-red-400">
-                        {dp.failed}
-                      </TableCell>
-                      <TableCell className="text-right font-mono text-xs text-zinc-400">
-                        {dp.credits}
-                      </TableCell>
-                      <TableCell>
-                        <div className="flex items-center gap-2">
-                          <div className="h-1.5 flex-1 rounded-full bg-zinc-800">
-                            <div
-                              className="h-1.5 rounded-full bg-green-500"
-                              style={{
-                                width: `${total > 0 ? (dp.completed / total) * 100 : 0}%`,
-                              }}
-                            />
-                          </div>
-                          <span className="w-8 text-right text-xs text-zinc-500">
-                            {rate}%
-                          </span>
-                        </div>
-                      </TableCell>
-                    </TableRow>
-                  );
-                })}
-              </TableBody>
-            </Table>
-          )}
+          <TaskHistoryTable taskMetrics={taskMetrics} />
         </CardContent>
       </Card>
 
@@ -552,62 +683,10 @@ export default function AnalyticsPage() {
           <CardTitle>Model Usage</CardTitle>
         </CardHeader>
         <CardContent>
-          {modelUsage.length === 0 ? (
-            <div className="p-8 text-center text-sm text-zinc-500">
-              No model usage data yet.
-            </div>
-          ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Model</TableHead>
-                  <TableHead className="text-right">Requests</TableHead>
-                  <TableHead className="text-right">Tokens</TableHead>
-                  <TableHead className="text-right">Cost</TableHead>
-                  <TableHead>Share</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {modelUsage.map((model) => {
-                  const share =
-                    totalModelTokens > 0
-                      ? (model.tokens / totalModelTokens) * 100
-                      : 0;
-                  return (
-                    <TableRow key={model.model}>
-                      <TableCell>
-                        <span className="font-mono text-xs text-zinc-300">
-                          {model.model}
-                        </span>
-                      </TableCell>
-                      <TableCell className="text-right text-zinc-400">
-                        {model.requests.toLocaleString()}
-                      </TableCell>
-                      <TableCell className="text-right font-mono text-xs text-zinc-400">
-                        {model.tokens.toLocaleString()}
-                      </TableCell>
-                      <TableCell className="text-right font-mono text-xs text-zinc-400">
-                        ${model.cost.toFixed(4)}
-                      </TableCell>
-                      <TableCell>
-                        <div className="flex items-center gap-2">
-                          <div className="h-1.5 flex-1 rounded-full bg-zinc-800">
-                            <div
-                              className="h-1.5 rounded-full bg-violet-500"
-                              style={{ width: `${share}%` }}
-                            />
-                          </div>
-                          <span className="w-10 text-right text-xs text-zinc-500">
-                            {share.toFixed(1)}%
-                          </span>
-                        </div>
-                      </TableCell>
-                    </TableRow>
-                  );
-                })}
-              </TableBody>
-            </Table>
-          )}
+          <ModelUsageTable
+            modelUsage={modelUsage}
+            totalModelTokens={totalModelTokens}
+          />
         </CardContent>
       </Card>
     </div>

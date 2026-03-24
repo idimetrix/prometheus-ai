@@ -2,6 +2,7 @@
 
 import { MarkdownRenderer } from "@prometheus/ui";
 import { use, useCallback, useEffect, useRef, useState } from "react";
+import { toast } from "sonner";
 import { SessionControls } from "@/components/session/session-controls";
 import { useSessionStream } from "@/hooks/use-session-stream";
 import { trpc } from "@/lib/trpc";
@@ -245,11 +246,9 @@ function TerminalPanel() {
           </div>
         ) : (
           <div className="space-y-0.5">
-            {terminalLines.map((line) => (
-              <div
-                className="flex gap-2"
-                key={`${line.timestamp ?? ""}-${line.content.slice(0, 50)}`}
-              >
+            {terminalLines.map((line, i) => (
+              // biome-ignore lint/suspicious/noArrayIndexKey: terminal lines lack stable unique IDs
+              <div className="flex gap-2" key={`${line.timestamp ?? ""}-${i}`}>
                 {line.timestamp && (
                   <span className="shrink-0 text-zinc-700">
                     {new Date(line.timestamp).toLocaleTimeString([], {
@@ -433,7 +432,7 @@ function ChatPanel({
     if (scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
-  });
+  }, []);
 
   const handleSend = useCallback(() => {
     const trimmed = input.trim();
@@ -559,6 +558,7 @@ function ChatPanel({
       <div className="border-zinc-800 border-t p-3">
         <div className="flex gap-2">
           <textarea
+            aria-label="Message the agent"
             className="flex-1 resize-none rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-white placeholder-zinc-500 focus:border-violet-500 focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
             disabled={disabled}
             onChange={(e) => setInput(e.target.value)}
@@ -593,10 +593,7 @@ export default function SessionPage({
   const { isConnected } = useSessionStream(sessionId);
   const { status: sessionStatus } = useSessionStore();
 
-  const sessionQuery = trpc.sessions.get.useQuery(
-    { sessionId },
-    { retry: false }
-  );
+  const sessionQuery = trpc.sessions.get.useQuery({ sessionId }, { retry: 2 });
   const pauseMutation = trpc.sessions.pause.useMutation();
   const resumeMutation = trpc.sessions.resume.useMutation();
   const cancelMutation = trpc.sessions.cancel.useMutation();
@@ -619,7 +616,7 @@ export default function SessionPage({
           content,
         });
       } catch {
-        // Mutation errors are surfaced by tRPC
+        toast.error("Failed to send message");
       }
     },
     [sessionId, sendMessageMutation]
@@ -695,12 +692,20 @@ export default function SessionPage({
             setShowCancelConfirm(true);
           }}
           onPause={async () => {
-            await pauseMutation.mutateAsync({ sessionId });
-            sessionQuery.refetch();
+            try {
+              await pauseMutation.mutateAsync({ sessionId });
+              sessionQuery.refetch();
+            } catch {
+              toast.error("Failed to pause session. Please try again.");
+            }
           }}
           onResume={async () => {
-            await resumeMutation.mutateAsync({ sessionId });
-            sessionQuery.refetch();
+            try {
+              await resumeMutation.mutateAsync({ sessionId });
+              sessionQuery.refetch();
+            } catch {
+              toast.error("Failed to resume session. Please try again.");
+            }
           }}
           sessionId={sessionId}
           status={status}
@@ -708,40 +713,59 @@ export default function SessionPage({
       </div>
 
       {/* Cancel confirmation dialog */}
-      <dialog
-        className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm"
-        open={showCancelConfirm}
-      >
-        <div className="max-w-md rounded-lg border border-zinc-800 bg-zinc-900 p-6">
-          <h3 className="font-semibold text-lg text-zinc-100">
-            Cancel Session?
-          </h3>
-          <p className="mt-2 text-sm text-zinc-400">
-            Are you sure you want to cancel this session? This action cannot be
-            undone.
-          </p>
-          <div className="mt-4 flex justify-end gap-3">
-            <button
-              className="rounded-md px-3 py-2 text-sm text-zinc-400 hover:text-zinc-200"
-              onClick={() => setShowCancelConfirm(false)}
-              type="button"
-            >
-              Keep Session
-            </button>
-            <button
-              className="rounded-md bg-red-600 px-3 py-2 text-sm text-white hover:bg-red-500"
-              onClick={async () => {
-                setShowCancelConfirm(false);
-                await cancelMutation.mutateAsync({ sessionId });
-                sessionQuery.refetch();
-              }}
-              type="button"
-            >
-              Cancel Session
-            </button>
+      {showCancelConfirm && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm"
+          onClick={() => setShowCancelConfirm(false)}
+          onKeyDown={(e) => {
+            if (e.key === "Escape") {
+              setShowCancelConfirm(false);
+            }
+          }}
+          role="presentation"
+        >
+          <div
+            aria-label="Cancel session confirmation"
+            aria-modal="true"
+            className="max-w-md rounded-lg border border-zinc-800 bg-zinc-900 p-6"
+            onClick={(e) => e.stopPropagation()}
+            onKeyDown={(e) => e.stopPropagation()}
+            role="dialog"
+          >
+            <h3 className="font-semibold text-lg text-zinc-100">
+              Cancel Session?
+            </h3>
+            <p className="mt-2 text-sm text-zinc-400">
+              Are you sure you want to cancel this session? This action cannot
+              be undone.
+            </p>
+            <div className="mt-4 flex justify-end gap-3">
+              <button
+                className="rounded-md px-3 py-2 text-sm text-zinc-400 hover:text-zinc-200"
+                onClick={() => setShowCancelConfirm(false)}
+                type="button"
+              >
+                Keep Running
+              </button>
+              <button
+                className="rounded-md bg-red-600 px-3 py-2 text-sm text-white hover:bg-red-500"
+                onClick={async () => {
+                  setShowCancelConfirm(false);
+                  try {
+                    await cancelMutation.mutateAsync({ sessionId });
+                    sessionQuery.refetch();
+                  } catch {
+                    toast.error("Failed to cancel session. Please try again.");
+                  }
+                }}
+                type="button"
+              >
+                Cancel Session
+              </button>
+            </div>
           </div>
         </div>
-      </dialog>
+      )}
     </div>
   );
 }

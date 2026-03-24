@@ -72,7 +72,7 @@ export default function ProjectDetailPage({
           </Link>
           <Link
             className="rounded-lg bg-violet-600 px-4 py-2 font-medium text-sm text-white hover:bg-violet-700"
-            href="/new"
+            href={`/new?projectId=${projectId}` as Route}
           >
             New Task
           </Link>
@@ -147,7 +147,9 @@ export default function ProjectDetailPage({
                     {session.status}
                   </span>
                   <span className="text-xs text-zinc-600">
-                    {new Date(session.startedAt).toLocaleDateString()}
+                    {session.startedAt
+                      ? new Date(session.startedAt).toLocaleDateString()
+                      : "Not started"}
                   </span>
                 </div>
               </Link>

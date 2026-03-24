@@ -1,5 +1,6 @@
 "use client";
 
+import { useAuth } from "@clerk/nextjs";
 import {
   createContext,
   type ReactNode,
@@ -37,8 +38,14 @@ export function useSocketContext() {
 export function SocketProvider({ children }: { children: ReactNode }) {
   const [status, setStatus] = useState<ConnectionStatus>("disconnected");
   const socketRef = useRef<Socket | null>(null);
+  const { isSignedIn } = useAuth();
 
   useEffect(() => {
+    // Only connect when the user is authenticated
+    if (!isSignedIn) {
+      return;
+    }
+
     const socket = connectSocket({
       onStatusChange: setStatus,
       onError: (err) => {
@@ -53,7 +60,7 @@ export function SocketProvider({ children }: { children: ReactNode }) {
       socketRef.current = null;
       setStatus("disconnected");
     };
-  }, []);
+  }, [isSignedIn]);
 
   return (
     <SocketContext.Provider

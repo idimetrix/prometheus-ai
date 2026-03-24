@@ -9,6 +9,9 @@ export const metadata: Metadata = {
   title: "PROMETHEUS - AI Engineering Platform",
   description:
     "The AI engineering platform that builds your entire project from requirements to production deployment.",
+  icons: {
+    icon: "/favicon.svg",
+  },
 };
 
 export default function RootLayout({
@@ -21,7 +24,7 @@ export default function RootLayout({
       <head>
         <link href="/manifest.json" rel="manifest" />
         <meta content="#7c3aed" name="theme-color" />
-        <meta content="yes" name="apple-mobile-web-app-capable" />
+        <meta content="yes" name="mobile-web-app-capable" />
       </head>
       <body className="min-h-screen bg-background font-sans text-foreground antialiased">
         <Providers>{children}</Providers>

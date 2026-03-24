@@ -1,13 +1,11 @@
 import { createLogger } from "@prometheus/logger";
+import { LangfuseTracer } from "@prometheus/telemetry";
 
 const logger = createLogger("model-router:langfuse");
 
 /**
- * Lightweight Langfuse-compatible LLM observability tracker.
- * Records every LLM call with latency, cost, tokens, and model info.
- *
- * When LANGFUSE_PUBLIC_KEY and LANGFUSE_SECRET_KEY are set,
- * traces are sent to Langfuse. Otherwise, traces are logged locally.
+ * Model Router LLM observability — delegates to @prometheus/telemetry LangfuseTracer
+ * for Langfuse API integration, while maintaining local metrics for the /metrics endpoint.
  */
 
 interface TraceEvent {
@@ -29,76 +27,58 @@ interface TraceEvent {
 const traces: TraceEvent[] = [];
 const MAX_LOCAL_TRACES = 1000;
 
-let langfuseEnabled = false;
-let langfuseBaseUrl = "";
-let langfuseHeaders: Record<string, string> = {};
+let tracer: LangfuseTracer | null = null;
 
 /**
- * Initialize Langfuse connection (call once at startup).
+ * Initialize Langfuse connection via the shared telemetry package.
  */
 export function initLangfuse(): void {
-  const publicKey = process.env.LANGFUSE_PUBLIC_KEY;
-  const secretKey = process.env.LANGFUSE_SECRET_KEY;
-  const baseUrl = process.env.LANGFUSE_BASE_URL ?? "https://cloud.langfuse.com";
-
-  if (publicKey && secretKey) {
-    langfuseEnabled = true;
-    langfuseBaseUrl = baseUrl;
-    langfuseHeaders = {
-      "Content-Type": "application/json",
-      Authorization: `Basic ${Buffer.from(`${publicKey}:${secretKey}`).toString("base64")}`,
-    };
-    logger.info({ baseUrl }, "Langfuse LLM observability enabled");
+  tracer = new LangfuseTracer();
+  if (tracer.isEnabled()) {
+    logger.info("Langfuse LLM observability enabled via @prometheus/telemetry");
   } else {
-    logger.info("Langfuse not configured — using local trace storage");
+    logger.info("Langfuse not configured — using local trace storage only");
   }
 }
 
 /**
  * Record an LLM completion trace.
  */
-export async function recordTrace(event: TraceEvent): Promise<void> {
-  // Always store locally
+export function recordTrace(event: TraceEvent): void {
+  // Always store locally for metrics
   traces.push(event);
   if (traces.length > MAX_LOCAL_TRACES) {
     traces.shift();
   }
 
-  // Send to Langfuse if configured
-  if (langfuseEnabled) {
+  // Send to Langfuse via shared tracer if available
+  if (tracer?.isEnabled()) {
     try {
-      await fetch(`${langfuseBaseUrl}/api/public/ingestion`, {
-        method: "POST",
-        headers: langfuseHeaders,
-        body: JSON.stringify({
-          batch: [
-            {
-              id: event.id,
-              type: "generation-create",
-              timestamp: event.timestamp,
-              body: {
-                name: `${event.slot}/${event.model}`,
-                model: event.model,
-                modelParameters: { provider: event.provider, slot: event.slot },
-                usage: {
-                  promptTokens: event.promptTokens,
-                  completionTokens: event.completionTokens,
-                  totalTokens: event.totalTokens,
-                },
-                metadata: {
-                  ...event.metadata,
-                  costUsd: event.costUsd,
-                  latencyMs: event.latencyMs,
-                  provider: event.provider,
-                  slot: event.slot,
-                },
-                level: event.success ? "DEFAULT" : "ERROR",
-                statusMessage: event.error,
-              },
-            },
-          ],
-        }),
-        signal: AbortSignal.timeout(5000),
+      const traceId = tracer.trace({
+        name: `${event.slot}/${event.model}`,
+        metadata: {
+          provider: event.provider,
+          slot: event.slot,
+          costUsd: event.costUsd,
+          latencyMs: event.latencyMs,
+        },
+      });
+
+      tracer.generation({
+        traceId,
+        name: `${event.provider}/${event.model}`,
+        model: event.model,
+        modelParameters: { provider: event.provider, slot: event.slot },
+        input: event.metadata,
+        usage: {
+          promptTokens: event.promptTokens,
+          completionTokens: event.completionTokens,
+          totalTokens: event.totalTokens,
+        },
+        costUsd: event.costUsd,
+        latencyMs: event.latencyMs,
+        level: event.success ? "DEFAULT" : "ERROR",
+        statusMessage: event.error,
       });
     } catch (err) {
       logger.warn({ error: String(err) }, "Failed to send trace to Langfuse");
