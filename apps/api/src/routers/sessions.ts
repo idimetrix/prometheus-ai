@@ -263,6 +263,19 @@ export const sessionsRouter = router({
         });
       }
 
+      // Signal orchestrator to pause the agent loop
+      try {
+        await fetch(`${ORCHESTRATOR_URL}/sessions/${input.sessionId}/pause`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+        });
+      } catch (err) {
+        logger.warn(
+          { sessionId: input.sessionId, error: String(err) },
+          "Failed to signal orchestrator pause (session DB status updated)"
+        );
+      }
+
       // Record event
       await ctx.db.insert(sessionEvents).values({
         id: generateId("evt"),
@@ -294,6 +307,19 @@ export const sessionsRouter = router({
           code: "PRECONDITION_FAILED",
           message: "Session is not paused and cannot be resumed",
         });
+      }
+
+      // Signal orchestrator to resume the agent loop
+      try {
+        await fetch(`${ORCHESTRATOR_URL}/sessions/${input.sessionId}/resume`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+        });
+      } catch (err) {
+        logger.warn(
+          { sessionId: input.sessionId, error: String(err) },
+          "Failed to signal orchestrator resume (session DB status updated)"
+        );
       }
 
       // Record event
@@ -352,6 +378,19 @@ export const sessionsRouter = router({
           code: "PRECONDITION_FAILED",
           message: "Session is already ended and cannot be cancelled",
         });
+      }
+
+      // Signal orchestrator to cancel/stop the agent loop
+      try {
+        await fetch(`${ORCHESTRATOR_URL}/sessions/${input.sessionId}/cancel`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+        });
+      } catch (err) {
+        logger.warn(
+          { sessionId: input.sessionId, error: String(err) },
+          "Failed to signal orchestrator cancel (session DB status updated)"
+        );
       }
 
       // Record event
@@ -501,16 +540,17 @@ export const sessionsRouter = router({
     .mutation(async ({ input, ctx }) => {
       await verifySessionAccess(ctx.db, input.sessionId, ctx.orgId);
 
-      const res = await fetch(`${ORCHESTRATOR_URL}/sessions/approve-plan`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          sessionId: input.sessionId,
-          checkpointId: input.checkpointId,
-          orgId: ctx.orgId,
-          userId: ctx.auth.userId,
-        }),
-      });
+      const res = await fetch(
+        `${ORCHESTRATOR_URL}/checkpoints/${input.checkpointId}/respond`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            action: "approve",
+            userId: ctx.auth.userId,
+          }),
+        }
+      );
 
       if (!res.ok) {
         logger.error(
@@ -557,17 +597,18 @@ export const sessionsRouter = router({
     .mutation(async ({ input, ctx }) => {
       await verifySessionAccess(ctx.db, input.sessionId, ctx.orgId);
 
-      const res = await fetch(`${ORCHESTRATOR_URL}/sessions/reject-plan`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          sessionId: input.sessionId,
-          checkpointId: input.checkpointId,
-          orgId: ctx.orgId,
-          userId: ctx.auth.userId,
-          reason: input.reason ?? null,
-        }),
-      });
+      const res = await fetch(
+        `${ORCHESTRATOR_URL}/checkpoints/${input.checkpointId}/respond`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            action: "reject",
+            message: input.reason ?? null,
+            userId: ctx.auth.userId,
+          }),
+        }
+      );
 
       if (!res.ok) {
         logger.error(
@@ -626,17 +667,18 @@ export const sessionsRouter = router({
     .mutation(async ({ input, ctx }) => {
       await verifySessionAccess(ctx.db, input.sessionId, ctx.orgId);
 
-      const res = await fetch(`${ORCHESTRATOR_URL}/sessions/modify-plan`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          sessionId: input.sessionId,
-          checkpointId: input.checkpointId,
-          orgId: ctx.orgId,
-          userId: ctx.auth.userId,
-          steps: input.steps,
-        }),
-      });
+      const res = await fetch(
+        `${ORCHESTRATOR_URL}/checkpoints/${input.checkpointId}/respond`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            action: "modify",
+            data: { steps: input.steps },
+            userId: ctx.auth.userId,
+          }),
+        }
+      );
 
       if (!res.ok) {
         logger.error(
@@ -697,15 +739,14 @@ export const sessionsRouter = router({
         });
       }
 
-      const res = await fetch(`${ORCHESTRATOR_URL}/sessions/takeover`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          sessionId: input.sessionId,
-          orgId: ctx.orgId,
-          userId: ctx.auth.userId,
-        }),
-      });
+      const res = await fetch(
+        `${ORCHESTRATOR_URL}/sessions/${input.sessionId}/takeover`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ userId: ctx.auth.userId }),
+        }
+      );
 
       if (!res.ok) {
         logger.error(
@@ -859,15 +900,17 @@ export const sessionsRouter = router({
     .mutation(async ({ input, ctx }) => {
       await verifySessionAccess(ctx.db, input.sessionId, ctx.orgId);
 
-      const res = await fetch(`${ORCHESTRATOR_URL}/sessions/release`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          sessionId: input.sessionId,
-          orgId: ctx.orgId,
-          userId: ctx.auth.userId,
-        }),
-      });
+      const res = await fetch(
+        `${ORCHESTRATOR_URL}/sessions/${input.sessionId}/release`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            userId: ctx.auth.userId,
+            context: undefined,
+          }),
+        }
+      );
 
       if (!res.ok) {
         logger.error(

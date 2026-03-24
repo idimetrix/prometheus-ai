@@ -46,6 +46,24 @@ export const billingRouter = router({
   }),
 
   // ---------------------------------------------------------------------------
+  // All available plans
+  // ---------------------------------------------------------------------------
+  getPlans: protectedProcedure.query(() => {
+    return {
+      plans: Object.entries(PRICING_TIERS).map(([slug, tier]) => ({
+        slug,
+        name: tier.name,
+        price: tier.price,
+        creditsIncluded: tier.creditsIncluded,
+        maxParallelAgents: tier.maxParallelAgents,
+        maxTasksPerDay: tier.maxTasksPerDay,
+        features: tier.features,
+        selfService: !!tier.stripePriceId,
+      })),
+    };
+  }),
+
+  // ---------------------------------------------------------------------------
   // Plan info
   // ---------------------------------------------------------------------------
   getPlan: protectedProcedure.query(async ({ ctx }) => {
