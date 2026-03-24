@@ -1,6 +1,7 @@
 "use client";
 
-import { use, useEffect, useRef, useState } from "react";
+import { MarkdownRenderer } from "@prometheus/ui";
+import { use, useCallback, useEffect, useRef, useState } from "react";
 import { SessionControls } from "@/components/session/session-controls";
 import { useSessionStream } from "@/hooks/use-session-stream";
 import { trpc } from "@/lib/trpc";
@@ -376,6 +377,211 @@ function CodeDiffPanel() {
   );
 }
 
+// ── Chat Panel ─────────────────────────────────────────────────
+
+interface ChatMessage {
+  content: string;
+  id: string;
+  role: "user" | "agent" | "system";
+  streaming?: boolean;
+  timestamp: string;
+}
+
+function ChatPanel({
+  disabled,
+  onSend,
+}: {
+  disabled?: boolean;
+  onSend: (content: string) => void;
+  sessionId: string;
+}) {
+  const { events, reasoning } = useSessionStore();
+  const [input, setInput] = useState("");
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
+
+  // Derive chat messages from session events and terminal output
+  const messages: ChatMessage[] = [];
+
+  for (const event of events) {
+    if (event.type === "agent_output" && event.data.content) {
+      messages.push({
+        id: event.id,
+        role: "agent",
+        content: String(event.data.content),
+        timestamp: event.timestamp,
+      });
+    } else if (event.type === "task_status" && event.data.status) {
+      messages.push({
+        id: event.id,
+        role: "system",
+        content: `Status changed to: ${String(event.data.status)}${event.data.message ? ` — ${String(event.data.message)}` : ""}`,
+        timestamp: event.timestamp,
+      });
+    } else if (event.type === "error" && event.data.message) {
+      messages.push({
+        id: event.id,
+        role: "system",
+        content: `Error: ${String(event.data.message)}`,
+        timestamp: event.timestamp,
+      });
+    }
+  }
+
+  // Auto-scroll on new messages
+  useEffect(() => {
+    if (scrollRef.current) {
+      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    }
+  });
+
+  const handleSend = useCallback(() => {
+    const trimmed = input.trim();
+    if (!trimmed || disabled) {
+      return;
+    }
+    onSend(trimmed);
+    setInput("");
+    inputRef.current?.focus();
+  }, [input, disabled, onSend]);
+
+  const handleKeyDown = useCallback(
+    (e: React.KeyboardEvent) => {
+      if (e.key === "Enter" && !e.shiftKey) {
+        e.preventDefault();
+        handleSend();
+      }
+    },
+    [handleSend]
+  );
+
+  const ROLE_STYLES: Record<string, string> = {
+    user: "ml-8 border-violet-500/20 bg-violet-500/10",
+    agent: "mr-8 border-zinc-800 bg-zinc-900/50",
+    system: "border-blue-500/20 bg-blue-500/5",
+  };
+
+  const ROLE_BADGES: Record<string, string> = {
+    user: "bg-violet-500/20 text-violet-300",
+    agent: "bg-green-500/20 text-green-300",
+    system: "bg-blue-500/20 text-blue-300",
+  };
+
+  return (
+    <div className="flex h-full flex-col rounded-xl border border-zinc-800 bg-zinc-900/50">
+      {/* Header */}
+      <div className="flex items-center gap-2 border-zinc-800 border-b px-3 py-2">
+        <svg
+          aria-hidden="true"
+          className="h-3.5 w-3.5 text-zinc-500"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth={1.5}
+          viewBox="0 0 24 24"
+        >
+          <path
+            d="M8.625 12a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Zm0 0H8.25m4.125 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Zm0 0H12m4.125 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Zm0 0h-.375M21 12c0 4.556-4.03 8.25-9 8.25a9.764 9.764 0 0 1-2.555-.337A5.972 5.972 0 0 1 5.41 20.97a5.969 5.969 0 0 1-.474-.065 4.48 4.48 0 0 0 .978-2.025c.09-.457-.133-.901-.467-1.226C3.93 16.178 3 14.189 3 12c0-4.556 4.03-8.25 9-8.25s9 3.694 9 8.25Z"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+        </svg>
+        <span className="font-medium text-xs text-zinc-400">Chat</span>
+        <span className="ml-auto rounded bg-zinc-800 px-1.5 py-0.5 text-[10px] text-zinc-500">
+          {messages.length} messages
+        </span>
+      </div>
+
+      {/* Messages */}
+      <div className="flex-1 overflow-auto p-3" ref={scrollRef}>
+        {messages.length === 0 ? (
+          <div className="flex h-full flex-col items-center justify-center gap-2 text-xs text-zinc-600">
+            <span>Waiting for agent output...</span>
+            {reasoning.length > 0 && (
+              <div className="max-w-full rounded-lg border border-violet-500/20 bg-violet-500/5 px-3 py-2 text-center text-violet-400 italic">
+                {reasoning.at(-1)}
+              </div>
+            )}
+          </div>
+        ) : (
+          <div className="space-y-3">
+            {messages.map((msg) => (
+              <div
+                className={`rounded-lg border p-3 ${ROLE_STYLES[msg.role] ?? ROLE_STYLES.agent}`}
+                key={msg.id}
+              >
+                <div className="mb-1 flex items-center gap-2">
+                  <span
+                    className={`rounded-full px-2 py-0.5 font-medium text-[10px] ${ROLE_BADGES[msg.role] ?? ""}`}
+                  >
+                    {msg.role}
+                  </span>
+                  <span className="ml-auto text-[10px] text-zinc-600">
+                    {new Date(msg.timestamp).toLocaleTimeString([], {
+                      hour: "2-digit",
+                      minute: "2-digit",
+                    })}
+                  </span>
+                </div>
+                <div className="mt-1">
+                  {msg.role === "agent" ? (
+                    <MarkdownRenderer
+                      className="text-xs"
+                      content={msg.content}
+                    />
+                  ) : (
+                    <div
+                      className={`text-xs leading-relaxed ${msg.role === "system" ? "text-blue-300" : "text-zinc-300"}`}
+                    >
+                      {msg.content}
+                    </div>
+                  )}
+                </div>
+                {msg.streaming && (
+                  <span className="mt-1 inline-flex items-center gap-1">
+                    <span className="inline-block h-1.5 w-1.5 animate-bounce rounded-full bg-violet-400" />
+                    <span
+                      className="inline-block h-1.5 w-1.5 animate-bounce rounded-full bg-violet-400"
+                      style={{ animationDelay: "0.15s" }}
+                    />
+                    <span
+                      className="inline-block h-1.5 w-1.5 animate-bounce rounded-full bg-violet-400"
+                      style={{ animationDelay: "0.3s" }}
+                    />
+                  </span>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Input area */}
+      <div className="border-zinc-800 border-t p-3">
+        <div className="flex gap-2">
+          <textarea
+            className="flex-1 resize-none rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-white placeholder-zinc-500 focus:border-violet-500 focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
+            disabled={disabled}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={handleKeyDown}
+            placeholder="Message the agent... (Shift+Enter for newline)"
+            ref={inputRef}
+            rows={2}
+            value={input}
+          />
+          <button
+            className="shrink-0 self-end rounded-lg bg-violet-600 px-4 py-2 font-medium text-sm text-white hover:bg-violet-500 disabled:cursor-not-allowed disabled:opacity-40"
+            disabled={!input.trim() || disabled}
+            onClick={handleSend}
+            type="button"
+          >
+            Send
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Main Session Page ───────────────────────────────────────────
 
 export default function SessionPage({
@@ -395,10 +601,29 @@ export default function SessionPage({
   const resumeMutation = trpc.sessions.resume.useMutation();
   const cancelMutation = trpc.sessions.cancel.useMutation();
 
+  const sendMessageMutation = trpc.sessions.sendMessage.useMutation();
+
   const session = sessionQuery.data;
   const status = session?.status ?? sessionStatus ?? "loading";
 
+  const isEnded =
+    status === "completed" || status === "cancelled" || status === "failed";
+
   const [showCancelConfirm, setShowCancelConfirm] = useState(false);
+
+  const handleSendMessage = useCallback(
+    async (content: string) => {
+      try {
+        await sendMessageMutation.mutateAsync({
+          sessionId,
+          content,
+        });
+      } catch {
+        // Mutation errors are surfaced by tRPC
+      }
+    },
+    [sessionId, sendMessageMutation]
+  );
 
   return (
     <div className="flex h-[calc(100vh-theme(spacing.14)-theme(spacing.12))] flex-col gap-3">
@@ -432,19 +657,24 @@ export default function SessionPage({
         </div>
       </div>
 
-      {/* 4-panel layout */}
-      <div className="grid min-h-0 flex-1 grid-cols-2 grid-rows-2 gap-3">
-        {/* Top-left: File tree */}
-        <FileTreePanel />
+      {/* Main layout: Chat (left) + Monitoring Panels (right) */}
+      <div className="flex min-h-0 flex-1 gap-3">
+        {/* Left: Chat panel */}
+        <div className="flex w-1/2 min-w-0 flex-col lg:w-[45%]">
+          <ChatPanel
+            disabled={isEnded}
+            onSend={handleSendMessage}
+            sessionId={sessionId}
+          />
+        </div>
 
-        {/* Top-right: Plan */}
-        <PlanPanel />
-
-        {/* Bottom-left: Terminal */}
-        <TerminalPanel />
-
-        {/* Bottom-right: Code diff */}
-        <CodeDiffPanel />
+        {/* Right: Monitoring panels (2x2 grid) */}
+        <div className="grid w-1/2 min-w-0 grid-cols-2 grid-rows-2 gap-3 lg:w-[55%]">
+          <FileTreePanel />
+          <PlanPanel />
+          <TerminalPanel />
+          <CodeDiffPanel />
+        </div>
       </div>
 
       {/* Control bar (sticky bottom) */}
