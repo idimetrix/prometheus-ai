@@ -317,7 +317,13 @@ export async function handleGitHubWebhook(c: Context): Promise<Response> {
   }
 
   const event = c.req.header("x-github-event") ?? "";
-  const payload = JSON.parse(rawBody) as Record<string, unknown>;
+  let payload: Record<string, unknown>;
+  try {
+    payload = JSON.parse(rawBody) as Record<string, unknown>;
+  } catch {
+    logger.warn("Invalid JSON in GitHub webhook body");
+    return c.json({ error: "Invalid JSON" }, 400);
+  }
 
   try {
     switch (event) {

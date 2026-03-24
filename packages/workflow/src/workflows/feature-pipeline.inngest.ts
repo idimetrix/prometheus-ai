@@ -194,7 +194,11 @@ export const featurePipelineWorkflow: ReturnType<
         throw new Error(`Task analysis failed: ${result.error ?? "unknown"}`);
       }
 
-      return JSON.parse(result.output) as TaskAnalysisResult;
+      try {
+        return JSON.parse(result.output) as TaskAnalysisResult;
+      } catch {
+        throw new Error("Failed to parse task analysis output as JSON");
+      }
     });
 
     await step.sendEvent("analysis-completed", {
@@ -232,7 +236,11 @@ export const featurePipelineWorkflow: ReturnType<
         );
       }
 
-      return JSON.parse(result.output) as CompositionResult;
+      try {
+        return JSON.parse(result.output) as CompositionResult;
+      } catch {
+        throw new Error("Failed to parse composition output as JSON");
+      }
     });
 
     await step.sendEvent("composition-completed", {

@@ -284,7 +284,13 @@ slackWebhookApp.post("/", async (c) => {
   const signature = c.req.header("x-slack-signature") ?? "";
 
   // Verify signature (skip for url_verification during initial setup)
-  const body = JSON.parse(rawBody) as SlackEventPayload;
+  let body: SlackEventPayload;
+  try {
+    body = JSON.parse(rawBody) as SlackEventPayload;
+  } catch {
+    logger.warn("Invalid JSON in Slack webhook body");
+    return c.json({ error: "Invalid JSON" }, 400);
+  }
 
   if (
     body.type !== "url_verification" &&

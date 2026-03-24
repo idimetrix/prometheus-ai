@@ -257,10 +257,16 @@ clerkWebhookApp.post("/", async (c) => {
     return c.json({ error: "Invalid signature" }, 401);
   }
 
-  const body = JSON.parse(rawBody) as {
-    type: string;
-    data: Record<string, unknown>;
-  };
+  let body: { type: string; data: Record<string, unknown> };
+  try {
+    body = JSON.parse(rawBody) as {
+      type: string;
+      data: Record<string, unknown>;
+    };
+  } catch {
+    logger.warn("Invalid JSON in Clerk webhook body");
+    return c.json({ error: "Invalid JSON" }, 400);
+  }
   const eventType = body.type;
 
   // Idempotency: use svix-id as event identifier

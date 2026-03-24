@@ -152,11 +152,15 @@ export class ClaudeAgentProvider {
         break;
       }
 
-      const toolCalls = choice.message.tool_calls.map((tc) => ({
-        id: tc.id,
-        name: tc.function.name,
-        input: JSON.parse(tc.function.arguments) as Record<string, unknown>,
-      }));
+      const toolCalls = choice.message.tool_calls.map((tc) => {
+        let input: Record<string, unknown>;
+        try {
+          input = JSON.parse(tc.function.arguments) as Record<string, unknown>;
+        } catch {
+          input = { raw: tc.function.arguments };
+        }
+        return { id: tc.id, name: tc.function.name, input };
+      });
 
       messages.push({
         role: "assistant",

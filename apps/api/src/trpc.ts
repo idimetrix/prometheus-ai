@@ -71,7 +71,10 @@ export const protectedProcedure = t.procedure
   .use(sanitizeErrors)
   .use(async ({ ctx, next }) => {
     if (!ctx.auth) {
-      throw new TRPCError({ code: "UNAUTHORIZED" });
+      throw new TRPCError({
+        code: "UNAUTHORIZED",
+        message: "Authentication required",
+      });
     }
     if (!ctx.auth.orgId) {
       throw new TRPCError({
@@ -98,7 +101,10 @@ export const orgAdminProcedure = t.procedure
   .use(sanitizeErrors)
   .use(async ({ ctx, next }) => {
     if (!ctx.auth) {
-      throw new TRPCError({ code: "UNAUTHORIZED" });
+      throw new TRPCError({
+        code: "UNAUTHORIZED",
+        message: "Authentication required",
+      });
     }
     if (!ctx.auth.orgId) {
       throw new TRPCError({
@@ -127,7 +133,10 @@ export const orgOwnerProcedure = t.procedure
   .use(sanitizeErrors)
   .use(async ({ ctx, next }) => {
     if (!ctx.auth) {
-      throw new TRPCError({ code: "UNAUTHORIZED" });
+      throw new TRPCError({
+        code: "UNAUTHORIZED",
+        message: "Authentication required",
+      });
     }
     if (!ctx.auth.orgId) {
       throw new TRPCError({

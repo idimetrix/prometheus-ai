@@ -110,8 +110,12 @@ export class RateLimitManager {
       const members = (tokenResults?.[1]?.[1] as string[]) ?? [];
       let totalTokens = 0;
       for (const member of members) {
-        const parsed = JSON.parse(member);
-        totalTokens += parsed.tokens ?? 0;
+        try {
+          const parsed = JSON.parse(member);
+          totalTokens += parsed.tokens ?? 0;
+        } catch {
+          // skip malformed entries
+        }
       }
 
       if (totalTokens >= limits.maxTokens) {

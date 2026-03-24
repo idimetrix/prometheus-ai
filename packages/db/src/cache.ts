@@ -145,8 +145,13 @@ export async function getCached<T>(
   // L1 lookup
   const l1Hit = l1.get(cacheKey);
   if (l1Hit !== null) {
-    logger.debug({ key: cacheKey }, "L1 cache hit");
-    return JSON.parse(l1Hit) as T;
+    try {
+      logger.debug({ key: cacheKey }, "L1 cache hit");
+      return JSON.parse(l1Hit) as T;
+    } catch {
+      l1.delete(cacheKey);
+      logger.debug({ key: cacheKey }, "L1 cache entry corrupted, evicted");
+    }
   }
 
   // L2 lookup (Redis)

@@ -50,7 +50,7 @@ interface GitHubWebhookPayload {
     user: { login: string };
   };
   ref?: string;
-  repository: {
+  repository?: {
     full_name: string;
     clone_url: string;
   };
@@ -133,7 +133,13 @@ export async function handleGitHubAppWebhook(c: Context): Promise<Response> {
     return c.json({ error: "Invalid signature" }, 401);
   }
 
-  const payload = JSON.parse(rawBody) as GitHubWebhookPayload;
+  let payload: GitHubWebhookPayload;
+  try {
+    payload = JSON.parse(rawBody) as GitHubWebhookPayload;
+  } catch {
+    logger.warn("Invalid JSON in GitHub App webhook body");
+    return c.json({ error: "Invalid JSON" }, 400);
+  }
   const event = c.req.header("X-GitHub-Event");
   const deliveryId = c.req.header("X-GitHub-Delivery") ?? `gh_${Date.now()}`;
 
@@ -147,7 +153,7 @@ export async function handleGitHubAppWebhook(c: Context): Promise<Response> {
     {
       event,
       action: payload.action,
-      repo: payload.repository.full_name,
+      repo: payload.repository?.full_name ?? "unknown",
       deliveryId,
     },
     "GitHub App webhook received"
@@ -194,6 +200,11 @@ async function handleIssueEvent(payload: GitHubWebhookPayload): Promise<void> {
 
   const hasAutoLabel = issue.labels.some((l) => l.name === AUTO_LABEL);
   if (!hasAutoLabel) {
+    return;
+  }
+
+  if (!payload.repository) {
+    logger.warn("Issue event missing repository field");
     return;
   }
 
@@ -246,7 +257,7 @@ async function handlePREvent(payload: GitHubWebhookPayload): Promise<void> {
   }
 
   const pr = payload.pull_request;
-  if (!pr) {
+  if (!(pr && payload.repository)) {
     return;
   }
 
@@ -293,7 +304,7 @@ async function handleCommentEvent(
   payload: GitHubWebhookPayload
 ): Promise<void> {
   const comment = payload.comment;
-  if (!comment?.body.includes(BOT_MENTION)) {
+  if (!(comment?.body.includes(BOT_MENTION) && payload.repository)) {
     return;
   }
 
@@ -342,6 +353,9 @@ async function handleCommentEvent(
 }
 
 async function handlePushEvent(payload: GitHubWebhookPayload): Promise<void> {
+  if (!payload.repository) {
+    return;
+  }
   const project = await findProjectByRepo(payload.repository.full_name);
   if (!project) {
     return;

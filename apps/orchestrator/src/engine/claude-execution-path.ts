@@ -94,14 +94,18 @@ export class ClaudeExecutionPath {
     const choice = data.choices[0];
     const toolCalls =
       choice?.message.tool_calls?.map(
-        (tc: {
-          id: string;
-          function: { name: string; arguments: string };
-        }) => ({
-          id: tc.id,
-          name: tc.function.name,
-          input: JSON.parse(tc.function.arguments) as Record<string, unknown>,
-        })
+        (tc: { id: string; function: { name: string; arguments: string } }) => {
+          let input: Record<string, unknown>;
+          try {
+            input = JSON.parse(tc.function.arguments) as Record<
+              string,
+              unknown
+            >;
+          } catch {
+            input = { raw: tc.function.arguments };
+          }
+          return { id: tc.id, name: tc.function.name, input };
+        }
       ) ?? [];
 
     return {

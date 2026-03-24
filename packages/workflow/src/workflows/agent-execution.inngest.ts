@@ -108,7 +108,7 @@ function parsePlanResponse(
   if (!jsonMatch) {
     return null;
   }
-  const parsed = JSON.parse(jsonMatch[0]) as Array<{
+  let parsed: Array<{
     id?: string;
     title: string;
     description: string;
@@ -116,6 +116,11 @@ function parsePlanResponse(
     estimatedTokens?: number;
     dependencies?: string[];
   }>;
+  try {
+    parsed = JSON.parse(jsonMatch[0]);
+  } catch {
+    return null;
+  }
   return parsed.map((s, i) => ({
     id: s.id ?? `${taskId}-step-${i + 1}`,
     title: s.title,

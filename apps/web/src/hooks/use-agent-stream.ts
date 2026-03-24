@@ -45,24 +45,32 @@ export function useAgentStream(options: UseAgentStreamOptions) {
     };
 
     es.addEventListener("token", (e) => {
-      const data = JSON.parse(e.data) as { content: string };
-      setTokens((prev) => [
-        ...prev,
-        { content: data.content, timestamp: Date.now() },
-      ]);
+      try {
+        const data = JSON.parse(e.data) as { content: string };
+        setTokens((prev) => [
+          ...prev,
+          { content: data.content, timestamp: Date.now() },
+        ]);
+      } catch {
+        /* ignore parse errors */
+      }
     });
 
     es.addEventListener("tool_call", (e) => {
-      const data = JSON.parse(e.data) as ToolCallEvent;
-      setToolCalls((prev) => {
-        const idx = prev.findIndex((tc) => tc.id === data.id);
-        if (idx >= 0) {
-          const updated = [...prev];
-          updated[idx] = data;
-          return updated;
-        }
-        return [...prev, data];
-      });
+      try {
+        const data = JSON.parse(e.data) as ToolCallEvent;
+        setToolCalls((prev) => {
+          const idx = prev.findIndex((tc) => tc.id === data.id);
+          if (idx >= 0) {
+            const updated = [...prev];
+            updated[idx] = data;
+            return updated;
+          }
+          return [...prev, data];
+        });
+      } catch {
+        /* ignore parse errors */
+      }
     });
 
     es.addEventListener("done", () => {

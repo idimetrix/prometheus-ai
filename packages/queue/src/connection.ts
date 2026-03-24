@@ -20,10 +20,16 @@ function createClusterConnection(): Cluster {
     },
     scaleReads: "slave",
     natMap: process.env.REDIS_CLUSTER_NAT_MAP
-      ? (JSON.parse(process.env.REDIS_CLUSTER_NAT_MAP) as Record<
-          string,
-          { host: string; port: number }
-        >)
+      ? (() => {
+          try {
+            return JSON.parse(process.env.REDIS_CLUSTER_NAT_MAP) as Record<
+              string,
+              { host: string; port: number }
+            >;
+          } catch {
+            throw new Error("REDIS_CLUSTER_NAT_MAP contains invalid JSON");
+          }
+        })()
       : undefined,
   });
 }
