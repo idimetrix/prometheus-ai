@@ -74,6 +74,8 @@ export class DockerProvider implements SandboxProvider {
       `/tmp:rw,noexec,nosuid,size=${Math.min(512, diskMb)}m`,
       "--tmpfs",
       "/home/sandbox:rw,nosuid,size=256m",
+      "--tmpfs",
+      `/workspace:rw,nosuid,size=${diskMb}m`,
       "--cap-drop",
       "ALL",
       "--cap-add",
