@@ -149,8 +149,13 @@ app.post("/route", async (c) => {
       }
     }
 
+    // When tools are present, use non-streaming path since SSE streaming
+    // doesn't support tool_call deltas. The orchestrator's callModelRouter
+    // already handles JSON responses alongside SSE.
+    const hasTools = Array.isArray(options.tools) && options.tools.length > 0;
+
     // Streaming response (SSE format, compatible with OpenAI streaming)
-    if (options.stream) {
+    if (options.stream && !hasTools) {
       return streamSSE(c, async (sseStream) => {
         try {
           const streamResult = await routerService.routeStream({

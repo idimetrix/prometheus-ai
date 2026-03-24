@@ -8,7 +8,7 @@ import {
 import { createLogger } from "@prometheus/logger";
 import { withSpan } from "@prometheus/telemetry";
 import { generateId } from "@prometheus/utils";
-import { generateText, streamText } from "ai";
+import { generateText, jsonSchema, streamText, type Tool } from "ai";
 import { ResponseCache } from "./cache";
 import { type CascadeMessage, ModelCascade } from "./model-cascade";
 import { ModelScorer } from "./model-scorer";
@@ -200,6 +200,44 @@ interface CompletionResponse {
     completion_tokens: number;
     total_tokens: number;
   };
+}
+
+/**
+ * Convert OpenAI-format tool definitions to AI SDK 6 tool objects.
+ * The orchestrator sends tools as { type: "function", function: { name, description, parameters } }.
+ * AI SDK 6 expects Record<string, Tool> with { description, parameters: jsonSchema(...) }.
+ */
+function convertOpenAIToolsToAISDK(
+  tools: unknown[] | undefined
+): Record<string, Tool> | undefined {
+  if (!tools || tools.length === 0) {
+    return undefined;
+  }
+
+  const converted: Record<string, Tool> = {};
+  for (const t of tools) {
+    const tool = t as {
+      type?: string;
+      function?: {
+        name: string;
+        description?: string;
+        parameters?: Record<string, unknown>;
+      };
+    };
+    if (tool.type === "function" && tool.function?.name) {
+      converted[tool.function.name] = {
+        description: tool.function.description ?? "",
+        inputSchema: jsonSchema(
+          (tool.function.parameters ?? {
+            type: "object",
+            properties: {},
+          }) as Parameters<typeof jsonSchema>[0]
+        ),
+      };
+    }
+  }
+
+  return Object.keys(converted).length > 0 ? converted : undefined;
 }
 
 /**
@@ -780,6 +818,8 @@ export class ModelRouterService {
       const temperature =
         request.options?.temperature ?? SLOT_TEMPERATURES[request.slot] ?? 0.1;
 
+      const aiSdkTools = convertOpenAIToolsToAISDK(request.options?.tools);
+
       const response = await generateText({
         model,
         messages: request.messages.map((m) => ({
@@ -788,6 +828,7 @@ export class ModelRouterService {
         })),
         temperature,
         maxOutputTokens: request.options?.maxTokens ?? 4096,
+        ...(aiSdkTools ? { tools: aiSdkTools, maxSteps: 1 } : {}),
       });
 
       const promptTokens = response.usage?.inputTokens ?? 0;
@@ -835,9 +876,20 @@ export class ModelRouterService {
         /* fire-and-forget */
       });
 
-      // Extract tool calls from AI SDK response if present
+      // Extract tool calls from AI SDK response and convert to OpenAI format
+      // AI SDK 6 uses { toolCallId, toolName, input } while OpenAI uses { id, function: { name, arguments } }
       const toolCalls = response.toolCalls?.length
-        ? (response.toolCalls as unknown[])
+        ? response.toolCalls.map((tc) => ({
+            id: tc.toolCallId,
+            type: "function" as const,
+            function: {
+              name: tc.toolName,
+              arguments:
+                typeof tc.input === "string"
+                  ? tc.input
+                  : JSON.stringify(tc.input),
+            },
+          }))
         : undefined;
 
       return {

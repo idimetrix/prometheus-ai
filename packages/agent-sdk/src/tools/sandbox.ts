@@ -32,14 +32,12 @@ async function execRemoteSandbox(
   timeoutMs: number
 ): Promise<ToolResult> {
   try {
-    const response = await fetch(`${baseUrl}/api/exec`, {
+    const response = await fetch(`${baseUrl}/sandbox/${ctx.sandboxId}/exec`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        sandboxId: ctx.sandboxId,
         command,
-        workDir: ctx.workDir,
-        timeoutMs,
+        timeout: timeoutMs,
       }),
       signal: AbortSignal.timeout(timeoutMs + 5000),
     });

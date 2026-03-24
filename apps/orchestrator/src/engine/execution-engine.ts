@@ -1298,14 +1298,25 @@ function buildAgentMessages(agent: {
     role: string;
     content: string | null;
     toolCallId?: string;
-    toolCalls?: unknown[];
+    toolCalls?: ToolCall[];
   }>;
 }): Record<string, unknown>[] {
   return agent.getMessages().map((m) => ({
     role: m.role,
     content: m.content,
     ...(m.toolCallId ? { tool_call_id: m.toolCallId } : {}),
-    ...(m.toolCalls ? { tool_calls: m.toolCalls } : {}),
+    ...(m.toolCalls && m.toolCalls.length > 0
+      ? {
+          tool_calls: m.toolCalls.map((tc) => ({
+            id: tc.id,
+            type: "function",
+            function: {
+              name: tc.name,
+              arguments: tc.arguments,
+            },
+          })),
+        }
+      : {}),
   }));
 }
 
