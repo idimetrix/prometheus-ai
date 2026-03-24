@@ -125,7 +125,10 @@ app.get("/health", async (c) => {
     await db.execute(sql`SELECT 1`);
     checks.db = true;
   } catch (err) {
-    console.error("[health] DB check failed:", (err as Error).message);
+    logger.error(
+      { error: (err as Error).message },
+      "Health check: DB connectivity failed"
+    );
     checks.db = false;
   }
 

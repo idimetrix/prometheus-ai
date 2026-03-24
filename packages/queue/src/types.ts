@@ -195,11 +195,20 @@ export interface PreviewDeploymentData {
   sessionId?: string;
 }
 
+/** credit-reconciliation: Verify credit balance integrity */
+export interface ReconciliationData {
+  /** When provided, only reconcile this org */
+  orgId?: string;
+  /** "scheduled" for cron jobs, "manual" for admin-triggered */
+  trigger: "scheduled" | "manual";
+}
+
 // ========== Job Name Registry ==========
 export interface JobDataMap {
   "agent-task": AgentTaskData;
   "cleanup-sandbox": CleanupSandboxData;
   "credit-grant": CreditGrantData;
+  "credit-reconciliation": ReconciliationData;
   "generate-embeddings": GenerateEmbeddingsData;
   "index-project": IndexProjectData;
   "preview-deployment": PreviewDeploymentData;

@@ -172,4 +172,85 @@ export default defineWorkspace([
       },
     },
   },
+  {
+    test: {
+      name: "apps/socket-server",
+      root: "apps/socket-server",
+      coverage: {
+        thresholds: { lines: 80, branches: 70, functions: 80 },
+      },
+    },
+  },
+  {
+    test: {
+      name: "packages/db",
+      root: "packages/db",
+      coverage: {
+        thresholds: { lines: 80, branches: 70, functions: 80 },
+      },
+    },
+  },
+  {
+    test: {
+      name: "packages/telemetry",
+      root: "packages/telemetry",
+      coverage: {
+        thresholds: { lines: 80, branches: 70, functions: 80 },
+      },
+    },
+  },
+  {
+    test: {
+      name: "packages/workflow",
+      root: "packages/workflow",
+      coverage: {
+        thresholds: { lines: 80, branches: 70, functions: 80 },
+      },
+    },
+  },
+  {
+    test: {
+      name: "packages/code-intelligence",
+      root: "packages/code-intelligence",
+      coverage: {
+        thresholds: { lines: 80, branches: 70, functions: 80 },
+      },
+    },
+  },
+  {
+    test: {
+      name: "packages/plugins",
+      root: "packages/plugins",
+      coverage: {
+        thresholds: { lines: 80, branches: 70, functions: 80 },
+      },
+    },
+  },
+  {
+    test: {
+      name: "packages/notifications",
+      root: "packages/notifications",
+      coverage: {
+        thresholds: { lines: 80, branches: 70, functions: 80 },
+      },
+    },
+  },
+  {
+    test: {
+      name: "packages/collaboration",
+      root: "packages/collaboration",
+      coverage: {
+        thresholds: { lines: 80, branches: 70, functions: 80 },
+      },
+    },
+  },
+  {
+    test: {
+      name: "packages/email",
+      root: "packages/email",
+      coverage: {
+        thresholds: { lines: 80, branches: 70, functions: 80 },
+      },
+    },
+  },
 ]);

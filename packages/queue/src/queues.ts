@@ -9,6 +9,7 @@ import {
   type IndexProjectData,
   JobPriority,
   type PreviewDeploymentData,
+  type ReconciliationData,
   RetryPolicies,
   type SendNotificationData,
   type UsageRollupData,
@@ -150,14 +151,17 @@ export const creditGrantQueue = new Queue<CreditGrantData>("credit-grant", {
 });
 
 /** Credit reconciliation queue */
-export const reconciliationQueue = new Queue("credit-reconciliation", {
-  connection: redis,
-  defaultJobOptions: buildJobOptions(RetryPolicies.standard, {
-    removeOnComplete: 500,
-    removeOnFail: 1000,
-    priority: JobPriority.NORMAL,
-  }),
-});
+export const reconciliationQueue = new Queue<ReconciliationData>(
+  "credit-reconciliation",
+  {
+    connection: redis,
+    defaultJobOptions: buildJobOptions(RetryPolicies.standard, {
+      removeOnComplete: 500,
+      removeOnFail: 1000,
+      priority: JobPriority.NORMAL,
+    }),
+  }
+);
 
 // Re-export the old billingQueue name for backward compat
 export const billingQueue = creditGrantQueue;

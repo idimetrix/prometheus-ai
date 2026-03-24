@@ -71,13 +71,17 @@ function tryDevAuthBypass(token: string): AuthContext | null {
   }
 
   // Format: <userId> or <userId>__<orgId>
-  const [userId, orgId] = payload.split("__");
+  const [rawUserId, rawOrgId] = payload.split("__");
+
+  // Guard against empty strings — fall back to seed defaults
+  const userId = rawUserId || "usr_seed_dev001";
+  const orgId = rawOrgId || "org_seed_dev001";
 
   return {
-    userId: userId ?? "usr_seed_dev001",
-    orgId: orgId ?? "org_seed_dev001",
+    userId,
+    orgId,
     orgRole: "owner",
-    sessionId: `dev-session-${userId ?? "usr_seed_dev001"}`,
+    sessionId: `dev-session-${userId}`,
   };
 }
 
