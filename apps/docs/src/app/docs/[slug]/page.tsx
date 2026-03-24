@@ -59,10 +59,22 @@ export default async function DocPage({ params }: PageProps) {
   );
 }
 
+/** Escape HTML entities to prevent XSS when rendering markdown as HTML */
+function escapeHtml(str: string): string {
+  return str
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
 /** Minimal markdown-to-HTML conversion for headings, paragraphs, code, lists */
 function simpleMarkdownToHtml(md: string): string {
+  // First escape HTML entities in the raw markdown to prevent XSS,
+  // then apply markdown-to-HTML transforms on the escaped content.
   return (
-    md
+    escapeHtml(md)
       // Code blocks
       .replace(
         /```(\w*)\n([\s\S]*?)```/g,
@@ -79,8 +91,22 @@ function simpleMarkdownToHtml(md: string): string {
       .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
       // Italic
       .replace(/\*(.+?)\*/g, "<em>$1</em>")
-      // Links
-      .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2">$1</a>')
+      // Links — only allow http(s) and relative URLs to prevent javascript: XSS
+      .replace(
+        /\[([^\]]+)\]\(([^)]+)\)/g,
+        (_match, text: string, href: string) => {
+          const trimmed = href.trim();
+          if (
+            trimmed.startsWith("http://") ||
+            trimmed.startsWith("https://") ||
+            trimmed.startsWith("/") ||
+            trimmed.startsWith("#")
+          ) {
+            return `<a href="${trimmed}">${text}</a>`;
+          }
+          return text;
+        }
+      )
       // Unordered lists
       .replace(/^- (.+)$/gm, "<li>$1</li>")
       // Ordered lists

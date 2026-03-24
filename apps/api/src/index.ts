@@ -200,6 +200,15 @@ app.route("/webhooks/inbound", inboundWebhookApp);
 // Internal: model usage logging (called by model-router, fire-and-forget)
 // ---------------------------------------------------------------------------
 app.post("/internal/model-usage", async (c) => {
+  // Verify internal shared secret to prevent unauthorized usage logging
+  const internalSecret = process.env.INTERNAL_SERVICE_SECRET;
+  if (internalSecret) {
+    const provided = c.req.header("x-internal-secret");
+    if (provided !== internalSecret) {
+      return c.json({ error: "Unauthorized" }, 401);
+    }
+  }
+
   try {
     const body = await c.req.json();
     if (!(body.orgId && body.modelKey && body.provider && body.slot)) {

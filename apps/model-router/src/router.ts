@@ -1155,9 +1155,16 @@ export class ModelRouterService {
     costUsd: number;
   }): Promise<void> {
     const apiUrl = process.env.API_URL ?? "http://localhost:4000";
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+    };
+    const internalSecret = process.env.INTERNAL_SERVICE_SECRET;
+    if (internalSecret) {
+      headers["x-internal-secret"] = internalSecret;
+    }
     await fetch(`${apiUrl}/internal/model-usage`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers,
       body: JSON.stringify(usage),
       signal: AbortSignal.timeout(5000),
     });
