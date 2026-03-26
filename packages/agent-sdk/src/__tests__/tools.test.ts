@@ -8,6 +8,7 @@ describe("TOOL_REGISTRY", () => {
     expect(TOOL_REGISTRY).toHaveProperty("file_edit");
     expect(TOOL_REGISTRY).toHaveProperty("file_delete");
     expect(TOOL_REGISTRY).toHaveProperty("file_list");
+    expect(TOOL_REGISTRY).toHaveProperty("multi_file_edit");
   });
 
   it("should have terminal tools registered", () => {
@@ -33,6 +34,7 @@ describe("TOOL_REGISTRY", () => {
   it("should have browser tools registered", () => {
     expect(TOOL_REGISTRY).toHaveProperty("browser_open");
     expect(TOOL_REGISTRY).toHaveProperty("browser_screenshot");
+    expect(TOOL_REGISTRY).toHaveProperty("browser_visual_diff");
   });
 
   it("should have agent meta tools registered", () => {
@@ -58,7 +60,7 @@ describe("TOOL_REGISTRY", () => {
   });
 
   it("should have correct total tools", () => {
-    // Original 45 + web_search + web_fetch + doc_search + git_add + git_log + git_merge = 51
-    expect(Object.keys(TOOL_REGISTRY)).toHaveLength(51);
+    // Original 45 + web_search + web_fetch + doc_search + git_add + git_log + git_merge + multi_file_edit + browser_visual_diff = 53
+    expect(Object.keys(TOOL_REGISTRY)).toHaveLength(53);
   });
 });

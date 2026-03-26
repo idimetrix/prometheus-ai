@@ -200,14 +200,14 @@ describe("ModelRouterService", () => {
       expect(configs).toHaveProperty("premium");
     });
 
-    it("default slot uses ollama/qwen2.5-coder:32b as primary", () => {
+    it("default slot uses anthropic/claude-sonnet-4-6 as primary", () => {
       const configs = service.getSlotConfigs();
-      expect(configs.default?.primary).toBe("ollama/qwen2.5-coder:32b");
+      expect(configs.default?.primary).toBe("anthropic/claude-sonnet-4-6");
     });
 
-    it("think slot uses ollama/qwen2.5-coder:32b as primary", () => {
+    it("think slot uses anthropic/claude-sonnet-4-6 as primary", () => {
       const configs = service.getSlotConfigs();
-      expect(configs.think?.primary).toBe("ollama/qwen2.5-coder:32b");
+      expect(configs.think?.primary).toBe("anthropic/claude-sonnet-4-6");
     });
 
     it("premium slot uses claude-opus as primary", () => {
@@ -232,7 +232,7 @@ describe("ModelRouterService", () => {
     };
 
     it("routes to primary model successfully via cascade", async () => {
-      // Cascade routing starts with the cheap tier (qwen2.5-coder:14b)
+      // Cascade routing starts with the cheap tier (claude-sonnet-4-6)
       // for default slot non-streaming requests. The cascade uses
       // generateText via the Vercel AI SDK.
       mockGenerateText.mockResolvedValueOnce({
@@ -246,8 +246,8 @@ describe("ModelRouterService", () => {
       const result = await service.route(baseRequest);
 
       // Cascade routes to cheap tier first for default slot
-      expect(result.model).toBe("ollama/qwen2.5-coder:14b");
-      expect(result.provider).toBe("ollama");
+      expect(result.model).toBe("anthropic/claude-sonnet-4-6");
+      expect(result.provider).toBe("anthropic");
       expect(result.slot).toBe("default");
       expect(result.choices[0]?.message.content).toBe("Hi there");
     });
@@ -285,8 +285,8 @@ describe("ModelRouterService", () => {
 
       const result = await service.route(baseRequest);
 
-      // Cascade escalates to standard tier (qwen2.5-coder:32b)
-      expect(result.model).toBe("ollama/qwen2.5-coder:32b");
+      // Cascade escalates to standard tier (claude-sonnet-4-6)
+      expect(result.model).toBe("anthropic/claude-sonnet-4-6");
       expect(result.routing.wasFallback).toBe(true);
       expect(result.routing.attemptsCount).toBe(1);
     });
@@ -310,8 +310,8 @@ describe("ModelRouterService", () => {
         messages: [{ role: "user", content: "Hello" }],
       });
 
-      // think slot: primary=qwen2.5-coder:32b (rate limited), fallback=qwen2.5:14b
-      expect(result.model).toBe("ollama/qwen2.5:14b");
+      // think slot: primary=claude-sonnet-4-6 (rate limited), fallback=qwen2.5-coder:32b
+      expect(result.model).toBe("ollama/qwen2.5-coder:32b");
       expect(result.routing.wasFallback).toBe(true);
     });
 
@@ -345,12 +345,12 @@ describe("ModelRouterService", () => {
       });
 
       expect(mockRateLimiter.recordRequest).toHaveBeenCalledWith(
-        "ollama",
-        "ollama/qwen2.5-coder:32b"
+        "anthropic",
+        "anthropic/claude-sonnet-4-6"
       );
       expect(mockRateLimiter.recordTokenUsage).toHaveBeenCalledWith(
-        "ollama",
-        "ollama/qwen2.5-coder:32b",
+        "anthropic",
+        "anthropic/claude-sonnet-4-6",
         50,
         25
       );
@@ -395,7 +395,7 @@ describe("ModelRouterService", () => {
       });
 
       // Cascade routes to the cheap tier for default slot
-      expect(result.model).toBe("ollama/qwen2.5-coder:14b");
+      expect(result.model).toBe("anthropic/claude-sonnet-4-6");
     });
 
     it("calculates cost based on model pricing", async () => {
@@ -449,8 +449,8 @@ describe("ModelRouterService", () => {
         messages: [{ role: "user", content: "Hello" }],
       });
 
-      expect(result.routing.primaryModel).toBe("ollama/qwen2.5-coder:32b");
-      expect(result.routing.modelUsed).toBe("ollama/qwen2.5-coder:32b");
+      expect(result.routing.primaryModel).toBe("anthropic/claude-sonnet-4-6");
+      expect(result.routing.modelUsed).toBe("anthropic/claude-sonnet-4-6");
       expect(result.routing.wasFallback).toBe(false);
       expect(result.routing.attemptsCount).toBe(1);
     });
