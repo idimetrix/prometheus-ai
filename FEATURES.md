@@ -20,7 +20,14 @@ We rate our features honestly. Code existing is NOT the same as feature working.
 
 ### Prometheus Reality Check
 
-Almost all Prometheus features are 🔶 (code exists, not production-proven). This is honest — we have extensive code (10 services, 29 packages, 94 DB tables, 377 test files) but **no production deployment yet**. The path from 🔶 to ✅ requires: production deployment, real user validation, and reliability engineering.
+**UPDATE 2026-03-26:** Core pipeline validated locally. Key subsystems moved from 🔶 to 🟡 (partial validation):
+- Agent loop: processes real tasks with Anthropic LLM
+- Sandbox: Docker containers create and execute code
+- Model router: streaming + non-streaming LLM calls work
+- All 8 backend services boot and communicate
+- 77 DB tables, API key auth, tRPC endpoints operational
+
+Remaining 🔶 features need production deployment validation.
 
 **Key fact:** No user has ever typed a prompt into Prometheus and received a working deployed application. Until that happens, every feature is theoretical.
 
