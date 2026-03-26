@@ -1,12 +1,19 @@
 "use client";
 
 import { MarkdownRenderer } from "@prometheus/ui";
-import { use, useCallback, useEffect, useRef, useState } from "react";
+import { use, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
+import { ApprovalGate } from "@/components/session/approval-gate";
 import { SessionControls } from "@/components/session/session-controls";
+import {
+  createDefaultTaskProgress,
+  TaskPhaseProgress,
+  TaskPhaseProgressCompact,
+} from "@/components/session/task-phase-progress";
 import { WorkspaceLayout } from "@/components/workspace/workspace-layout";
 import { useSessionStream } from "@/hooks/use-session-stream";
 import { trpc } from "@/lib/trpc";
+import type { PendingCheckpoint } from "@/stores/session.store";
 import { useSessionStore } from "@/stores/session.store";
 
 // ── FileTree Panel ──────────────────────────────────────────────
@@ -448,13 +455,84 @@ export default function SessionPage({
 }) {
   const { id: sessionId } = use(params);
   const { isConnected } = useSessionStream(sessionId);
-  const { status: sessionStatus } = useSessionStore();
+  const sessionStatus = useSessionStore((s) => s.status);
+  const taskProgress = useSessionStore((s) => s.taskProgress);
+  const confidenceScore = useSessionStore((s) => s.confidenceScore);
+  const creditHistory = useSessionStore((s) => s.creditHistory);
+  const setTaskProgress = useSessionStore((s) => s.setTaskProgress);
 
   const sessionQuery = trpc.sessions.get.useQuery({ sessionId }, { retry: 2 });
   const pauseMutation = trpc.sessions.pause.useMutation();
   const resumeMutation = trpc.sessions.resume.useMutation();
   const cancelMutation = trpc.sessions.cancel.useMutation();
+  const retryMutation = trpc.sessions.retry.useMutation();
   const sendMessageMutation = trpc.sessions.sendMessage.useMutation();
+  const resolveCheckpointMutation =
+    trpc.sessions.resolveCheckpoint.useMutation();
+
+  const pendingCheckpoints = useSessionStore((s) => s.pendingCheckpoints);
+  const addPendingCheckpoint = useSessionStore((s) => s.addPendingCheckpoint);
+  const removePendingCheckpoint = useSessionStore(
+    (s) => s.removePendingCheckpoint
+  );
+  const allEvents = useSessionStore((s) => s.events);
+
+  // Watch for checkpoint events in the event stream and add them to pending
+  // Track events for checkpoint detection
+  useEffect(() => {
+    for (const event of allEvents) {
+      if (event.type === "checkpoint" && event.data.checkpointId) {
+        const ckpt: PendingCheckpoint = {
+          checkpointId: String(event.data.checkpointId),
+          type: String(event.data.type ?? "approval"),
+          title: String(event.data.title ?? "Approval Required"),
+          description: String(event.data.description ?? ""),
+          data: (event.data.data as Record<string, unknown>) ?? {},
+          timeoutMs: Number(event.data.timeoutMs ?? 120_000),
+          createdAt: event.timestamp,
+        };
+        addPendingCheckpoint(ckpt);
+      }
+      if (event.type === "checkpoint_resolved" && event.data.checkpointId) {
+        removePendingCheckpoint(String(event.data.checkpointId));
+      }
+    }
+  }, [allEvents, addPendingCheckpoint, removePendingCheckpoint]);
+
+  const handleCheckpointApprove = useCallback(
+    async (checkpointId: string) => {
+      try {
+        await resolveCheckpointMutation.mutateAsync({
+          sessionId,
+          checkpointId,
+          action: "approve",
+        });
+        removePendingCheckpoint(checkpointId);
+        toast.success("Checkpoint approved");
+      } catch {
+        toast.error("Failed to approve checkpoint");
+      }
+    },
+    [sessionId, resolveCheckpointMutation, removePendingCheckpoint]
+  );
+
+  const handleCheckpointReject = useCallback(
+    async (checkpointId: string, reason: string) => {
+      try {
+        await resolveCheckpointMutation.mutateAsync({
+          sessionId,
+          checkpointId,
+          action: "reject",
+          message: reason || undefined,
+        });
+        removePendingCheckpoint(checkpointId);
+        toast.success("Checkpoint rejected");
+      } catch {
+        toast.error("Failed to reject checkpoint");
+      }
+    },
+    [sessionId, resolveCheckpointMutation, removePendingCheckpoint]
+  );
 
   const session = sessionQuery.data;
   const status = session?.status ?? sessionStatus ?? "loading";
@@ -463,6 +541,35 @@ export default function SessionPage({
     status === "completed" || status === "cancelled" || status === "failed";
 
   const [showCancelConfirm, setShowCancelConfirm] = useState(false);
+
+  // Initialize default task progress when a session becomes active
+  useEffect(() => {
+    if (status === "active" && !taskProgress) {
+      setTaskProgress(createDefaultTaskProgress(sessionId));
+    }
+  }, [status, taskProgress, sessionId, setTaskProgress]);
+
+  // Compute credit totals from history
+  const totalCreditsConsumed = useMemo(
+    () => creditHistory.reduce((sum, entry) => sum + entry.credits, 0),
+    [creditHistory]
+  );
+
+  const estimatedCostUsd = useMemo(
+    () => totalCreditsConsumed * 0.0001,
+    [totalCreditsConsumed]
+  );
+
+  // Pre-compute confidence colors to avoid nested ternaries in JSX
+  let confTextClass = "text-red-400";
+  let confBarClass = "bg-red-500";
+  if (confidenceScore > 0.7) {
+    confTextClass = "text-green-400";
+    confBarClass = "bg-green-500";
+  } else if (confidenceScore >= 0.4) {
+    confTextClass = "text-yellow-400";
+    confBarClass = "bg-yellow-500";
+  }
 
   const handleSendMessage = useCallback(
     async (content: string) => {
@@ -502,10 +609,46 @@ export default function SessionPage({
             {status}
           </span>
         </div>
-        <div className="flex items-center gap-2 text-xs text-zinc-500">
+        <div className="flex items-center gap-3 text-xs text-zinc-500">
+          <TaskPhaseProgressCompact />
           <span>{session?.mode ?? "task"} mode</span>
+          {confidenceScore > 0 && (
+            <span className={`font-mono ${confTextClass}`}>
+              {Math.round(confidenceScore * 100)}% conf
+            </span>
+          )}
+          {totalCreditsConsumed > 0 && (
+            <span className="font-mono text-zinc-500">
+              {totalCreditsConsumed.toLocaleString()} credits
+            </span>
+          )}
         </div>
       </div>
+
+      {/* Task Phase Progress Bar (TM01) */}
+      {!isEnded && (
+        <div className="px-2">
+          <TaskPhaseProgress />
+        </div>
+      )}
+
+      {/* Pending checkpoint approval gates */}
+      {pendingCheckpoints.length > 0 && (
+        <div className="space-y-2 px-2">
+          {pendingCheckpoints.map((ckpt) => (
+            <ApprovalGate
+              action={ckpt.type}
+              checkpointId={ckpt.checkpointId}
+              description={ckpt.description}
+              details={ckpt.data}
+              key={ckpt.checkpointId}
+              onApprove={handleCheckpointApprove}
+              onReject={handleCheckpointReject}
+              riskLevel={ckpt.type === "high_stakes" ? "critical" : "medium"}
+            />
+          ))}
+        </div>
+      )}
 
       {/* Workspace Layout with resizable panels */}
       <div className="min-h-0 flex-1">
@@ -525,15 +668,52 @@ export default function SessionPage({
 
       {/* Control bar (sticky bottom) */}
       <div className="flex items-center justify-between rounded-xl border border-zinc-800 bg-zinc-900/50 px-4 py-2">
-        <div className="flex items-center gap-2">
-          <span
-            className={`h-2 w-2 rounded-full ${
-              isConnected ? "bg-green-500" : "bg-red-500"
-            }`}
-          />
-          <span className="text-xs text-zinc-400">
-            {isConnected ? "Live" : "Disconnected"}
-          </span>
+        <div className="flex items-center gap-4">
+          <div className="flex items-center gap-2">
+            <span
+              className={`h-2 w-2 rounded-full ${
+                isConnected ? "bg-green-500" : "bg-red-500"
+              }`}
+            />
+            <span className="text-xs text-zinc-400">
+              {isConnected ? "Live" : "Disconnected"}
+            </span>
+          </div>
+
+          {/* Credit consumption counter */}
+          {totalCreditsConsumed > 0 && (
+            <div className="flex items-center gap-1.5 text-[10px]">
+              <svg
+                aria-hidden="true"
+                className="h-3 w-3 text-yellow-500"
+                fill="currentColor"
+                viewBox="0 0 20 20"
+              >
+                <path d="M10.75 10.818a2.608 2.608 0 0 1-.873 1.214c-.546.44-1.276.673-2.133.673a4.21 4.21 0 0 1-1.279-.2 2.349 2.349 0 0 1-.96-.609 2.372 2.372 0 0 1-.535-.858A3.2 3.2 0 0 1 4.8 10c0-.668.167-1.241.502-1.72a3.41 3.41 0 0 1 1.316-1.125c.546-.29 1.14-.435 1.782-.435.68 0 1.265.152 1.754.456.49.304.855.71 1.095 1.218.24.509.36 1.07.36 1.684 0 .282-.031.558-.093.827-.062.27-.164.525-.306.766ZM10 18a8 8 0 1 0 0-16 8 8 0 0 0 0 16Z" />
+              </svg>
+              <span className="font-mono text-zinc-400">
+                {totalCreditsConsumed.toLocaleString()} credits
+              </span>
+              <span className="text-zinc-600">
+                (~${estimatedCostUsd.toFixed(4)})
+              </span>
+            </div>
+          )}
+
+          {/* Confidence score indicator */}
+          {confidenceScore > 0 && (
+            <div className="flex items-center gap-1.5 text-[10px]">
+              <div className="h-1.5 w-8 overflow-hidden rounded-full bg-zinc-800">
+                <div
+                  className={`h-full rounded-full transition-all duration-300 ${confBarClass}`}
+                  style={{ width: `${Math.round(confidenceScore * 100)}%` }}
+                />
+              </div>
+              <span className={`font-mono ${confTextClass}`}>
+                {Math.round(confidenceScore * 100)}%
+              </span>
+            </div>
+          )}
         </div>
 
         <SessionControls
@@ -554,6 +734,18 @@ export default function SessionPage({
               sessionQuery.refetch();
             } catch {
               toast.error("Failed to resume session. Please try again.");
+            }
+          }}
+          onRetry={async () => {
+            try {
+              await retryMutation.mutateAsync({
+                sessionId,
+                fromCheckpoint: true,
+              });
+              sessionQuery.refetch();
+              toast.success("Session retry initiated");
+            } catch {
+              toast.error("Failed to retry session. Please try again.");
             }
           }}
           sessionId={sessionId}

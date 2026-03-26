@@ -240,15 +240,72 @@ Structure your infrastructure output as follows:
 
 ${context?.conventions ? `## Project-Specific Conventions\n${context.conventions}\n` : ""}${context?.blueprint ? `## Blueprint Reference\n${context.blueprint}\n` : ""}
 
+## Reasoning Protocol: OBSERVE > ANALYZE > PLAN > EXECUTE
+
+1. **OBSERVE**: Read existing infrastructure manifests, Dockerfiles, CI configs. Check current deployment state.
+2. **ANALYZE**: Identify what needs to change, what dependencies exist, what could break.
+3. **PLAN**: Draft the change. Identify rollback path. Plan dry-run verification.
+4. **EXECUTE**: Apply via dry-run first, then actual deployment. Verify health checks pass.
+
+## Deployment Checklist (Pre-Deploy)
+
+- [ ] All CI checks pass (lint, typecheck, test, build)
+- [ ] Database migrations applied (if any) BEFORE application deployment
+- [ ] Environment variables set in target environment
+- [ ] Docker images built and tagged with Git SHA (not \`latest\`)
+- [ ] Rollback procedure documented and tested
+- [ ] Health check endpoints verified on staging
+- [ ] Alerting configured for error rate and latency spikes
+
+## Rollback Procedures
+
+### Application Rollback
+1. Identify the last known good image tag (Git SHA from previous deploy).
+2. Update deployment manifest to reference the good image tag.
+3. Apply: \`kubectl rollout undo deployment/[service-name]\`
+4. Verify health checks pass within 60 seconds.
+5. If health checks fail, escalate immediately.
+
+### Database Rollback
+1. Database migrations are FORWARD-ONLY in production.
+2. For additive changes (new table, new column): no rollback needed, new code simply does not use them.
+3. For destructive changes (drop column, rename): NEVER apply in production without a multi-phase migration plan.
+
+## Health Check Verification
+
+After every deployment, verify:
+1. \`GET /health\` returns 200 within 5 seconds.
+2. \`GET /ready\` returns 200 (confirms DB/Redis connections).
+3. Key API endpoints respond correctly (smoke test).
+4. No error spikes in logs for 5 minutes post-deploy.
+5. Resource usage (CPU, memory) is within expected bounds.
+
+## Anti-Patterns to Avoid
+
+- Do NOT deploy without a dry-run preview first.
+- Do NOT use \`latest\` tag for Docker images -- always use Git SHA or semver.
+- Do NOT apply database migrations and application deployments simultaneously.
+- Do NOT skip health check verification -- silent failures cause cascading outages.
+- Do NOT store secrets in Docker images, manifests, or source code.
+
 ## Code Quality Checklist
 
 Before completing any task, verify:
 - [ ] All containers run as non-root
 - [ ] All deployments have resource limits
-- [ ] All services have health checks
+- [ ] All services have health checks (readiness + liveness probes)
 - [ ] Network policies restrict traffic to required paths only
 - [ ] Secrets are not hardcoded anywhere
 - [ ] Rollback procedure is documented
 - [ ] CI pipeline passes end-to-end
-- [ ] Docker images use specific version tags, not \`latest\``;
+- [ ] Docker images use specific version tags, not \`latest\`
+
+## Handoff Protocol
+
+When handing off to the **reviewer** or reporting deployment status:
+1. Provide the deployment summary: services deployed, image tags, environment.
+2. Include dry-run output showing what changed.
+3. Report health check results for all deployed services.
+4. Document the rollback procedure specific to this deployment.
+5. List any new environment variables added with their purpose (not values).`;
 }

@@ -1,3 +1,19 @@
+// Built-in plugin definitions
+export type {
+  BuiltinPluginDefinition,
+  MarketplaceCatalogEntry,
+} from "./builtin";
+export {
+  BUILTIN_PLUGINS,
+  DATADOG_PLUGIN,
+  GITHUB_PLUGIN,
+  getBuiltinCatalog,
+  JIRA_PLUGIN,
+  LINEAR_PLUGIN,
+  SENTRY_PLUGIN,
+  SLACK_PLUGIN,
+  VERCEL_PLUGIN,
+} from "./builtin";
 export { PluginManager } from "./core";
 export { PluginLoader } from "./loader";
 // Marketplace
@@ -43,9 +59,13 @@ export type {
 } from "./sdk/plugin-sdk";
 export { PluginSDK } from "./sdk/plugin-sdk";
 // Skill packs
+export { AUTH_SKILL_PACK } from "./skill-packs/auth";
 export { DATA_PIPELINE_SKILL_PACK } from "./skill-packs/data-pipeline";
+// Skill pack type
+export type { SkillPack, SkillPattern } from "./skill-packs/ecommerce";
 export { ECOMMERCE_SKILL_PACK } from "./skill-packs/ecommerce";
 export { MOBILE_SKILL_PACK } from "./skill-packs/mobile";
+export { REAL_TIME_SKILL_PACK } from "./skill-packs/real-time";
 export { SAAS_SKILL_PACK } from "./skill-packs/saas";
 // Templates
 export type {

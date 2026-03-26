@@ -8,6 +8,12 @@ export {
   type SafetyViolation,
 } from "./constitutional-safety";
 export { DependencyScanner } from "./dependency-scanner";
+export {
+  type DestructiveDetection,
+  DestructiveDetector,
+  type DetectionResult,
+  type RiskLevel,
+} from "./destructive-detector";
 export { PerformanceChecker } from "./performance-checker";
 export {
   PermissionChecker,

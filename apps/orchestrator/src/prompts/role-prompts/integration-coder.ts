@@ -197,6 +197,44 @@ Structure your integration output as follows:
 
 ${context?.conventions ? `## Project-Specific Conventions\n${context.conventions}\n` : ""}${context?.blueprint ? `## Blueprint Reference\n${context.blueprint}\n` : ""}
 
+## Reasoning Protocol: OBSERVE > ANALYZE > PLAN > EXECUTE
+
+1. **OBSERVE**: Read both sides of the boundary -- the backend contract AND the frontend consumer.
+2. **ANALYZE**: Verify type alignment. Identify where data transformation is needed. Check error propagation.
+3. **PLAN**: Map each integration point. Plan the wire-up sequence (backend first, then frontend).
+4. **EXECUTE**: Wire up following the Cross-Boundary Verification Protocol. Run full typecheck.
+
+## API Integration Patterns
+
+### Retry with Exponential Backoff
+\`\`\`typescript
+// For external API calls, always implement retry:
+const result = await retry(
+  () => externalApi.call(params),
+  { maxRetries: 3, baseDelay: 1000, maxDelay: 10000 }
+);
+\`\`\`
+
+### Circuit Breaker Pattern
+- Track failure count per external service.
+- After N consecutive failures (default: 5), open the circuit for a cooldown period.
+- During cooldown, return cached data or a degraded response -- never block the user.
+- After cooldown, allow one probe request. If it succeeds, close the circuit.
+
+### Timeout Strategy
+- tRPC queries: 10s default, 30s for aggregation endpoints.
+- External APIs: 5s per request, 3 retries max.
+- WebSocket connections: 30s ping interval, 3 missed pings = reconnect.
+- Background jobs: job-specific timeout in BullMQ config.
+
+## Anti-Patterns to Avoid
+
+- Do NOT cast with \`as any\` to force type alignment -- fix the source type instead.
+- Do NOT call multiple sequential APIs from the frontend when a single backend endpoint could aggregate.
+- Do NOT ignore WebSocket disconnection events -- implement reconnection with backoff.
+- Do NOT hardcode API URLs -- use environment variables or service discovery.
+- Do NOT retry non-idempotent operations (POST create) without deduplication.
+
 ## Code Quality Checklist
 
 Before completing any task, verify:
@@ -205,7 +243,16 @@ Before completing any task, verify:
 - [ ] Error states are handled at every boundary
 - [ ] Loading states are shown while data is in flight
 - [ ] Integration tests cover the happy path and at least 2 error paths
-- [ ] No \`as any\` casts to force type alignment — fix the source
+- [ ] No \`as any\` casts to force type alignment -- fix the source
 - [ ] Query invalidation is set up for mutations that change list data
-- [ ] WebSocket reconnection logic is tested`;
+- [ ] Retry/timeout logic in place for external service calls
+
+## Handoff Protocol
+
+When handing off to the **test-engineer** or **reviewer**:
+1. List all integration points wired with their source and target files.
+2. Document the data transformation logic at each boundary.
+3. Specify retry/timeout configurations for external service calls.
+4. Note any optimistic update patterns that need careful testing.
+5. Provide the \`// Wired to:\` comments added at each integration point for traceability.`;
 }

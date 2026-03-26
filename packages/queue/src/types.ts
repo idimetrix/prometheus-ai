@@ -220,6 +220,14 @@ export interface WebhookDeliveryData {
   subscriptionId: string;
 }
 
+/** audit-archival: Archive old audit logs to cold storage */
+export interface AuditArchivalData {
+  /** If provided, only archive this org. Otherwise archive all orgs. */
+  orgId?: string;
+  /** "scheduled" for daily cron, "manual" for admin-triggered */
+  trigger: "scheduled" | "manual";
+}
+
 /** setup-project-environment: Auto-detect stack, install deps, verify build */
 export interface SetupProjectEnvironmentData {
   /** Git hosting provider (default: github.com) */
@@ -236,6 +244,7 @@ export interface SetupProjectEnvironmentData {
 // ========== Job Name Registry ==========
 export interface JobDataMap {
   "agent-task": AgentTaskData;
+  "audit-archival": AuditArchivalData;
   "cleanup-sandbox": CleanupSandboxData;
   "continue-session": ContinueSessionData;
   "credit-grant": CreditGrantData;

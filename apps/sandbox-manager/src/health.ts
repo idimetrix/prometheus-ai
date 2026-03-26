@@ -37,6 +37,7 @@ export interface HealthStatus {
     warmTarget: number;
     maxCapacity: number;
   };
+  service: string;
   status: "healthy" | "degraded" | "unhealthy";
   system: {
     memoryUsedMb: number;
@@ -109,8 +110,9 @@ export function createHealthChecker(
 
     return {
       status,
+      service: "sandbox-manager",
       checks: { docker: dockerAvailable, redis: redisOk },
-      version: "0.1.0",
+      version: process.env.APP_VERSION ?? "0.1.0",
       mode: containerManager.getMode(),
       uptime: Math.floor((Date.now() - startTime) / 1000),
       pool: {

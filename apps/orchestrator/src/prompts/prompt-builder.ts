@@ -1,3 +1,5 @@
+import type { LanguageDetectionResult } from "./language-context";
+import { buildLanguageContextForRole } from "./language-context";
 import { ROLE_PROMPTS } from "./role-prompts";
 
 /**
@@ -10,6 +12,8 @@ export interface PromptBuilderConfig {
   brainContext?: string;
   /** Project-specific conventions from .prometheus.md or similar config. */
   conventions?: string;
+  /** Detected language information for language-aware prompt injection. */
+  languageDetection?: LanguageDetectionResult;
   /** Maximum token budget for the system prompt. Defaults to 8000. */
   maxTokens?: number;
   /** The agent role (e.g., "backend-coder", "frontend-coder", "discovery"). */
@@ -115,9 +119,15 @@ function appendSection(
 function getRolePrompt(config: PromptBuilderConfig): string {
   const rolePromptFn = ROLE_PROMPTS[config.role];
   if (rolePromptFn) {
+    // Build inline language context for roles that support the placeholder
+    const languageContext = config.languageDetection
+      ? buildLanguageContextForRole(config.languageDetection, config.role)
+      : undefined;
+
     return rolePromptFn({
       blueprint: config.blueprint,
       conventions: config.conventions,
+      languageContext: languageContext || undefined,
     });
   }
   return getDefaultRolePrompt(config.role);
@@ -131,9 +141,10 @@ function getRolePrompt(config: PromptBuilderConfig): string {
  * by prioritizing sections in this order:
  * 1. Role prompt (never truncated - core instructions)
  * 2. Task instructions (never truncated - current task context)
- * 3. Conventions (truncated if needed)
- * 4. Blueprint (truncated if needed)
- * 5. Brain context (truncated if needed - largest section, lowest priority)
+ * 3. Language context (truncated if needed - language-specific guidance)
+ * 4. Conventions (truncated if needed)
+ * 5. Blueprint (truncated if needed)
+ * 6. Brain context (truncated if needed - largest section, lowest priority)
  */
 export function buildAgentPrompt(config: PromptBuilderConfig): BuiltPrompt {
   const maxTokens = config.maxTokens ?? 8000;
@@ -157,7 +168,18 @@ export function buildAgentPrompt(config: PromptBuilderConfig): BuiltPrompt {
     truncated: false,
   };
 
-  // 3. Conventions (high priority context)
+  // 3. Language context (high priority — informs coding style for the project)
+  if (config.languageDetection) {
+    const languageContext = buildLanguageContextForRole(
+      config.languageDetection,
+      config.role
+    );
+    if (languageContext) {
+      appendSection(state, "language", "## Language Context", languageContext);
+    }
+  }
+
+  // 4. Conventions (high priority context)
   if (config.conventions) {
     appendSection(
       state,
@@ -167,12 +189,12 @@ export function buildAgentPrompt(config: PromptBuilderConfig): BuiltPrompt {
     );
   }
 
-  // 4. Blueprint summary (medium priority)
+  // 5. Blueprint summary (medium priority)
   if (config.blueprint) {
     appendSection(state, "blueprint", "## Blueprint Summary", config.blueprint);
   }
 
-  // 5. Brain context (lowest priority, most likely to be truncated)
+  // 6. Brain context (lowest priority, most likely to be truncated)
   if (config.brainContext) {
     appendSection(state, "brain", "## Codebase Context", config.brainContext);
   }

@@ -338,6 +338,41 @@ export class SessionManager {
     };
   }
 
+  /**
+   * Retry a failed session. Reloads the session and restarts the agent loop.
+   */
+  async retrySession(
+    sessionId: string,
+    orgId: string,
+    fromCheckpoint: boolean
+  ): Promise<void> {
+    // Remove stale entry if present
+    this.activeSessions.delete(sessionId);
+
+    // Reload from DB
+    const active = await this.loadSession(sessionId, orgId);
+    if (!active) {
+      throw new Error(`Session ${sessionId} not found for retry`);
+    }
+
+    active.session.status = "active" as SessionStatus;
+    active.session.endedAt = null;
+
+    // Persist to DB
+    await db
+      .update(sessions)
+      .set({ status: "active", endedAt: null })
+      .where(eq(sessions.id, sessionId));
+
+    await this.eventPublisher.publishSessionEvent(sessionId, {
+      type: QueueEvents.SESSION_RESUME,
+      data: { status: "active", retried: true, fromCheckpoint },
+      timestamp: new Date().toISOString(),
+    });
+
+    this.logger.info({ sessionId, fromCheckpoint }, "Session retried");
+  }
+
   async emitTaskProgress(
     sessionId: string,
     taskId: string,

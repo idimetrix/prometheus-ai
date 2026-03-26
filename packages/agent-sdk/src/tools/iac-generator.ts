@@ -25,6 +25,17 @@ export interface ServiceDefinition {
   replicas: number;
 }
 
+export interface K8sConfig {
+  domain?: string;
+  enableHpa?: boolean;
+  enableIngress?: boolean;
+  hpaMaxReplicas?: number;
+  hpaMinReplicas?: number;
+  hpaTargetCpuPercent?: number;
+  namespace?: string;
+  tlsSecretName?: string;
+}
+
 export interface InfrastructureSpec {
   database: { engine: "postgres" | "mysql"; instanceSize: string };
   domain: string;
@@ -65,17 +76,31 @@ export class IaCGenerator {
 
   /**
    * Generate Kubernetes manifests for a set of services.
+   * Includes Deployment, Service, Ingress (optional), and HPA (optional).
    */
-  generateKubernetesManifests(services: ServiceDefinition[]): string {
+  generateKubernetesManifests(
+    services: ServiceDefinition[],
+    config?: K8sConfig
+  ): string {
     logger.info(
-      { serviceCount: services.length },
+      { serviceCount: services.length, config },
       "Generating Kubernetes manifests"
     );
 
-    const manifests = services.flatMap((service) => [
-      this.generateK8sDeployment(service),
-      this.generateK8sService(service),
-    ]);
+    const manifests: string[] = [];
+
+    for (const service of services) {
+      manifests.push(this.generateK8sDeployment(service, config));
+      manifests.push(this.generateK8sService(service, config));
+
+      if (config?.enableIngress && config.domain) {
+        manifests.push(this.generateK8sIngress(service, config));
+      }
+
+      if (config?.enableHpa) {
+        manifests.push(this.generateK8sHpa(service, config));
+      }
+    }
 
     return manifests.join("\n---\n");
   }
@@ -191,6 +216,14 @@ export class IaCGenerator {
         }
       }
 
+      lines.push("    healthcheck:");
+      lines.push(
+        `      test: ["CMD", "curl", "-f", "http://localhost:${service.port}/health"]`
+      );
+      lines.push("      interval: 30s");
+      lines.push("      timeout: 5s");
+      lines.push("      retries: 3");
+      lines.push("      start_period: 10s");
       lines.push("    deploy:");
       lines.push("      resources:");
       lines.push("        limits:");
@@ -230,6 +263,8 @@ COPY --from=builder --chown=app:app /app/node_modules ./node_modules
 COPY --from=builder --chown=app:app /app/package.json ./
 USER app
 EXPOSE ${info.port}
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+  CMD ["node", "-e", "fetch('http://localhost:${info.port}/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
 CMD ["node", "${info.entrypoint}"]
 `;
   }
@@ -249,6 +284,8 @@ COPY . .
 RUN useradd --system app
 USER app
 EXPOSE ${info.port}
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+  CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:${info.port}/health')" || exit 1
 CMD ["python", "${info.entrypoint}"]
 `;
   }
@@ -264,10 +301,12 @@ RUN CGO_ENABLED=0 GOOS=linux go build -o /app/server ${info.entrypoint}
 
 # Stage 2: Production
 FROM alpine:3.19 AS runner
-RUN apk --no-cache add ca-certificates && adduser -D app
+RUN apk --no-cache add ca-certificates curl && adduser -D app
 COPY --from=builder /app/server /usr/local/bin/server
 USER app
 EXPOSE ${info.port}
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+  CMD curl -f http://localhost:${info.port}/health || exit 1
 CMD ["server"]
 `;
   }
@@ -283,15 +322,21 @@ RUN cargo build --release
 
 # Stage 2: Production
 FROM debian:bookworm-slim AS runner
-RUN useradd --system app
+RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf /var/lib/apt/lists/* && useradd --system app
 COPY --from=builder /app/target/release/${info.projectName} /usr/local/bin/app
 USER app
 EXPOSE ${info.port}
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+  CMD curl -f http://localhost:${info.port}/health || exit 1
 CMD ["app"]
 `;
   }
 
-  private generateK8sDeployment(service: ServiceDefinition): string {
+  private generateK8sDeployment(
+    service: ServiceDefinition,
+    config?: K8sConfig
+  ): string {
+    const ns = config?.namespace ?? "default";
     const envLines = Object.entries(service.envVars)
       .map(([k, v]) => `        - name: ${k}\n          value: "${v}"`)
       .join("\n");
@@ -300,6 +345,7 @@ CMD ["app"]
 kind: Deployment
 metadata:
   name: ${service.name}
+  namespace: ${ns}
   labels:
     app: ${service.name}
 spec:
@@ -307,11 +353,19 @@ spec:
   selector:
     matchLabels:
       app: ${service.name}
+  strategy:
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+    type: RollingUpdate
   template:
     metadata:
       labels:
         app: ${service.name}
     spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
       containers:
       - name: ${service.name}
         image: ${service.image ?? `${service.name}:latest`}
@@ -332,19 +386,33 @@ ${envLines || "        []"}
             port: ${service.port}
           initialDelaySeconds: 10
           periodSeconds: 30
+          failureThreshold: 3
         readinessProbe:
           httpGet:
             path: /health
             port: ${service.port}
           initialDelaySeconds: 5
-          periodSeconds: 10`;
+          periodSeconds: 10
+          failureThreshold: 2
+        startupProbe:
+          httpGet:
+            path: /health
+            port: ${service.port}
+          initialDelaySeconds: 3
+          periodSeconds: 5
+          failureThreshold: 10`;
   }
 
-  private generateK8sService(service: ServiceDefinition): string {
+  private generateK8sService(
+    service: ServiceDefinition,
+    config?: K8sConfig
+  ): string {
+    const ns = config?.namespace ?? "default";
     return `apiVersion: v1
 kind: Service
 metadata:
   name: ${service.name}
+  namespace: ${ns}
 spec:
   selector:
     app: ${service.name}
@@ -352,6 +420,93 @@ spec:
   - port: ${service.port}
     targetPort: ${service.port}
   type: ClusterIP`;
+  }
+
+  private generateK8sIngress(
+    service: ServiceDefinition,
+    config: K8sConfig
+  ): string {
+    const ns = config.namespace ?? "default";
+    const host = `${service.name}.${config.domain}`;
+
+    const tlsBlock = config.tlsSecretName
+      ? `
+  tls:
+  - hosts:
+    - ${host}
+    secretName: ${config.tlsSecretName}`
+      : "";
+
+    return `apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: ${service.name}-ingress
+  namespace: ${ns}
+  annotations:
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/proxy-body-size: "50m"
+spec:${tlsBlock}
+  ingressClassName: nginx
+  rules:
+  - host: ${host}
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: ${service.name}
+            port:
+              number: ${service.port}`;
+  }
+
+  private generateK8sHpa(
+    service: ServiceDefinition,
+    config: K8sConfig
+  ): string {
+    const ns = config.namespace ?? "default";
+    const minReplicas = config.hpaMinReplicas ?? service.replicas;
+    const maxReplicas = config.hpaMaxReplicas ?? service.replicas * 4;
+    const targetCpu = config.hpaTargetCpuPercent ?? 70;
+
+    return `apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: ${service.name}-hpa
+  namespace: ${ns}
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: ${service.name}
+  minReplicas: ${minReplicas}
+  maxReplicas: ${maxReplicas}
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: ${targetCpu}
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 80
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+      - type: Percent
+        value: 25
+        periodSeconds: 60
+    scaleUp:
+      stabilizationWindowSeconds: 30
+      policies:
+      - type: Percent
+        value: 50
+        periodSeconds: 60`;
   }
 
   private dbResourceType(provider: string): string {

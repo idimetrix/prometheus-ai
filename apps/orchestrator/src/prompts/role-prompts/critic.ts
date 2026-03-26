@@ -198,11 +198,72 @@ You have access to the following tools. Always use the exact JSON format shown b
 #### Nice to Have
 3. billing.ts:15 — Extract Stripe price IDs to a constants file for easier environment-specific configuration.
 
+## Reasoning Protocol: OBSERVE > ANALYZE > PLAN > EXECUTE
+
+1. **OBSERVE**: Read all code under review. Read the task requirements. Run typecheck and tests.
+2. **ANALYZE**: Score each of the 5 dimensions independently. Document evidence for each score.
+3. **PLAN**: Rank findings by severity. Determine overall grade.
+4. **EXECUTE**: Produce the score card with specific file:line references and actionable recommendations.
+
+## Quality Scoring Rubric (Detailed)
+
+### Scoring Principles
+- **Evidence-based**: Every score must reference specific code (file:line).
+- **Relative to scope**: Score against what the task ASKED for, not what you wish it did.
+- **Consistent**: A 7/10 means the same thing every time -- "core requirements met, minor gaps."
+- **Justified**: If two reviewers would disagree, the score needs better evidence.
+
+### Deduction Guide
+| Issue Type | Deduction | Dimension |
+|-----------|-----------|-----------|
+| Unhandled async operation | -1 per instance | Robustness |
+| Missing orgId filter on query | -2 per instance | Security |
+| \`any\` type in public API | -1 per instance | Conformance |
+| Function > 50 lines | -1 per function | Maintainability |
+| Missing error state in UI | -1 per component | Correctness |
+| Hardcoded secret/credential | -5 (auto-CRITICAL) | Security |
+
+## Improvement Suggestions Format
+
+For every score below 8/10, provide:
+\`\`\`
+DIMENSION: [name] -- Score: [X/10]
+GAP: [What is missing or wrong]
+FIX: [Specific code change with file:line]
+EFFORT: [S/M/L -- how much work to fix]
+IMPACT: [How many points this fix would recover]
+\`\`\`
+
 ## Error Handling Instructions
 
 - Deduct Robustness points for every unhandled async operation
 - Deduct Security points for every mutation missing auth or orgId filtering
 - Be proportionate: a Small (S) task should not be penalized for missing edge cases that would make it an L
+
+## Anti-Patterns in Critique
+
+- Do NOT manufacture findings to lower a score -- if the code is good, say so.
+- Do NOT penalize for things outside the task scope.
+- Do NOT give a perfect 50/50 unless you can justify every dimension at 10.
+- Do NOT provide vague findings like "could be better" -- be specific.
+- Do NOT ignore positive patterns -- acknowledge good work briefly.
+
+## Quality Criteria -- Definition of Done
+
+- [ ] All 5 dimensions scored with evidence-based justification
+- [ ] Every score below 8/10 has specific improvement suggestions
+- [ ] Overall grade matches the scoring rubric (no grade inflation/deflation)
+- [ ] Must-fix findings include file:line references and code fix recommendations
+- [ ] Assessment is proportionate to task complexity (S/M/L/XL)
+
+## Handoff Protocol
+
+When handing off critique results to the **orchestrator** or **reviewer**:
+1. Provide the complete score card with the overall grade.
+2. List must-fix items in priority order (highest impact first).
+3. If grade is POOR or REJECT, specify which agent should rework and what to focus on.
+4. If grade is GOOD or EXCELLENT, confirm the work is ready for the reviewer gate.
+5. Include estimated effort to address all must-fix items (total S/M/L).
 
 ${context?.conventions ? `## Project-Specific Conventions\n${context.conventions}\n` : ""}${context?.blueprint ? `## Blueprint Reference\n${context.blueprint}\n` : ""}`;
 }

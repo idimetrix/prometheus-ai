@@ -194,11 +194,58 @@ TASK-004: Test notification preferences
 
 ${context?.blueprint ? `## Blueprint Reference\n${context.blueprint}\n` : ""}${context?.conventions ? `## Project Conventions\n${context.conventions}\n` : ""}
 
+## Reasoning Protocol: OBSERVE > ANALYZE > PLAN > EXECUTE
+
+1. **OBSERVE**: Read the blueprint, search existing codebase structure, and identify what already exists.
+2. **ANALYZE**: Map blueprint sections to tasks. Identify file-level dependencies. Detect parallelization opportunities.
+3. **PLAN**: Build the task DAG. Assign roles. Estimate complexity. Verify no orphan tasks.
+4. **EXECUTE**: Produce the sprint plan with all required metadata per task.
+
+## Sprint Decomposition Heuristics
+
+- **1 task = 1 agent session**: If it requires context-switching between domains, split it.
+- **5-file rule**: If a task touches > 5 files, split into focused sub-tasks.
+- **Vertical over horizontal**: Prefer "add users table + API + tests" over "add all tables, then all APIs."
+- **Test-inclusive**: Never create a coding task without its corresponding test task or inline testing.
+- **Foundation first**: DB schema > API > Frontend > Integration > Tests > Security.
+
+## Effort Estimation Guidance
+
+- **S** (Small): Single file, < 50 lines, well-defined pattern. ~15 min agent time.
+- **M** (Medium): 2-3 files, < 200 lines, some design decisions. ~30 min agent time.
+- **L** (Large): 4-5 files, < 500 lines, cross-cutting concerns. ~60 min agent time.
+- **XL** (Extra Large): Must justify why splitting is worse. Likely > 60 min. Red flag.
+
+## Dependency Detection Rules
+
+- If task B imports a type/function from task A's output file, B depends on A.
+- If task B modifies a file that task A creates, B depends on A.
+- If two tasks modify the same file, they CANNOT be parallel -- sequence them.
+- If tasks share no files or exports, they can be parallel.
+
 ## Anti-Patterns
 
-- Do NOT create tasks like "Set up project structure" — the project already exists.
-- Do NOT create "research" tasks — research happens during discovery, not planning.
-- Do NOT create tasks without specific file paths — vague tasks are unexecutable.
-- Do NOT separate schema creation from seed data — combine them.
-- Do NOT plan migrations before the schema is finalized in the blueprint.`;
+- Do NOT create tasks like "Set up project structure" -- the project already exists.
+- Do NOT create "research" tasks -- research happens during discovery, not planning.
+- Do NOT create tasks without specific file paths -- vague tasks are unexecutable.
+- Do NOT separate schema creation from seed data -- combine them.
+- Do NOT plan migrations before the schema is finalized in the blueprint.
+
+## Quality Criteria -- Definition of Done
+
+- [ ] Every task has a unique ID (TASK-NNN), assigned role, and complexity estimate
+- [ ] Every task lists specific input and output artifacts with file paths
+- [ ] Every task has at least one testable acceptance criterion
+- [ ] The task DAG has no cycles and no orphan tasks
+- [ ] Phase boundaries respect file-level dependencies (no same-file conflicts within a phase)
+- [ ] Plan ends with a verification phase (test-engineer and/or security-auditor)
+
+## Handoff Protocol
+
+When handing off to **coding agents** (frontend-coder, backend-coder, integration-coder):
+1. Provide the specific TASK-NNN with all metadata (description, files, acceptance criteria).
+2. Include the relevant blueprint section for context.
+3. List the exact input artifacts the agent should read first.
+4. Specify the verification command (e.g., \`pnpm typecheck --filter=@prometheus/api\`).
+5. Flag any constraints from the Never-Do list that apply to this task.`;
 }

@@ -1,5 +1,11 @@
 name: "Prometheus AI Agent"
-description: "Trigger a Prometheus AI agent to work on your codebase"
+description: "Trigger a Prometheus AI agent to work on your codebase — automate tasks, generate plans, and create PRs"
+author: "Prometheus"
+
+branding:
+  icon: "cpu"
+  color: "purple"
+
 inputs:
   task:
     description: "Task description for the agent"
@@ -8,24 +14,41 @@ inputs:
     description: "Prometheus project ID"
     required: true
   api-key:
-    description: "Prometheus API key"
+    description: "Prometheus API key (store as a GitHub secret)"
     required: true
   api-url:
     description: "Prometheus API URL"
     required: false
     default: "https://api.prometheus.dev"
   mode:
-    description: "Agent mode (task, plan, review)"
+    description: "Agent mode: task (execute), plan (generate plan), review (code review)"
     required: false
     default: "task"
   timeout:
-    description: "Timeout in seconds"
+    description: "Timeout in seconds (max 3600)"
     required: false
     default: "600"
   wait:
-    description: "Wait for completion"
+    description: "Wait for task completion before finishing the action"
     required: false
     default: "true"
+  branch:
+    description: "Target branch for PR creation (defaults to current branch)"
+    required: false
+    default: ""
+  labels:
+    description: "Comma-separated labels to apply to created PRs"
+    required: false
+    default: "prometheus-ai"
+  max-retries:
+    description: "Maximum number of retries on transient failures"
+    required: false
+    default: "3"
+  log-level:
+    description: "Logging verbosity: debug, info, warn, error"
+    required: false
+    default: "info"
+
 outputs:
   task-id:
     description: "Created task ID"
@@ -33,8 +56,15 @@ outputs:
     description: "Agent session ID"
   pr-url:
     description: "Created PR URL (if applicable)"
+  pr-number:
+    description: "Created PR number (if applicable)"
   status:
-    description: "Task completion status"
+    description: "Task completion status (queued, running, completed, failed, cancelled, error)"
+  duration:
+    description: "Task duration in seconds (only when wait is true)"
+  result-json:
+    description: "Full result payload as JSON string"
+
 runs:
   using: "node20"
   main: "dist/index.js"

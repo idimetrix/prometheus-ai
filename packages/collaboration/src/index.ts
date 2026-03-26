@@ -25,9 +25,15 @@ export {
   type VoiceParticipant,
 } from "./voice-channel";
 export {
+  applyRemoteUpdate,
+  createSocketYProvider,
   createYProvider,
+  encodeDocState,
   isConnected,
   reconnect,
+  type SocketLike,
+  type SocketYProviderInstance,
+  type SocketYProviderOptions,
   type YProviderInstance,
   type YProviderOptions,
 } from "./y-provider";

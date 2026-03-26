@@ -4,28 +4,54 @@ namespace: prometheus
 resources:
   - ../../base/namespace.yaml
   - ../../base/configmap.yaml
-  # App services
+  # App services — deployments
   - ../../base/web/deployment.yaml
   - ../../base/web/service.yaml
   - ../../base/web/hpa.yaml
   - ../../base/api/deployment.yaml
   - ../../base/api/service.yaml
   - ../../base/api/hpa.yaml
+  - ../../base/api/pdb.yaml
   - ../../base/socket-server/deployment.yaml
   - ../../base/socket-server/service.yaml
+  - ../../base/socket-server/hpa.yaml
+  - ../../base/socket-server/pdb.yaml
   - ../../base/orchestrator/deployment.yaml
+  - ../../base/orchestrator/service.yaml
+  - ../../base/orchestrator/hpa.yaml
+  - ../../base/orchestrator/pdb.yaml
   - ../../base/project-brain/deployment.yaml
+  - ../../base/project-brain/service.yaml
+  - ../../base/project-brain/hpa.yaml
+  - ../../base/project-brain/pdb.yaml
   - ../../base/model-router/deployment.yaml
+  - ../../base/model-router/service.yaml
+  - ../../base/model-router/hpa.yaml
+  - ../../base/model-router/pdb.yaml
   - ../../base/mcp-gateway/deployment.yaml
+  - ../../base/mcp-gateway/service.yaml
+  - ../../base/mcp-gateway/hpa.yaml
+  - ../../base/mcp-gateway/pdb.yaml
   - ../../base/sandbox-manager/deployment.yaml
+  - ../../base/sandbox-manager/service.yaml
+  - ../../base/sandbox-manager/hpa.yaml
+  - ../../base/sandbox-manager/pdb.yaml
   - ../../base/queue-worker/deployment.yaml
+  - ../../base/queue-worker/pdb.yaml
   # Infrastructure
   - ../../base/redis/deployment.yaml
   - ../../base/postgres/deployment.yaml
   # Networking
   - ../../base/traefik/ingress.yaml
-  # Autoscaling
+  # Autoscaling — KEDA ScaledObjects
   - ../../base/keda/scaledobject-agent-worker.yaml
+  - ../../autoscaling/keda-scaledobject.yaml
+  # Autoscaling — HPA overrides (consolidated)
+  - ../../autoscaling/api-hpa.yaml
+  - ../../autoscaling/orchestrator-hpa.yaml
+  - ../../autoscaling/socket-server-hpa.yaml
+  - ../../autoscaling/model-router-hpa.yaml
+  - ../../autoscaling/queue-worker-hpa.yaml
   # Monitoring
   - ../../base/monitoring/alert-rules.yaml
   # Secrets Management

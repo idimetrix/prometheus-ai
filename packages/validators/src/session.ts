@@ -75,6 +75,11 @@ export const cancelSessionSchema = z.object({
   reason: z.string().max(500).optional(),
 });
 
+export const retrySessionSchema = z.object({
+  sessionId: z.string().min(1),
+  fromCheckpoint: z.boolean().default(true),
+});
+
 // ---------- Session events ----------
 export const sessionEventSchema = z.object({
   type: sessionEventTypeSchema,
@@ -195,6 +200,7 @@ export type ApproveCheckpointInput = z.infer<typeof approveCheckpointSchema>;
 export type ResumeSessionInput = z.infer<typeof resumeSessionSchema>;
 export type PauseSessionInput = z.infer<typeof pauseSessionSchema>;
 export type CancelSessionInput = z.infer<typeof cancelSessionSchema>;
+export type RetrySessionInput = z.infer<typeof retrySessionSchema>;
 export type SessionEventInput = z.infer<typeof sessionEventSchema>;
 export type SessionEventDiscriminatedInput = z.infer<
   typeof sessionEventDiscriminatedSchema

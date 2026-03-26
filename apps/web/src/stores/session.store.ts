@@ -38,6 +38,37 @@ export type AgentStatus =
   | "terminated"
   | "error";
 
+export type TaskPhase =
+  | "discovery"
+  | "planning"
+  | "coding"
+  | "testing"
+  | "review"
+  | "deploy"
+  | "complete";
+
+export interface PhaseInfo {
+  completedAt?: string;
+  message?: string;
+  phase: TaskPhase;
+  progress: number;
+  startedAt?: string;
+  status: "pending" | "active" | "completed" | "skipped";
+}
+
+export interface TaskProgress {
+  agentRole?: string;
+  confidenceScore: number;
+  creditsConsumed: number;
+  currentPhase: TaskPhase;
+  estimatedTimeRemaining: number | null;
+  message: string;
+  overallProgress: number;
+  phases: PhaseInfo[];
+  startedAt: string | null;
+  taskId: string;
+}
+
 export interface ActiveAgent {
   currentTask?: string;
   id: string;
@@ -47,6 +78,16 @@ export interface ActiveAgent {
   stepsCompleted: number;
   tokensIn: number;
   tokensOut: number;
+}
+
+export interface PendingCheckpoint {
+  checkpointId: string;
+  createdAt: string;
+  data: Record<string, unknown>;
+  description: string;
+  timeoutMs: number;
+  title: string;
+  type: string;
 }
 
 export interface CreditEntry {
@@ -60,12 +101,14 @@ interface SessionState {
   addCreditEntry: (credits: number) => void;
   addEvent: (event: SessionEvent) => void;
   addFileEntry: (entry: FileEntry) => void;
+  addPendingCheckpoint: (checkpoint: PendingCheckpoint) => void;
   addReasoning: (thought: string) => void;
   addTerminalLine: (line: { content: string; timestamp?: string }) => void;
   addTerminalOutput: (content: string) => void;
   agents: ActiveAgent[];
   clearSession: () => void;
   closeFile: (path: string) => void;
+  confidenceScore: number;
   creditHistory: CreditEntry[];
   events: SessionEvent[];
   fileTree: FileEntry[];
@@ -73,25 +116,35 @@ interface SessionState {
   mode: SessionMode;
   openFile: (path: string) => void;
   openFiles: string[];
+  pendingCheckpoints: PendingCheckpoint[];
   planSteps: PlanStep[];
   queuePosition: number;
   reasoning: string[];
   removeAgent: (agentId: string) => void;
+  removePendingCheckpoint: (checkpointId: string) => void;
   setActiveFile: (path: string) => void;
 
   setActiveSession: (id: string | null) => void;
   setAgents: (agents: ActiveAgent[]) => void;
+  setConfidenceScore: (score: number) => void;
   setConnected: (connected: boolean) => void;
   setFileTree: (files: FileEntry[]) => void;
   setMode: (mode: SessionMode) => void;
   setPlanSteps: (steps: PlanStep[]) => void;
   setQueuePosition: (position: number) => void;
   setStatus: (status: string | null) => void;
+  setTaskProgress: (progress: TaskProgress) => void;
   status: string | null;
+  taskProgress: TaskProgress | null;
   terminalLines: Array<{ content: string; timestamp?: string }>;
   updateAgent: (agentId: string, updates: Partial<ActiveAgent>) => void;
   updateFileTree: (files: FileEntry[]) => void;
   updatePlanStep: (stepId: string, updates: Partial<PlanStep>) => void;
+  updateTaskPhase: (
+    phase: TaskPhase,
+    status: PhaseInfo["status"],
+    message?: string
+  ) => void;
 }
 
 export const useSessionStore = create<SessionState>((set) => ({
@@ -109,6 +162,29 @@ export const useSessionStore = create<SessionState>((set) => ({
   openFiles: [],
   activeFilePath: null,
   creditHistory: [],
+  taskProgress: null,
+  confidenceScore: 0,
+  pendingCheckpoints: [],
+
+  addPendingCheckpoint: (checkpoint) =>
+    set((state) => {
+      // Avoid duplicates
+      if (
+        state.pendingCheckpoints.some(
+          (c) => c.checkpointId === checkpoint.checkpointId
+        )
+      ) {
+        return state;
+      }
+      return { pendingCheckpoints: [...state.pendingCheckpoints, checkpoint] };
+    }),
+
+  removePendingCheckpoint: (checkpointId) =>
+    set((state) => ({
+      pendingCheckpoints: state.pendingCheckpoints.filter(
+        (c) => c.checkpointId !== checkpointId
+      ),
+    })),
 
   setActiveSession: (id) => set({ activeSessionId: id }),
   setStatus: (status) => set({ status }),
@@ -206,6 +282,40 @@ export const useSessionStore = create<SessionState>((set) => ({
       agents: state.agents.filter((a) => a.id !== agentId),
     })),
 
+  setConfidenceScore: (score) => set({ confidenceScore: score }),
+
+  setTaskProgress: (progress) => set({ taskProgress: progress }),
+
+  updateTaskPhase: (phase, status, message) =>
+    set((state) => {
+      if (!state.taskProgress) {
+        return state;
+      }
+      const phases = state.taskProgress.phases.map((p) => {
+        if (p.phase === phase) {
+          return {
+            ...p,
+            status,
+            message: message ?? p.message,
+            ...(status === "active"
+              ? { startedAt: new Date().toISOString() }
+              : {}),
+            ...(status === "completed"
+              ? { completedAt: new Date().toISOString() }
+              : {}),
+          };
+        }
+        return p;
+      });
+      return {
+        taskProgress: {
+          ...state.taskProgress,
+          currentPhase: phase,
+          phases,
+        },
+      };
+    }),
+
   clearSession: () =>
     set({
       activeSessionId: null,
@@ -222,5 +332,8 @@ export const useSessionStore = create<SessionState>((set) => ({
       openFiles: [],
       activeFilePath: null,
       creditHistory: [],
+      taskProgress: null,
+      confidenceScore: 0,
+      pendingCheckpoints: [],
     }),
 }));

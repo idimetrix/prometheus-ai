@@ -18,6 +18,7 @@ import {
   listSessionsSchema,
   pauseSessionSchema,
   resumeSessionSchema,
+  retrySessionSchema,
   sendMessageSchema,
 } from "@prometheus/validators";
 import { TRPCError } from "@trpc/server";
@@ -446,6 +447,114 @@ export const sessionsRouter = router({
       });
 
       logger.info({ sessionId: input.sessionId }, "Session cancelled");
+      return { success: true, session: updated };
+    }),
+
+  // ─── Retry Failed Session ────────────────────────────────────────────
+  retry: protectedProcedure
+    .input(retrySessionSchema)
+    .mutation(async ({ input, ctx }) => {
+      const session = await verifySessionAccess(
+        ctx.db,
+        input.sessionId,
+        ctx.orgId
+      );
+
+      if (session.status !== "failed") {
+        throw new TRPCError({
+          code: "PRECONDITION_FAILED",
+          message: "Only failed sessions can be retried",
+        });
+      }
+
+      // Reset session status to active
+      const [updated] = await ctx.db
+        .update(sessions)
+        .set({ status: "active", endedAt: null })
+        .where(eq(sessions.id, input.sessionId))
+        .returning();
+
+      if (!updated) {
+        throw new TRPCError({
+          code: "INTERNAL_SERVER_ERROR",
+          message: "Failed to update session status",
+        });
+      }
+
+      // Signal orchestrator to retry the session
+      try {
+        await fetch(`${ORCHESTRATOR_URL}/sessions/${input.sessionId}/retry`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            ...getInternalAuthHeaders(),
+          },
+          body: JSON.stringify({
+            fromCheckpoint: input.fromCheckpoint,
+          }),
+        });
+      } catch (err) {
+        logger.warn(
+          { sessionId: input.sessionId, error: String(err) },
+          "Failed to signal orchestrator retry (session DB status updated)"
+        );
+      }
+
+      // Find the last task description to re-queue
+      const lastTask = await ctx.db.query.tasks.findFirst({
+        where: eq(tasks.sessionId, input.sessionId),
+        orderBy: [desc(tasks.createdAt)],
+      });
+
+      if (lastTask) {
+        const taskId = generateId("task");
+        const planTier = await getOrgPlanTier(ctx.db, ctx.orgId);
+
+        await ctx.db.insert(tasks).values({
+          id: taskId,
+          sessionId: input.sessionId,
+          projectId: updated.projectId,
+          orgId: ctx.orgId,
+          title: lastTask.title,
+          description: lastTask.description,
+          status: "pending",
+          priority: 50,
+          agentRole: null,
+          creditsReserved: 0,
+          creditsConsumed: 0,
+        });
+
+        await agentTaskQueue.add(
+          "agent-task",
+          {
+            taskId,
+            sessionId: input.sessionId,
+            projectId: updated.projectId,
+            orgId: ctx.orgId,
+            userId: ctx.auth.userId,
+            title: lastTask.title,
+            description: lastTask.description ?? "",
+            mode: updated.mode,
+            agentRole: null,
+            planTier,
+            creditsReserved: 0,
+          },
+          { priority: 50 }
+        );
+      }
+
+      // Record event
+      await ctx.db.insert(sessionEvents).values({
+        id: generateId("evt"),
+        sessionId: input.sessionId,
+        type: "checkpoint",
+        data: {
+          action: "retried",
+          fromCheckpoint: input.fromCheckpoint,
+        },
+      });
+
+      logger.info({ sessionId: input.sessionId }, "Session retried");
       return { success: true, session: updated };
     }),
 
@@ -962,6 +1071,128 @@ export const sessionsRouter = router({
         "Checkpoint rejected"
       );
       return { rejected: response.ok };
+    }),
+
+  // ─── Resolve Checkpoint (Generic) ─────────────────────────────────────
+  resolveCheckpoint: protectedProcedure
+    .input(
+      z.object({
+        sessionId: z.string().min(1, "Session ID is required"),
+        checkpointId: z.string().min(1, "Checkpoint ID is required"),
+        action: z.enum(["approve", "reject", "modify", "input"]),
+        message: z.string().max(5000).optional(),
+        data: z.record(z.string(), z.unknown()).optional(),
+      })
+    )
+    .mutation(async ({ input, ctx }) => {
+      await verifySessionAccess(ctx.db, input.sessionId, ctx.orgId);
+
+      const response = await fetch(
+        `${ORCHESTRATOR_URL}/checkpoints/${input.checkpointId}/respond`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            ...getInternalAuthHeaders(),
+          },
+          body: JSON.stringify({
+            action: input.action,
+            data: input.data,
+            message: input.message,
+            userId: ctx.auth.userId,
+          }),
+        }
+      );
+
+      if (!response.ok) {
+        logger.error(
+          {
+            sessionId: input.sessionId,
+            checkpointId: input.checkpointId,
+            action: input.action,
+            status: response.status,
+          },
+          "Failed to resolve checkpoint via orchestrator"
+        );
+        throw new TRPCError({
+          code: "INTERNAL_SERVER_ERROR",
+          message: "Failed to resolve checkpoint",
+        });
+      }
+
+      await ctx.db.insert(sessionEvents).values({
+        id: generateId("evt"),
+        sessionId: input.sessionId,
+        type: "checkpoint",
+        data: {
+          action: `checkpoint_${input.action}`,
+          checkpointId: input.checkpointId,
+          userId: ctx.auth.userId,
+          message: input.message ?? null,
+        },
+      });
+
+      logger.info(
+        {
+          sessionId: input.sessionId,
+          checkpointId: input.checkpointId,
+          action: input.action,
+        },
+        "Checkpoint resolved"
+      );
+      return { success: true, action: input.action };
+    }),
+
+  // ─── List Pending Checkpoints ──────────────────────────────────────────
+  listCheckpoints: protectedProcedure
+    .input(
+      z.object({
+        sessionId: z.string().min(1, "Session ID is required"),
+      })
+    )
+    .query(async ({ input, ctx }) => {
+      await verifySessionAccess(ctx.db, input.sessionId, ctx.orgId);
+
+      try {
+        const response = await fetch(
+          `${ORCHESTRATOR_URL}/sessions/${input.sessionId}/checkpoints`,
+          {
+            method: "GET",
+            headers: {
+              "Content-Type": "application/json",
+              ...getInternalAuthHeaders(),
+            },
+          }
+        );
+
+        if (!response.ok) {
+          logger.warn(
+            { sessionId: input.sessionId, status: response.status },
+            "Failed to fetch checkpoints from orchestrator"
+          );
+          return { checkpoints: [] };
+        }
+
+        const body = (await response.json()) as {
+          checkpoints: Array<{
+            id: string;
+            type: string;
+            title: string;
+            description: string;
+            data: Record<string, unknown>;
+            timeoutMs: number;
+            createdAt: string;
+          }>;
+        };
+
+        return { checkpoints: body.checkpoints ?? [] };
+      } catch (err) {
+        logger.warn(
+          { sessionId: input.sessionId, error: String(err) },
+          "Failed to list checkpoints (orchestrator may be unavailable)"
+        );
+        return { checkpoints: [] };
+      }
     }),
 
   // ─── Release Session (Return Control to Agent) ───────────────────────

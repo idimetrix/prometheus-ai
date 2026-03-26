@@ -25,3 +25,20 @@ export {
   healthcareSkillPack,
   SKILL_PACKS,
 } from "./skill-packs/index";
+export {
+  DJANGO_HTMX_TEMPLATE,
+  EXPRESS_API_TEMPLATE,
+  FASTAPI_REACT_TEMPLATE,
+  GO_FIBER_TEMPLATE,
+  generateScaffold,
+  getProjectTemplate,
+  MONOREPO_TURBO_TEMPLATE,
+  NEXTJS_TRPC_TEMPLATE,
+  PROJECT_TEMPLATES,
+  PROJECT_TEMPLATES_LIST,
+  type ProjectTemplate,
+  REACT_NATIVE_TEMPLATE,
+  RUST_AXUM_TEMPLATE as RUST_AXUM_SCAFFOLD_TEMPLATE,
+  type ScaffoldFile,
+  type TemplateCategory,
+} from "./templates/index";

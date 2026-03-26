@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: model-router
+  namespace: prometheus
+  labels:
+    app: model-router
+spec:
+  selector:
+    app: model-router
+  ports:
+    - port: 4004
+      targetPort: 4004
+      protocol: TCP
+  type: ClusterIP

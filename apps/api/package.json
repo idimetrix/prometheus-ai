@@ -20,6 +20,7 @@
     "@trpc/server": "^11.15.0",
     "superjson": "^2.2.6",
     "zod": "^4.3.6",
+    "@prometheus/config-stacks": "workspace:*",
     "@prometheus/db": "workspace:*",
     "@prometheus/auth": "workspace:*",
     "@prometheus/billing": "workspace:*",

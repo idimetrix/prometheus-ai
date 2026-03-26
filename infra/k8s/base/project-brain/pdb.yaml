@@ -1,0 +1,12 @@
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: project-brain-pdb
+  namespace: prometheus
+  labels:
+    app: project-brain
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: project-brain

@@ -1,9 +1,36 @@
-import { auditLogs, projects, users } from "@prometheus/db";
+import {
+  auditArchiveIndex,
+  auditLogs,
+  auditRetentionPolicies,
+  projects,
+  users,
+} from "@prometheus/db";
 import { createLogger } from "@prometheus/logger";
 import { generateId } from "@prometheus/utils";
 import { TRPCError } from "@trpc/server";
-import { and, desc, eq, gte, inArray, lt, lte, sql } from "drizzle-orm";
+import {
+  and,
+  desc,
+  eq,
+  gte,
+  ilike,
+  inArray,
+  lt,
+  lte,
+  or,
+  sql,
+} from "drizzle-orm";
 import { z } from "zod";
+import {
+  archiveOrgAuditLogs,
+  retrieveArchivedLogs,
+} from "../services/audit-archival";
+import {
+  checkDataResidency,
+  generateComplianceReport,
+  getAccessReview,
+  getSecurityControls,
+} from "../services/compliance";
 import { orgAdminProcedure, protectedProcedure, router } from "../trpc";
 
 const logger = createLogger("audit-router");
@@ -111,6 +138,110 @@ export const auditRouter = router({
       };
     }),
 
+  // ─── Full-Text Search Across Audit Logs ────────────────────────────────
+  search: orgAdminProcedure
+    .input(
+      z.object({
+        query: z.string().min(1).max(500),
+        action: z.string().optional(),
+        userId: z.string().optional(),
+        resourceType: z.string().optional(),
+        dateFrom: z.string().datetime().optional(),
+        dateTo: z.string().datetime().optional(),
+        limit: z.number().int().min(1).max(200).default(50),
+        cursor: z.string().optional(),
+      })
+    )
+    .query(async ({ input, ctx }) => {
+      const conditions = [eq(auditLogs.orgId, ctx.orgId)];
+
+      // Full-text search across action, resource, resourceId, and details
+      const searchPattern = `%${input.query}%`;
+      conditions.push(
+        or(
+          ilike(auditLogs.action, searchPattern),
+          ilike(auditLogs.resource, searchPattern),
+          ilike(auditLogs.resourceId, searchPattern),
+          sql`${auditLogs.details}::text ILIKE ${searchPattern}`
+        ) ?? sql`true`
+      );
+
+      if (input.action) {
+        conditions.push(eq(auditLogs.action, input.action));
+      }
+      if (input.userId) {
+        conditions.push(eq(auditLogs.userId, input.userId));
+      }
+      if (input.resourceType) {
+        conditions.push(eq(auditLogs.resource, input.resourceType));
+      }
+      if (input.dateFrom) {
+        conditions.push(gte(auditLogs.createdAt, new Date(input.dateFrom)));
+      }
+      if (input.dateTo) {
+        conditions.push(lte(auditLogs.createdAt, new Date(input.dateTo)));
+      }
+      if (input.cursor) {
+        const [cursorLog] = await ctx.db
+          .select({ createdAt: auditLogs.createdAt })
+          .from(auditLogs)
+          .where(eq(auditLogs.id, input.cursor))
+          .limit(1);
+        if (cursorLog) {
+          conditions.push(lt(auditLogs.createdAt, cursorLog.createdAt));
+        }
+      }
+
+      const results = await ctx.db
+        .select()
+        .from(auditLogs)
+        .where(and(...conditions))
+        .orderBy(desc(auditLogs.createdAt))
+        .limit(input.limit + 1);
+
+      const hasMore = results.length > input.limit;
+      const items = hasMore ? results.slice(0, input.limit) : results;
+
+      // Resolve user names
+      const userIds = [
+        ...new Set(items.map((l) => l.userId).filter(Boolean)),
+      ] as string[];
+
+      let userMap = new Map<string, { name: string | null; email: string }>();
+      if (userIds.length > 0) {
+        const userRows = await ctx.db
+          .select({ id: users.id, name: users.name, email: users.email })
+          .from(users)
+          .where(inArray(users.id, userIds));
+        userMap = new Map(
+          userRows.map((u) => [u.id, { name: u.name, email: u.email }])
+        );
+      }
+
+      logger.info(
+        { orgId: ctx.orgId, query: input.query, resultCount: items.length },
+        "Audit log search completed"
+      );
+
+      return {
+        logs: items.map((log) => ({
+          id: log.id,
+          action: log.action,
+          resource: log.resource,
+          resourceId: log.resourceId,
+          details: log.details,
+          ipAddress: log.ipAddress,
+          createdAt: log.createdAt,
+          userId: log.userId,
+          userName: log.userId ? (userMap.get(log.userId)?.name ?? null) : null,
+          userEmail: log.userId
+            ? (userMap.get(log.userId)?.email ?? null)
+            : null,
+        })),
+        nextCursor: hasMore ? items.at(-1)?.id : null,
+      };
+    }),
+
   // ─── Export User Data (GDPR) ───────────────────────────────────────────
   exportUserData: protectedProcedure
     .input(
@@ -127,8 +258,6 @@ export const auditRouter = router({
         ctx.auth.orgRole !== "admin" &&
         ctx.auth.orgRole !== "owner"
       ) {
-        // Only org admins can export other users' data
-        // The orgAdminProcedure check isn't applied here, so we verify manually
         throw new TRPCError({
           code: "FORBIDDEN",
           message: "Only admins can export other users' data",
@@ -258,7 +387,6 @@ export const auditRouter = router({
       }
 
       // Create a deletion request audit entry
-      // Actual deletion is processed asynchronously by a background job
       const requestId = generateId("gdpr");
 
       await ctx.db.insert(auditLogs).values({
@@ -275,7 +403,6 @@ export const auditRouter = router({
           reason: input.reason ?? null,
           status: "pending",
           requestedAt: new Date().toISOString(),
-          // GDPR requires processing within 30 days
           deadlineAt: new Date(
             Date.now() + 30 * 24 * 60 * 60 * 1000
           ).toISOString(),
@@ -302,6 +429,202 @@ export const auditRouter = router({
           Date.now() + 30 * 24 * 60 * 60 * 1000
         ).toISOString(),
       };
+    }),
+
+  // ─── Set Retention Policy ──────────────────────────────────────────────
+  setRetentionPolicy: orgAdminProcedure
+    .input(
+      z.object({
+        retentionDays: z
+          .number()
+          .int()
+          .min(7, "Minimum retention is 7 days")
+          .max(2555, "Maximum retention is 7 years"),
+        archiveEnabled: z.boolean().default(true),
+      })
+    )
+    .mutation(async ({ input, ctx }) => {
+      const policyId = generateId("arp");
+
+      // Upsert the retention policy
+      const [existing] = await ctx.db
+        .select({ id: auditRetentionPolicies.id })
+        .from(auditRetentionPolicies)
+        .where(eq(auditRetentionPolicies.orgId, ctx.orgId))
+        .limit(1);
+
+      if (existing) {
+        await ctx.db
+          .update(auditRetentionPolicies)
+          .set({
+            retentionDays: input.retentionDays,
+            archiveEnabled: input.archiveEnabled ? "true" : "false",
+            updatedBy: ctx.auth.userId,
+          })
+          .where(eq(auditRetentionPolicies.id, existing.id));
+      } else {
+        await ctx.db.insert(auditRetentionPolicies).values({
+          id: policyId,
+          orgId: ctx.orgId,
+          retentionDays: input.retentionDays,
+          archiveEnabled: input.archiveEnabled ? "true" : "false",
+          updatedBy: ctx.auth.userId,
+        });
+      }
+
+      // Record in audit log
+      await ctx.db.insert(auditLogs).values({
+        id: generateId("audit"),
+        orgId: ctx.orgId,
+        userId: ctx.auth.userId,
+        action: "audit.retention_policy_updated",
+        resource: "audit_retention_policy",
+        details: {
+          retentionDays: input.retentionDays,
+          archiveEnabled: input.archiveEnabled,
+          updatedBy: ctx.auth.userId,
+        },
+      });
+
+      logger.info(
+        {
+          orgId: ctx.orgId,
+          retentionDays: input.retentionDays,
+          archiveEnabled: input.archiveEnabled,
+        },
+        "Retention policy updated"
+      );
+
+      return {
+        retentionDays: input.retentionDays,
+        archiveEnabled: input.archiveEnabled,
+        updatedAt: new Date().toISOString(),
+      };
+    }),
+
+  // ─── Get Retention Policy ──────────────────────────────────────────────
+  getRetentionPolicy: orgAdminProcedure.query(async ({ ctx }) => {
+    const [policy] = await ctx.db
+      .select()
+      .from(auditRetentionPolicies)
+      .where(eq(auditRetentionPolicies.orgId, ctx.orgId))
+      .limit(1);
+
+    return {
+      retentionDays: policy?.retentionDays ?? 90,
+      archiveEnabled: policy?.archiveEnabled !== "false",
+      lastArchivedAt: policy?.lastArchivedAt?.toISOString() ?? null,
+      updatedBy: policy?.updatedBy ?? null,
+      updatedAt: policy?.updatedAt?.toISOString() ?? null,
+    };
+  }),
+
+  // ─── Archive Old Logs ──────────────────────────────────────────────────
+  archiveOldLogs: orgAdminProcedure.mutation(async ({ ctx }) => {
+    const result = await archiveOrgAuditLogs(ctx.orgId);
+
+    // Record the archival action
+    await ctx.db.insert(auditLogs).values({
+      id: generateId("audit"),
+      orgId: ctx.orgId,
+      userId: ctx.auth.userId,
+      action: "audit.manual_archive",
+      resource: "audit_log",
+      details: {
+        archivedCount: result.archivedCount,
+        archiveId: result.archiveId,
+        triggeredBy: ctx.auth.userId,
+      },
+    });
+
+    logger.info(
+      {
+        orgId: ctx.orgId,
+        archivedCount: result.archivedCount,
+        archiveId: result.archiveId,
+      },
+      "Manual audit log archival completed"
+    );
+
+    return result;
+  }),
+
+  // ─── List Archives ─────────────────────────────────────────────────────
+  listArchives: orgAdminProcedure
+    .input(
+      z.object({
+        limit: z.number().int().min(1).max(100).default(20),
+        cursor: z.string().optional(),
+      })
+    )
+    .query(async ({ input, ctx }) => {
+      const conditions = [eq(auditArchiveIndex.orgId, ctx.orgId)];
+
+      if (input.cursor) {
+        const [cursorArchive] = await ctx.db
+          .select({ createdAt: auditArchiveIndex.createdAt })
+          .from(auditArchiveIndex)
+          .where(eq(auditArchiveIndex.id, input.cursor))
+          .limit(1);
+        if (cursorArchive) {
+          conditions.push(
+            lt(auditArchiveIndex.createdAt, cursorArchive.createdAt)
+          );
+        }
+      }
+
+      const results = await ctx.db
+        .select()
+        .from(auditArchiveIndex)
+        .where(and(...conditions))
+        .orderBy(desc(auditArchiveIndex.createdAt))
+        .limit(input.limit + 1);
+
+      const hasMore = results.length > input.limit;
+      const items = hasMore ? results.slice(0, input.limit) : results;
+
+      return {
+        archives: items.map((a) => ({
+          id: a.id,
+          periodStart: a.periodStart.toISOString(),
+          periodEnd: a.periodEnd.toISOString(),
+          recordCount: a.recordCount,
+          sizeBytes: a.sizeBytes,
+          checksumSha256: a.checksumSha256,
+          createdAt: a.createdAt.toISOString(),
+        })),
+        nextCursor: hasMore ? items.at(-1)?.id : null,
+      };
+    }),
+
+  // ─── Retrieve Archived Logs ────────────────────────────────────────────
+  getArchivedLogs: orgAdminProcedure
+    .input(
+      z.object({
+        archiveId: z.string().min(1),
+      })
+    )
+    .query(async ({ input, ctx }) => {
+      try {
+        const logs = await retrieveArchivedLogs(input.archiveId, ctx.orgId);
+
+        logger.info(
+          {
+            orgId: ctx.orgId,
+            archiveId: input.archiveId,
+            recordCount: logs.length,
+          },
+          "Archived logs retrieved"
+        );
+
+        return { logs, recordCount: logs.length };
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        throw new TRPCError({
+          code: "NOT_FOUND",
+          message: `Failed to retrieve archive: ${message}`,
+        });
+      }
     }),
 
   // ─── Compliance Report ─────────────────────────────────────────────────
@@ -396,12 +719,20 @@ export const auditRouter = router({
         .groupBy(sql`date`)
         .orderBy(sql`date`);
 
+      // Retention policy
+      const [retentionPolicy] = await ctx.db
+        .select()
+        .from(auditRetentionPolicies)
+        .where(eq(auditRetentionPolicies.orgId, ctx.orgId))
+        .limit(1);
+
       // Compute compliance health score
       const totalEvents = Number(auditStats?.totalEvents ?? 0);
       const hasAuditCoverage = totalEvents > 0;
-      const hasGdprProcess = Number(gdprStats?.exportRequests ?? 0) >= 0; // Always true if GDPR endpoints exist
+      const hasGdprProcess = Number(gdprStats?.exportRequests ?? 0) >= 0;
       const lowSecurityIncidents =
         Number(securityStats?.failedAttempts ?? 0) < totalEvents * 0.05;
+      const hasRetentionPolicy = retentionPolicy !== undefined;
 
       const healthChecks = [
         {
@@ -423,6 +754,18 @@ export const auditRouter = router({
           name: "Low Security Incident Rate",
           passed: lowSecurityIncidents,
           description: "Failed/denied attempts are below 5% of total events",
+        },
+        {
+          name: "Retention Policy Configured",
+          passed: hasRetentionPolicy,
+          description:
+            "A data retention policy is configured for audit log lifecycle management",
+        },
+        {
+          name: "Archive Enabled",
+          passed: retentionPolicy?.archiveEnabled !== "false",
+          description:
+            "Old audit logs are archived to cold storage before deletion",
         },
       ];
 
@@ -458,6 +801,12 @@ export const auditRouter = router({
           totalSecurityEvents: Number(securityStats?.securityEvents ?? 0),
           failedAttempts: Number(securityStats?.failedAttempts ?? 0),
         },
+        retentionPolicy: {
+          retentionDays: retentionPolicy?.retentionDays ?? 90,
+          archiveEnabled: retentionPolicy?.archiveEnabled !== "false",
+          lastArchivedAt:
+            retentionPolicy?.lastArchivedAt?.toISOString() ?? null,
+        },
         eventsByAction: eventsByAction.map((e) => ({
           action: e.action,
           count: Number(e.count),
@@ -473,6 +822,80 @@ export const auditRouter = router({
         healthChecks,
         healthScore,
       };
+    }),
+
+  // ─── Enhanced Compliance Report (SOC2 Type II) ─────────────────────────
+  getFullComplianceReport: orgAdminProcedure
+    .input(
+      z.object({
+        periodDays: z.number().int().min(7).max(365).default(90),
+      })
+    )
+    .query(async ({ input, ctx }) => {
+      const report = await generateComplianceReport(
+        ctx.orgId,
+        input.periodDays
+      );
+
+      // Record the report generation in audit log
+      await ctx.db.insert(auditLogs).values({
+        id: generateId("audit"),
+        orgId: ctx.orgId,
+        userId: ctx.auth.userId,
+        action: "audit.compliance_report_generated",
+        resource: "compliance_report",
+        details: {
+          periodDays: input.periodDays,
+          healthScore:
+            (report.securityControls.filter((c) => c.status === "implemented")
+              .length /
+              report.securityControls.length) *
+            100,
+          totalEvents: report.summary.totalAuditEvents,
+        },
+      });
+
+      return report;
+    }),
+
+  // ─── Security Controls ─────────────────────────────────────────────────
+  getSecurityControls: orgAdminProcedure.query(() => {
+    return { controls: getSecurityControls() };
+  }),
+
+  // ─── Data Residency Check ──────────────────────────────────────────────
+  checkDataResidency: orgAdminProcedure.query(() => {
+    return checkDataResidency();
+  }),
+
+  // ─── Access Review ─────────────────────────────────────────────────────
+  getAccessReview: orgAdminProcedure
+    .input(
+      z.object({
+        periodDays: z.number().int().min(7).max(365).default(90),
+      })
+    )
+    .query(async ({ input, ctx }) => {
+      const since = new Date(
+        Date.now() - input.periodDays * 24 * 60 * 60 * 1000
+      );
+      const review = await getAccessReview(ctx.orgId, since);
+
+      // Record the access review in audit log
+      await ctx.db.insert(auditLogs).values({
+        id: generateId("audit"),
+        orgId: ctx.orgId,
+        userId: ctx.auth.userId,
+        action: "audit.access_review",
+        resource: "access_review",
+        details: {
+          periodDays: input.periodDays,
+          userCount: review.length,
+          reviewedBy: ctx.auth.userId,
+        },
+      });
+
+      return { entries: review, reviewedAt: new Date().toISOString() };
     }),
 
   // ─── Export Audit Logs (CSV/JSON for SOC 2) ─────────────────────────────

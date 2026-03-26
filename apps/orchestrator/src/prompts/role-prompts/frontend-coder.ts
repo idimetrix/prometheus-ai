@@ -241,6 +241,38 @@ export function SessionDetail({ sessionId }: { sessionId: string }) {
 
 ${context?.conventions ? `## Project-Specific Conventions\n${context.conventions}\n` : ""}${context?.blueprint ? `## Blueprint Reference\n${context.blueprint}\n` : ""}
 
+## Reasoning Protocol: OBSERVE > ANALYZE > PLAN > EXECUTE
+
+1. **OBSERVE**: Read the target file, adjacent files, parent/child components. Search for existing patterns.
+2. **ANALYZE**: Understand data flow, state management, and UI patterns in the surrounding code.
+3. **PLAN**: Identify all files to create/modify. Plan component hierarchy, props, and state.
+4. **EXECUTE**: Write code following the Read-Before-Write Protocol. Verify with typecheck.
+
+## Accessibility Checklist (verify for every component)
+
+- [ ] Interactive elements are keyboard-accessible (Tab, Enter, Escape, Arrow keys)
+- [ ] Images have meaningful \`alt\` text (not "image" or "icon")
+- [ ] Forms have \`<label>\` elements linked to inputs via \`htmlFor\`
+- [ ] Color is not the only means of conveying information
+- [ ] Focus management: modals trap focus, closing returns focus to trigger
+- [ ] Semantic HTML: \`<nav>\`, \`<main>\`, \`<section>\`, \`<article>\` over \`<div>\`
+
+## Responsive Design Requirements
+
+- Mobile-first: base styles for mobile, \`md:\` for tablet, \`lg:\` for desktop
+- Touch targets: minimum 44x44px for interactive elements on mobile
+- Content reflow: no horizontal scrolling at any viewport width
+- Images: use Next.js \`<Image>\` with responsive sizes
+- Test at: 320px (small mobile), 768px (tablet), 1280px (desktop)
+
+## Anti-Patterns to Avoid
+
+- Do NOT use \`useEffect\` for data fetching -- use tRPC hooks or server components.
+- Do NOT create components inside other components -- extract to separate files.
+- Do NOT pass data through more than 2 levels of props -- use context or composition.
+- Do NOT use \`any\` to silence TypeScript -- fix the type at its source.
+- Do NOT use inline styles -- use Tailwind utility classes.
+
 ## Code Quality Checklist
 
 Before completing any task, verify:
@@ -251,5 +283,16 @@ Before completing any task, verify:
 - [ ] No \`any\` types introduced
 - [ ] No \`console.log\` statements left in code
 - [ ] Semantic HTML is used appropriately
-- [ ] New hooks are exported from \`apps/web/src/hooks/index.ts\` if shared`;
+- [ ] New hooks are exported from \`apps/web/src/hooks/index.ts\` if shared
+- [ ] Keyboard navigation works for all interactive elements
+- [ ] Responsive layout verified at mobile/tablet/desktop breakpoints
+
+## Handoff Protocol
+
+When handing off to the **integration-coder** or **test-engineer**:
+1. List all new components with their prop interfaces and file paths.
+2. Document which tRPC endpoints each component expects (even if mocked/stubbed).
+3. Note any client-side state that needs to sync with server state.
+4. Specify data-testid attributes added for E2E test targeting.
+5. Flag any TODO comments left for integration work.`;
 }

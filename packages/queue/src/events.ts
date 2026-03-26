@@ -21,6 +21,8 @@ export const QueueEvents = {
   TASK_CREATED: "task:created",
   SESSION_CHECKPOINT: "session:checkpoint",
   SESSION_ERROR: "session:error",
+  TASK_PROGRESS: "task_progress",
+  VISUAL_REGRESSION: "visual_regression",
 } as const;
 
 export type QueueEvent = (typeof QueueEvents)[keyof typeof QueueEvents];

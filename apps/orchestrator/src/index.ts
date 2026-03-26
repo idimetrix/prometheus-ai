@@ -515,6 +515,27 @@ app.post("/sessions/:id/cancel", async (c) => {
   }
 });
 
+// ─── Retry Failed Session ───────────────────────────────────────
+
+app.post("/sessions/:id/retry", async (c) => {
+  const sessionId = c.req.param("id");
+
+  try {
+    const body = await c.req.json();
+    const { fromCheckpoint } = body as { fromCheckpoint?: boolean };
+
+    await sessionManager.retrySession(sessionId, "", fromCheckpoint ?? true);
+    return c.json({ status: "active", sessionId, retried: true });
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    if (msg.includes("not found")) {
+      return c.json({ error: "Session not found" }, 404);
+    }
+    logger.error({ error: msg }, "Failed to retry session");
+    return c.json({ error: "Internal server error" }, 500);
+  }
+});
+
 // ─── List Active Sessions ───────────────────────────────────────
 
 app.get("/sessions", (c) => {
@@ -639,6 +660,104 @@ app.post("/sessions/:id/release", async (c) => {
   }
 });
 
+// ─── Meta-Learning Stats (AI08) ──────────────────────────────
+
+import { sharedMetaLearner } from "./agent-loop";
+
+app.get("/meta-learning/stats", (c) => {
+  return c.json(sharedMetaLearner.getStats());
+});
+
+app.get("/meta-learning/patterns", (c) => {
+  return c.json({ patterns: sharedMetaLearner.getPatterns() });
+});
+
+app.post("/meta-learning/extract", (c) => {
+  const patterns = sharedMetaLearner.extractPatterns();
+  const adjustments = sharedMetaLearner.generateAdjustments();
+  return c.json({ patterns, adjustments });
+});
+
+// ─── Self-Play Training (AI04) ────────────────────────────────
+
+import { TrainingRunner } from "./training/training-runner";
+
+const trainingRunner = new TrainingRunner();
+
+app.post("/training/self-play", async (c) => {
+  try {
+    if (trainingRunner.isRunning()) {
+      return c.json({ error: "Training run already in progress" }, 409);
+    }
+
+    const body = await c.req.json();
+    const { projectId, orgId, agentRoles, taskTypes, maxRoundsPerRole } =
+      body as {
+        projectId: string;
+        orgId: string;
+        agentRoles?: string[];
+        taskTypes?: string[];
+        maxRoundsPerRole?: number;
+      };
+
+    if (!(projectId && orgId)) {
+      return c.json({ error: "projectId and orgId are required" }, 400);
+    }
+
+    const defaultRoles = [
+      "backend_coder",
+      "frontend_coder",
+      "test_engineer",
+      "ci_loop",
+    ];
+
+    const result = trainingRunner.runSelfPlay({
+      projectId,
+      orgId,
+      agentRoles: agentRoles ?? defaultRoles,
+      taskTypes,
+      maxRoundsPerRole,
+    });
+
+    return c.json(result);
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    logger.error({ error: msg }, "Self-play training failed");
+    return c.json({ error: "Internal server error" }, 500);
+  }
+});
+
+app.get("/training/metrics", (c) => {
+  return c.json(trainingRunner.getMetrics());
+});
+
+app.post("/training/recommend", async (c) => {
+  try {
+    const body = await c.req.json();
+    const { agentRole, taskType, context } = body as {
+      agentRole: string;
+      taskType: string;
+      context?: Record<string, string>;
+    };
+
+    if (!(agentRole && taskType)) {
+      return c.json({ error: "agentRole and taskType are required" }, 400);
+    }
+
+    const recommendation = trainingRunner.getRecommendation(
+      agentRole,
+      taskType,
+      context ?? {}
+    );
+
+    return c.json({ recommendation });
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    logger.error({ error: msg }, "Training recommendation failed");
+    return c.json({ error: "Internal server error" }, 500);
+  }
+});
+
 // ─── Benchmark Endpoints (SWE-bench) ────────────────────────
 
 app.post("/benchmark/run", async (c) => {
@@ -741,7 +860,7 @@ serve({ fetch: app.fetch, port }, () => {
   logger.info({ port }, "Orchestrator engine running");
 });
 
-export { AgentLoop } from "./agent-loop";
+export { AgentLoop, sharedMetaLearner } from "./agent-loop";
 export {
   BlueprintEnforcer as OrchestratorBlueprintEnforcer,
   type BlueprintViolation as OrcBlueprintViolation,
@@ -785,9 +904,10 @@ export {
   type RoleAdjustment,
   type SessionOutcome,
 } from "./meta-learning/meta-learner";
+export { CodeVoter } from "./moa/code-voter";
 export { MixtureOfAgents } from "./moa/parallel-generator";
 // Phase 7: MoA
-export { MoAVoting } from "./moa/voting";
+export { MoADecisionGate, MoAVoting } from "./moa/voting";
 // Phase 2: Mode handlers
 export { getModeHandler } from "./modes";
 export type { ModeHandler, ModeHandlerParams, ModeResult } from "./modes/types";
@@ -799,9 +919,20 @@ export { AuditPhase } from "./phases/audit";
 export { IntegrationPhase } from "./phases/integration";
 // Phase 7: Pipeline phases
 export { PhaseGate } from "./phases/phase-gate";
-
+// MCTS Planning
+export { MCTSPlanner } from "./planning/mcts-planner";
 // Phase 7: Planning
 export { SeniorPlanner } from "./planning/senior-planner";
 export { SessionManager } from "./session-manager";
 export { TakeoverManager } from "./takeover";
 export { TaskRouter } from "./task-router";
+// Phase: Self-play training
+export {
+  type TrainingRunConfig,
+  TrainingRunner,
+  type TrainingRunResult,
+} from "./training/training-runner";
+export { ScreenshotComparator } from "./verification/screenshot-comparator";
+// Visual regression & verification
+export { VisualRegressionTester } from "./verification/visual-regression";
+export { ScreenshotDiffer } from "./visual/screenshot-differ";

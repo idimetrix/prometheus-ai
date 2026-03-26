@@ -2,6 +2,7 @@ import { Queue } from "bullmq";
 import { redis } from "./connection";
 import {
   type AgentTaskData,
+  type AuditArchivalData,
   type CleanupSandboxData,
   type ContinueSessionData,
   type CreditGrantData,
@@ -197,6 +198,21 @@ export const reconciliationQueue = new Queue<ReconciliationData>(
 // Re-export the old billingQueue name for backward compat
 export const billingQueue = creditGrantQueue;
 
+// ========== Audit Archival ==========
+
+/** Audit log archival queue — archives old logs to cold storage */
+export const auditArchivalQueue = new Queue<AuditArchivalData>(
+  "audit-archival",
+  {
+    connection: redis,
+    defaultJobOptions: buildJobOptions(RetryPolicies.standard, {
+      removeOnComplete: 200,
+      removeOnFail: 500,
+      priority: JobPriority.LOW,
+    }),
+  }
+);
+
 // ========== Webhook Delivery ==========
 
 /** Outbound webhook delivery queue */
@@ -242,6 +258,7 @@ export const billingDLQ = new Queue<CreditGrantData>(
 
 export const ALL_QUEUES = {
   "agent-tasks": agentTaskQueue,
+  "audit-archival": auditArchivalQueue,
   "enterprise-tasks": enterpriseTaskQueue,
   "index-project": indexingQueue,
   "generate-embeddings": embeddingsQueue,

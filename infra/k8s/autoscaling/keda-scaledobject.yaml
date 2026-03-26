@@ -1,0 +1,115 @@
+# KEDA ScaledObject for queue-based autoscaling of worker pods.
+# Scales workers based on BullMQ queue depths in Redis.
+# Requires KEDA operator: https://keda.sh/docs/deploy/
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: queue-worker-keda
+  namespace: prometheus
+  labels:
+    app: queue-worker
+    component: autoscaling
+spec:
+  scaleTargetRef:
+    name: queue-worker
+  pollingInterval: 10
+  cooldownPeriod: 120
+  idleReplicaCount: 0
+  minReplicaCount: 2
+  maxReplicaCount: 20
+  fallback:
+    failureThreshold: 3
+    replicas: 2
+  triggers:
+    # Session events queue
+    - type: redis
+      metadata:
+        address: redis.prometheus.svc.cluster.local:6379
+        listName: "bull:session-events:wait"
+        listLength: "5"
+        activationListLength: "1"
+        enableTLS: "false"
+      authenticationRef:
+        name: keda-redis-auth
+    # Agent tasks queue (primary workload)
+    - type: redis
+      metadata:
+        address: redis.prometheus.svc.cluster.local:6379
+        listName: "bull:agent-tasks:wait"
+        listLength: "3"
+        activationListLength: "0"
+        enableTLS: "false"
+      authenticationRef:
+        name: keda-redis-auth
+    # Workflow runs queue
+    - type: redis
+      metadata:
+        address: redis.prometheus.svc.cluster.local:6379
+        listName: "bull:workflow-runs:wait"
+        listLength: "5"
+        activationListLength: "1"
+        enableTLS: "false"
+      authenticationRef:
+        name: keda-redis-auth
+    # Usage aggregation queue (low priority, higher threshold)
+    - type: redis
+      metadata:
+        address: redis.prometheus.svc.cluster.local:6379
+        listName: "bull:usage-aggregation:wait"
+        listLength: "20"
+        activationListLength: "1"
+        enableTLS: "false"
+      authenticationRef:
+        name: keda-redis-auth
+    # Enterprise tasks queue (high priority, low threshold)
+    - type: redis
+      metadata:
+        address: redis.prometheus.svc.cluster.local:6379
+        listName: "bull:enterprise-tasks:wait"
+        listLength: "2"
+        activationListLength: "0"
+        enableTLS: "false"
+      authenticationRef:
+        name: keda-redis-auth
+    # CPU fallback trigger
+    - type: cpu
+      metricType: Utilization
+      metadata:
+        value: "75"
+  advanced:
+    restoreToOriginalReplicaCount: true
+    horizontalPodAutoscalerConfig:
+      behavior:
+        scaleDown:
+          stabilizationWindowSeconds: 120
+          policies:
+            - type: Percent
+              value: 25
+              periodSeconds: 60
+            - type: Pods
+              value: 2
+              periodSeconds: 60
+          selectPolicy: Min
+        scaleUp:
+          stabilizationWindowSeconds: 15
+          policies:
+            - type: Pods
+              value: 4
+              periodSeconds: 30
+            - type: Percent
+              value: 100
+              periodSeconds: 30
+          selectPolicy: Max
+---
+apiVersion: keda.sh/v1alpha1
+kind: TriggerAuthentication
+metadata:
+  name: keda-redis-auth
+  namespace: prometheus
+  labels:
+    component: autoscaling
+spec:
+  secretTargetRef:
+    - parameter: password
+      name: redis-credentials
+      key: redis-password

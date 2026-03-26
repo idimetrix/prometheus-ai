@@ -1,6 +1,11 @@
 import { createLogger } from "@prometheus/logger";
-import { EventPublisher, QueueEvents } from "@prometheus/queue";
+import {
+  createRedisConnection,
+  EventPublisher,
+  QueueEvents,
+} from "@prometheus/queue";
 import { generateId } from "@prometheus/utils";
+import type IORedis from "ioredis";
 
 const logger = createLogger("orchestrator:checkpoint");
 
@@ -31,10 +36,17 @@ export interface CheckpointResponse {
   respondedBy: string;
 }
 
+/** Redis channel used for checkpoint resolution pub/sub */
+const CHECKPOINT_CHANNEL = "checkpoint:resolution";
+
 /**
  * CheckpointManager handles human-in-the-loop interactions.
  * When an agent needs human approval or input, it creates a checkpoint
  * and pauses execution until a response is received or timeout occurs.
+ *
+ * Supports both in-process resolution (respondToCheckpoint) and
+ * distributed resolution via Redis pub/sub so checkpoint responses
+ * work across multiple orchestrator instances.
  */
 export class CheckpointManager {
   private readonly pendingCheckpoints = new Map<
@@ -47,9 +59,64 @@ export class CheckpointManager {
     }
   >();
   private readonly eventPublisher: EventPublisher;
+  private subscriber: IORedis | null = null;
 
   constructor() {
     this.eventPublisher = new EventPublisher();
+    this.initRedisSubscriber();
+  }
+
+  /**
+   * Subscribe to Redis checkpoint resolution channel so responses
+   * from other processes (API server, socket server) can resolve
+   * checkpoints held in this orchestrator instance.
+   */
+  private initRedisSubscriber(): void {
+    try {
+      this.subscriber = createRedisConnection();
+      this.subscriber.subscribe(CHECKPOINT_CHANNEL, (err) => {
+        if (err) {
+          logger.error(
+            { error: err.message },
+            "Failed to subscribe to checkpoint resolution channel"
+          );
+        } else {
+          logger.info("Subscribed to checkpoint resolution channel");
+        }
+      });
+
+      this.subscriber.on("message", (channel: string, message: string) => {
+        if (channel !== CHECKPOINT_CHANNEL) {
+          return;
+        }
+        try {
+          const payload = JSON.parse(message) as {
+            checkpointId: string;
+            response: {
+              action: CheckpointResponse["action"];
+              data?: Record<string, unknown>;
+              message?: string;
+              respondedBy: string;
+            };
+          };
+
+          this.respondToCheckpoint(payload.checkpointId, {
+            ...payload.response,
+            respondedAt: new Date(),
+          });
+        } catch (err) {
+          logger.error(
+            { error: String(err) },
+            "Failed to process checkpoint resolution from Redis"
+          );
+        }
+      });
+    } catch (err) {
+      logger.warn(
+        { error: String(err) },
+        "Redis unavailable for checkpoint pub/sub — using in-process only"
+      );
+    }
   }
 
   /**
@@ -172,7 +239,7 @@ export class CheckpointManager {
         timer,
       });
 
-      // Publish checkpoint event to frontend
+      // Publish checkpoint event to frontend via session events channel
       this.eventPublisher
         .publishSessionEvent(params.sessionId, {
           type: QueueEvents.CHECKPOINT,
@@ -196,7 +263,8 @@ export class CheckpointManager {
   }
 
   /**
-   * Respond to a pending checkpoint (called from socket server or API).
+   * Respond to a pending checkpoint (called from HTTP handler, socket
+   * server, or Redis pub/sub).
    */
   respondToCheckpoint(
     checkpointId: string,
@@ -214,11 +282,54 @@ export class CheckpointManager {
     pending.resolve(response);
     this.pendingCheckpoints.delete(checkpointId);
 
+    // Publish resolution event so the frontend knows the checkpoint is resolved
+    this.eventPublisher
+      .publishSessionEvent(pending.checkpoint.sessionId, {
+        type: "checkpoint_resolved",
+        data: {
+          checkpointId,
+          action: response.action,
+          respondedBy: response.respondedBy,
+          message: response.message ?? null,
+        },
+        timestamp: new Date().toISOString(),
+      })
+      .catch((err) => {
+        logger.error(
+          { error: String(err) },
+          "Failed to publish checkpoint resolution event"
+        );
+      });
+
     logger.info(
       { checkpointId, action: response.action },
       "Checkpoint resolved"
     );
     return true;
+  }
+
+  /**
+   * Publish a checkpoint resolution via Redis pub/sub so all orchestrator
+   * instances can receive it. Called by the API when the user resolves
+   * a checkpoint through the HTTP endpoint.
+   */
+  async publishResolution(
+    checkpointId: string,
+    response: Omit<CheckpointResponse, "respondedAt">
+  ): Promise<void> {
+    try {
+      const publisher = createRedisConnection();
+      await publisher.publish(
+        CHECKPOINT_CHANNEL,
+        JSON.stringify({ checkpointId, response })
+      );
+      await publisher.quit();
+    } catch (err) {
+      logger.error(
+        { checkpointId, error: String(err) },
+        "Failed to publish checkpoint resolution via Redis"
+      );
+    }
   }
 
   /**
@@ -244,6 +355,20 @@ export class CheckpointManager {
           respondedAt: new Date(),
         });
         this.pendingCheckpoints.delete(id);
+      }
+    }
+  }
+
+  /**
+   * Clean up Redis subscriber on shutdown.
+   */
+  async destroy(): Promise<void> {
+    if (this.subscriber) {
+      try {
+        await this.subscriber.unsubscribe(CHECKPOINT_CHANNEL);
+        await this.subscriber.quit();
+      } catch {
+        // Best-effort cleanup
       }
     }
   }

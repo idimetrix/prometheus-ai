@@ -9,6 +9,7 @@ import { PropertyTesting } from "./ci-loop/property-testing";
 import { classifyTask } from "./embedding-classifier";
 import { LearningExtractor } from "./feedback/learning-extractor";
 import { MixtureOfAgents } from "./moa/parallel-generator";
+import { MoADecisionGate, MoAVoting, type ModelResponse } from "./moa/voting";
 import { GeneratorEvaluator } from "./patterns/generator-evaluator";
 import { SpecFirst } from "./patterns/spec-first";
 import {
@@ -537,6 +538,9 @@ Instructions:
   /**
    * Task mode: Full pipeline execution.
    * Discovery -> Architect -> Planner -> Coders -> Test -> CI Loop -> Security -> Deploy
+   *
+   * Uses the adaptive pipeline to determine which phases to run and
+   * whether MoA voting should be used for high-stakes coding decisions.
    */
   private async processTaskMode(
     agentLoop: import("./agent-loop").AgentLoop,
@@ -564,6 +568,44 @@ Instructions:
       return { results };
     }
 
+    // Determine adaptive pipeline based on task complexity
+    const pipeline = this.adaptPipeline(taskDescription);
+    this.logger.info(
+      {
+        complexity: pipeline.complexity,
+        phases: pipeline.phases,
+        useMoA: pipeline.useMoA,
+        extraReviewPasses: pipeline.extraReviewPasses,
+      },
+      "Adaptive pipeline selected"
+    );
+
+    // Simple tasks: skip discovery/architecture/planning, go straight to coding
+    if (pipeline.complexity === "simple") {
+      const routing = await this.routeTask(
+        taskDescription,
+        undefined,
+        agentLoop
+      );
+      const codingResult = await agentLoop.executeTask(
+        taskDescription,
+        routing.agentRole
+      );
+      results.push(codingResult);
+
+      if (pipeline.phases.includes("testing")) {
+        await this.publishPhaseUpdate("testing", "running");
+        const testResult = await agentLoop.executeTask(
+          `Write tests for the changes just made:\n\n${taskDescription}`,
+          "test_engineer"
+        );
+        results.push(testResult);
+        await this.publishPhaseUpdate("testing", "completed");
+      }
+
+      return { results };
+    }
+
     // Full pipeline: Discovery + Architecture + Planning
     const { discoveryResult, architectureResult } =
       await this.runDiscoveryAndArchitecture(
@@ -571,6 +613,17 @@ Instructions:
         taskDescription,
         results
       );
+
+    // For complex/critical tasks with MoA, run MoA architecture review
+    // (already done in runDiscoveryAndArchitecture, but add extra review
+    // passes for critical tasks)
+    if (pipeline.useMoA && pipeline.extraReviewPasses > 0) {
+      await this.runMoAExtraReview(
+        architectureResult,
+        taskDescription,
+        pipeline.extraReviewPasses
+      );
+    }
 
     const { sprintPlan, mctsResult } = await this.runPlanningPhase(
       agentLoop,
@@ -586,16 +639,24 @@ Instructions:
       results
     );
 
-    // Coding with backtracking
-    const { executionResults, finalPlan } =
-      await this.runCodingWithBacktracking(
-        agentLoop,
-        sprintPlan,
-        architectureResult,
-        mctsResult,
-        taskDescription,
-        results
-      );
+    // Coding with backtracking — use MoA voting for critical tasks
+    const { executionResults, finalPlan } = pipeline.useMoA
+      ? await this.runCodingWithMoA(
+          agentLoop,
+          sprintPlan,
+          architectureResult,
+          mctsResult,
+          taskDescription,
+          results
+        )
+      : await this.runCodingWithBacktracking(
+          agentLoop,
+          sprintPlan,
+          architectureResult,
+          mctsResult,
+          taskDescription,
+          results
+        );
 
     // Post-coding verification phases
     await this.runPostCodingVerification(
@@ -836,6 +897,195 @@ Instructions:
     return { executionResults, finalPlan: sprintPlan };
   }
 
+  /**
+   * Run coding with MoA voting for critical/complex tasks.
+   *
+   * For each coding task in the sprint plan, dispatches the prompt to
+   * 3 models in parallel via {@link MixtureOfAgents}, scores responses
+   * via {@link MoAVoting}, and uses the best response. Falls back to
+   * standard single-model execution for non-coding tasks or on failure.
+   */
+  private async runCodingWithMoA(
+    agentLoop: import("./agent-loop").AgentLoop,
+    initialPlan: SprintPlan,
+    architectureResult: ArchitectureResult,
+    _mctsResult: MCTSPlanResult,
+    _taskDescription: string,
+    results: AgentExecutionResult[]
+  ): Promise<{
+    executionResults: AgentExecutionResult[];
+    finalPlan: SprintPlan;
+  }> {
+    await this.publishPhaseUpdate("coding", "running");
+
+    const executionResults: AgentExecutionResult[] = [];
+    const completed = new Set<string>();
+    const allTasks = [...initialPlan.tasks];
+    const codingRoles = new Set([
+      "frontend_coder",
+      "backend_coder",
+      "integration_coder",
+    ]);
+
+    let safetyCounter = 0;
+    const maxRounds = allTasks.length + 1;
+
+    while (completed.size < allTasks.length && safetyCounter < maxRounds) {
+      safetyCounter++;
+
+      const ready = allTasks.filter(
+        (t) =>
+          !completed.has(t.id) &&
+          t.dependencies.every((dep) => completed.has(dep))
+      );
+
+      if (ready.length === 0 && completed.size < allTasks.length) {
+        const remaining = allTasks.filter((t) => !completed.has(t.id));
+        ready.push(...remaining);
+      }
+
+      for (const task of ready) {
+        const enrichedDesc = `${task.description}\n\nBlueprint:\n${architectureResult.blueprint}\n\nAcceptance Criteria:\n${task.acceptanceCriteria.map((c) => `- ${c}`).join("\n")}`;
+
+        const useMoA = codingRoles.has(task.agentRole);
+        const result = useMoA
+          ? await this.executeCodingTaskWithMoA(
+              agentLoop,
+              task.id,
+              enrichedDesc,
+              task.agentRole
+            )
+          : await agentLoop.executeTask(enrichedDesc, task.agentRole);
+
+        executionResults.push(result);
+        completed.add(task.id);
+
+        this.logger.info(
+          {
+            taskId: task.id,
+            role: task.agentRole,
+            success: result.success,
+            usedMoA: useMoA,
+            progress: `${completed.size}/${allTasks.length}`,
+          },
+          "Sprint task completed (MoA pipeline)"
+        );
+      }
+    }
+
+    results.push(...executionResults);
+    await this.publishPhaseUpdate("coding", "completed");
+
+    return { executionResults, finalPlan: initialPlan };
+  }
+
+  /**
+   * Execute a single coding task using MoA multi-model generation + voting.
+   * Dispatches to 3 models in parallel, votes on the best response,
+   * validates quorum via decision gate, and feeds the consensus result
+   * to the agent loop for execution.
+   */
+  private async executeCodingTaskWithMoA(
+    agentLoop: import("./agent-loop").AgentLoop,
+    taskId: string,
+    enrichedDesc: string,
+    agentRole: string
+  ): Promise<AgentExecutionResult> {
+    const moa = new MixtureOfAgents();
+    const moaVoting = new MoAVoting();
+    const decisionGate = new MoADecisionGate({ mode: "majority" });
+
+    try {
+      const moaResult = await moa.generate(enrichedDesc, 1);
+      this.runMoAVotingRound(moaVoting, decisionGate, moaResult, taskId);
+
+      if (moaResult.synthesized.length > 0) {
+        return await agentLoop.executeTask(
+          `${enrichedDesc}\n\nReference implementation from multi-model consensus:\n${moaResult.synthesized.slice(0, 4000)}`,
+          agentRole
+        );
+      }
+      return await agentLoop.executeTask(enrichedDesc, agentRole);
+    } catch (err) {
+      this.logger.warn(
+        { taskId, err },
+        "MoA coding failed, falling back to single model"
+      );
+      return await agentLoop.executeTask(enrichedDesc, agentRole);
+    }
+  }
+
+  /**
+   * Run MoA voting and decision gate evaluation on multi-model responses.
+   * Logs the voting outcome for observability.
+   */
+  private runMoAVotingRound(
+    moaVoting: MoAVoting,
+    decisionGate: MoADecisionGate,
+    moaResult: import("./moa/parallel-generator").MoAResult,
+    taskId: string
+  ): void {
+    const validResponses = moaResult.responses.filter(
+      (r) => r.output.length > 0
+    );
+    if (validResponses.length <= 1) {
+      return;
+    }
+
+    const modelResponses: ModelResponse[] = validResponses.map((r) => ({
+      model: r.model,
+      output: r.output,
+      confidence: r.qualityScore ?? r.confidence,
+    }));
+
+    const voteResult = moaVoting.vote(modelResponses, "confidence-weighted");
+
+    this.logger.info(
+      {
+        taskId,
+        winner: modelResponses[voteResult.winner]?.model,
+        strategy: voteResult.strategy,
+        scores: voteResult.scores,
+      },
+      "MoA voting selected best coding response"
+    );
+
+    const gateResult = decisionGate.evaluate(modelResponses);
+    if (!gateResult.approved) {
+      this.logger.warn(
+        { taskId },
+        "MoA quorum not met, using synthesized result"
+      );
+    }
+  }
+
+  /**
+   * Run extra MoA review passes on the architecture for critical tasks.
+   * Each pass sends the blueprint to multiple models for review and
+   * appends consensus improvements.
+   */
+  private async runMoAExtraReview(
+    architectureResult: ArchitectureResult,
+    taskDescription: string,
+    passes: number
+  ): Promise<void> {
+    const moa = new MixtureOfAgents();
+
+    for (let pass = 0; pass < passes; pass++) {
+      const reviewResult = await moa
+        .generate(
+          `Critical task review pass ${pass + 1}: Review this architecture for security, scalability, and correctness issues.\n\nTask: ${taskDescription}\n\nBlueprint:\n${architectureResult.blueprint.slice(0, 3000)}`,
+          1
+        )
+        .catch(() => null);
+
+      if (reviewResult?.synthesized) {
+        architectureResult.blueprint += `\n\n## MoA Review Pass ${pass + 1}\n${reviewResult.synthesized.slice(0, 1500)}`;
+        this.logger.info({ pass: pass + 1 }, "MoA extra review pass completed");
+      }
+    }
+  }
+
   private async attemptPlanRevision(
     agentLoop: import("./agent-loop").AgentLoop,
     planReviser: PlanReviser,
@@ -960,7 +1210,8 @@ Instructions:
       agentLoop,
       this.currentSessionId ?? "",
       allChangedFiles,
-      taskDescription
+      taskDescription,
+      this.currentSessionId ?? undefined
     );
     results.push({
       success: visualResult.passed,

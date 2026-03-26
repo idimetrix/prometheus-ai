@@ -45,6 +45,7 @@ export function useSessionStream(sessionId: string | null) {
   const eventSourceRef = useRef<EventSource | null>(null);
   const reconnectAttempts = useRef(0);
   const reconnectTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastEventIdRef = useRef<string>("0");
 
   const store = useSessionStore();
   const storeRef = useRef(store);
@@ -76,9 +77,17 @@ export function useSessionStream(sessionId: string | null) {
 
     // Build URL with auth token — EventSource doesn't support custom headers,
     // so we pass the token as a query parameter.
+    // Include lastEventId for gap-fill on reconnection.
     const token = getAuthTokenSync();
-    const params = token ? `?token=${encodeURIComponent(token)}` : "";
-    const url = `${apiUrl}/api/sse/sessions/${sessionId}/stream${params}`;
+    const searchParams = new URLSearchParams();
+    if (token) {
+      searchParams.set("token", token);
+    }
+    if (lastEventIdRef.current !== "0") {
+      searchParams.set("lastEventId", lastEventIdRef.current);
+    }
+    const qs = searchParams.toString();
+    const url = `${apiUrl}/api/sse/sessions/${sessionId}/stream${qs ? `?${qs}` : ""}`;
 
     const es = new EventSource(url);
     eventSourceRef.current = es;
@@ -89,8 +98,23 @@ export function useSessionStream(sessionId: string | null) {
       reconnectAttempts.current = 0;
     };
 
+    // Track the last event ID from any SSE message for resume on reconnect.
+    // We wrap each addEventListener so the ID is captured automatically.
+    const trackedListen = (
+      eventType: string,
+      handler: (e: MessageEvent) => void
+    ) => {
+      es.addEventListener(eventType, (e) => {
+        const me = e as MessageEvent;
+        if (me.lastEventId) {
+          lastEventIdRef.current = me.lastEventId;
+        }
+        handler(me);
+      });
+    };
+
     // Terminal / agent output
-    es.addEventListener("agent_output", (e) => {
+    trackedListen("agent_output", (e) => {
       try {
         const data = JSON.parse(e.data);
         storeRef.current.addTerminalLine({
@@ -108,7 +132,7 @@ export function useSessionStream(sessionId: string | null) {
       }
     });
 
-    es.addEventListener("terminal_output", (e) => {
+    trackedListen("terminal_output", (e) => {
       try {
         const data = JSON.parse(e.data);
         storeRef.current.addTerminalLine({
@@ -121,7 +145,7 @@ export function useSessionStream(sessionId: string | null) {
     });
 
     // Plan updates
-    es.addEventListener("plan_update", (e) => {
+    trackedListen("plan_update", (e) => {
       try {
         const data = JSON.parse(e.data);
         if (data.steps) {
@@ -132,7 +156,7 @@ export function useSessionStream(sessionId: string | null) {
       }
     });
 
-    es.addEventListener("plan_step_update", (e) => {
+    trackedListen("plan_step_update", (e) => {
       try {
         const data = JSON.parse(e.data);
         if (data.stepId) {
@@ -148,7 +172,7 @@ export function useSessionStream(sessionId: string | null) {
     });
 
     // File changes
-    es.addEventListener("file_change", (e) => {
+    trackedListen("file_change", (e) => {
       try {
         const data = JSON.parse(e.data);
         if (data.files) {
@@ -162,7 +186,7 @@ export function useSessionStream(sessionId: string | null) {
     });
 
     // Code diffs
-    es.addEventListener("file_diff", (e) => {
+    trackedListen("file_diff", (e) => {
       try {
         const data = JSON.parse(e.data);
         storeRef.current.addEvent({
@@ -176,7 +200,7 @@ export function useSessionStream(sessionId: string | null) {
       }
     });
 
-    es.addEventListener("code_change", (e) => {
+    trackedListen("code_change", (e) => {
       try {
         const data = JSON.parse(e.data);
         storeRef.current.addEvent({
@@ -191,7 +215,7 @@ export function useSessionStream(sessionId: string | null) {
     });
 
     // Agent status
-    es.addEventListener("agent_status", (e) => {
+    trackedListen("agent_status", (e) => {
       try {
         const data = JSON.parse(e.data);
         storeRef.current.addEvent({
@@ -206,7 +230,7 @@ export function useSessionStream(sessionId: string | null) {
     });
 
     // Queue position
-    es.addEventListener("queue_position", (e) => {
+    trackedListen("queue_position", (e) => {
       try {
         const data = JSON.parse(e.data);
         storeRef.current.setQueuePosition(data.position);
@@ -216,7 +240,7 @@ export function useSessionStream(sessionId: string | null) {
     });
 
     // Task status
-    es.addEventListener("task_status", (e) => {
+    trackedListen("task_status", (e) => {
       try {
         const data = JSON.parse(e.data);
         storeRef.current.setStatus(data.status);
@@ -232,7 +256,7 @@ export function useSessionStream(sessionId: string | null) {
     });
 
     // Reasoning/thinking
-    es.addEventListener("reasoning", (e) => {
+    trackedListen("reasoning", (e) => {
       try {
         const data = JSON.parse(e.data);
         storeRef.current.addReasoning(data.content ?? data.thought ?? "");
@@ -246,7 +270,7 @@ export function useSessionStream(sessionId: string | null) {
     });
 
     // Session complete
-    es.addEventListener("session_complete", (e) => {
+    trackedListen("session_complete", (e) => {
       try {
         const data = JSON.parse(e.data);
         storeRef.current.setStatus(data.status ?? "completed");
@@ -258,7 +282,7 @@ export function useSessionStream(sessionId: string | null) {
     // ---- Canonical agent streaming events (GAP-P0-08) ----
 
     // agent:thinking — LLM token streaming (partial text)
-    es.addEventListener("agent:thinking", (e) => {
+    trackedListen("agent:thinking", (e) => {
       try {
         const data = JSON.parse(e.data);
         if (data.content) {
@@ -279,7 +303,7 @@ export function useSessionStream(sessionId: string | null) {
     });
 
     // agent:terminal — Terminal command output
-    es.addEventListener("agent:terminal", (e) => {
+    trackedListen("agent:terminal", (e) => {
       try {
         const data = JSON.parse(e.data);
         const content = data.output
@@ -301,7 +325,7 @@ export function useSessionStream(sessionId: string | null) {
     });
 
     // agent:file-change — File write with diff
-    es.addEventListener("agent:file-change", (e) => {
+    trackedListen("agent:file-change", (e) => {
       try {
         const data = JSON.parse(e.data);
         if (data.filePath) {
@@ -324,7 +348,7 @@ export function useSessionStream(sessionId: string | null) {
     });
 
     // agent:progress — Task progress (step N of M)
-    es.addEventListener("agent:progress", (e) => {
+    trackedListen("agent:progress", (e) => {
       try {
         const data = JSON.parse(e.data);
         if (data.status) {
@@ -342,7 +366,7 @@ export function useSessionStream(sessionId: string | null) {
     });
 
     // task:complete — Task completion with summary
-    es.addEventListener("task:complete", (e) => {
+    trackedListen("task:complete", (e) => {
       try {
         const data = JSON.parse(e.data);
         storeRef.current.setStatus(data.status ?? "completed");
@@ -352,7 +376,7 @@ export function useSessionStream(sessionId: string | null) {
     });
 
     // task:created — New task enqueued
-    es.addEventListener("task:created", (e) => {
+    trackedListen("task:created", (e) => {
       try {
         const data = JSON.parse(e.data);
         storeRef.current.addEvent({
@@ -367,7 +391,7 @@ export function useSessionStream(sessionId: string | null) {
     });
 
     // session:checkpoint — Checkpoint saved
-    es.addEventListener("session:checkpoint", (e) => {
+    trackedListen("session:checkpoint", (e) => {
       try {
         const data = JSON.parse(e.data);
         storeRef.current.addEvent({
@@ -382,7 +406,7 @@ export function useSessionStream(sessionId: string | null) {
     });
 
     // session:error — Error event
-    es.addEventListener("session:error", (e) => {
+    trackedListen("session:error", (e) => {
       try {
         const data = JSON.parse(e.data);
         storeRef.current.addEvent({
@@ -391,6 +415,50 @@ export function useSessionStream(sessionId: string | null) {
           data,
           timestamp: data.timestamp ?? new Date().toISOString(),
         });
+      } catch {
+        /* ignore */
+      }
+    });
+
+    // task_progress — Phase progress updates (TM01)
+    trackedListen("task_progress", (e) => {
+      try {
+        const data = JSON.parse(e.data);
+        if (data.phase) {
+          storeRef.current.setTaskProgress({
+            taskId: data.taskId ?? "",
+            currentPhase: data.phase,
+            overallProgress: data.progress ?? 0,
+            message: data.message ?? "",
+            phases: data.phases ?? [],
+            estimatedTimeRemaining: data.estimatedTimeRemaining ?? null,
+            confidenceScore: data.confidenceScore ?? 0,
+            creditsConsumed: data.creditsConsumed ?? 0,
+            agentRole: data.agentRole,
+            startedAt: data.startedAt ?? null,
+          });
+        }
+        if (typeof data.confidenceScore === "number") {
+          storeRef.current.setConfidenceScore(data.confidenceScore);
+        }
+        storeRef.current.addEvent({
+          id: crypto.randomUUID(),
+          type: "task_progress",
+          data,
+          timestamp: data.timestamp ?? new Date().toISOString(),
+        });
+      } catch {
+        /* ignore */
+      }
+    });
+
+    // credit_update — Credit consumption updates
+    trackedListen("credit_update", (e) => {
+      try {
+        const data = JSON.parse(e.data);
+        if (typeof data.creditsConsumed === "number") {
+          storeRef.current.addCreditEntry(data.creditsConsumed);
+        }
       } catch {
         /* ignore */
       }

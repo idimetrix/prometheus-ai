@@ -1,0 +1,83 @@
+# Generic multi-stage Dockerfile for any Prometheus service.
+#
+# Build args:
+#   SERVICE_NAME  - Name of the service (e.g., api, orchestrator, queue-worker)
+#   SERVICE_PORT  - Port the service listens on (e.g., 4000)
+#   SERVICE_PATH  - Path within apps/ (defaults to SERVICE_NAME)
+#
+# Usage:
+#   docker build \
+#     --build-arg SERVICE_NAME=api \
+#     --build-arg SERVICE_PORT=4000 \
+#     -f infra/docker/Dockerfile.service .
+
+# ─── Base ────────────────────────────────────────────────────────────────────
+FROM node:22-alpine AS base
+RUN apk add --no-cache libc6-compat
+RUN corepack enable && corepack prepare pnpm@10 --activate
+WORKDIR /app
+
+ARG SERVICE_NAME
+ARG SERVICE_PATH=""
+ENV SERVICE_DIR=${SERVICE_PATH:-${SERVICE_NAME}}
+
+# ─── Dependencies ────────────────────────────────────────────────────────────
+FROM base AS deps
+COPY package.json pnpm-workspace.yaml pnpm-lock.yaml .npmrc ./
+
+# Copy all package.json files for workspace resolution
+COPY apps/${SERVICE_DIR}/package.json ./apps/${SERVICE_DIR}/
+COPY packages/db/package.json ./packages/db/
+COPY packages/auth/package.json ./packages/auth/
+COPY packages/types/package.json ./packages/types/
+COPY packages/validators/package.json ./packages/validators/
+COPY packages/logger/package.json ./packages/logger/
+COPY packages/queue/package.json ./packages/queue/
+COPY packages/utils/package.json ./packages/utils/
+COPY packages/agent-sdk/package.json ./packages/agent-sdk/
+COPY packages/config/package.json ./packages/config/ 2>/dev/null || true
+COPY packages/config-typescript/package.json ./packages/config-typescript/
+
+RUN pnpm install --frozen-lockfile
+
+# ─── Build ───────────────────────────────────────────────────────────────────
+FROM base AS builder
+ARG SERVICE_NAME
+ARG SERVICE_PATH=""
+ENV SERVICE_DIR=${SERVICE_PATH:-${SERVICE_NAME}}
+
+COPY --from=deps /app/node_modules ./node_modules
+COPY --from=deps /app/apps/${SERVICE_DIR}/node_modules ./apps/${SERVICE_DIR}/node_modules 2>/dev/null || true
+COPY . .
+RUN pnpm turbo build --filter=@prometheus/${SERVICE_NAME}
+
+# ─── Production ──────────────────────────────────────────────────────────────
+FROM node:22-alpine AS runner
+ARG SERVICE_NAME
+ARG SERVICE_PORT=4000
+ARG SERVICE_PATH=""
+ENV SERVICE_DIR=${SERVICE_PATH:-${SERVICE_NAME}}
+
+WORKDIR /app
+
+# Security: non-root user
+RUN addgroup --system --gid 1001 nodejs && \
+    adduser --system --uid 1001 appuser
+
+# Copy built output
+COPY --from=builder --chown=appuser:nodejs /app/apps/${SERVICE_DIR}/dist ./dist
+COPY --from=builder --chown=appuser:nodejs /app/node_modules ./node_modules
+
+# Create tmp directory for read-only root filesystem
+RUN mkdir -p /tmp && chown appuser:nodejs /tmp
+
+USER appuser
+
+ENV NODE_ENV=production
+ENV PORT=${SERVICE_PORT}
+EXPOSE ${SERVICE_PORT}
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
+  CMD wget -qO- http://localhost:${SERVICE_PORT}/health || exit 1
+
+CMD ["node", "dist/index.js"]

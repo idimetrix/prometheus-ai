@@ -15,7 +15,14 @@ import {
 } from "./engine";
 import { ExecutionTracker } from "./feedback/execution-tracker";
 import { LearningExtractor } from "./feedback/learning-extractor";
+import { MetaLearner } from "./meta-learning/meta-learner";
 import { loadProjectContext } from "./prompts/project-context";
+import { analyzeTaskOutcome } from "./self-improvement/feedback-loop";
+
+/** Shared MetaLearner instance across all agent loops */
+const sharedMetaLearner = new MetaLearner();
+
+export { sharedMetaLearner };
 
 export type AgentLoopStatus = "idle" | "running" | "paused" | "stopped";
 
@@ -451,6 +458,45 @@ export class AgentLoop {
       .catch(() => {
         /* fire-and-forget */
       });
+
+    // Record outcome in MetaLearner for cross-session pattern extraction (AI08)
+    const durationMs = iteration.completedAt
+      ? iteration.completedAt.getTime() - iteration.startedAt.getTime()
+      : 0;
+
+    try {
+      sharedMetaLearner.recordOutcome({
+        sessionId: this.sessionId,
+        agentRole,
+        taskDescription: result.output.slice(0, 200),
+        success: result.success,
+        toolsUsed: [],
+        toolCalls: result.toolCalls,
+        tokensUsed: result.tokensUsed.input + result.tokensUsed.output,
+        durationMs,
+        error: result.error,
+      });
+    } catch {
+      /* fire-and-forget */
+    }
+
+    // Record in feedback loop for self-improvement (AI04)
+    try {
+      analyzeTaskOutcome({
+        taskId: this.sessionId,
+        projectId: this.projectId,
+        orgId: this.orgId,
+        agentRole,
+        succeeded: result.success,
+        toolsUsed: [],
+        errorMessages: result.error ? [result.error] : [],
+        filesModified: result.filesChanged,
+        durationMs,
+        tags: [agentRole],
+      });
+    } catch {
+      /* fire-and-forget */
+    }
   }
 
   /**

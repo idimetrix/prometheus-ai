@@ -101,7 +101,7 @@ app.get("/health", async (c) => {
         status,
         checks,
         uptime: Math.floor(process.uptime()),
-        version: "0.1.0",
+        version: process.env.APP_VERSION ?? "0.0.0",
         service: "model-router",
         providers: providerHealth,
         timestamp: new Date().toISOString(),
@@ -114,7 +114,7 @@ app.get("/health", async (c) => {
         status: "unhealthy",
         checks: { providers: false },
         uptime: Math.floor(process.uptime()),
-        version: "0.1.0",
+        version: process.env.APP_VERSION ?? "0.0.0",
         service: "model-router",
         error: "Health check failed",
         timestamp: new Date().toISOString(),
@@ -730,7 +730,98 @@ app.get("/v1/cost-report", (c) => {
     promptCache: promptCacheStats,
     cascade: cascadeMetrics,
     profiles: profiles.slice(0, 20),
+    optimizationSavings: costOptimizer.getSavingsSummary(),
   });
+});
+
+// ─── Cost Optimization Endpoints ────────────────────────────────
+
+/**
+ * POST /v1/cost/estimate - Pre-execution cost estimate for a task.
+ * Body: { taskDescription, complexity }
+ */
+app.post("/v1/cost/estimate", async (c) => {
+  try {
+    const body = await c.req.json();
+    const { taskDescription, complexity } = body;
+
+    if (!taskDescription) {
+      return c.json({ error: "'taskDescription' is required" }, 400);
+    }
+
+    const estimate = costOptimizer.estimateTaskCost(
+      taskDescription,
+      complexity ?? 3
+    );
+    return c.json({ data: estimate });
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    logger.error({ error: msg }, "Cost estimation failed");
+    return c.json({ error: "Internal server error" }, 500);
+  }
+});
+
+/**
+ * POST /v1/cost/select-model - Select the optimal model for a task within budget.
+ * Body: { task, budget: { maxCostPerDay, maxCostPerTask, preferFreeModels } }
+ */
+app.post("/v1/cost/select-model", async (c) => {
+  try {
+    const body = await c.req.json();
+    const { task, budget } = body;
+
+    if (!task) {
+      return c.json({ error: "'task' is required" }, 400);
+    }
+
+    const result = costOptimizer.selectOptimalModel(task, {
+      maxCostPerDay: budget?.maxCostPerDay ?? 50,
+      maxCostPerTask: budget?.maxCostPerTask ?? 1,
+      preferFreeModels: budget?.preferFreeModels ?? true,
+    });
+    return c.json({ data: result });
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    logger.error({ error: msg }, "Model selection failed");
+    return c.json({ error: "Internal server error" }, 500);
+  }
+});
+
+/**
+ * POST /v1/cost/track-savings - Record cost savings for a completed request.
+ * Body: { actualCost, modelUsed, tokenCount }
+ */
+app.post("/v1/cost/track-savings", async (c) => {
+  try {
+    const body = await c.req.json();
+    const { actualCost, modelUsed, tokenCount } = body;
+
+    if (actualCost === undefined || !modelUsed || !tokenCount) {
+      return c.json(
+        { error: "'actualCost', 'modelUsed', and 'tokenCount' are required" },
+        400
+      );
+    }
+
+    const record = costOptimizer.trackCostSavings(
+      actualCost,
+      modelUsed,
+      tokenCount
+    );
+    return c.json({ data: record });
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    logger.error({ error: msg }, "Cost savings tracking failed");
+    return c.json({ error: "Internal server error" }, 500);
+  }
+});
+
+/**
+ * GET /v1/cost/savings - Get aggregate savings summary.
+ */
+app.get("/v1/cost/savings", (c) => {
+  const summary = costOptimizer.getSavingsSummary();
+  return c.json({ data: summary });
 });
 
 // ─── Cascade Routing ─────────────────────────────────────────
@@ -812,7 +903,12 @@ export type { QualityAssessment } from "./cascade";
 export { CascadeRouter } from "./cascade";
 export type { OptimalModelResult } from "./cost-monitor";
 export { CostMonitor } from "./cost-monitor";
-export type { CostOptimizationResult, CostProfile } from "./cost-optimizer";
+export type {
+  CostOptimizationResult,
+  CostProfile,
+  CostSavingsRecord,
+  TaskCostEstimate,
+} from "./cost-optimizer";
 export { CostOptimizer } from "./cost-optimizer";
 export { isMockLLMEnabled, mockRoute, mockRouteStream } from "./mock-provider";
 export { PromptCacheManager } from "./prompt-cache";

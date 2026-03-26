@@ -1,8 +1,8 @@
 "use client";
 
 import type { Route } from "next";
-import { useRouter } from "next/navigation";
-import { useCallback, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 import { trpc } from "@/lib/trpc";
 
@@ -88,9 +88,21 @@ export default function OnboardingPage() {
   const [repoConnected, setRepoConnected] = useState<string | null>(null);
   const [isLaunching, setIsLaunching] = useState(false);
 
+  const searchParams = useSearchParams();
   const currentIdx = STEPS.findIndex((s) => s.key === currentStep);
   const [orgId, setOrgId] = useState<string | null>(null);
   const [_isCreatingOrg, setIsCreatingOrg] = useState(false);
+
+  // Handle OAuth callback return
+  useEffect(() => {
+    const provider = searchParams.get("provider");
+    const connected = searchParams.get("connected");
+    if (provider && connected === "true") {
+      setRepoConnected(provider.charAt(0).toUpperCase() + provider.slice(1));
+      setCurrentStep("repo");
+      toast.success(`${provider} connected successfully!`);
+    }
+  }, [searchParams]);
 
   const createOrg = trpc.user.createOrg.useMutation({
     onError(error) {
@@ -152,14 +164,19 @@ export default function OnboardingPage() {
     }
   }, [currentIdx]);
 
-  const handleConnectRepo = useCallback((provider: string) => {
-    // In production this would redirect to OAuth flow.
-    // For now, simulate a successful connection.
-    setRepoConnected(provider);
-    toast.success(
-      `${provider} connected successfully. You can configure repositories in Settings later.`
-    );
-  }, []);
+  const handleConnectRepo = useCallback(
+    (provider: string) => {
+      if (!orgId) {
+        toast.error("Please create an organization first");
+        return;
+      }
+      const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000";
+      const providerSlug = provider.toLowerCase();
+      // Redirect to real OAuth flow with orgId in state
+      window.location.href = `${apiUrl}/oauth/${providerSlug}/authorize?orgId=${orgId}&returnTo=${encodeURIComponent(window.location.href)}`;
+    },
+    [orgId]
+  );
 
   const handleSkip = useCallback(() => {
     if (typeof window !== "undefined") {
@@ -303,6 +320,24 @@ export default function OnboardingPage() {
                   <div className="text-sm text-zinc-400">Connect via OAuth</div>
                 </div>
                 {repoConnected === "GitLab" && (
+                  <span className="text-green-400 text-sm">Connected</span>
+                )}
+              </button>
+              <button
+                className={`flex w-full items-center gap-3 rounded-lg border p-4 text-left transition-colors ${
+                  repoConnected === "Bitbucket"
+                    ? "border-green-500 bg-green-600/10"
+                    : "border-zinc-700 hover:border-zinc-500"
+                }`}
+                onClick={() => handleConnectRepo("Bitbucket")}
+                type="button"
+              >
+                <span className="text-2xl">BB</span>
+                <div className="flex-1">
+                  <div className="font-medium text-white">Bitbucket</div>
+                  <div className="text-sm text-zinc-400">Connect via OAuth</div>
+                </div>
+                {repoConnected === "Bitbucket" && (
                   <span className="text-green-400 text-sm">Connected</span>
                 )}
               </button>

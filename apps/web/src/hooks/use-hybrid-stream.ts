@@ -187,7 +187,7 @@ export function useHybridStream(sessionId: string): HybridStreamReturn {
 
   const connectSSE = useCallback((): void => {
     const seqParam =
-      lastSequence.current > 0 ? `?after=${lastSequence.current}` : "";
+      lastSequence.current > 0 ? `?lastEventId=${lastSequence.current}` : "";
     const url = `${apiUrl}/api/sse/sessions/${sessionId}/stream${seqParam}`;
 
     const es = new EventSource(url);

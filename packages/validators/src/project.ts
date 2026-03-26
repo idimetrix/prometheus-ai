@@ -125,6 +125,22 @@ export const getSharedProjectSchema = z.object({
   slug: z.string().min(3).max(60),
 });
 
+// ---------- Scaffold ----------
+export const scaffoldProjectSchema = z
+  .object({
+    name: z.string().min(1).max(100),
+    description: z.string().max(2000).optional(),
+    /** Use a specific template ID */
+    template: z.string().optional(),
+    /** Natural language prompt (alternative to template) */
+    prompt: z.string().max(5000).optional(),
+  })
+  .refine((data) => data.template ?? data.prompt, {
+    message: "Either 'template' or 'prompt' must be provided",
+  });
+
+export type ScaffoldProjectInput = z.infer<typeof scaffoldProjectSchema>;
+
 // ---------- Types ----------
 export type ShareProjectInput = z.infer<typeof shareProjectSchema>;
 export type UnshareProjectInput = z.infer<typeof unshareProjectSchema>;

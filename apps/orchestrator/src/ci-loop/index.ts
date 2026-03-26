@@ -1,4 +1,9 @@
 export {
+  AutoDebugger,
+  type AutoDebugResult,
+  type ErrorLocation,
+} from "./auto-debugger";
+export {
   type CIFailureCategory,
   type CIFailureData,
   CILogFetcher,
@@ -21,6 +26,10 @@ export {
 } from "./coverage-tracker";
 export { type FailureAnalysis, FailureAnalyzer } from "./failure-analyzer";
 export {
+  FiveWhyDebugger,
+  type RootCauseAnalysis,
+} from "./five-why-debugger";
+export {
   type Mutant,
   type MutantResult,
   type MutantStatus,
@@ -33,3 +42,4 @@ export {
   PropertyTesting,
   type PropertyTestResult,
 } from "./property-testing";
+export { TargetedRunner } from "./targeted-runner";

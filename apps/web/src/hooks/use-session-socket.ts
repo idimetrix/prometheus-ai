@@ -16,6 +16,7 @@ import { useSessionStore } from "@/stores/session.store";
  */
 export function useSessionSocket(sessionId: string | null) {
   const socketRef = useRef<Socket | null>(null);
+  const lastSequenceRef = useRef<string>("0");
   const store = useSessionStore();
   const storeRef = useRef(store);
   storeRef.current = store;
@@ -29,9 +30,15 @@ export function useSessionSocket(sessionId: string | null) {
     const socket = getNamespaceSocket("/sessions");
     socketRef.current = socket;
 
-    // Join the session room once connected
+    // Join the session room once connected, including lastEventId for replay
     const onConnect = () => {
-      socket.emit("join_session", { sessionId });
+      const joinPayload: { sessionId: string; lastEventId?: string } = {
+        sessionId,
+      };
+      if (lastSequenceRef.current !== "0") {
+        joinPayload.lastEventId = lastSequenceRef.current;
+      }
+      socket.emit("join_session", joinPayload);
       storeRef.current.setConnected(true);
       storeRef.current.setActiveSession(sessionId);
       logger.info(`[WS] Connected to session ${sessionId}`);
@@ -47,6 +54,16 @@ export function useSessionSocket(sessionId: string | null) {
     socket.on("session_joined", () => {
       logger.debug(`[WS] Joined session room ${sessionId}`);
     });
+
+    // Track the latest sequence number from session_event for resume on reconnect
+    socket.on(
+      "session_event",
+      (data: { sequence?: number; [key: string]: unknown }) => {
+        if (data.sequence !== undefined) {
+          lastSequenceRef.current = String(data.sequence);
+        }
+      }
+    );
 
     // ---- Agent streaming events (canonical) ----
 
@@ -346,6 +363,57 @@ export function useSessionSocket(sessionId: string | null) {
         storeRef.current.addCreditEntry(data.creditsConsumed);
       }
     });
+
+    // task_progress — Phase progress updates (TM01)
+    socket.on(
+      "task_progress",
+      (data: {
+        taskId?: string;
+        phase?: string;
+        progress?: number;
+        message?: string;
+        phases?: Array<{
+          phase: string;
+          status: string;
+          progress: number;
+          message?: string;
+          startedAt?: string;
+          completedAt?: string;
+        }>;
+        estimatedTimeRemaining?: number;
+        confidenceScore?: number;
+        creditsConsumed?: number;
+        agentRole?: string;
+        startedAt?: string;
+        timestamp?: string;
+      }) => {
+        if (data.phase) {
+          storeRef.current.setTaskProgress({
+            taskId: data.taskId ?? "",
+            currentPhase:
+              data.phase as import("@/stores/session.store").TaskPhase,
+            overallProgress: data.progress ?? 0,
+            message: data.message ?? "",
+            phases: (data.phases ??
+              []) as import("@/stores/session.store").PhaseInfo[],
+            estimatedTimeRemaining: data.estimatedTimeRemaining ?? null,
+            confidenceScore: data.confidenceScore ?? 0,
+            creditsConsumed: data.creditsConsumed ?? 0,
+            agentRole: data.agentRole,
+            startedAt: data.startedAt ?? null,
+          });
+        }
+        if (typeof data.confidenceScore === "number") {
+          storeRef.current.setConfidenceScore(data.confidenceScore);
+        }
+        storeRef.current.addEvent({
+          id: crypto.randomUUID(),
+          type: "task_progress",
+          data: data as Record<string, unknown>,
+          timestamp: data.timestamp ?? new Date().toISOString(),
+        });
+      }
+    );
 
     socket.on("disconnect", () => {
       storeRef.current.setConnected(false);

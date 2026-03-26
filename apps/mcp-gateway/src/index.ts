@@ -130,7 +130,7 @@ app.get("/health", async (c) => {
       status,
       checks,
       uptime: Math.floor(process.uptime()),
-      version: "0.1.0",
+      version: process.env.APP_VERSION ?? "0.0.0",
       service: "mcp-gateway",
       toolCount: registry.getToolCount(),
       adapters: registry.getAdapters(),

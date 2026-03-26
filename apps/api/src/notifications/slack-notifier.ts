@@ -13,13 +13,20 @@
  * - completed: "Done! PR: {link}"
  * - failed: "Ran into an issue: {error}. Need help?"
  * - approval_required: Posts approve/reject buttons
+ *
+ * Resolves the bot token per-org from the oauthTokens table, falling back
+ * to the SLACK_BOT_TOKEN env var for single-workspace setups.
  */
 
+import { db, oauthTokens } from "@prometheus/db";
 import { createLogger } from "@prometheus/logger";
+import { decrypt } from "@prometheus/utils";
+import { and, eq } from "drizzle-orm";
 
 const logger = createLogger("api:notifications:slack-notifier");
 
 const SLACK_API = "https://slack.com/api";
+const FRONTEND_URL = process.env.FRONTEND_URL ?? "http://localhost:3000";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -48,6 +55,33 @@ export interface SlackNotification {
 interface SlackBlock {
   type: string;
   [key: string]: unknown;
+}
+
+// ---------------------------------------------------------------------------
+// Bot token resolution
+// ---------------------------------------------------------------------------
+
+/** Resolve the Slack bot token for a given org from the oauthTokens table. */
+export async function resolveBotToken(orgId: string): Promise<string | null> {
+  // 1. Try the oauthTokens table
+  const token = await db.query.oauthTokens.findFirst({
+    where: and(eq(oauthTokens.orgId, orgId), eq(oauthTokens.provider, "slack")),
+  });
+
+  if (token) {
+    try {
+      return decrypt(token.accessToken);
+    } catch {
+      logger.warn(
+        { orgId },
+        "Failed to decrypt Slack token from DB, falling back to env"
+      );
+    }
+  }
+
+  // 2. Fall back to env var
+  const envToken = process.env.SLACK_BOT_TOKEN;
+  return envToken ?? null;
 }
 
 // ---------------------------------------------------------------------------
@@ -94,45 +128,77 @@ async function postMessage(
   }
 }
 
-// ---------------------------------------------------------------------------
-// Status emoji and color mapping
-// ---------------------------------------------------------------------------
+/** Update an existing Slack message. */
+async function updateMessage(
+  token: string,
+  channel: string,
+  ts: string,
+  text: string,
+  blocks: SlackBlock[]
+): Promise<{ ok: boolean }> {
+  try {
+    const resp = await fetch(`${SLACK_API}/chat.update`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json; charset=utf-8",
+      },
+      body: JSON.stringify({
+        channel,
+        ts,
+        text,
+        blocks,
+      }),
+      signal: AbortSignal.timeout(5000),
+    });
 
-const STATUS_CONFIG: Record<
-  AgentEventType,
-  { color: string; emoji: string; label: string }
-> = {
-  task_started: {
-    emoji: ":arrows_counterclockwise:",
-    label: "Started",
-    color: "#2196F3",
-  },
-  planning: { emoji: ":thought_balloon:", label: "Planning", color: "#9C27B0" },
-  coding: { emoji: ":computer:", label: "Coding", color: "#FF9800" },
-  testing: { emoji: ":test_tube:", label: "Testing", color: "#00BCD4" },
-  pr_created: {
-    emoji: ":git-pull-request:",
-    label: "PR Created",
-    color: "#8BC34A",
-  },
-  completed: {
-    emoji: ":white_check_mark:",
-    label: "Completed",
-    color: "#4CAF50",
-  },
-  failed: { emoji: ":x:", label: "Failed", color: "#F44336" },
-  approval_required: {
-    emoji: ":raised_hand:",
-    label: "Approval Required",
-    color: "#FFC107",
-  },
-};
+    const data = (await resp.json()) as Record<string, unknown>;
+    return { ok: data.ok === true };
+  } catch (error) {
+    logger.warn({ error: String(error) }, "Failed to update Slack message");
+    return { ok: false };
+  }
+}
+
+/** Add a reaction to a message. */
+async function addReaction(
+  token: string,
+  channel: string,
+  timestamp: string,
+  name: string
+): Promise<void> {
+  try {
+    await fetch(`${SLACK_API}/reactions.add`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json; charset=utf-8",
+      },
+      body: JSON.stringify({
+        channel,
+        timestamp,
+        name,
+      }),
+      signal: AbortSignal.timeout(5000),
+    });
+  } catch {
+    // Reactions are best-effort
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Block builders
 // ---------------------------------------------------------------------------
 
-function buildTaskStartedBlocks(taskId: string): SlackBlock[] {
+function buildTaskStartedBlocks(
+  taskId: string,
+  sessionId?: string
+): SlackBlock[] {
+  const sessionUrl = sessionId
+    ? `${FRONTEND_URL}/dashboard/sessions/${sessionId}`
+    : null;
+  const trackLink = sessionUrl ? ` | <${sessionUrl}|Track progress>` : "";
+
   return [
     {
       type: "section",
@@ -146,7 +212,7 @@ function buildTaskStartedBlocks(taskId: string): SlackBlock[] {
       elements: [
         {
           type: "mrkdwn",
-          text: `Task \`${taskId}\``,
+          text: `Task \`${taskId}\`${trackLink}`,
         },
       ],
     },
@@ -210,18 +276,43 @@ function buildPRCreatedBlocks(prUrl: string, prTitle: string): SlackBlock[] {
   ];
 }
 
-function buildCompletedBlocks(prUrl?: string, summary?: string): SlackBlock[] {
+function buildCompletedBlocks(
+  sessionId?: string,
+  prUrl?: string,
+  summary?: string
+): SlackBlock[] {
+  const sessionUrl = sessionId
+    ? `${FRONTEND_URL}/dashboard/sessions/${sessionId}`
+    : null;
+
+  let mainText: string;
+  if (prUrl) {
+    mainText = `:white_check_mark: *Done!* PR: <${prUrl}|View Pull Request>`;
+  } else {
+    mainText = `:white_check_mark: *Done!* ${summary ?? "Task completed successfully."}`;
+  }
+
   const blocks: SlackBlock[] = [
     {
       type: "section",
       text: {
         type: "mrkdwn",
-        text: prUrl
-          ? `:white_check_mark: *Done!* PR: <${prUrl}|View Pull Request>`
-          : `:white_check_mark: *Done!* ${summary ?? "Task completed successfully."}`,
+        text: mainText,
       },
     },
   ];
+
+  if (sessionUrl) {
+    blocks.push({
+      type: "context",
+      elements: [
+        {
+          type: "mrkdwn",
+          text: `<${sessionUrl}|View session details>`,
+        },
+      ],
+    });
+  }
 
   return blocks;
 }
@@ -232,7 +323,7 @@ function buildFailedBlocks(errorMessage: string): SlackBlock[] {
       type: "section",
       text: {
         type: "mrkdwn",
-        text: `:x: *Ran into an issue:* ${errorMessage}\n\nNeed help? Reply in this thread or run \`/prometheus status\` to check.`,
+        text: `:x: *Ran into an issue:* ${errorMessage}\n\nNeed help? Reply in this thread or check the dashboard.`,
       },
     },
   ];
@@ -242,6 +333,8 @@ function buildApprovalBlocks(
   sessionId: string,
   description: string
 ): SlackBlock[] {
+  const sessionUrl = `${FRONTEND_URL}/dashboard/sessions/${sessionId}`;
+
   return [
     {
       type: "section",
@@ -275,6 +368,16 @@ function buildApprovalBlocks(
           action_id: "reject_action",
           value: sessionId,
         },
+        {
+          type: "button",
+          text: {
+            type: "plain_text",
+            text: "View Details",
+            emoji: true,
+          },
+          action_id: "view_session",
+          url: sessionUrl,
+        },
       ],
     },
   ];
@@ -293,18 +396,12 @@ export async function sendSlackNotification(
   const { botToken, channel, threadTs, event, taskId, sessionId, metadata } =
     notification;
 
-  const config = STATUS_CONFIG[event];
-  if (!config) {
-    logger.warn({ event }, "Unknown agent event type for Slack notification");
-    return;
-  }
-
   let blocks: SlackBlock[];
   let fallbackText: string;
 
   switch (event) {
     case "task_started": {
-      blocks = buildTaskStartedBlocks(taskId);
+      blocks = buildTaskStartedBlocks(taskId, sessionId);
       fallbackText = "Starting work on this...";
       break;
     }
@@ -335,7 +432,7 @@ export async function sendSlackNotification(
     case "completed": {
       const prUrl = metadata?.prUrl as string | undefined;
       const summary = metadata?.summary as string | undefined;
-      blocks = buildCompletedBlocks(prUrl, summary);
+      blocks = buildCompletedBlocks(sessionId, prUrl, summary);
       fallbackText = prUrl ? `Done! PR: ${prUrl}` : "Done!";
       break;
     }
@@ -355,7 +452,8 @@ export async function sendSlackNotification(
       break;
     }
     default: {
-      logger.warn({ event }, "Unhandled agent event type");
+      const _exhaustive: never = event;
+      logger.warn({ event: _exhaustive }, "Unhandled agent event type");
       return;
     }
   }
@@ -373,6 +471,13 @@ export async function sendSlackNotification(
       { taskId, event, channel, threadTs },
       "Slack notification sent"
     );
+
+    // Add a reaction for key events
+    if (event === "completed") {
+      await addReaction(botToken, channel, threadTs, "white_check_mark");
+    } else if (event === "failed") {
+      await addReaction(botToken, channel, threadTs, "x");
+    }
   } else {
     logger.warn(
       { taskId, event, channel, threadTs },
@@ -383,7 +488,7 @@ export async function sendSlackNotification(
 
 /**
  * Convenience: resolve the bot token for an org and send notification.
- * Uses SLACK_BOT_TOKEN env var or looks up from oauthTokens table.
+ * Looks up the token from the oauthTokens table first, then falls back to env.
  */
 export async function notifySlackForTask(params: {
   channel: string;
@@ -394,9 +499,12 @@ export async function notifySlackForTask(params: {
   taskId: string;
   threadTs: string;
 }): Promise<void> {
-  const botToken = process.env.SLACK_BOT_TOKEN;
+  const botToken = await resolveBotToken(params.orgId);
   if (!botToken) {
-    logger.debug("No SLACK_BOT_TOKEN configured, skipping Slack notification");
+    logger.debug(
+      { orgId: params.orgId },
+      "No Slack bot token available, skipping notification"
+    );
     return;
   }
 
@@ -409,4 +517,65 @@ export async function notifySlackForTask(params: {
     sessionId: params.sessionId,
     metadata: params.metadata,
   });
+}
+
+/**
+ * Update an existing Slack message with new progress info.
+ * Useful for updating the initial "Working on it..." message with final status.
+ */
+export async function updateSlackNotification(params: {
+  botToken: string;
+  channel: string;
+  event: AgentEventType;
+  messageTs: string;
+  metadata?: Record<string, unknown>;
+  sessionId?: string;
+  taskId: string;
+}): Promise<void> {
+  const { botToken, channel, messageTs, event, sessionId, metadata } = params;
+
+  let blocks: SlackBlock[];
+  let fallbackText: string;
+
+  switch (event) {
+    case "completed": {
+      const prUrl = metadata?.prUrl as string | undefined;
+      const summary = metadata?.summary as string | undefined;
+      blocks = buildCompletedBlocks(sessionId, prUrl, summary);
+      fallbackText = prUrl ? `Done! PR: ${prUrl}` : "Done!";
+      break;
+    }
+    case "failed": {
+      const errorMessage =
+        (metadata?.error as string) ?? "An unexpected error occurred";
+      blocks = buildFailedBlocks(errorMessage);
+      fallbackText = `Failed: ${errorMessage}`;
+      break;
+    }
+    default: {
+      // For other events, just post a new threaded message instead
+      logger.debug(
+        { event },
+        "updateSlackNotification only supports completed/failed, skipping"
+      );
+      return;
+    }
+  }
+
+  const result = await updateMessage(
+    botToken,
+    channel,
+    messageTs,
+    fallbackText,
+    blocks
+  );
+
+  if (result.ok) {
+    logger.info({ event, channel, messageTs }, "Slack message updated");
+  } else {
+    logger.warn(
+      { event, channel, messageTs },
+      "Failed to update Slack message"
+    );
+  }
 }

@@ -155,9 +155,13 @@ sseApp.get("/sessions/:sessionId/stream", async (c) => {
               for (const missed of missedEvents) {
                 const eventType = missed.type ?? "message";
                 const data = JSON.stringify(missed.data ?? missed);
-                enqueue(
-                  `id: ${missed.id}\nevent: ${eventType}\ndata: ${data}\n\n`
-                );
+                // Use sequence as the SSE event ID so clients can resume
+                // from the same cursor on subsequent reconnections.
+                const seqId = missed.sequence
+                  ? String(missed.sequence)
+                  : (missed.id ?? "");
+                const idField = seqId ? `id: ${seqId}\n` : "";
+                enqueue(`${idField}event: ${eventType}\ndata: ${data}\n\n`);
               }
             })
             .catch((err: unknown) => {

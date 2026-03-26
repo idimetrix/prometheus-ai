@@ -61,6 +61,12 @@ import type {
 import { HealthWatchdog } from "./health-watchdog";
 import { QualityGate } from "./quality-gate";
 import { RecoveryStrategy } from "./recovery-strategy";
+import {
+  ApproachSpeculator,
+  type MCTSStrategy,
+} from "./speculation/approach-speculator";
+import { BranchExecutor } from "./speculation/branch-executor";
+import { SpeculationMetrics } from "./speculation/metrics";
 
 const CONTEXT_WINDOW_RE =
   /context.*window|token.*limit|maximum.*context|too many tokens/i;
@@ -452,6 +458,7 @@ function accumulateToolCallDeltas(
   }
 }
 
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: post-write validation coordinates file parsing, import checking, and error reporting
 async function runPostWriteValidation(
   tc: { id: string; name: string; args: Record<string, unknown> },
   agent: {
@@ -511,6 +518,51 @@ async function runPostWriteValidation(
       if (feedback) {
         agent.addUserMessage(feedback);
       }
+    }
+  }
+
+  // Multi-file coordination: validate import consistency for TS files
+  if (fileStr.endsWith(".ts") || fileStr.endsWith(".tsx")) {
+    try {
+      const { FileCoordinator } = await import(
+        "../coordination/file-coordinator"
+      );
+      const coordinator = new FileCoordinator();
+      const content = String(tc.args.content ?? tc.args.newString ?? "");
+      if (content.length > 0) {
+        const structure = coordinator.parseFileStructure(fileStr, content);
+
+        // Check for broken imports within the single file (quick check)
+        const hasRelativeImports = structure.imports.some((imp) =>
+          imp.modulePath.startsWith(".")
+        );
+        if (hasRelativeImports) {
+          const suggestions = coordinator.suggestRelatedFiles(
+            fileStr,
+            Array.from(
+              new Set([
+                ...structure.imports
+                  .filter((imp) => imp.modulePath.startsWith("."))
+                  .map((imp) => imp.modulePath),
+              ])
+            )
+          );
+          if (suggestions.length > 0) {
+            const suggestionText = suggestions
+              .slice(0, 3)
+              .map(
+                (s) =>
+                  `- ${s.filePath} (${s.reason}, confidence: ${s.confidence})`
+              )
+              .join("\n");
+            agent.addUserMessage(
+              `[System] File coordination: after modifying ${filePath}, you may also need to update:\n${suggestionText}`
+            );
+          }
+        }
+      }
+    } catch {
+      // File coordinator not available, continue without it
     }
   }
 }
@@ -1373,6 +1425,214 @@ interface IterationOutcome {
   state: IterationState;
 }
 
+// ---------------------------------------------------------------------------
+// AE06: Speculative Multi-Approach Execution
+// ---------------------------------------------------------------------------
+
+const SPECULATION_CONFIDENCE_THRESHOLD = 0.5;
+const SPECULATION_MAX_APPROACHES = 3;
+
+interface SpeculationOutcome {
+  approachesAttempted: number;
+  recommendedSlot: string | null;
+  winnerOutput: string;
+  winnerScore: number;
+}
+
+async function trySpeculativeExecution(
+  ctx: ExecutionContext,
+  state: IterationState,
+  _step: number,
+  _agent: ReturnType<(typeof AGENT_ROLES)[keyof typeof AGENT_ROLES]["create"]>,
+  deps: {
+    logger: ReturnType<typeof createLogger>;
+    makeEvent: <T extends ExecutionEvent>(
+      partial: Omit<T, "sessionId" | "agentRole" | "sequence" | "timestamp">
+    ) => T;
+    [key: string]: unknown;
+  }
+): Promise<SpeculationOutcome | null> {
+  if (
+    state.lastConfidence &&
+    state.lastConfidence.score > SPECULATION_CONFIDENCE_THRESHOLD
+  ) {
+    return null;
+  }
+
+  deps.logger.info(
+    {
+      confidence: state.lastConfidence?.score ?? 0,
+      iteration: _step,
+      task: ctx.taskDescription.slice(0, 100),
+    },
+    "Starting speculative multi-approach execution"
+  );
+
+  const metrics = new SpeculationMetrics();
+
+  try {
+    const branchExecutor = new BranchExecutor();
+    const strategies = generateAlternativeStrategies(ctx, state);
+
+    if (strategies.length === 0) {
+      return null;
+    }
+
+    const branchResult = await branchExecutor.executeBranches(
+      ctx.taskDescription,
+      strategies
+    );
+
+    metrics.record(
+      "branch_execution",
+      branchResult.best.success,
+      branchResult.totalDuration
+    );
+
+    if (branchResult.best.success && branchResult.best.qualityScore >= 0.5) {
+      deps.logger.info(
+        {
+          strategy: branchResult.best.strategy.slice(0, 50),
+          qualityScore: branchResult.best.qualityScore.toFixed(3),
+          totalBranches: branchResult.allBranches.length,
+          selectionReason: branchResult.selectionReason,
+        },
+        "Branch execution found viable approach"
+      );
+
+      return {
+        winnerOutput: branchResult.best.output,
+        winnerScore: branchResult.best.qualityScore,
+        approachesAttempted: branchResult.allBranches.length,
+        recommendedSlot: null,
+      };
+    }
+
+    const speculator = new ApproachSpeculator();
+    const mctsStrategies = generateMCTSStrategies(ctx, state);
+
+    if (mctsStrategies.length === 0) {
+      return null;
+    }
+
+    const speculationResult = await speculator.speculate(mctsStrategies, ctx);
+
+    if (speculationResult.winner) {
+      deps.logger.info(
+        {
+          winnerId: speculationResult.winner.strategy.id,
+          winnerScore: speculationResult.winner.qualityScore.toFixed(3),
+          allApproaches: speculationResult.allApproaches.length,
+          reasoning: speculationResult.winnerReasoning.slice(0, 200),
+        },
+        "ApproachSpeculator found viable approach"
+      );
+
+      metrics.record("approach_speculation", true, 0);
+
+      return {
+        winnerOutput: speculationResult.winner.output,
+        winnerScore: speculationResult.winner.qualityScore,
+        approachesAttempted: speculationResult.allApproaches.length,
+        recommendedSlot: "think",
+      };
+    }
+
+    deps.logger.info(
+      {
+        reason: speculationResult.winnerReasoning.slice(0, 200),
+        attempted: speculationResult.allApproaches.length,
+      },
+      "Speculative execution found no viable approach"
+    );
+
+    return null;
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    deps.logger.warn(
+      { error: msg },
+      "Speculative execution failed, falling back to escalation"
+    );
+    return null;
+  }
+}
+
+function generateAlternativeStrategies(
+  ctx: ExecutionContext,
+  state: IterationState
+): string[] {
+  const strategies: string[] = [];
+  const task = ctx.taskDescription;
+
+  strategies.push(
+    "You are a systematic problem solver. Break down this task into the smallest possible steps and execute them one at a time. " +
+      "Focus on correctness over speed. If unsure about any step, verify before proceeding.\n\n" +
+      `Previous attempt had low confidence (${state.lastConfidence?.score?.toFixed(2) ?? "unknown"}). Take a different approach.`
+  );
+
+  strategies.push(
+    "You are a focused engineer. Identify the single most critical file or component for this task and solve it completely before moving on. " +
+      "Prioritize getting one thing right rather than partially solving everything.\n\n" +
+      "Previous attempt struggled. Re-read the requirements carefully and focus on the core change needed."
+  );
+
+  if (
+    task.includes("test") ||
+    task.includes("fix") ||
+    task.includes("implement")
+  ) {
+    strategies.push(
+      "You are a test-driven developer. First write or identify the test that defines success, then implement the minimal code to make it pass. " +
+        "Work backwards from the expected output to the implementation.\n\n" +
+        "Previous attempt had issues. Start fresh with a TDD approach."
+    );
+  }
+
+  return strategies.slice(0, SPECULATION_MAX_APPROACHES);
+}
+
+function generateMCTSStrategies(
+  _ctx: ExecutionContext,
+  state: IterationState
+): MCTSStrategy[] {
+  const strategies: MCTSStrategy[] = [];
+
+  strategies.push({
+    id: "incremental",
+    description:
+      "Incremental step-by-step approach with verification at each step",
+    score: 0.8,
+    systemPrompt:
+      "Solve this task incrementally. After each change, verify it works before proceeding. " +
+      "Use small, focused edits. Read files before editing. Run tests after each change.",
+  });
+
+  strategies.push({
+    id: "architecture-first",
+    description: "Understand the full architecture before making changes",
+    score: 0.7,
+    systemPrompt:
+      "Before making any changes, thoroughly read and understand all related files. " +
+      "Map out the dependencies and data flow. Then make all changes in the correct order " +
+      "to avoid breaking intermediate states.",
+  });
+
+  strategies.push({
+    id: "minimal-diff",
+    description: "Minimal change strategy - smallest possible diff",
+    score: 0.6,
+    systemPrompt:
+      "Find the absolute minimum change needed to accomplish this task. " +
+      "Avoid refactoring or improving code beyond what is strictly necessary. " +
+      "The goal is a small, correct, reviewable diff.",
+    expectedFiles: state.lastConfidence?.factors
+      ?.filter((f) => f.name === "files_changed")
+      .map(() => "identified-from-context"),
+  });
+
+  return strategies;
+}
+
 function buildAgentMessages(agent: {
   getMessages: () => Array<{
     role: string;
@@ -1739,8 +1999,73 @@ async function processToolCallsAndConfidence(
   if (confResult.confidence.action === "escalate") {
     deps.logger.warn(
       { confidence: confResult.confidence.score, iteration: step },
-      "Low confidence - escalating"
+      "Low confidence - attempting speculative execution before escalating"
     );
+
+    // AE06: Try speculative multi-approach execution before giving up.
+    // When speculation is enabled and confidence drops, generate alternative
+    // approaches and execute them in parallel to find a viable path forward.
+    if (ctx.options.speculate) {
+      const speculationOutcome = await trySpeculativeExecution(
+        ctx,
+        updated,
+        step,
+        agent,
+        deps
+      );
+
+      if (speculationOutcome) {
+        // Speculation found a viable approach — inject the winning output
+        // back into the agent conversation and continue the loop.
+        deps.logger.info(
+          {
+            winnerScore: speculationOutcome.winnerScore,
+            approachesAttempted: speculationOutcome.approachesAttempted,
+          },
+          "Speculative execution recovered from low confidence"
+        );
+
+        agent.addUserMessage(
+          `[System] Your previous approach had low confidence. A speculative search found a better approach:\n\n${speculationOutcome.winnerOutput}\n\nPlease continue using this approach.`
+        );
+
+        // Update state: reset stale iterations since we have a new direction
+        updated.staleIterations = 0;
+        updated.slot = speculationOutcome.recommendedSlot ?? updated.slot;
+
+        events.push(
+          deps.makeEvent<ConfidenceEvent>({
+            type: "confidence",
+            score: speculationOutcome.winnerScore,
+            action: "continue",
+            iteration: step,
+            factors: [
+              {
+                name: "speculation_recovery",
+                value: speculationOutcome.winnerScore,
+              },
+              {
+                name: "approaches_tried",
+                value: speculationOutcome.approachesAttempted,
+              },
+            ],
+          })
+        );
+
+        // Continue the iteration loop instead of aborting
+        return {
+          action: "continue",
+          events,
+          state: updated,
+          spanStatus: {
+            code: SpanStatusCode.OK,
+            message: "Recovered via speculative execution",
+          },
+        };
+      }
+    }
+
+    // Speculation not enabled or failed — proceed with original escalation
     events.push(
       deps.makeEvent<ErrorEvent>({
         type: "error",

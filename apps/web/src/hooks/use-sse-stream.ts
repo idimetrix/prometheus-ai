@@ -396,6 +396,11 @@ export function useSSEStream(sessionId: string | null) {
       es.addEventListener(eventType, (e) => {
         resetHeartbeat();
         try {
+          // Track the SSE event ID (set via `id:` field) for resume on reconnect
+          const me = e as MessageEvent;
+          if (me.lastEventId) {
+            lastEventId.current = me.lastEventId;
+          }
           const data = JSON.parse(e.data);
           queueEvent(eventType, data);
         } catch {
@@ -408,6 +413,9 @@ export function useSSEStream(sessionId: string | null) {
     es.onmessage = (e) => {
       resetHeartbeat();
       try {
+        if (e.lastEventId) {
+          lastEventId.current = e.lastEventId;
+        }
         const data = JSON.parse(e.data);
         if (data.type) {
           queueEvent(data.type, data);

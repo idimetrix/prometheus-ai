@@ -43,11 +43,13 @@ import { fastPathsApp } from "./routes/fast-paths";
 import { bitbucketOAuthApp } from "./routes/oauth/bitbucket";
 import { githubOAuthApp } from "./routes/oauth/github";
 import { gitlabOAuthApp } from "./routes/oauth/gitlab";
+import { slackOAuthApp } from "./routes/oauth/slack";
 import { sseApp } from "./routes/sse";
 import { v1App } from "./routes/v1";
 import { alertsWebhookApp } from "./routes/webhooks/alerts";
 import { ciTriggerApp } from "./routes/webhooks/ci-trigger";
 import { clerkWebhookApp } from "./routes/webhooks/clerk";
+import { githubAppWebhookApp } from "./routes/webhooks/github-app";
 import { inboundWebhookApp } from "./routes/webhooks/inbound";
 import { slackWebhookApp } from "./routes/webhooks/slack";
 import { slackCommandsApp } from "./routes/webhooks/slack-commands";
@@ -212,7 +214,7 @@ app.get("/health", async (c) => {
     {
       status,
       service: "api",
-      version: process.env.APP_VERSION ?? "0.1.0",
+      version: process.env.APP_VERSION ?? "0.0.0",
       uptime: Math.floor(startTime),
       timestamp: new Date().toISOString(),
       dependencies: {
@@ -321,6 +323,7 @@ app.route("/webhooks/alerts", alertsWebhookApp);
 app.route("/webhooks/slack", slackWebhookApp);
 app.route("/webhooks/slack/commands", slackCommandsApp);
 app.route("/webhooks/inbound", inboundWebhookApp);
+app.route("/webhooks/github-app", githubAppWebhookApp);
 app.route("/webhooks/ci", ciTriggerApp);
 
 // ---------------------------------------------------------------------------
@@ -329,6 +332,7 @@ app.route("/webhooks/ci", ciTriggerApp);
 app.route("/oauth/github", githubOAuthApp);
 app.route("/oauth/gitlab", gitlabOAuthApp);
 app.route("/oauth/bitbucket", bitbucketOAuthApp);
+app.route("/oauth/slack", slackOAuthApp);
 
 // ---------------------------------------------------------------------------
 // Internal: model usage logging (called by model-router, fire-and-forget)

@@ -2,6 +2,7 @@ import { createServer } from "node:http";
 import { createLogger } from "@prometheus/logger";
 import type {
   AgentTaskData,
+  AuditArchivalData,
   CleanupSandboxData,
   ContinueSessionData,
   CreditGrantData,
@@ -24,6 +25,7 @@ import {
   registerShutdownHandler,
 } from "@prometheus/utils";
 import { Queue, Worker } from "bullmq";
+import { processAuditArchival } from "./jobs/audit-archival";
 import { processCleanupSandbox } from "./jobs/cleanup-sandbox";
 import { processContinueSession } from "./jobs/continue-session";
 import { processCreditGrant } from "./jobs/credit-grant";
@@ -387,6 +389,26 @@ const sessionContinuationWorker = new Worker<ContinueSessionData>(
   }
 );
 
+// ========== Audit Archival Worker ==========
+const auditArchivalWorker = new Worker<AuditArchivalData>(
+  "audit-archival",
+  async (job) => {
+    logger.info(
+      {
+        jobId: job.id,
+        trigger: job.data.trigger,
+        orgId: job.data.orgId ?? "all",
+      },
+      "Processing audit-archival job"
+    );
+    return await processAuditArchival(job.data);
+  },
+  {
+    connection: createRedisConnection(),
+    concurrency: 1, // Archival must be serialized
+  }
+);
+
 // ========== Webhook Delivery Worker ==========
 const webhookDeliveryWorker = new Worker<WebhookDeliveryData>(
   "webhook-delivery",
@@ -427,6 +449,7 @@ const workers: Record<string, { worker: Worker; dlq?: Queue }> = {
   "setup-project-environment": { worker: setupEnvWorker },
   "usage-rollup": { worker: usageRollupWorker },
   "credit-grant": { worker: creditGrantWorker, dlq: billingDLQ },
+  "audit-archival": { worker: auditArchivalWorker },
   "webhook-delivery": { worker: webhookDeliveryWorker, dlq: webhookDLQ },
 };
 

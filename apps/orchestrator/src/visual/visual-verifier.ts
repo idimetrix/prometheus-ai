@@ -1,6 +1,11 @@
 import { createLogger } from "@prometheus/logger";
+import { EventPublisher, QueueEvents } from "@prometheus/queue";
 import { modelRouterClient, sandboxManagerClient } from "@prometheus/utils";
 import type { AgentLoop } from "../agent-loop";
+import {
+  VisualRegressionTester,
+  type VisualReport,
+} from "../verification/visual-regression";
 
 const logger = createLogger("orchestrator:visual");
 
@@ -15,6 +20,7 @@ export interface VisualVerificationResult {
   }>;
   pagesChecked: number;
   passed: boolean;
+  regressionReport?: VisualReport;
   score: number;
   summary: string;
 }
@@ -23,18 +29,30 @@ export interface VisualVerificationResult {
  * VisualVerifier automatically verifies frontend changes by:
  * 1. Starting the dev server in the sandbox
  * 2. Taking screenshots of affected pages via Playwright
- * 3. Sending screenshots to the vision model for analysis
- * 4. Reporting visual issues back to the coding agent
+ * 3. Running visual regression tests against stored baselines (MinIO/S3)
+ * 4. Sending screenshots to the vision model for analysis
+ * 5. Reporting visual issues and regressions via session events
  */
 export class VisualVerifier {
+  private readonly regressionTester: VisualRegressionTester;
+  private readonly eventPublisher: EventPublisher;
+
+  constructor(threshold = 0.98) {
+    this.regressionTester = new VisualRegressionTester(threshold);
+    this.eventPublisher = new EventPublisher();
+  }
+
   /**
    * Verify frontend changes by taking screenshots and analyzing them.
+   * When a projectId is provided, also runs visual regression tests
+   * against stored baselines in MinIO/S3.
    */
   async verify(
     agentLoop: AgentLoop,
     projectId: string,
     changedFiles: string[],
-    taskDescription: string
+    taskDescription: string,
+    sessionId?: string
   ): Promise<VisualVerificationResult> {
     // Only verify if frontend files were changed
     const frontendFiles = changedFiles.filter(
@@ -76,26 +94,131 @@ export class VisualVerifier {
       };
     }
 
+    // Run visual regression test against stored baselines
+    const regressionReport = await this.runRegressionTest(
+      projectId,
+      pagesToCheck,
+      sessionId
+    );
+
     // Attempt real screenshot-based verification via sandbox + Playwright
     const screenshots = await this.captureScreenshots(pagesToCheck);
 
     if (screenshots.length > 0) {
       // Send screenshots to vision model for analysis
-      return await this.analyzeScreenshots(
+      const result = await this.analyzeScreenshots(
         screenshots,
         frontendFiles,
         taskDescription,
         pagesToCheck.length
       );
+
+      // Merge regression results into the verification result
+      return this.mergeRegressionResult(result, regressionReport);
     }
 
     // Fallback: use LLM code review if screenshots unavailable
-    return await this.fallbackCodeReview(
+    const result = await this.fallbackCodeReview(
       agentLoop,
       frontendFiles,
       taskDescription,
       pagesToCheck.length
     );
+    return this.mergeRegressionResult(result, regressionReport);
+  }
+
+  /**
+   * Run visual regression testing against stored baselines.
+   * Emits a VISUAL_REGRESSION session event with the report.
+   */
+  private async runRegressionTest(
+    projectId: string,
+    pagesToCheck: string[],
+    sessionId?: string
+  ): Promise<VisualReport | undefined> {
+    try {
+      const devServerUrl = process.env.WEB_URL ?? "http://localhost:3000";
+      const fullUrls = pagesToCheck.map((p) => `${devServerUrl}${p}`);
+
+      const report = await this.regressionTester.runRegressionTest(
+        projectId,
+        fullUrls
+      );
+
+      logger.info(
+        {
+          totalComparisons: report.totalComparisons,
+          passRate: report.overallPassRate,
+        },
+        "Visual regression test completed"
+      );
+
+      // Emit visual regression event so the frontend can display results
+      if (sessionId) {
+        await this.eventPublisher
+          .publishSessionEvent(sessionId, {
+            type: QueueEvents.VISUAL_REGRESSION,
+            data: {
+              totalComparisons: report.totalComparisons,
+              overallPassRate: report.overallPassRate,
+              comparisons: report.comparisons,
+            },
+            timestamp: new Date().toISOString(),
+          })
+          .catch(() => {
+            /* fire-and-forget */
+          });
+      }
+
+      return report;
+    } catch (err) {
+      logger.warn({ err }, "Visual regression test failed, continuing");
+      return undefined;
+    }
+  }
+
+  /**
+   * Merge the regression report into a VisualVerificationResult.
+   * If regressions are detected, they lower the score and add issues.
+   */
+  private mergeRegressionResult(
+    base: VisualVerificationResult,
+    regressionReport?: VisualReport
+  ): VisualVerificationResult {
+    if (!regressionReport || regressionReport.totalComparisons === 0) {
+      return base;
+    }
+
+    const failedRegressions = regressionReport.comparisons.filter(
+      (c) => !c.passed
+    );
+
+    if (failedRegressions.length === 0) {
+      return { ...base, regressionReport };
+    }
+
+    // Add regression issues
+    const regressionIssues: VisualVerificationResult["issues"] =
+      failedRegressions.map((c) => ({
+        severity:
+          c.diffScore < 0.8 ? ("critical" as const) : ("warning" as const),
+        description: `Visual regression on ${c.url} (${c.viewport.width}x${c.viewport.height}): similarity ${(c.diffScore * 100).toFixed(1)}%`,
+        location: c.url,
+      }));
+
+    const hasCriticalRegression = regressionIssues.some(
+      (i) => i.severity === "critical"
+    );
+    const regressionPenalty = failedRegressions.length * 0.15;
+
+    return {
+      ...base,
+      issues: [...base.issues, ...regressionIssues],
+      score: Math.max(0, base.score - regressionPenalty),
+      passed: base.passed && !hasCriticalRegression,
+      summary: `${base.summary}; ${failedRegressions.length} visual regression(s) detected`,
+      regressionReport,
+    };
   }
 
   /**

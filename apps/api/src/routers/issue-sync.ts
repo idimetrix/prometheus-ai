@@ -20,6 +20,10 @@ import {
 } from "@prometheus/validators";
 import { TRPCError } from "@trpc/server";
 import { and, count, desc, eq, lt } from "drizzle-orm";
+import {
+  fetchProviderIssues,
+  fetchProviderPRs,
+} from "../lib/issue-sync-providers";
 import { protectedProcedure, router } from "../trpc";
 
 const logger = createLogger("api:issue-sync");
@@ -183,7 +187,9 @@ export const issueSyncRouter = router({
       // Fetch issues from the provider via external API
       const externalIssues = await fetchProviderIssues(
         input.provider,
-        project.repoUrl ?? ""
+        project.repoUrl ?? "",
+        ctx.db,
+        ctx.orgId
       );
 
       let upsertedCount = 0;
@@ -258,7 +264,9 @@ export const issueSyncRouter = router({
 
       const externalPRs = await fetchProviderPRs(
         input.provider,
-        project.repoUrl ?? ""
+        project.repoUrl ?? "",
+        ctx.db,
+        ctx.orgId
       );
 
       let upsertedCount = 0;
@@ -476,46 +484,3 @@ export const issueSyncRouter = router({
       };
     }),
 });
-
-// ---------------------------------------------------------------------------
-// Provider fetch helpers (stub implementations — to be connected to MCP adapters)
-// ---------------------------------------------------------------------------
-
-interface ExternalIssue {
-  body: string;
-  externalId: string;
-  status: string;
-  title: string;
-  updatedAt: string | null;
-  url: string;
-}
-
-interface ExternalPR {
-  baseBranch: string;
-  branch: string;
-  externalId: string;
-  title: string;
-  updatedAt: string | null;
-  url: string;
-}
-
-function fetchProviderIssues(
-  provider: string,
-  repoUrl: string
-): Promise<ExternalIssue[]> {
-  // TODO: Connect to MCP adapter per provider to fetch real issues
-  // For now, this is a placeholder that returns an empty array.
-  // In production, this will call the GitHub/GitLab/Linear/Jira API
-  // through the MCP gateway.
-  logger.info({ provider, repoUrl }, "Fetching issues from provider");
-  return Promise.resolve([]);
-}
-
-function fetchProviderPRs(
-  provider: string,
-  repoUrl: string
-): Promise<ExternalPR[]> {
-  // TODO: Connect to MCP adapter per provider to fetch real PRs
-  logger.info({ provider, repoUrl }, "Fetching PRs from provider");
-  return Promise.resolve([]);
-}

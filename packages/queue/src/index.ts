@@ -19,6 +19,7 @@ export {
   ALL_QUEUES,
   agentTaskDLQ,
   agentTaskQueue,
+  auditArchivalQueue,
   billingDLQ,
   billingQueue,
   cleanupSandboxQueue,
@@ -43,6 +44,7 @@ export {
 } from "./scheduled-tasks";
 export {
   type AgentTaskData,
+  type AuditArchivalData,
   type BillingEventData,
   type CleanupSandboxData,
   type ContinueSessionData,

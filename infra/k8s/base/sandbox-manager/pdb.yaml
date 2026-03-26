@@ -1,0 +1,12 @@
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: sandbox-manager-pdb
+  namespace: prometheus
+  labels:
+    app: sandbox-manager
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: sandbox-manager

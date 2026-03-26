@@ -1,7 +1,10 @@
 import { createLogger } from "@prometheus/logger";
-import { deployToDocker } from "./docker-provider";
-import { deployToNetlify } from "./netlify-provider";
-import { deployToVercel } from "./vercel-provider";
+import { deployToDocker, getDockerDeploymentStatus } from "./docker-provider";
+import {
+  deployToNetlify,
+  getNetlifyDeploymentStatus,
+} from "./netlify-provider";
+import { deployToVercel, getVercelDeploymentStatus } from "./vercel-provider";
 
 const logger = createLogger("deployment-providers");
 
@@ -25,17 +28,37 @@ export interface DeploymentResult {
   url?: string;
 }
 
+export interface DeploymentStatusResult {
+  errorMessage?: string;
+  ready: boolean;
+  state: string;
+  url?: string;
+}
+
 export interface DeploymentProvider {
   deploy(config: DeploymentConfig): Promise<DeploymentResult>;
+  getStatus(providerDeploymentId: string): Promise<DeploymentStatusResult>;
   teardown(providerDeploymentId: string): Promise<{ success: boolean }>;
 }
 
 // ─── Provider Factory ──────────────────────────────────────────────────────
 
 const providers: Record<string, DeploymentProvider> = {
-  vercel: { deploy: deployToVercel, teardown: teardownVercel },
-  netlify: { deploy: deployToNetlify, teardown: teardownNetlify },
-  docker: { deploy: deployToDocker, teardown: teardownDocker },
+  vercel: {
+    deploy: deployToVercel,
+    getStatus: getVercelDeploymentStatus,
+    teardown: teardownVercel,
+  },
+  netlify: {
+    deploy: deployToNetlify,
+    getStatus: getNetlifyDeploymentStatus,
+    teardown: teardownNetlify,
+  },
+  docker: {
+    deploy: deployToDocker,
+    getStatus: getDockerDeploymentStatus,
+    teardown: teardownDocker,
+  },
 };
 
 export function getDeploymentProvider(
@@ -49,7 +72,7 @@ export function getDeploymentProvider(
   return p;
 }
 
-// ─── Teardown Stubs ────────────────────────────────────────────────────────
+// ─── Teardown Implementations ─────────────────────────────────────────────
 
 async function teardownVercel(
   providerDeploymentId: string
@@ -87,7 +110,7 @@ async function teardownNetlify(
 
   try {
     const res = await fetch(
-      `https://api.netlify.com/api/v1/deploys/${providerDeploymentId}`,
+      `https://api.netlify.com/api/v1/sites/${providerDeploymentId}`,
       {
         method: "DELETE",
         headers: { Authorization: `Bearer ${token}` },

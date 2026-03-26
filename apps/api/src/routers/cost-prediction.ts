@@ -1,6 +1,6 @@
 import { modelUsageLogs, sessions } from "@prometheus/db";
 import { createLogger } from "@prometheus/logger";
-import { and, avg, count, desc, eq, gte, sum } from "drizzle-orm";
+import { and, avg, count, desc, eq, gte, sql, sum } from "drizzle-orm";
 import { z } from "zod";
 import { protectedProcedure, router } from "../trpc";
 
@@ -8,6 +8,9 @@ const logger = createLogger("cost-prediction-router");
 
 const WHITESPACE_RE = /\s+/;
 const ESCAPE_BACKSLASH_RE = /\\/g;
+
+// Force usage of sql so linter does not strip the import
+const _SQL_REF = sql;
 
 const CODE_COMPLEXITY_PATTERNS = [
   /refactor/i,
@@ -360,6 +363,173 @@ export const costPredictionRouter = router({
           totalCost: row.totalCost ?? 0,
           requestCount: row.requestCount,
         })),
+      };
+    }),
+
+  /**
+   * Quick cost estimate endpoint (AM03).
+   * Given a task description, returns estimated cost range, duration, and credits.
+   */
+  estimate: protectedProcedure
+    .input(
+      z.object({
+        taskDescription: z.string().min(1).max(10_000),
+        projectContext: z.string().max(5000).optional(),
+        mode: z
+          .enum(["flagship", "standard", "fast", "background"])
+          .default("standard"),
+      })
+    )
+    .query(async ({ input, ctx }) => {
+      const { complexity, score, factors } = analyzeComplexity(
+        input.taskDescription,
+        input.projectContext
+      );
+
+      const estimate = estimateCost(complexity, input.mode);
+
+      // Fetch historical accuracy data to calibrate
+      const thirtyDaysAgo = new Date();
+      thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+
+      let historicalAvgCost: number | undefined;
+      try {
+        const [row] = await ctx.db
+          .select({
+            avgCost: avg(modelUsageLogs.costUsd).mapWith(Number),
+            avgTokens: avg(modelUsageLogs.totalTokens).mapWith(Number),
+          })
+          .from(modelUsageLogs)
+          .where(
+            and(
+              eq(modelUsageLogs.orgId, ctx.orgId),
+              gte(modelUsageLogs.createdAt, thirtyDaysAgo)
+            )
+          );
+        historicalAvgCost = row?.avgCost ?? undefined;
+      } catch (err) {
+        logger.warn({ err }, "Failed to fetch historical cost data");
+      }
+
+      // Adjust estimate if we have historical data
+      const calibrationFactor = historicalAvgCost
+        ? Math.min(2, Math.max(0.5, historicalAvgCost / (estimate.mid || 0.01)))
+        : 1;
+
+      const calibratedEstimate = {
+        ...estimate,
+        low: estimate.low * calibrationFactor,
+        mid: estimate.mid * calibrationFactor,
+        high: estimate.high * calibrationFactor,
+        estimatedTotalUsd: estimate.estimatedTotalUsd * calibrationFactor,
+        estimatedCredits: Math.ceil(
+          estimate.estimatedCredits * calibrationFactor
+        ),
+      };
+
+      const durationMinutes = SESSION_DURATION_MINUTES[complexity] ?? 10;
+
+      return {
+        complexity,
+        complexityScore: score,
+        factors,
+        estimate: calibratedEstimate,
+        estimatedDurationMinutes: durationMinutes,
+        calibrated: calibrationFactor !== 1,
+        wordCount: input.taskDescription.trim().split(WHITESPACE_RE).length,
+      };
+    }),
+
+  /**
+   * Historical cost accuracy (AM03).
+   * Compares predicted vs actual costs for past sessions.
+   */
+  history: protectedProcedure
+    .input(
+      z.object({
+        days: z.number().min(1).max(90).default(30),
+        limit: z.number().min(1).max(100).default(20),
+      })
+    )
+    .query(async ({ input, ctx }) => {
+      const sinceDate = new Date();
+      sinceDate.setDate(sinceDate.getDate() - input.days);
+
+      // Aggregate session-level cost data
+      const sessionCosts = await ctx.db
+        .select({
+          sessionId: modelUsageLogs.sessionId,
+          totalCost: sum(modelUsageLogs.costUsd).mapWith(Number),
+          totalTokens: sum(modelUsageLogs.totalTokens).mapWith(Number),
+          requestCount: sql<number>`count(*)`.mapWith(Number),
+          firstRequest: sql<string>`min(${modelUsageLogs.createdAt})`.as(
+            "first_request"
+          ),
+        })
+        .from(modelUsageLogs)
+        .where(
+          and(
+            eq(modelUsageLogs.orgId, ctx.orgId),
+            gte(modelUsageLogs.createdAt, sinceDate)
+          )
+        )
+        .groupBy(modelUsageLogs.sessionId)
+        .orderBy(desc(sum(modelUsageLogs.costUsd)))
+        .limit(input.limit);
+
+      // For each session, compute what the prediction would have been
+      const historyEntries = sessionCosts.map((session) => {
+        const tokens = session.totalTokens ?? 0;
+        const actual = session.totalCost ?? 0;
+
+        // Estimate what we would have predicted based on token count
+        const costPerToken = COST_PER_TOKEN.standard ?? 0.000_01;
+        const predicted = tokens * costPerToken;
+
+        const accuracy =
+          predicted > 0
+            ? Math.max(0, 1 - Math.abs(actual - predicted) / predicted)
+            : 0;
+
+        return {
+          sessionId: session.sessionId,
+          actualCostUsd: actual,
+          predictedCostUsd: predicted,
+          totalTokens: tokens,
+          requestCount: session.requestCount,
+          accuracy: Math.round(accuracy * 100),
+          firstRequest: session.firstRequest,
+        };
+      });
+
+      // Compute aggregate accuracy
+      const totalAccuracy = historyEntries.reduce(
+        (acc, e) => acc + e.accuracy,
+        0
+      );
+      const avgAccuracy =
+        historyEntries.length > 0
+          ? Math.round(totalAccuracy / historyEntries.length)
+          : 0;
+
+      const totalActual = historyEntries.reduce(
+        (acc, e) => acc + e.actualCostUsd,
+        0
+      );
+      const totalPredicted = historyEntries.reduce(
+        (acc, e) => acc + e.predictedCostUsd,
+        0
+      );
+
+      return {
+        entries: historyEntries,
+        summary: {
+          averageAccuracyPercent: avgAccuracy,
+          totalActualUsd: totalActual,
+          totalPredictedUsd: totalPredicted,
+          sessionCount: historyEntries.length,
+          periodDays: input.days,
+        },
       };
     }),
 });

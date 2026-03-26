@@ -573,4 +573,94 @@ export const analyticsRouter = router({
           : 0,
     };
   }),
+
+  // ---------------------------------------------------------------------------
+  // Team velocity (CT04) — powered by analytics engine
+  // ---------------------------------------------------------------------------
+  teamVelocity: protectedProcedure
+    .input(
+      z.object({
+        days: z.number().min(1).max(365).default(90),
+        period: z.enum(["day", "week", "month"]).default("week"),
+      })
+    )
+    .query(async ({ input, ctx }) => {
+      const { getTeamVelocity } = await import("../services/analytics-engine");
+      return getTeamVelocity(ctx.db, ctx.orgId, input.period, input.days);
+    }),
+
+  // ---------------------------------------------------------------------------
+  // Agent performance (CT04)
+  // ---------------------------------------------------------------------------
+  agentPerformanceDetailed: protectedProcedure
+    .input(
+      z
+        .object({ days: z.number().min(1).max(365).default(30) })
+        .default({ days: 30 })
+    )
+    .query(async ({ input, ctx }) => {
+      const { getAgentPerformance } = await import(
+        "../services/analytics-engine"
+      );
+      return getAgentPerformance(ctx.db, ctx.orgId, input.days);
+    }),
+
+  // ---------------------------------------------------------------------------
+  // Cost breakdown (CT04) — by model, role, project
+  // ---------------------------------------------------------------------------
+  costBreakdownDetailed: protectedProcedure
+    .input(
+      z
+        .object({ days: z.number().min(1).max(365).default(30) })
+        .default({ days: 30 })
+    )
+    .query(async ({ input, ctx }) => {
+      const { getCostBreakdown } = await import("../services/analytics-engine");
+      return getCostBreakdown(ctx.db, ctx.orgId, input.days);
+    }),
+
+  // ---------------------------------------------------------------------------
+  // Productivity gains (CT04) — estimated developer-hours saved
+  // ---------------------------------------------------------------------------
+  productivityGains: protectedProcedure
+    .input(
+      z
+        .object({ days: z.number().min(1).max(365).default(30) })
+        .default({ days: 30 })
+    )
+    .query(async ({ input, ctx }) => {
+      const { getProductivityGains } = await import(
+        "../services/analytics-engine"
+      );
+      return getProductivityGains(ctx.db, ctx.orgId, input.days);
+    }),
+
+  // ---------------------------------------------------------------------------
+  // Trends (CT04) — time-series data for any metric
+  // ---------------------------------------------------------------------------
+  trends: protectedProcedure
+    .input(
+      z.object({
+        days: z.number().min(1).max(365).default(30),
+        metric: z.enum([
+          "tasks_completed",
+          "tasks_failed",
+          "credits_consumed",
+          "cost_usd",
+          "sessions_created",
+          "tokens_used",
+        ]),
+        period: z.enum(["day", "week", "month"]).default("day"),
+      })
+    )
+    .query(async ({ input, ctx }) => {
+      const { getTrends } = await import("../services/analytics-engine");
+      return getTrends(
+        ctx.db,
+        ctx.orgId,
+        input.metric,
+        input.period,
+        input.days
+      );
+    }),
 });

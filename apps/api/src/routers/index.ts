@@ -10,6 +10,7 @@ import { brainRouter } from "./brain";
 import { brandingRouter } from "./branding";
 import { chatRouter } from "./chat";
 import { codeAnalysisRouter } from "./code-analysis";
+import { collaborationRouter } from "./collaboration";
 import { costAnalyticsRouter } from "./cost-analytics";
 import { costPredictionRouter } from "./cost-prediction";
 import { deploymentsRouter } from "./deployments";
@@ -75,6 +76,7 @@ export const appRouter = router({
   permissions: permissionsRouter,
   playbooks: playbooksRouter,
   team: teamRouter,
+  collaboration: collaborationRouter,
 });
 
 export type AppRouter = typeof appRouter;

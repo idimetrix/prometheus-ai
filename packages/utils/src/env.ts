@@ -176,6 +176,12 @@ const servicePortsSchema = z.object({
 const workerSchema = z.object({
   WORKER_CONCURRENCY: z.coerce.number().int().min(1).default(2),
   ENTERPRISE_CONCURRENCY: z.coerce.number().int().min(1).default(4),
+  AUDIT_RETENTION_DAYS: z.coerce
+    .number()
+    .int()
+    .min(7)
+    .default(90)
+    .describe("Default audit log retention period in days before archival"),
 });
 
 // ============================================================================

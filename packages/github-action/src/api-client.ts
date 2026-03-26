@@ -32,9 +32,14 @@ export class PrometheusApiClient {
    * Create a new agent task via the CI trigger endpoint.
    */
   async createTask(params: {
+    branch?: string;
     description: string;
+    labels?: string[];
     mode: string;
     projectId: string;
+    ref?: string;
+    repo?: string;
+    sha?: string;
   }): Promise<CreateTaskResponse> {
     const response = await fetch(
       `${this.baseUrl}/webhooks/ci/${params.projectId}`,
@@ -47,6 +52,12 @@ export class PrometheusApiClient {
         body: JSON.stringify({
           event: "manual",
           description: params.description,
+          mode: params.mode,
+          branch: params.branch,
+          labels: params.labels,
+          repo: params.repo,
+          sha: params.sha,
+          ref: params.ref,
         }),
       }
     );

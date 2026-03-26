@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: mcp-gateway
+  namespace: prometheus
+  labels:
+    app: mcp-gateway
+spec:
+  selector:
+    app: mcp-gateway
+  ports:
+    - port: 4005
+      targetPort: 4005
+      protocol: TCP
+  type: ClusterIP

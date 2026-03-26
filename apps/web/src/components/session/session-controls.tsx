@@ -1,13 +1,21 @@
 "use client";
 
 import { Button } from "@prometheus/ui";
-import { CheckCircle, Pause, Play, Square, XCircle } from "lucide-react";
+import {
+  CheckCircle,
+  Pause,
+  Play,
+  RotateCcw,
+  Square,
+  XCircle,
+} from "lucide-react";
 import { useState } from "react";
 
 interface SessionControlsProps {
   onCancel: (sessionId: string) => Promise<void>;
   onPause: (sessionId: string) => Promise<void>;
   onResume: (sessionId: string) => Promise<void>;
+  onRetry?: (sessionId: string) => Promise<void>;
   sessionId: string;
   status: string;
 }
@@ -18,6 +26,7 @@ export function SessionControls({
   onPause,
   onResume,
   onCancel,
+  onRetry,
 }: SessionControlsProps) {
   const [loading, setLoading] = useState<string | null>(null);
 
@@ -35,12 +44,9 @@ export function SessionControls({
 
   const isActive = status === "active" || status === "running";
   const isPaused = status === "paused";
+  const isFailed = status === "failed";
   const isEnded =
     status === "completed" || status === "cancelled" || status === "failed";
-
-  if (isEnded) {
-    return null;
-  }
 
   return (
     <div className="flex items-center gap-2">
@@ -66,15 +72,28 @@ export function SessionControls({
           {loading === "resume" ? "Resuming..." : "Resume"}
         </Button>
       )}
-      <Button
-        disabled={loading !== null}
-        onClick={() => handleAction("cancel", onCancel)}
-        size="sm"
-        variant="destructive"
-      >
-        <Square className="mr-1 h-4 w-4" />
-        {loading === "cancel" ? "Cancelling..." : "Cancel"}
-      </Button>
+      {isFailed && onRetry && (
+        <Button
+          disabled={loading !== null}
+          onClick={() => handleAction("retry", onRetry)}
+          size="sm"
+          variant="outline"
+        >
+          <RotateCcw className="mr-1 h-4 w-4" />
+          {loading === "retry" ? "Retrying..." : "Retry"}
+        </Button>
+      )}
+      {!isEnded && (
+        <Button
+          disabled={loading !== null}
+          onClick={() => handleAction("cancel", onCancel)}
+          size="sm"
+          variant="destructive"
+        >
+          <Square className="mr-1 h-4 w-4" />
+          {loading === "cancel" ? "Cancelling..." : "Cancel"}
+        </Button>
+      )}
     </div>
   );
 }

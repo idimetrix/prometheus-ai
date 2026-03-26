@@ -22,6 +22,9 @@ import { ContainerManager } from "./container";
 import { GitOperations } from "./git-ops";
 import { createHealthChecker } from "./health";
 import { SandboxPool } from "./pool";
+import { PoolManager } from "./pool-manager";
+import { DevProvider } from "./providers/dev";
+import { DockerProvider } from "./providers/docker";
 import { createPreviewProxyRoute } from "./routes/preview-proxy";
 import { screenshotRoute } from "./routes/screenshot";
 import {
@@ -48,6 +51,31 @@ const containerManager = new ContainerManager();
 const sandboxPool = new SandboxPool(containerManager);
 const gitOps = new GitOperations(containerManager);
 const healthCheck = createHealthChecker(containerManager, sandboxPool);
+
+// ---- Warm Pool Manager (provider-level pool with pre-created sandboxes) ----
+
+const SANDBOX_POOL_SIZE = Number(process.env.SANDBOX_POOL_SIZE ?? 3);
+const SANDBOX_MAX_POOL_SIZE = Number(process.env.SANDBOX_MAX_POOL_SIZE ?? 20);
+const SANDBOX_IDLE_TTL_MS = Number(
+  process.env.SANDBOX_IDLE_TTL_MS ?? 30 * 60 * 1000
+);
+
+const poolManager = new PoolManager({
+  warmPoolSize: SANDBOX_POOL_SIZE,
+  maxPoolSize: SANDBOX_MAX_POOL_SIZE,
+  idleTtlMs: SANDBOX_IDLE_TTL_MS,
+  affinityEnabled: process.env.SANDBOX_AFFINITY_ENABLED !== "false",
+  predictiveScalingEnabled: process.env.SANDBOX_PREDICTIVE_SCALING !== "false",
+});
+
+// Register providers with the pool manager
+const dockerProvider = new DockerProvider(
+  process.env.SANDBOX_IMAGE ?? "node:20-slim"
+);
+const devProvider = new DevProvider();
+
+poolManager.registerProvider(dockerProvider);
+poolManager.registerProvider(devProvider);
 
 // ---- Health ----
 
@@ -109,6 +137,109 @@ app.get("/metrics", metricsHandler);
 
 app.get("/pool/stats", (c) => {
   return c.json(sandboxPool.getStats());
+});
+
+// ---- Warm Pool Manager stats ----
+
+app.get("/pool/manager/metrics", (c) => {
+  return c.json(poolManager.getMetrics());
+});
+
+app.get("/pool/manager/templates", (c) => {
+  return c.json(poolManager.getTemplateStats());
+});
+
+app.get("/pool/manager/hourly-usage", (c) => {
+  return c.json(poolManager.getHourlyUsagePatterns());
+});
+
+/**
+ * POST /pool/manager/acquire
+ * Acquire a sandbox from the warm pool manager.
+ * Body: { projectId: string, cpuLimit?: number, memoryMb?: number, sessionId?: string, template?: string }
+ */
+app.post("/pool/manager/acquire", async (c) => {
+  try {
+    const body = await c.req.json<{
+      projectId: string;
+      cpuLimit?: number;
+      memoryMb?: number;
+      sessionId?: string;
+      template?: "node18" | "python3.12" | "rust";
+      provider?: "docker" | "firecracker" | "dev" | "gvisor" | "e2b";
+    }>();
+
+    if (!body.projectId) {
+      return c.json({ error: "projectId is required" }, 400);
+    }
+
+    const instance = await poolManager.acquire(
+      {
+        projectId: body.projectId,
+        cpuLimit: body.cpuLimit,
+        memoryMb: body.memoryMb,
+      },
+      body.provider,
+      { sessionId: body.sessionId, template: body.template }
+    );
+
+    return c.json(
+      {
+        id: instance.id,
+        provider: instance.provider,
+        status: instance.status,
+        workDir: instance.workDir,
+        containerId: instance.containerId,
+        createdAt: instance.createdAt.toISOString(),
+      },
+      201
+    );
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    logger.error({ error: msg }, "Failed to acquire sandbox from pool manager");
+    return c.json({ error: msg }, 500);
+  }
+});
+
+/**
+ * POST /pool/manager/release
+ * Release a sandbox back to the warm pool.
+ * Body: { sandboxId: string, sessionId?: string }
+ */
+app.post("/pool/manager/release", async (c) => {
+  try {
+    const body = await c.req.json<{
+      sandboxId: string;
+      sessionId?: string;
+    }>();
+
+    if (!body.sandboxId) {
+      return c.json({ error: "sandboxId is required" }, 400);
+    }
+
+    poolManager.release(body.sandboxId, body.sessionId);
+    return c.json({ success: true, sandboxId: body.sandboxId });
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    logger.error({ error: msg }, "Failed to release sandbox to pool manager");
+    return c.json({ error: msg }, 500);
+  }
+});
+
+/**
+ * DELETE /pool/manager/:id
+ * Destroy a sandbox via the pool manager.
+ */
+app.delete("/pool/manager/:id", async (c) => {
+  const sandboxId = c.req.param("id");
+  try {
+    await poolManager.destroy(sandboxId);
+    return c.json({ success: true, id: sandboxId });
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    logger.error({ sandboxId, error: msg }, "Failed to destroy pooled sandbox");
+    return c.json({ error: msg }, 500);
+  }
 });
 
 // ---- Sandbox CRUD ----
@@ -637,6 +768,29 @@ async function start() {
     );
   });
 
+  // Initialize the warm pool manager (provider-level pre-created containers)
+  const dockerAvailable = await DockerProvider.isAvailable().catch(() => false);
+  const defaultProvider = dockerAvailable
+    ? ("docker" as const)
+    : ("dev" as const);
+
+  await poolManager.initialize(defaultProvider).catch((err) => {
+    const msg = err instanceof Error ? err.message : String(err);
+    logger.warn(
+      { error: msg },
+      "Warm pool manager initialization failed (will create sandboxes on demand)"
+    );
+  });
+
+  logger.info(
+    {
+      warmPoolSize: SANDBOX_POOL_SIZE,
+      maxPoolSize: SANDBOX_MAX_POOL_SIZE,
+      defaultProvider,
+    },
+    "Warm pool manager ready"
+  );
+
   const server = serve({ fetch: app.fetch, port }, () => {
     logger.info(
       { port, mode: containerManager.getMode() },
@@ -673,7 +827,7 @@ async function start() {
   // Register custom cleanup with the centralized shutdown handler
   registerShutdownHandler("sandbox-manager", async () => {
     logger.info("Shutting down...");
-    await sandboxPool.shutdown();
+    await Promise.allSettled([sandboxPool.shutdown(), poolManager.shutdown()]);
   });
 }
 

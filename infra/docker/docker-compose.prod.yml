@@ -1,0 +1,440 @@
+# docker-compose.prod.yml — Production deployment for self-hosted Prometheus.
+#
+# Usage:
+#   docker compose -f infra/docker/docker-compose.prod.yml --env-file .env up -d
+#
+# All 9 application services + infrastructure (Postgres, Redis, MinIO).
+
+x-common-env: &common-env
+  NODE_ENV: production
+  DATABASE_URL: postgresql://${POSTGRES_USER:-prometheus}:${POSTGRES_PASSWORD:-prometheus_prod}@postgres:5432/${POSTGRES_DB:-prometheus}
+  PGBOUNCER_URL: postgresql://${POSTGRES_USER:-prometheus}:${POSTGRES_PASSWORD:-prometheus_prod}@pgbouncer:6432/${POSTGRES_DB:-prometheus}
+  REDIS_URL: redis://:${REDIS_PASSWORD:-}@redis:6379
+  MINIO_ENDPOINT: http://minio:9000
+  MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-minioadmin}
+  MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-minioadmin}
+  API_URL: http://api:4000
+  SOCKET_SERVER_URL: http://socket-server:4001
+  ORCHESTRATOR_URL: http://orchestrator:4002
+  PROJECT_BRAIN_URL: http://project-brain:4003
+  MODEL_ROUTER_URL: http://model-router:4004
+  MCP_GATEWAY_URL: http://mcp-gateway:4005
+  SANDBOX_MANAGER_URL: http://sandbox-manager:4006
+  CLERK_SECRET_KEY: ${CLERK_SECRET_KEY:-}
+  CLERK_PUBLISHABLE_KEY: ${CLERK_PUBLISHABLE_KEY:-}
+  INTERNAL_API_KEY: ${INTERNAL_API_KEY:-change-me-in-production}
+  LOG_LEVEL: ${LOG_LEVEL:-info}
+
+x-service-defaults: &service-defaults
+  restart: unless-stopped
+  networks:
+    - prometheus-net
+  logging:
+    driver: json-file
+    options:
+      max-size: "50m"
+      max-file: "5"
+
+services:
+  # ─── Infrastructure ──────────────────────────────────────────────────────
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: prometheus-postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-prometheus}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-prometheus_prod}
+      POSTGRES_DB: ${POSTGRES_DB:-prometheus}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    command:
+      - postgres
+      - -c
+      - shared_preload_libraries=pg_stat_statements
+      - -c
+      - pg_stat_statements.track=all
+      - -c
+      - max_connections=200
+      - -c
+      - shared_buffers=512MB
+      - -c
+      - work_mem=16MB
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-prometheus} -d ${POSTGRES_DB:-prometheus}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          memory: 4G
+          cpus: "4.0"
+        reservations:
+          memory: 1G
+          cpus: "1.0"
+    <<: *service-defaults
+
+  pgbouncer:
+    image: edoburu/pgbouncer:latest
+    container_name: prometheus-pgbouncer
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-prometheus}:${POSTGRES_PASSWORD:-prometheus_prod}@postgres:5432/${POSTGRES_DB:-prometheus}
+      POOL_MODE: transaction
+      MAX_CLIENT_CONN: 400
+      DEFAULT_POOL_SIZE: 60
+      RESERVE_POOL_SIZE: 10
+      SERVER_LIFETIME: 3600
+      AUTH_TYPE: plain
+    ports:
+      - "${PGBOUNCER_PORT:-6432}:6432"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -p 6432 -U ${POSTGRES_USER:-prometheus} || true"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: "1.0"
+    <<: *service-defaults
+
+  redis:
+    image: docker.dragonflydb.io/dragonflydb/dragonfly:latest
+    container_name: prometheus-redis
+    command: dragonfly --maxmemory 1gb --proactor_threads 4 --cache_mode ${REDIS_PASSWORD:+--requirepass ${REDIS_PASSWORD}}
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+          cpus: "4.0"
+        reservations:
+          memory: 512M
+          cpus: "1.0"
+    <<: *service-defaults
+
+  minio:
+    image: minio/minio:latest
+    container_name: prometheus-minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ACCESS_KEY:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY:-minioadmin}
+    ports:
+      - "${MINIO_PORT:-9000}:9000"
+      - "${MINIO_CONSOLE_PORT:-9001}:9001"
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: "2.0"
+    <<: *service-defaults
+
+  # ─── Application Services ─────────────────────────────────────────────────
+  web:
+    image: ${IMAGE_REGISTRY:-ghcr.io/prometheus}/web:${IMAGE_TAG:-latest}
+    container_name: prometheus-web
+    ports:
+      - "${WEB_PORT:-3000}:3000"
+    environment:
+      <<: *common-env
+      NEXT_PUBLIC_API_URL: ${PUBLIC_API_URL:-http://localhost:4000}
+      NEXT_PUBLIC_WS_URL: ${PUBLIC_WS_URL:-ws://localhost:4001}
+      NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ${CLERK_PUBLISHABLE_KEY:-}
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3000/ || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: "2.0"
+        reservations:
+          memory: 256M
+          cpus: "0.25"
+      replicas: 2
+    <<: *service-defaults
+
+  api:
+    image: ${IMAGE_REGISTRY:-ghcr.io/prometheus}/api:${IMAGE_TAG:-latest}
+    container_name: prometheus-api
+    ports:
+      - "${API_PORT:-4000}:4000"
+    environment:
+      <<: *common-env
+      PORT: "4000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      pgbouncer:
+        condition: service_started
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:4000/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    deploy:
+      resources:
+        limits:
+          memory: 1.5G
+          cpus: "2.0"
+        reservations:
+          memory: 512M
+          cpus: "0.5"
+      replicas: 2
+    <<: *service-defaults
+
+  socket-server:
+    image: ${IMAGE_REGISTRY:-ghcr.io/prometheus}/socket-server:${IMAGE_TAG:-latest}
+    container_name: prometheus-socket-server
+    ports:
+      - "${SOCKET_PORT:-4001}:4001"
+    environment:
+      <<: *common-env
+      PORT: "4001"
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:4001/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: "2.0"
+        reservations:
+          memory: 256M
+          cpus: "0.5"
+      replicas: 2
+    <<: *service-defaults
+
+  orchestrator:
+    image: ${IMAGE_REGISTRY:-ghcr.io/prometheus}/orchestrator:${IMAGE_TAG:-latest}
+    container_name: prometheus-orchestrator
+    ports:
+      - "${ORCHESTRATOR_PORT:-4002}:4002"
+    environment:
+      <<: *common-env
+      PORT: "4002"
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:4002/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+          cpus: "2.0"
+        reservations:
+          memory: 512M
+          cpus: "0.5"
+      replicas: 2
+    <<: *service-defaults
+
+  queue-worker:
+    image: ${IMAGE_REGISTRY:-ghcr.io/prometheus}/queue-worker:${IMAGE_TAG:-latest}
+    container_name: prometheus-queue-worker
+    environment:
+      <<: *common-env
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:4007/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+          cpus: "2.0"
+        reservations:
+          memory: 512M
+          cpus: "0.5"
+      replicas: 3
+    <<: *service-defaults
+
+  project-brain:
+    image: ${IMAGE_REGISTRY:-ghcr.io/prometheus}/project-brain:${IMAGE_TAG:-latest}
+    container_name: prometheus-project-brain
+    ports:
+      - "${PROJECT_BRAIN_PORT:-4003}:4003"
+    environment:
+      <<: *common-env
+      PORT: "4003"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:4003/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: "1.0"
+        reservations:
+          memory: 256M
+          cpus: "0.25"
+    <<: *service-defaults
+
+  model-router:
+    image: ${IMAGE_REGISTRY:-ghcr.io/prometheus}/model-router:${IMAGE_TAG:-latest}
+    container_name: prometheus-model-router
+    ports:
+      - "${MODEL_ROUTER_PORT:-4004}:4004"
+    environment:
+      <<: *common-env
+      PORT: "4004"
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:4004/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: "1.0"
+        reservations:
+          memory: 256M
+          cpus: "0.25"
+    <<: *service-defaults
+
+  mcp-gateway:
+    image: ${IMAGE_REGISTRY:-ghcr.io/prometheus}/mcp-gateway:${IMAGE_TAG:-latest}
+    container_name: prometheus-mcp-gateway
+    ports:
+      - "${MCP_GATEWAY_PORT:-4005}:4005"
+    environment:
+      <<: *common-env
+      PORT: "4005"
+      GITHUB_APP_ID: ${GITHUB_APP_ID:-}
+      GITHUB_APP_PRIVATE_KEY: ${GITHUB_APP_PRIVATE_KEY:-}
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:4005/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: "1.0"
+        reservations:
+          memory: 256M
+          cpus: "0.25"
+    <<: *service-defaults
+
+  sandbox-manager:
+    image: ${IMAGE_REGISTRY:-ghcr.io/prometheus}/sandbox-manager:${IMAGE_TAG:-latest}
+    container_name: prometheus-sandbox-manager
+    ports:
+      - "${SANDBOX_MANAGER_PORT:-4006}:4006"
+    environment:
+      <<: *common-env
+      PORT: "4006"
+    depends_on:
+      redis:
+        condition: service_healthy
+    volumes:
+      - sandbox_workspace:/sandboxes
+      - /var/run/docker.sock:/var/run/docker.sock
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:4006/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    deploy:
+      resources:
+        limits:
+          memory: 4G
+          cpus: "4.0"
+        reservations:
+          memory: 512M
+          cpus: "0.5"
+    <<: *service-defaults
+
+volumes:
+  postgres_data:
+    name: prometheus-prod-postgres-data
+  redis_data:
+    name: prometheus-prod-redis-data
+  minio_data:
+    name: prometheus-prod-minio-data
+  sandbox_workspace:
+    name: prometheus-prod-sandbox-workspace
+
+networks:
+  prometheus-net:
+    name: prometheus-prod-network
+    driver: bridge

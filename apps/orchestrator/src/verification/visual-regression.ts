@@ -1,5 +1,6 @@
 import { getInternalAuthHeaders } from "@prometheus/auth";
 import { createLogger } from "@prometheus/logger";
+import { ScreenshotComparator } from "./screenshot-comparator";
 
 const logger = createLogger("orchestrator:visual-regression");
 
@@ -47,19 +48,35 @@ export interface VisualReportEntry {
   viewport: Viewport;
 }
 
+/** Key used to store/retrieve baselines in the storage backend. */
+export interface BaselineKey {
+  projectId: string;
+  url: string;
+  viewport: Viewport;
+}
+
 // ---------------------------------------------------------------------------
 // VisualRegressionTester
 // ---------------------------------------------------------------------------
 
 /**
  * Captures screenshots and compares them to detect visual regressions.
- * Communicates with a sandbox browser instance for rendering.
+ * Communicates with a sandbox browser instance for rendering and
+ * stores baselines in MinIO/S3 via the sandbox-manager storage API.
+ *
+ * Uses {@link ScreenshotComparator} for grid-based pixel-diff region
+ * detection instead of naive full-viewport reports.
  */
 export class VisualRegressionTester {
   private readonly threshold: number;
+  private readonly comparator: ScreenshotComparator;
+  private readonly sandboxManagerUrl: string;
 
   constructor(threshold = 0.98) {
     this.threshold = threshold;
+    this.comparator = new ScreenshotComparator();
+    this.sandboxManagerUrl =
+      process.env.SANDBOX_MANAGER_URL ?? "http://localhost:4006";
   }
 
   /**
@@ -89,6 +106,8 @@ export class VisualRegressionTester {
 
   /**
    * Compare two screenshots and return a visual comparison result.
+   * Delegates pixel-level comparison to {@link ScreenshotComparator}
+   * for grid-based changed region detection.
    */
   compareScreenshots(
     baseline: ScreenshotCapture,
@@ -96,17 +115,13 @@ export class VisualRegressionTester {
   ): VisualComparison {
     logger.info(`Comparing screenshots: ${baseline.url} vs ${current.url}`);
 
-    const diffScore = this.getVisualDiffScore(baseline.base64, current.base64);
-    const changedRegions = this.detectChangedRegions(
-      baseline.base64,
-      current.base64
-    );
+    const compResult = this.comparator.compare(baseline.base64, current.base64);
 
     return {
       baseline,
       current,
-      diffScore,
-      changedRegions,
+      diffScore: compResult.diffScore,
+      changedRegions: compResult.changedRegions,
     };
   }
 
@@ -115,30 +130,7 @@ export class VisualRegressionTester {
    * Returns a value between 0 (completely different) and 1 (identical).
    */
   getVisualDiffScore(baseline: string, current: string): number {
-    if (baseline === current) {
-      return 1.0;
-    }
-
-    // Simple byte-level comparison for similarity estimation.
-    // Production would use pixel-level diffing (e.g., pixelmatch).
-    const baselineBytes = Buffer.from(baseline, "base64");
-    const currentBytes = Buffer.from(current, "base64");
-
-    const minLength = Math.min(baselineBytes.length, currentBytes.length);
-    const maxLength = Math.max(baselineBytes.length, currentBytes.length);
-
-    if (maxLength === 0) {
-      return 1.0;
-    }
-
-    let matchingBytes = 0;
-    for (let i = 0; i < minLength; i++) {
-      if (baselineBytes[i] === currentBytes[i]) {
-        matchingBytes++;
-      }
-    }
-
-    return matchingBytes / maxLength;
+    return this.comparator.compare(baseline, current).diffScore;
   }
 
   /**
@@ -169,22 +161,126 @@ export class VisualRegressionTester {
     return report;
   }
 
-  // ---- Private helpers ----
+  // ---- Baseline storage via MinIO/S3 through sandbox-manager ----
 
-  private detectChangedRegions(
-    baseline: string,
-    current: string
-  ): ChangedRegion[] {
-    // Simple pixel comparison: compare base64 encoded images by chunks
-    // to identify approximate changed regions. For production, integrate
-    // a proper pixel-diff library like pixelmatch.
-    if (baseline === current) {
-      return [];
+  /**
+   * Run a full visual regression test for a set of URLs.
+   *
+   * 1. Capture current screenshots for each URL + viewport combination.
+   * 2. Load baseline screenshots from MinIO/S3 (via sandbox-manager).
+   * 3. Compare current vs baseline using pixel-diff.
+   * 4. Optionally update baselines when no baseline exists yet.
+   * 5. Return a {@link VisualReport} summarising all comparisons.
+   */
+  async runRegressionTest(
+    projectId: string,
+    urls: string[],
+    viewport: Viewport = { width: 1280, height: 720 }
+  ): Promise<VisualReport> {
+    const comparisons: VisualComparison[] = [];
+
+    for (const url of urls) {
+      const current = await this.captureScreenshot(url, viewport);
+
+      if (current.base64.length === 0) {
+        logger.warn(
+          { url },
+          "Skipping URL — screenshot capture returned empty"
+        );
+        continue;
+      }
+
+      const baselineKey: BaselineKey = { projectId, url, viewport };
+      const baselineBase64 = await this.loadBaseline(baselineKey);
+
+      if (baselineBase64.length === 0) {
+        // No baseline yet — store current as the baseline and skip comparison
+        await this.storeBaseline(baselineKey, current.base64);
+        logger.info({ url }, "Stored new baseline (no prior baseline found)");
+        continue;
+      }
+
+      const baseline: ScreenshotCapture = {
+        base64: baselineBase64,
+        timestamp: "",
+        url,
+        viewport,
+      };
+
+      comparisons.push(this.compareScreenshots(baseline, current));
     }
 
-    // If images differ, report the full viewport as changed
-    // (fine-grained region detection requires pixelmatch/sharp integration)
-    return [{ x: 0, y: 0, width: 1920, height: 1080 }];
+    return this.generateVisualReport(comparisons);
+  }
+
+  /**
+   * Store a baseline screenshot in MinIO/S3 via sandbox-manager.
+   */
+  async storeBaseline(key: BaselineKey, base64: string): Promise<void> {
+    try {
+      const res = await fetch(`${this.sandboxManagerUrl}/baselines`, {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          ...getInternalAuthHeaders(),
+        },
+        body: JSON.stringify({
+          key: this.baselineKeyToString(key),
+          data: base64,
+        }),
+        signal: AbortSignal.timeout(15_000),
+      });
+
+      if (!res.ok) {
+        logger.warn(
+          { key: this.baselineKeyToString(key), status: res.status },
+          "Failed to store baseline"
+        );
+      }
+    } catch (err) {
+      logger.warn({ err }, "Baseline storage request failed");
+    }
+  }
+
+  /**
+   * Load a baseline screenshot from MinIO/S3 via sandbox-manager.
+   * Returns an empty string if no baseline exists.
+   */
+  async loadBaseline(key: BaselineKey): Promise<string> {
+    try {
+      const encoded = encodeURIComponent(this.baselineKeyToString(key));
+      const res = await fetch(
+        `${this.sandboxManagerUrl}/baselines/${encoded}`,
+        {
+          method: "GET",
+          headers: getInternalAuthHeaders(),
+          signal: AbortSignal.timeout(15_000),
+        }
+      );
+
+      if (res.ok) {
+        const data = (await res.json()) as { data?: string };
+        return data.data ?? "";
+      }
+    } catch (err) {
+      logger.warn({ err }, "Baseline load request failed");
+    }
+    return "";
+  }
+
+  /**
+   * Update the baseline for a specific key with a new screenshot.
+   * Useful after a visual change has been manually approved.
+   */
+  async updateBaseline(key: BaselineKey, base64: string): Promise<void> {
+    await this.storeBaseline(key, base64);
+    logger.info({ key: this.baselineKeyToString(key) }, "Baseline updated");
+  }
+
+  // ---- Private helpers ----
+
+  private baselineKeyToString(key: BaselineKey): string {
+    return `${key.projectId}/${encodeURIComponent(key.url)}/${key.viewport.width}x${key.viewport.height}`;
   }
 
   private async renderInSandbox(request: {
@@ -193,11 +289,8 @@ export class VisualRegressionTester {
     url: string;
     viewport: Viewport;
   }): Promise<string> {
-    const sandboxManagerUrl =
-      process.env.SANDBOX_MANAGER_URL ?? "http://localhost:4006";
-
     try {
-      const res = await fetch(`${sandboxManagerUrl}/screenshot`, {
+      const res = await fetch(`${this.sandboxManagerUrl}/screenshot`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",

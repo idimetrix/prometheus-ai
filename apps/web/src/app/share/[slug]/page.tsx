@@ -1,13 +1,21 @@
-import { db, projects } from "@prometheus/db";
-import { eq } from "drizzle-orm";
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
+
+// Force dynamic rendering — db import requires DATABASE_URL at runtime only
+export const dynamic = "force-dynamic";
+
+async function getDb() {
+  const { db, projects } = await import("@prometheus/db");
+  const { eq } = await import("drizzle-orm");
+  return { db, projects, eq };
+}
 
 interface SharePageProps {
   params: Promise<{ slug: string }>;
 }
 
 async function getSharedProject(slug: string) {
+  const { db, projects, eq } = await getDb();
   const project = await db.query.projects.findFirst({
     where: eq(projects.shareSlug, slug),
     with: {

@@ -9,6 +9,7 @@ import { withSpan } from "@prometheus/telemetry";
 import { generateId } from "@prometheus/utils";
 import { generateText, jsonSchema, streamText, type Tool } from "ai";
 import { ResponseCache } from "./cache";
+import { recordTrace } from "./langfuse";
 import { type CascadeMessage, ModelCascade } from "./model-cascade";
 import { ModelScorer } from "./model-scorer";
 import type { RateLimitManager } from "./rate-limiter";
@@ -592,6 +593,27 @@ export class ModelRouterService {
           costUsd: 0,
           taskType: request.options?.taskId,
         });
+
+        // Record Langfuse trace for failed attempt (AM04)
+        recordTrace({
+          id: generateId("cmpl"),
+          model: modelKey,
+          provider: config.provider,
+          slot: request.slot,
+          success: false,
+          promptTokens: 0,
+          completionTokens: 0,
+          totalTokens: 0,
+          costUsd: 0,
+          latencyMs,
+          timestamp: new Date().toISOString(),
+          error: `Model ${modelKey} failed for slot ${request.slot}`,
+          metadata: {
+            agentRole: (request.options as Record<string, unknown> | undefined)
+              ?.agentRole,
+            taskType: request.options?.taskId,
+          },
+        });
         continue;
       }
 
@@ -605,6 +627,28 @@ export class ModelRouterService {
         qualitySignal: (request.options as Record<string, unknown> | undefined)
           ?.qualitySignal as number | undefined,
         taskType: request.options?.taskId,
+      });
+
+      // Record Langfuse trace for LLM observability (AM04)
+      recordTrace({
+        id: result.id,
+        model: result.model,
+        provider: result.provider,
+        slot: request.slot,
+        success: true,
+        promptTokens: result.usage.prompt_tokens,
+        completionTokens: result.usage.completion_tokens,
+        totalTokens: result.usage.total_tokens,
+        costUsd: result.usage.cost_usd,
+        latencyMs,
+        timestamp: new Date().toISOString(),
+        metadata: {
+          agentRole: (request.options as Record<string, unknown> | undefined)
+            ?.agentRole,
+          taskType: request.options?.taskId,
+          sessionId: (request.options as Record<string, unknown> | undefined)
+            ?.sessionId,
+        },
       });
 
       // Cache the successful response

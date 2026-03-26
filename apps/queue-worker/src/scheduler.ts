@@ -1,6 +1,7 @@
 import { createLogger } from "@prometheus/logger";
 import {
   agentTaskQueue,
+  auditArchivalQueue,
   cleanupSandboxQueue,
   notificationQueue,
   reconciliationQueue,
@@ -59,6 +60,7 @@ export async function registerScheduledTask(
 
   const queueMap: Record<string, Queue> = {
     "agent-tasks": agentTaskQueue,
+    "audit-archival": auditArchivalQueue,
     "cleanup-sandbox": cleanupSandboxQueue,
     "usage-rollup": usageRollupQueue,
     "credit-reconciliation": reconciliationQueue,
@@ -100,6 +102,7 @@ export async function removeScheduledTask(
 ): Promise<boolean> {
   const queueMap: Record<string, Queue> = {
     "agent-tasks": agentTaskQueue,
+    "audit-archival": auditArchivalQueue,
     "cleanup-sandbox": cleanupSandboxQueue,
     "usage-rollup": usageRollupQueue,
     "credit-reconciliation": reconciliationQueue,
@@ -254,6 +257,17 @@ export async function setupScheduledJobs(): Promise<void> {
     {
       repeat: { pattern: "0 8 * * *" },
       jobId: "scheduled:daily-summary",
+    }
+  );
+
+  // Audit log archival — daily at 1am UTC
+  // Archives audit logs older than retention period to MinIO/S3
+  await auditArchivalQueue.add(
+    "scheduled:audit-archival",
+    { trigger: "scheduled" as const },
+    {
+      repeat: { pattern: "0 1 * * *" },
+      jobId: "scheduled:audit-archival",
     }
   );
 

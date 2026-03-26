@@ -35,49 +35,49 @@ async function fileExists(filePath: string): Promise<boolean> {
 }
 
 /**
- * Detect project type from manifest files in the workspace.
+ * Detect Node.js package manager from lockfiles.
  */
-async function detectProjectType(
+async function detectNodeProject(
   workspaceDir: string
-): Promise<DetectedProject | null> {
-  // Check in priority order
-
-  // Node.js — detect preferred package manager
-  if (await fileExists(join(workspaceDir, "package.json"))) {
-    // Check lockfiles to determine package manager
-    if (await fileExists(join(workspaceDir, "pnpm-lock.yaml"))) {
-      return {
-        language: "node",
-        packageManager: "pnpm",
-        manifestFile: "package.json",
-        installCommand: "pnpm install --frozen-lockfile || pnpm install",
-      };
-    }
-    if (await fileExists(join(workspaceDir, "yarn.lock"))) {
-      return {
-        language: "node",
-        packageManager: "yarn",
-        manifestFile: "package.json",
-        installCommand: "yarn install --frozen-lockfile || yarn install",
-      };
-    }
-    if (await fileExists(join(workspaceDir, "bun.lockb"))) {
-      return {
-        language: "node",
-        packageManager: "bun",
-        manifestFile: "package.json",
-        installCommand: "bun install",
-      };
-    }
+): Promise<DetectedProject> {
+  if (await fileExists(join(workspaceDir, "pnpm-lock.yaml"))) {
     return {
       language: "node",
-      packageManager: "npm",
+      packageManager: "pnpm",
       manifestFile: "package.json",
-      installCommand: "npm ci || npm install",
+      installCommand: "pnpm install --frozen-lockfile || pnpm install",
     };
   }
+  if (await fileExists(join(workspaceDir, "yarn.lock"))) {
+    return {
+      language: "node",
+      packageManager: "yarn",
+      manifestFile: "package.json",
+      installCommand: "yarn install --frozen-lockfile || yarn install",
+    };
+  }
+  if (await fileExists(join(workspaceDir, "bun.lockb"))) {
+    return {
+      language: "node",
+      packageManager: "bun",
+      manifestFile: "package.json",
+      installCommand: "bun install",
+    };
+  }
+  return {
+    language: "node",
+    packageManager: "npm",
+    manifestFile: "package.json",
+    installCommand: "npm ci || npm install",
+  };
+}
 
-  // Python
+/**
+ * Detect Python package manager from manifest files.
+ */
+async function detectPythonProject(
+  workspaceDir: string
+): Promise<DetectedProject | null> {
   if (await fileExists(join(workspaceDir, "requirements.txt"))) {
     return {
       language: "python",
@@ -86,22 +86,83 @@ async function detectProjectType(
       installCommand: "pip install -r requirements.txt",
     };
   }
-
   if (await fileExists(join(workspaceDir, "pyproject.toml"))) {
-    if (await fileExists(join(workspaceDir, "poetry.lock"))) {
-      return {
-        language: "python",
-        packageManager: "poetry",
-        manifestFile: "pyproject.toml",
-        installCommand: "poetry install",
-      };
-    }
+    const hasPoetryLock = await fileExists(join(workspaceDir, "poetry.lock"));
+    return hasPoetryLock
+      ? {
+          language: "python",
+          packageManager: "poetry",
+          manifestFile: "pyproject.toml",
+          installCommand: "poetry install",
+        }
+      : {
+          language: "python",
+          packageManager: "pip",
+          manifestFile: "pyproject.toml",
+          installCommand: "pip install -e .",
+        };
+  }
+  if (await fileExists(join(workspaceDir, "Pipfile"))) {
     return {
       language: "python",
-      packageManager: "pip",
-      manifestFile: "pyproject.toml",
-      installCommand: "pip install -e .",
+      packageManager: "pipenv",
+      manifestFile: "Pipfile",
+      installCommand: "pipenv install",
     };
+  }
+  return null;
+}
+
+/**
+ * Detect Java build tool (Maven or Gradle).
+ */
+async function detectJavaProject(
+  workspaceDir: string
+): Promise<DetectedProject | null> {
+  if (await fileExists(join(workspaceDir, "pom.xml"))) {
+    const useMvnw = await fileExists(join(workspaceDir, "mvnw"));
+    const mvnCmd = useMvnw ? "./mvnw" : "mvn";
+    return {
+      language: "java",
+      packageManager: "maven",
+      manifestFile: "pom.xml",
+      installCommand: `${mvnCmd} dependency:resolve -q`,
+    };
+  }
+
+  const hasGradle = await fileExists(join(workspaceDir, "build.gradle"));
+  const hasGradleKts = await fileExists(join(workspaceDir, "build.gradle.kts"));
+
+  if (hasGradle || hasGradleKts) {
+    const useGradlew = await fileExists(join(workspaceDir, "gradlew"));
+    const gradleCmd = useGradlew ? "./gradlew" : "gradle";
+    return {
+      language: "java",
+      packageManager: "gradle",
+      manifestFile: hasGradle ? "build.gradle" : "build.gradle.kts",
+      installCommand: `${gradleCmd} dependencies --quiet`,
+    };
+  }
+
+  return null;
+}
+
+/**
+ * Detect project type from manifest files in the workspace.
+ * Checks languages in priority order: Node.js, Python, Go, Rust, Ruby, Java.
+ */
+async function detectProjectType(
+  workspaceDir: string
+): Promise<DetectedProject | null> {
+  // Node.js
+  if (await fileExists(join(workspaceDir, "package.json"))) {
+    return detectNodeProject(workspaceDir);
+  }
+
+  // Python
+  const pythonProject = await detectPythonProject(workspaceDir);
+  if (pythonProject) {
+    return pythonProject;
   }
 
   // Go
@@ -132,6 +193,12 @@ async function detectProjectType(
       manifestFile: "Gemfile",
       installCommand: "bundle install",
     };
+  }
+
+  // Java
+  const javaProject = await detectJavaProject(workspaceDir);
+  if (javaProject) {
+    return javaProject;
   }
 
   return null;
@@ -198,8 +265,8 @@ async function setupEnvFile(workspaceDir: string): Promise<boolean> {
 /**
  * Auto-detect project type and install dependencies in a sandbox workspace.
  *
- * Detects: package.json (Node), requirements.txt (Python), go.mod (Go),
- * Cargo.toml (Rust), Gemfile (Ruby).
+ * Detects: package.json (Node), requirements.txt/pyproject.toml/Pipfile (Python),
+ * go.mod (Go), Cargo.toml (Rust), Gemfile (Ruby), pom.xml/build.gradle (Java).
  *
  * Also copies .env.example to .env if it exists and .env does not.
  */

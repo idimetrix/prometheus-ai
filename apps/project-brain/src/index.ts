@@ -116,7 +116,7 @@ app.get("/health", async (c) => {
       status,
       checks,
       uptime: Math.floor(process.uptime()),
-      version: "0.1.0",
+      version: process.env.APP_VERSION ?? "0.0.0",
       service: "project-brain",
       timestamp: new Date().toISOString(),
     },
@@ -619,6 +619,245 @@ app.post("/procedural/prune", async (c) => {
   const body = await c.req.json();
   const pruned = await procedural.pruneIneffective(body.projectId);
   return c.json({ success: true, pruned });
+});
+
+// ---- Meta-Learning (AI08) ----
+
+import { CrossUserLearner } from "./meta-learning/cross-user-learner";
+import { LearningTransfer } from "./meta-learning/learning-transfer";
+
+const crossUserLearner = new CrossUserLearner();
+const learningTransfer = new LearningTransfer();
+
+app.post("/meta-learning/record-outcome", async (c) => {
+  const body = await c.req.json();
+  const { taskType, agentRole, strategy, success, quality } = body as {
+    taskType: string;
+    agentRole: string;
+    strategy: string;
+    success: boolean;
+    quality: number;
+  };
+
+  if (!(taskType && agentRole && strategy && typeof success === "boolean")) {
+    return c.json(
+      {
+        error:
+          "taskType, agentRole, strategy, success, and quality are required",
+      },
+      400
+    );
+  }
+
+  crossUserLearner.recordOutcome(
+    taskType,
+    agentRole,
+    strategy,
+    success,
+    quality ?? 0.5
+  );
+  return c.json({ success: true });
+});
+
+app.get("/meta-learning/best-strategy", (c) => {
+  const taskType = c.req.query("taskType");
+  const agentRole = c.req.query("agentRole");
+
+  if (!(taskType && agentRole)) {
+    return c.json(
+      { error: "taskType and agentRole query parameters are required" },
+      400
+    );
+  }
+
+  const recommendation = crossUserLearner.getBestStrategy(taskType, agentRole);
+  return c.json({ recommendation });
+});
+
+app.get("/meta-learning/strategies", (c) => {
+  const taskType = c.req.query("taskType");
+
+  if (!taskType) {
+    return c.json({ error: "taskType query parameter is required" }, 400);
+  }
+
+  const strategies = crossUserLearner.getSuccessRateByStrategy(taskType);
+  const result = [...strategies.entries()].map(([name, stats]) => ({
+    name,
+    ...stats,
+  }));
+
+  return c.json({ strategies: result });
+});
+
+app.post("/meta-learning/transfer", async (c) => {
+  const body = await c.req.json();
+  const { fromProjectId, toProjectId, type } = body as {
+    fromProjectId: string;
+    toProjectId: string;
+    type?: string;
+  };
+
+  if (!(fromProjectId && toProjectId)) {
+    return c.json({ error: "fromProjectId and toProjectId are required" }, 400);
+  }
+
+  const transferred = await learningTransfer.transferLearnings(
+    fromProjectId,
+    toProjectId,
+    type
+  );
+
+  return c.json({
+    success: true,
+    transferred: transferred.length,
+    patterns: transferred,
+  });
+});
+
+app.post("/meta-learning/register-project", async (c) => {
+  const data = await c.req.json();
+  const { projectId, languages, frameworks, structure } = data as {
+    projectId: string;
+    languages: string[];
+    frameworks: string[];
+    structure: string[];
+  };
+
+  if (!projectId) {
+    return c.json({ error: "projectId is required" }, 400);
+  }
+
+  learningTransfer.registerProject({
+    projectId,
+    languages: languages ?? [],
+    frameworks: frameworks ?? [],
+    structure: structure ?? [],
+  });
+
+  return c.json({ success: true });
+});
+
+app.get("/meta-learning/similar-projects", (c) => {
+  const projectId = c.req.query("projectId");
+
+  if (!projectId) {
+    return c.json({ error: "projectId query parameter is required" }, 400);
+  }
+
+  const similar = learningTransfer.findSimilarProjects(projectId);
+  return c.json({ projects: similar });
+});
+
+app.get("/meta-learning/transferable-patterns", (c) => {
+  const projectId = c.req.query("projectId");
+
+  if (!projectId) {
+    return c.json({ error: "projectId query parameter is required" }, 400);
+  }
+
+  const patterns = learningTransfer.getTransferablePatterns(projectId);
+  return c.json({ patterns });
+});
+
+// ---- Digital Twin (AI07) ----
+
+import { DigitalTwin, type TwinQuery } from "./digital-twin";
+
+const digitalTwin = new DigitalTwin();
+
+app.post("/digital-twin/query", async (c) => {
+  const body = await c.req.json();
+  const { projectId, query, queryType, maxResults } = body as TwinQuery;
+
+  if (!(projectId && query)) {
+    return c.json({ error: "projectId and query are required" }, 400);
+  }
+
+  const result = await digitalTwin.query({
+    projectId,
+    query,
+    queryType: queryType ?? "natural_language",
+    maxResults,
+  });
+
+  return c.json(result);
+});
+
+app.post("/digital-twin/impact", async (c) => {
+  const body = await c.req.json();
+  const { projectId, filePath } = body as {
+    projectId: string;
+    filePath: string;
+  };
+
+  if (!(projectId && filePath)) {
+    return c.json({ error: "projectId and filePath are required" }, 400);
+  }
+
+  const impact = await digitalTwin.predictImpact(projectId, filePath);
+  return c.json(impact);
+});
+
+app.get("/digital-twin/architecture/:projectId", async (c) => {
+  const projectId = c.req.param("projectId");
+  const view = await digitalTwin.getArchitectureView(projectId);
+  return c.json(view);
+});
+
+app.get("/digital-twin/changes/:projectId", async (c) => {
+  const projectId = c.req.param("projectId");
+  const changes = await digitalTwin.getChangeModel(projectId);
+  return c.json(changes);
+});
+
+app.post("/digital-twin/sync", async (c) => {
+  const body = await c.req.json();
+  const { projectId, changes } = body as {
+    projectId: string;
+    changes: Array<{
+      filePath: string;
+      content: string;
+      changeType: "created" | "modified" | "deleted";
+    }>;
+  };
+
+  if (!(projectId && changes)) {
+    return c.json({ error: "projectId and changes are required" }, 400);
+  }
+
+  // Map to FileChange format expected by fileIndexer.indexChanges
+  const indexerChanges = changes.map((ch) => ({
+    path: ch.filePath,
+    content: ch.content ?? "",
+    action: (ch.changeType === "created" ? "added" : ch.changeType) as
+      | "added"
+      | "modified"
+      | "deleted",
+    hash: "",
+  }));
+
+  // Re-index changed files to keep the digital twin in sync
+  const stats = await fileIndexer.indexChanges(projectId, indexerChanges);
+
+  // Also update the knowledge graph for modified/created files
+  for (const change of changes) {
+    if (change.changeType !== "deleted" && change.content) {
+      try {
+        const symbolTable = parseTypeScript(change.filePath, change.content);
+        if (
+          symbolTable.functions.length > 0 ||
+          symbolTable.classes.length > 0
+        ) {
+          await symbolStore.store(projectId, symbolTable);
+        }
+      } catch {
+        // Non-TypeScript files or parse errors are silently ignored
+      }
+    }
+  }
+
+  return c.json({ success: true, ...stats });
 });
 
 // ---- Blueprint Auto-Update ----

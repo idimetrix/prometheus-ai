@@ -26,7 +26,11 @@ import { getTestEngineerPrompt } from "./test-engineer";
 
 export const ROLE_PROMPTS: Record<
   string,
-  (context?: { blueprint?: string; conventions?: string }) => string
+  (context?: {
+    blueprint?: string;
+    conventions?: string;
+    languageContext?: string;
+  }) => string
 > = {
   architect: getArchitectPrompt,
   "backend-coder": getBackendCoderPrompt,

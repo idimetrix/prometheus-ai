@@ -7,6 +7,8 @@
 import type IORedis from "ioredis";
 import { createRedisConnection } from "./connection";
 
+const DIGITS_ONLY_RE = /^\d+$/;
+
 export interface StreamEvent {
   agentRole?: string;
   data: Record<string, unknown>;
@@ -61,6 +63,13 @@ export class EventStream {
   /**
    * Read events from a session stream starting after `lastEventId`.
    * Used for gap-fill on reconnection.
+   *
+   * `lastEventId` can be either:
+   *  - A Redis stream entry ID (e.g. "1711234567890-0")
+   *  - A monotonic sequence number (e.g. "42")
+   *
+   * When a sequence number is provided, we scan the stream to find events
+   * with sequence > lastEventId and return them.
    */
   async readAfter(
     sessionId: string,
@@ -68,6 +77,18 @@ export class EventStream {
     count = 100
   ): Promise<StreamEvent[]> {
     const streamKey = `session:${sessionId}:stream`;
+
+    // Detect whether lastEventId is a sequence number (pure digits) or a
+    // Redis stream entry ID (contains "-").
+    const isSequenceNumber = DIGITS_ONLY_RE.test(lastEventId);
+
+    if (isSequenceNumber) {
+      return this.readAfterSequence(
+        streamKey,
+        Number.parseInt(lastEventId, 10),
+        count
+      );
+    }
 
     const results = await this.redis.xrange(
       streamKey,
@@ -86,6 +107,42 @@ export class EventStream {
       const event = JSON.parse(eventJson) as StreamEvent;
       return { ...event, id };
     });
+  }
+
+  /**
+   * Read events from the stream where event.sequence > afterSequence.
+   * Scans from the beginning of the stream and filters by sequence.
+   */
+  private async readAfterSequence(
+    streamKey: string,
+    afterSequence: number,
+    count: number
+  ): Promise<StreamEvent[]> {
+    // Read a larger batch from the stream to find events after the sequence
+    const results = await this.redis.xrange(
+      streamKey,
+      "-",
+      "+",
+      "COUNT",
+      String(count * 2)
+    );
+
+    if (!results || results.length === 0) {
+      return [];
+    }
+
+    const matched: StreamEvent[] = [];
+    for (const [id, fields] of results) {
+      const eventJson = fields?.[1] ?? "{}";
+      const event = JSON.parse(eventJson) as StreamEvent;
+      if (event.sequence !== undefined && event.sequence > afterSequence) {
+        matched.push({ ...event, id });
+        if (matched.length >= count) {
+          break;
+        }
+      }
+    }
+    return matched;
   }
 
   /**

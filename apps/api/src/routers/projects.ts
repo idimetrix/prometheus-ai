@@ -1,4 +1,8 @@
 import { getInternalAuthHeaders } from "@prometheus/auth";
+import {
+  generateScaffold,
+  PROJECT_TEMPLATES_LIST,
+} from "@prometheus/config-stacks";
 import type { Database } from "@prometheus/db";
 import {
   blueprints,
@@ -32,6 +36,7 @@ import {
   removeProjectMemberSchema,
   removeProjectRepoSchema,
   rulesFileSchema,
+  scaffoldProjectSchema,
   setDefaultRepoSchema,
   shareProjectSchema,
   unshareProjectSchema,
@@ -140,6 +145,81 @@ export const projectsRouter = router({
       logger.info({ projectId: id, orgId: ctx.orgId }, "Project created");
       return project as NonNullable<typeof project>;
     }),
+
+  scaffold: protectedProcedure
+    .input(scaffoldProjectSchema)
+    .mutation(async ({ input, ctx }) => {
+      const id = generateId("proj");
+
+      let scaffoldedFiles: Array<{ content: string; path: string }> | null =
+        null;
+      let scaffoldMode: "prompt" | "template" = "template";
+
+      if (input.template) {
+        const result = generateScaffold(input.template, input.name);
+        if (!result) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: `Unknown template: ${input.template}. Use projects.listTemplates to see available templates.`,
+          });
+        }
+        scaffoldedFiles = result.files;
+      } else {
+        scaffoldMode = "prompt";
+      }
+
+      const [project] = await ctx.db
+        .insert(projects)
+        .values({
+          id,
+          orgId: ctx.orgId,
+          name: input.name,
+          description: input.description ?? null,
+          techStackPreset: input.template ?? null,
+          status: "setup",
+        })
+        .returning();
+
+      await ctx.db.insert(projectSettings).values({ projectId: id });
+      await ctx.db.insert(projectMembers).values({
+        id: generateId("pm"),
+        projectId: id,
+        userId: ctx.auth.userId,
+        role: "owner",
+      });
+
+      logger.info(
+        {
+          projectId: id,
+          orgId: ctx.orgId,
+          template: input.template,
+          scaffoldMode,
+          fileCount: scaffoldedFiles?.length ?? 0,
+        },
+        "Project scaffolded"
+      );
+
+      return {
+        project: project as NonNullable<typeof project>,
+        scaffoldMode,
+        scaffoldedFiles,
+      };
+    }),
+
+  listTemplates: protectedProcedure.query(() => {
+    return {
+      templates: PROJECT_TEMPLATES_LIST.map((t) => ({
+        category: t.category,
+        description: t.description,
+        estimatedMinutes: t.estimatedMinutes,
+        icon: t.icon,
+        id: t.id,
+        languages: t.languages,
+        name: t.name,
+        techStack: t.techStack,
+      })),
+    };
+  }),
 
   get: protectedProcedure
     .input(getProjectSchema)

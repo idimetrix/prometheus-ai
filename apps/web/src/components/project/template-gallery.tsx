@@ -10,134 +10,172 @@ import {
   CardTitle,
   Input,
 } from "@prometheus/ui";
+import {
+  Clock,
+  Code,
+  Globe,
+  Layers,
+  Layout,
+  Search,
+  Server,
+  Shield,
+  Smartphone,
+  Terminal,
+  Zap,
+} from "lucide-react";
 import { useMemo, useState } from "react";
 
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
 
-interface TemplateDefinition {
+export interface TemplateDefinition {
   category: TemplateCategory;
   description: string;
   estimatedMinutes: number;
+  icon: string;
   id: string;
+  languages: string[];
   name: string;
   techStack: string[];
 }
 
-type TemplateCategory =
-  | "Web App"
-  | "API"
+export type TemplateCategory =
+  | "Full-Stack"
+  | "Frontend"
+  | "Backend"
   | "Mobile"
-  | "CLI"
-  | "Data Pipeline"
-  | "E-Commerce";
+  | "Monorepo";
 
 // ---------------------------------------------------------------------------
-// Template data
+// Template data (matches config-stacks templates)
 // ---------------------------------------------------------------------------
 
-const TEMPLATES: TemplateDefinition[] = [
+const SCAFFOLD_TEMPLATES: TemplateDefinition[] = [
   {
-    id: "nextjs-saas",
-    name: "Next.js SaaS",
+    id: "nextjs-trpc",
+    name: "Next.js + tRPC",
     description:
-      "Full-stack SaaS with auth, billing, dashboard. Multi-tenant ready with subscription management.",
-    category: "Web App",
-    techStack: ["Next.js", "tRPC", "Drizzle", "Stripe", "Clerk"],
-    estimatedMinutes: 45,
+      "Full-stack Next.js app with tRPC API layer, Drizzle ORM, Tailwind CSS, and shadcn/ui components.",
+    category: "Full-Stack",
+    techStack: ["Next.js", "tRPC", "Tailwind CSS", "Drizzle", "shadcn/ui"],
+    languages: ["TypeScript"],
+    icon: "globe",
+    estimatedMinutes: 5,
   },
   {
-    id: "rest-api",
-    name: "REST API",
+    id: "fastapi-react",
+    name: "FastAPI + React",
     description:
-      "Production-ready API with authentication, input validation, and auto-generated OpenAPI docs.",
-    category: "API",
-    techStack: ["Hono", "Drizzle", "Zod", "Swagger"],
-    estimatedMinutes: 30,
+      "FastAPI Python backend with React + Vite frontend, SQLAlchemy ORM, and Tailwind CSS.",
+    category: "Full-Stack",
+    techStack: ["FastAPI", "React", "SQLAlchemy", "Tailwind CSS", "Vite"],
+    languages: ["Python", "TypeScript"],
+    icon: "zap",
+    estimatedMinutes: 8,
   },
   {
-    id: "react-dashboard",
-    name: "React Dashboard",
+    id: "express-api",
+    name: "Express API",
     description:
-      "Admin dashboard with interactive charts, data tables, and complex form handling.",
-    category: "Web App",
-    techStack: ["React", "Recharts", "TanStack Table"],
-    estimatedMinutes: 35,
+      "Express.js REST API with Prisma ORM, Zod validation, and PostgreSQL.",
+    category: "Backend",
+    techStack: ["Express", "Prisma", "Zod", "PostgreSQL"],
+    languages: ["TypeScript"],
+    icon: "server",
+    estimatedMinutes: 5,
   },
   {
-    id: "cli-tool",
-    name: "CLI Tool",
+    id: "django-htmx",
+    name: "Django + HTMX",
     description:
-      "Node.js command-line tool with subcommands, configuration management, and formatted output.",
-    category: "CLI",
-    techStack: ["Commander", "chalk", "inquirer"],
-    estimatedMinutes: 20,
+      "Django server-rendered app with HTMX for dynamic interactivity, no JavaScript framework required.",
+    category: "Full-Stack",
+    techStack: ["Django", "HTMX", "Tailwind CSS", "PostgreSQL"],
+    languages: ["Python"],
+    icon: "layout",
+    estimatedMinutes: 6,
   },
   {
-    id: "ecommerce",
-    name: "E-Commerce",
+    id: "go-fiber",
+    name: "Go Fiber API",
     description:
-      "Online store with product catalog, shopping cart, checkout flow, and payment processing.",
-    category: "E-Commerce",
-    techStack: ["Next.js", "Stripe", "Drizzle"],
-    estimatedMinutes: 50,
+      "Go REST API with Fiber web framework, pgx PostgreSQL driver, and zerolog structured logging.",
+    category: "Backend",
+    techStack: ["Go", "Fiber", "pgx", "PostgreSQL"],
+    languages: ["Go"],
+    icon: "terminal",
+    estimatedMinutes: 4,
   },
   {
-    id: "mobile-app",
-    name: "Mobile App",
+    id: "rust-axum",
+    name: "Rust Axum API",
     description:
-      "Cross-platform mobile app with navigation, authentication, and native device integration.",
+      "Rust API with Axum web framework, SQLx for type-safe PostgreSQL queries, and Tower middleware.",
+    category: "Backend",
+    techStack: ["Rust", "Axum", "SQLx", "PostgreSQL", "Tokio"],
+    languages: ["Rust"],
+    icon: "shield",
+    estimatedMinutes: 5,
+  },
+  {
+    id: "react-native",
+    name: "React Native",
+    description:
+      "Cross-platform mobile app with Expo, Expo Router, React Query, and Zustand state management.",
     category: "Mobile",
-    techStack: ["React Native", "Expo", "React Navigation"],
-    estimatedMinutes: 40,
+    techStack: ["React Native", "Expo", "React Query", "Zustand"],
+    languages: ["TypeScript"],
+    icon: "smartphone",
+    estimatedMinutes: 6,
   },
   {
-    id: "data-pipeline",
-    name: "Data Pipeline",
+    id: "monorepo-turbo",
+    name: "Turborepo Monorepo",
     description:
-      "ETL pipeline with job scheduling, retry logic, and monitoring for data processing workflows.",
-    category: "Data Pipeline",
-    techStack: ["Node.js", "BullMQ", "PostgreSQL"],
-    estimatedMinutes: 30,
-  },
-  {
-    id: "chrome-extension",
-    name: "Chrome Extension",
-    description:
-      "Browser extension with popup UI, content scripts, and background service worker.",
-    category: "Web App",
-    techStack: ["React", "Chrome APIs"],
-    estimatedMinutes: 25,
-  },
-  {
-    id: "fastapi-backend",
-    name: "FastAPI Backend",
-    description:
-      "Python API with auto-generated OpenAPI documentation, async support, and ORM integration.",
-    category: "API",
-    techStack: ["FastAPI", "SQLAlchemy", "Pydantic"],
-    estimatedMinutes: 30,
-  },
-  {
-    id: "django-react",
-    name: "Django + React",
-    description:
-      "Full-stack application with Django REST backend and React single-page frontend.",
-    category: "Web App",
-    techStack: ["Django", "DRF", "React"],
-    estimatedMinutes: 45,
+      "Turborepo monorepo with Next.js web app, Hono API server, and shared UI/utils packages.",
+    category: "Monorepo",
+    techStack: ["Turborepo", "Next.js", "Hono", "pnpm"],
+    languages: ["TypeScript"],
+    icon: "layers",
+    estimatedMinutes: 7,
   },
 ];
 
 const ALL_CATEGORIES: TemplateCategory[] = [
-  "Web App",
-  "API",
+  "Full-Stack",
+  "Backend",
+  "Frontend",
   "Mobile",
-  "CLI",
-  "Data Pipeline",
-  "E-Commerce",
+  "Monorepo",
 ];
+
+// ---------------------------------------------------------------------------
+// Icon map
+// ---------------------------------------------------------------------------
+
+const ICON_MAP: Record<string, React.ElementType> = {
+  code: Code,
+  globe: Globe,
+  layers: Layers,
+  layout: Layout,
+  server: Server,
+  shield: Shield,
+  smartphone: Smartphone,
+  terminal: Terminal,
+  zap: Zap,
+};
+
+function TemplateIcon({
+  icon,
+  className,
+}: {
+  className?: string;
+  icon: string;
+}) {
+  const IconComponent = ICON_MAP[icon] ?? Code;
+  return <IconComponent className={className} />;
+}
 
 // ---------------------------------------------------------------------------
 // Props
@@ -145,13 +183,14 @@ const ALL_CATEGORIES: TemplateCategory[] = [
 
 interface TemplateGalleryProps {
   onSelect?: (template: TemplateDefinition) => void;
+  selected?: string | null;
 }
 
 // ---------------------------------------------------------------------------
 // Component
 // ---------------------------------------------------------------------------
 
-export function TemplateGallery({ onSelect }: TemplateGalleryProps) {
+export function TemplateGallery({ onSelect, selected }: TemplateGalleryProps) {
   const [search, setSearch] = useState("");
   const [activeCategory, setActiveCategory] = useState<
     TemplateCategory | "All"
@@ -159,14 +198,15 @@ export function TemplateGallery({ onSelect }: TemplateGalleryProps) {
 
   const filtered = useMemo(() => {
     const lowerSearch = search.toLowerCase();
-    return TEMPLATES.filter((t) => {
+    return SCAFFOLD_TEMPLATES.filter((t) => {
       const matchesCategory =
         activeCategory === "All" || t.category === activeCategory;
       const matchesSearch =
         lowerSearch === "" ||
         t.name.toLowerCase().includes(lowerSearch) ||
         t.description.toLowerCase().includes(lowerSearch) ||
-        t.techStack.some((tech) => tech.toLowerCase().includes(lowerSearch));
+        t.techStack.some((tech) => tech.toLowerCase().includes(lowerSearch)) ||
+        t.languages.some((lang) => lang.toLowerCase().includes(lowerSearch));
       return matchesCategory && matchesSearch;
     });
   }, [search, activeCategory]);
@@ -176,24 +216,11 @@ export function TemplateGallery({ onSelect }: TemplateGalleryProps) {
       {/* Search and filter controls */}
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center">
         <div className="relative flex-1">
-          <svg
-            aria-hidden="true"
-            className="absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2 text-muted-foreground"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth={1.5}
-            viewBox="0 0 24 24"
-          >
-            <path
-              d="m21 21-5.197-5.197m0 0A7.5 7.5 0 1 0 5.196 5.196a7.5 7.5 0 0 0 10.607 10.607Z"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            />
-          </svg>
+          <Search className="absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
           <Input
             className="pl-9"
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search templates by name or technology..."
+            placeholder="Search templates by name, technology, or language..."
             value={search}
           />
         </div>
@@ -235,45 +262,68 @@ export function TemplateGallery({ onSelect }: TemplateGalleryProps) {
         </div>
       ) : (
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {filtered.map((template) => (
-            <button
-              className="text-left"
-              key={template.id}
-              onClick={() => onSelect?.(template)}
-              type="button"
-            >
-              <Card className="h-full transition-colors hover:border-primary/50 hover:shadow-md">
-                <CardHeader className="pb-3">
-                  <div className="flex items-center justify-between">
-                    <Badge variant="outline">{template.category}</Badge>
-                    <span className="text-muted-foreground text-xs">
-                      ~{template.estimatedMinutes} min
-                    </span>
-                  </div>
-                  <CardTitle className="text-lg">{template.name}</CardTitle>
-                  <CardDescription>{template.description}</CardDescription>
-                </CardHeader>
-                <CardContent className="pb-3">
-                  <div className="flex flex-wrap gap-1.5">
-                    {template.techStack.map((tech) => (
-                      <Badge key={tech} variant="secondary">
-                        {tech}
-                      </Badge>
-                    ))}
-                  </div>
-                </CardContent>
-                <CardFooter>
-                  <span className="text-muted-foreground text-xs">
-                    Click to use this template
-                  </span>
-                </CardFooter>
-              </Card>
-            </button>
-          ))}
+          {filtered.map((template) => {
+            const isSelected = selected === template.id;
+            return (
+              <button
+                className="text-left"
+                key={template.id}
+                onClick={() => onSelect?.(template)}
+                type="button"
+              >
+                <Card
+                  className={`h-full transition-all ${
+                    isSelected
+                      ? "border-primary bg-primary/5 shadow-md ring-1 ring-primary/30"
+                      : "hover:border-primary/50 hover:shadow-md"
+                  }`}
+                >
+                  <CardHeader className="pb-3">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <TemplateIcon
+                          className="h-4 w-4 text-muted-foreground"
+                          icon={template.icon}
+                        />
+                        <Badge variant="outline">{template.category}</Badge>
+                      </div>
+                      <div className="flex items-center gap-1 text-muted-foreground text-xs">
+                        <Clock className="h-3 w-3" />
+                        <span>~{template.estimatedMinutes} min</span>
+                      </div>
+                    </div>
+                    <CardTitle className="text-lg">{template.name}</CardTitle>
+                    <CardDescription>{template.description}</CardDescription>
+                  </CardHeader>
+                  <CardContent className="pb-3">
+                    <div className="flex flex-wrap gap-1.5">
+                      {template.techStack.map((tech) => (
+                        <Badge key={tech} variant="secondary">
+                          {tech}
+                        </Badge>
+                      ))}
+                    </div>
+                  </CardContent>
+                  <CardFooter>
+                    <div className="flex items-center gap-2">
+                      {template.languages.map((lang) => (
+                        <span
+                          className="text-muted-foreground text-xs"
+                          key={lang}
+                        >
+                          {lang}
+                        </span>
+                      ))}
+                    </div>
+                  </CardFooter>
+                </Card>
+              </button>
+            );
+          })}
         </div>
       )}
     </div>
   );
 }
 
-export type { TemplateCategory, TemplateDefinition, TemplateGalleryProps };
+export type { TemplateGalleryProps };

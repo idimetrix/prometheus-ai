@@ -1,5 +1,5 @@
 import { createLogger } from "@prometheus/logger";
-import { createRedisConnection } from "@prometheus/queue";
+import { createRedisConnection, EventStream } from "@prometheus/queue";
 import type { Namespace } from "socket.io";
 
 const logger = createLogger("socket-server:sessions");
@@ -45,6 +45,34 @@ function cleanupSocketRate(socketId: string): void {
   socketRateMap.delete(socketId);
 }
 
+/**
+ * Replay missed events from Redis Streams to a specific socket.
+ * Called when a client reconnects with a lastEventId.
+ */
+async function replayMissedEvents(
+  socket: { emit: (event: string, data: unknown) => void },
+  sessionId: string,
+  lastEventId: string
+): Promise<void> {
+  const eventStream = new EventStream();
+  const missedEvents = await eventStream.readAfter(sessionId, lastEventId);
+  logger.info(
+    { sessionId, lastEventId, replayed: missedEvents.length },
+    "Replaying missed WebSocket events"
+  );
+  for (const missed of missedEvents) {
+    const eventType = missed.type ?? "message";
+    const eventData = missed.data ?? missed;
+    socket.emit("session_event", {
+      type: eventType,
+      data: eventData,
+      sequence: missed.sequence,
+      timestamp: missed.timestamp ?? new Date().toISOString(),
+      replayed: true,
+    });
+  }
+}
+
 export function setupSessionNamespace(namespace: Namespace) {
   const subscriber = createRedisConnection();
   const publisher = createRedisConnection();
@@ -60,38 +88,54 @@ export function setupSessionNamespace(namespace: Namespace) {
     );
 
     // ---- join: Join a session room to receive events ----
-    socket.on("join_session", async (data: { sessionId: string }) => {
-      const { sessionId } = data;
-      await socket.join(`session:${sessionId}`);
-      logger.debug({ userId, sessionId }, "Joined session room");
+    socket.on(
+      "join_session",
+      async (data: { sessionId: string; lastEventId?: string }) => {
+        const { sessionId, lastEventId } = data;
+        await socket.join(`session:${sessionId}`);
+        logger.debug({ userId, sessionId, lastEventId }, "Joined session room");
 
-      // Subscribe to Redis channels for this session (events + commands relay)
-      const eventsChannel = `session:${sessionId}:events`;
-      if (!subscribedChannels.has(eventsChannel)) {
-        subscriber.subscribe(eventsChannel, (err) => {
-          if (err) {
+        // Subscribe to Redis channels for this session (events + commands relay)
+        const eventsChannel = `session:${sessionId}:events`;
+        if (!subscribedChannels.has(eventsChannel)) {
+          subscriber.subscribe(eventsChannel, (err) => {
+            if (err) {
+              logger.error(
+                { sessionId, error: err.message },
+                "Failed to subscribe to session events channel"
+              );
+            } else {
+              subscribedChannels.add(eventsChannel);
+            }
+          });
+        }
+
+        // Replay missed events from Redis Streams if lastEventId is provided
+        if (lastEventId && lastEventId !== "0") {
+          try {
+            await replayMissedEvents(socket, sessionId, lastEventId);
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
             logger.error(
-              { sessionId, error: err.message },
-              "Failed to subscribe to session events channel"
+              { sessionId, lastEventId, error: msg },
+              "Failed to replay missed WebSocket events"
             );
-          } else {
-            subscribedChannels.add(eventsChannel);
           }
+        }
+
+        // Notify others in the session
+        socket.to(`session:${sessionId}`).emit("user_joined", {
+          userId,
+          timestamp: new Date().toISOString(),
+        });
+
+        // Acknowledge join
+        socket.emit("session_joined", {
+          sessionId,
+          timestamp: new Date().toISOString(),
         });
       }
-
-      // Notify others in the session
-      socket.to(`session:${sessionId}`).emit("user_joined", {
-        userId,
-        timestamp: new Date().toISOString(),
-      });
-
-      // Acknowledge join
-      socket.emit("session_joined", {
-        sessionId,
-        timestamp: new Date().toISOString(),
-      });
-    });
+    );
 
     // ---- leave: Leave a session room ----
     socket.on("leave_session", async (data: { sessionId: string }) => {
@@ -252,9 +296,14 @@ export function setupSessionNamespace(namespace: Namespace) {
       (data: {
         sessionId: string;
         checkpointId: string;
-        action: "approve" | "rollback" | "modify";
+        action: "approve" | "reject" | "modify";
+        message?: string;
         modifications?: string;
       }) => {
+        // Normalize action: "rollback" was an old alias for "reject"
+        const normalizedAction =
+          data.action === "reject" ? "reject" : data.action;
+
         const channel = `session:${data.sessionId}:commands`;
         publisher.publish(
           channel,
@@ -262,16 +311,32 @@ export function setupSessionNamespace(namespace: Namespace) {
             type: "checkpoint_response",
             userId,
             checkpointId: data.checkpointId,
-            action: data.action,
+            action: normalizedAction,
+            message: data.message,
             modifications: data.modifications,
             timestamp: new Date().toISOString(),
+          })
+        );
+
+        // Publish to dedicated checkpoint resolution channel so the
+        // CheckpointManager in the orchestrator can resolve the pending
+        // promise and resume the agent loop.
+        publisher.publish(
+          "checkpoint:resolution",
+          JSON.stringify({
+            checkpointId: data.checkpointId,
+            response: {
+              action: normalizedAction,
+              message: data.message ?? data.modifications,
+              respondedBy: userId,
+            },
           })
         );
 
         namespace.to(`session:${data.sessionId}`).emit("checkpoint_resolved", {
           userId,
           checkpointId: data.checkpointId,
-          action: data.action,
+          action: normalizedAction,
           timestamp: new Date().toISOString(),
         });
       }
@@ -397,6 +462,7 @@ export function setupSessionNamespace(namespace: Namespace) {
     "queue_position",
     "credit_update",
     "checkpoint",
+    "checkpoint_resolved",
     "error",
     "reasoning",
     "terminal_output",
