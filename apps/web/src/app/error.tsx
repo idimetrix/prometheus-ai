@@ -3,7 +3,6 @@
 import { Button, Card, CardContent } from "@prometheus/ui";
 import { AlertTriangle, RefreshCw } from "lucide-react";
 import { useEffect } from "react";
-import { logger } from "@/lib/logger";
 
 interface ErrorPageProps {
   error: Error & { digest?: string };
@@ -12,7 +11,13 @@ interface ErrorPageProps {
 
 export default function ErrorPage({ error, reset }: ErrorPageProps) {
   useEffect(() => {
-    logger.error("[App Error]", error);
+    // Error is already captured by Next.js error boundary.
+    // Report to external error tracking if Sentry SDK is loaded.
+    const w = globalThis as unknown as Record<string, unknown>;
+    if (typeof w.Sentry === "object" && w.Sentry !== null) {
+      const sentry = w.Sentry as { captureException?: (e: Error) => void };
+      sentry.captureException?.(error);
+    }
   }, [error]);
 
   return (

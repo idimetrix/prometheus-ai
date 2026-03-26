@@ -14,7 +14,6 @@ import { cors } from "hono/cors";
 import { streamSSE } from "hono/streaming";
 import { BYOModelManager } from "./byo-model";
 import { CascadeRouter } from "./cascade";
-import { initLangfuse } from "./langfuse";
 import { PromptCacheManager } from "./prompt-cache";
 import { RateLimitManager } from "./rate-limiter";
 import { NearIdenticalCoalescer } from "./request-coalescer";
@@ -23,7 +22,6 @@ import { ModelRouterService, routeEmbedding } from "./router";
 await initTelemetry({ serviceName: "model-router" });
 initSentry({ serviceName: "model-router" });
 installShutdownHandlers();
-initLangfuse();
 
 const logger = createLogger("model-router");
 const app = new Hono();
@@ -476,44 +474,19 @@ export type {
   RegisteredModel,
 } from "./byo-model";
 export { BYOModelManager } from "./byo-model";
-export { BYOModelStore } from "./byo-model-store";
-export type {
-  BYOModelBenchmark,
-  BYOModelValidation,
-} from "./byo-model-validator";
-export { BYOModelValidator } from "./byo-model-validator";
 export type { QualityAssessment } from "./cascade";
 export { CascadeRouter } from "./cascade";
-export type {
-  ComplexityEstimate,
-  ComplexitySignals,
-} from "./complexity-estimator";
-export { ComplexityEstimator } from "./complexity-estimator";
-export type { BudgetStatus, OptimalModelResult } from "./cost-monitor";
+export type { OptimalModelResult } from "./cost-monitor";
 export { CostMonitor } from "./cost-monitor";
-export type {
-  BudgetConstraint,
-  CostOptimizationResult,
-  CostProfile,
-} from "./cost-optimizer";
-export { CostOptimizer } from "./cost-optimizer";
-export {
-  getMetrics as getLangfuseMetrics,
-  getRecentTraces,
-  initLangfuse,
-  recordTrace,
-} from "./langfuse";
-export type { ModelScore } from "./model-scorer";
-export { ModelScorer } from "./model-scorer";
 export { PromptCacheManager } from "./prompt-cache";
+export type {
+  EvalResult,
+  PromptComparisonResult,
+  PromptEvaluation,
+  PromptVersion,
+} from "./prompt-versioning";
+export { PromptVersionManager } from "./prompt-versioning";
 export { RateLimitManager } from "./rate-limiter";
 export type { CoalescingStats } from "./request-coalescer";
-export {
-  EmbeddingCoalescer,
-  NearIdenticalCoalescer,
-  normalizePrompt,
-  RequestCoalescer,
-} from "./request-coalescer";
+export { NearIdenticalCoalescer, normalizePrompt } from "./request-coalescer";
 export { ModelRouterService } from "./router";
-export type { SpeculativeConfig, SpeculativeResult } from "./speculative";
-export { SpeculativeExecutor } from "./speculative";

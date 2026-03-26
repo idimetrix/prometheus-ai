@@ -1,7 +1,19 @@
 import { Command } from "commander";
-import type { PlatformStatus, SessionInfo, TaskInfo } from "../api-client";
 import { APIClient } from "../api-client";
 import { resolveConfig } from "../config";
+
+interface PlatformStatus {
+  activeAgents: number;
+  queueDepth: number;
+  services: Record<string, boolean>;
+}
+
+interface SessionInfo {
+  id: string;
+  mode: string;
+  status: string;
+  title?: string;
+}
 
 function getStatusIcon(status: string): string {
   const icons: Record<string, string> = {
@@ -15,23 +27,18 @@ function getStatusIcon(status: string): string {
   return icons[status] ?? "[   ]";
 }
 
-function displaySessionDetails(session: SessionInfo, tasks: TaskInfo[]): void {
+function displaySessionDetails(session: {
+  id: string;
+  status: string;
+  mode: string;
+  progress?: number;
+}): void {
   console.log("Session Details\n");
   console.log(`  ID:         ${session.id}`);
-  console.log(`  Project:    ${session.project?.name ?? session.projectId}`);
   console.log(`  Status:     ${session.status}`);
   console.log(`  Mode:       ${session.mode}`);
-  console.log(`  Started:    ${session.startedAt}`);
-  if (session.endedAt) {
-    console.log(`  Ended:      ${session.endedAt}`);
-  }
-
-  if (tasks.length > 0) {
-    console.log("\n  Tasks:");
-    for (const task of tasks) {
-      const icon = getStatusIcon(task.status);
-      console.log(`    ${icon} ${task.title} (${task.status})`);
-    }
+  if (session.progress != null) {
+    console.log(`  Progress:   ${session.progress}%`);
   }
 }
 
@@ -54,9 +61,8 @@ function displayRecentSessions(sessions: SessionInfo[]): void {
   console.log("\nRecent Sessions:");
   for (const session of sessions) {
     const icon = getStatusIcon(session.status);
-    const name = session.project?.name ?? session.projectId;
     console.log(
-      `  ${icon} ${session.id} [${session.mode}] ${name} (${session.status})`
+      `  ${icon} ${session.id} [${session.mode}] ${session.title ?? "untitled"} (${session.status})`
     );
   }
 }
@@ -81,23 +87,16 @@ export const statusCommand = new Command("status")
 
       try {
         if (sessionId) {
-          const session = await client.getSession(sessionId);
-          const taskResult = await client.listTasks({
-            sessionId,
-            limit: 10,
-          });
-          displaySessionDetails(session, taskResult.tasks);
+          const session = await client.getSessionStatus(sessionId);
+          displaySessionDetails(session);
         } else {
           const status = await client.getStatus();
           displayPlatformStatus(status);
 
           if (config.projectId) {
             try {
-              const sessionsResult = await client.listSessions({
-                projectId: config.projectId,
-                limit: 5,
-              });
-              displayRecentSessions(sessionsResult.sessions);
+              const sessions = await client.listSessions(config.projectId);
+              displayRecentSessions(sessions.slice(0, 5));
             } catch {
               // Ignore session listing errors
             }

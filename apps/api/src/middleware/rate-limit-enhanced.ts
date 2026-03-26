@@ -21,8 +21,10 @@ const TIER_LIMITS: Record<EndpointTier, number> = {
  */
 export const PLAN_RATE_LIMITS: Record<string, number> = {
   hobby: 60,
+  starter: 120,
   pro: 300,
   team: 600,
+  studio: 1500,
   enterprise: 3000,
 };
 

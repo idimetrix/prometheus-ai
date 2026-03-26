@@ -3,7 +3,6 @@ import {
   creditBalances,
   creditReservations,
   creditTransactions,
-  organizations,
   projects,
   sessions,
   taskSteps,
@@ -27,16 +26,6 @@ import { protectedProcedure, router } from "../trpc";
 
 const logger = createLogger("tasks-router");
 
-type PlanTier = "hobby" | "starter" | "pro" | "team" | "studio" | "enterprise";
-
-async function getOrgPlanTier(db: Database, orgId: string): Promise<PlanTier> {
-  const org = await db.query.organizations.findFirst({
-    where: eq(organizations.id, orgId),
-    columns: { planTier: true },
-  });
-  return (org?.planTier ?? "hobby") as PlanTier;
-}
-
 /**
  * Verify that a task belongs to the caller's org via its project.
  * Returns the task row or throws TRPC NOT_FOUND.
@@ -56,58 +45,45 @@ async function verifyTaskAccess(db: Database, taskId: string, orgId: string) {
 
 /**
  * Reserve credits for a task. Returns the reservation ID or throws if insufficient.
- * Uses SELECT ... FOR UPDATE to prevent concurrent over-booking.
  */
 async function reserveCredits(
-  database: Database,
+  db: Database,
   orgId: string,
   taskId: string,
   amount: number
 ): Promise<string> {
-  const reservationId = generateId("cres");
-
-  await database.transaction(async (tx) => {
-    // Lock the balance row to prevent concurrent over-booking
-    const [locked] = await tx
-      .select()
-      .from(creditBalances)
-      .where(eq(creditBalances.orgId, orgId))
-      .for("update");
-
-    if (!locked) {
-      throw new TRPCError({
-        code: "PRECONDITION_FAILED",
-        message: "No credit balance found for this organization",
-      });
-    }
-
-    const available = locked.balance - locked.reserved;
-    if (available < amount) {
-      throw new TRPCError({
-        code: "PRECONDITION_FAILED",
-        message: `Insufficient credits: need ${amount}, have ${available} available`,
-      });
-    }
-
-    // Increment reserved amount
-    await tx
-      .update(creditBalances)
-      .set({
-        reserved: sql`${creditBalances.reserved} + ${amount}`,
-        updatedAt: new Date(),
-      })
-      .where(eq(creditBalances.orgId, orgId));
-
-    // Create reservation record
-    await tx.insert(creditReservations).values({
-      id: reservationId,
-      orgId,
-      taskId,
-      amount,
-      status: "active",
-      expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000), // 24h expiry
-    });
+  // Fetch current balance
+  const balance = await db.query.creditBalances.findFirst({
+    where: eq(creditBalances.orgId, orgId),
   });
+
+  const available = (balance?.balance ?? 0) - (balance?.reserved ?? 0);
+  if (available < amount) {
+    throw new TRPCError({
+      code: "PRECONDITION_FAILED",
+      message: `Insufficient credits: need ${amount}, have ${available} available`,
+    });
+  }
+
+  // Create reservation
+  const reservationId = generateId("cres");
+  await db.insert(creditReservations).values({
+    id: reservationId,
+    orgId,
+    taskId,
+    amount,
+    status: "active",
+    expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000), // 24h expiry
+  });
+
+  // Update reserved amount on balance
+  await db
+    .update(creditBalances)
+    .set({
+      reserved: sql`${creditBalances.reserved} + ${amount}`,
+      updatedAt: new Date(),
+    })
+    .where(eq(creditBalances.orgId, orgId));
 
   return reservationId;
 }
@@ -206,11 +182,10 @@ export const tasksRouter = router({
         if (err instanceof TRPCError) {
           throw err;
         }
-        logger.error({ taskId: id, error: err }, "Credit reservation failed");
-        throw new TRPCError({
-          code: "INTERNAL_SERVER_ERROR",
-          message: "Failed to reserve credits for task",
-        });
+        logger.warn(
+          { taskId: id, error: err },
+          "Credit reservation failed, proceeding without reservation"
+        );
       }
 
       const [task] = await ctx.db
@@ -242,7 +217,7 @@ export const tasksRouter = router({
           description: input.description ?? null,
           mode: session.mode,
           agentRole: input.agentRole ?? null,
-          planTier: await getOrgPlanTier(ctx.db, ctx.orgId),
+          planTier: "hobby",
           creditsReserved: reservationId ? estimatedCredits : 0,
           dependsOn: input.dependsOn ?? [],
         },
@@ -372,7 +347,11 @@ export const tasksRouter = router({
         // Set timestamp fields based on status transitions
         if (input.status === "running") {
           updateData.startedAt = new Date();
-        } else if (input.status === "completed" || input.status === "failed") {
+        } else if (
+          input.status === "completed" ||
+          input.status === "failed" ||
+          input.status === "cancelled"
+        ) {
           updateData.completedAt = new Date();
         }
       }

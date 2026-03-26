@@ -57,13 +57,10 @@ export const chatCommand = new Command("chat")
         console.log(`Resuming session: ${sessionId}`);
       } else if (opts.resume) {
         try {
-          const result = await client.listSessions({
-            projectId,
-            status: "active",
-            limit: 1,
-          });
-          if (result.sessions.length > 0) {
-            sessionId = result.sessions[0]?.id;
+          const sessions = await client.listSessions(projectId);
+          const activeSessions = sessions.filter((s) => s.status === "active");
+          if (activeSessions.length > 0) {
+            sessionId = activeSessions[0]?.id;
             console.log(`Resuming most recent session: ${sessionId}`);
           } else {
             console.log("No active sessions found, creating a new one...");
@@ -133,40 +130,37 @@ export const chatCommand = new Command("chat")
         }
 
         try {
-          await client.sendMessage(sessionId as string, input);
+          await client.sendMessage({
+            sessionId: sessionId as string,
+            content: input,
+          });
 
           process.stdout.write("\nagent> ");
 
-          const stream = client.streamSession(
-            sessionId as string,
-            (event) => {
-              if (event.type === "token") {
-                renderer.renderTextDelta(
-                  String((event.data as { content: string }).content)
-                );
-              } else if (event.type === "tool_call") {
-                const data = event.data as { toolName: string };
-                renderer.renderToolCall(data.toolName);
-              } else if (event.type === "file_change") {
-                const data = event.data as { filePath: string };
-                renderer.renderInfo(`File: ${data.filePath}`);
-              } else if (event.type === "error") {
-                renderer.renderError(
-                  String(
-                    (event.data as { error?: string }).error ?? "Unknown error"
-                  )
-                );
-              } else if (event.type === "complete") {
-                renderer.clear();
-                console.log();
-                stream.close();
-                rl.prompt();
-              }
-            },
-            () => {
-              renderer.renderError("Connection lost, retrying...");
+          const stream = client.streamSession(sessionId as string, (event) => {
+            if (event.type === "token") {
+              renderer.renderTextDelta(
+                String((event.data as { content: string }).content)
+              );
+            } else if (event.type === "tool_call") {
+              const data = event.data as { toolName: string };
+              renderer.renderToolCall(data.toolName);
+            } else if (event.type === "file_change") {
+              const data = event.data as { filePath: string };
+              renderer.renderInfo(`File: ${data.filePath}`);
+            } else if (event.type === "error") {
+              renderer.renderError(
+                String(
+                  (event.data as { error?: string }).error ?? "Unknown error"
+                )
+              );
+            } else if (event.type === "complete") {
+              renderer.clear();
+              console.log();
+              stream.close();
+              rl.prompt();
             }
-          );
+          });
         } catch (error) {
           const msg = error instanceof Error ? error.message : String(error);
           console.error(`\nError: ${msg}\n`);

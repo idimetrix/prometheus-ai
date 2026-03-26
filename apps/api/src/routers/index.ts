@@ -1,4 +1,5 @@
 import { router } from "../trpc";
+import { adminRouter } from "./admin";
 import { analyticsRouter } from "./analytics";
 import { analyticsEnhancedRouter } from "./analytics-enhanced";
 import { apiKeysRouter } from "./api-keys";
@@ -11,7 +12,6 @@ import { brandingRouter } from "./branding";
 import { chatRouter } from "./chat";
 import { codeAnalysisRouter } from "./code-analysis";
 import { collaborationRouter } from "./collaboration";
-import { costAnalyticsRouter } from "./cost-analytics";
 import { costPredictionRouter } from "./cost-prediction";
 import { deploymentsRouter } from "./deployments";
 import { filesRouter } from "./files";
@@ -39,8 +39,8 @@ import { webhooksOutboundRouter } from "./webhooks-outbound";
 import { workspacesRouter } from "./workspaces";
 
 export const appRouter = router({
+  admin: adminRouter,
   health: healthRouter,
-  chat: chatRouter,
   sessions: sessionsRouter,
   tasks: tasksRouter,
   projects: projectsRouter,
@@ -51,11 +51,8 @@ export const appRouter = router({
   settings: settingsRouter,
   brain: brainRouter,
   fleet: fleetRouter,
-  generate: generateRouter,
   user: userRouter,
   integrations: integrationsRouter,
-  issueSync: issueSyncRouter,
-  notifications: notificationsRouter,
   apiKeys: apiKeysRouter,
   plugins: pluginsRouter,
   architecture: architectureRouter,
@@ -67,16 +64,19 @@ export const appRouter = router({
   webhooks: webhooksOutboundRouter,
   branding: brandingRouter,
   costPrediction: costPredictionRouter,
-  costAnalytics: costAnalyticsRouter,
   deployments: deploymentsRouter,
-  files: filesRouter,
-  workspaces: workspacesRouter,
-  uploads: uploadsRouter,
   marketplace: marketplaceRouter,
-  permissions: permissionsRouter,
   playbooks: playbooksRouter,
-  team: teamRouter,
+  issueSync: issueSyncRouter,
+  chat: chatRouter,
   collaboration: collaborationRouter,
+  files: filesRouter,
+  generate: generateRouter,
+  notifications: notificationsRouter,
+  permissions: permissionsRouter,
+  team: teamRouter,
+  uploads: uploadsRouter,
+  workspaces: workspacesRouter,
 });
 
 export type AppRouter = typeof appRouter;

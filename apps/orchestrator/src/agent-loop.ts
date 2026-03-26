@@ -15,14 +15,6 @@ import {
 } from "./engine";
 import { ExecutionTracker } from "./feedback/execution-tracker";
 import { LearningExtractor } from "./feedback/learning-extractor";
-import { MetaLearner } from "./meta-learning/meta-learner";
-import { loadProjectContext } from "./prompts/project-context";
-import { analyzeTaskOutcome } from "./self-improvement/feedback-loop";
-
-/** Shared MetaLearner instance across all agent loops */
-const sharedMetaLearner = new MetaLearner();
-
-export { sharedMetaLearner };
 
 export type AgentLoopStatus = "idle" | "running" | "paused" | "stopped";
 
@@ -68,7 +60,6 @@ export class AgentLoop {
   private readonly projectId: string;
   private readonly orgId: string;
   private readonly userId: string;
-  private sandboxId: string | null = null;
   private status: AgentLoopStatus = "idle";
   private readonly iterations: LoopIteration[] = [];
   private readonly eventPublisher: EventPublisher;
@@ -119,14 +110,6 @@ export class AgentLoop {
     return this.sessionId;
   }
 
-  setSandboxId(id: string): void {
-    this.sandboxId = id;
-  }
-
-  getSandboxId(): string | null {
-    return this.sandboxId;
-  }
-
   getCreditsConsumed(): number {
     return this.totalCreditsConsumed;
   }
@@ -141,6 +124,8 @@ export class AgentLoop {
 
   /**
    * Load context from Project Brain service.
+   * Uses the /context/assemble endpoint which aggregates blueprint,
+   * code context, sprint state, and CI results.
    */
   private async loadProjectBrainContext(): Promise<ProjectBrainContext> {
     const defaultCtx: ProjectBrainContext = {
@@ -151,11 +136,26 @@ export class AgentLoop {
     };
 
     try {
-      const response = await projectBrainClient.get<ProjectBrainContext>(
-        `/api/projects/${this.projectId}/context`
-      );
+      const response = await projectBrainClient.post<{
+        global?: string;
+        session?: string;
+        taskSpecific?: string;
+      }>("/context/assemble", {
+        projectId: this.projectId,
+        sessionId: this.sessionId,
+        taskDescription: "",
+        agentRole: "orchestrator",
+        maxTokens: 14_000,
+      });
       this.logger.info("Loaded Project Brain context");
-      return response.data;
+
+      // Map assembled context to our expected structure
+      return {
+        blueprintContent: response.data.global ?? null,
+        projectSummary: response.data.taskSpecific ?? null,
+        recentCIResults: null,
+        sprintState: response.data.session ?? null,
+      };
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
       this.logger.warn(
@@ -222,13 +222,8 @@ export class AgentLoop {
     iteration: LoopIteration,
     options?: ExecutionOptions
   ): Promise<ReturnType<typeof createExecutionContext>> {
-    const [brainContext, priorContext, projectRulesContext] = await Promise.all(
-      [
-        this.loadProjectBrainContext(),
-        this.loadPriorContext(),
-        loadProjectContext(this.projectId),
-      ]
-    );
+    const brainContext = await this.loadProjectBrainContext();
+    const priorContext = await this.loadPriorContext();
 
     this.logger.info(
       { iteration: iteration.iteration, agentRole },
@@ -242,14 +237,6 @@ export class AgentLoop {
       agentRole
     );
 
-    // Merge project brain summary with .prometheus.md rules
-    const mergedProjectContext = [
-      brainContext.projectSummary ?? "",
-      projectRulesContext,
-    ]
-      .filter(Boolean)
-      .join("\n\n");
-
     return createExecutionContext({
       sessionId: this.sessionId,
       projectId: this.projectId,
@@ -257,9 +244,9 @@ export class AgentLoop {
       userId: this.userId,
       agentRole: agentRole as AgentRole,
       taskDescription: enrichedDescription,
-      sandboxId: this.sandboxId ?? this.sessionId,
+      sandboxId: this.sessionId,
       blueprintContent: brainContext.blueprintContent,
-      projectContext: mergedProjectContext || null,
+      projectContext: brainContext.projectSummary,
       sprintState: brainContext.sprintState,
       recentCIResults: brainContext.recentCIResults,
       priorSessionContext:
@@ -458,45 +445,6 @@ export class AgentLoop {
       .catch(() => {
         /* fire-and-forget */
       });
-
-    // Record outcome in MetaLearner for cross-session pattern extraction (AI08)
-    const durationMs = iteration.completedAt
-      ? iteration.completedAt.getTime() - iteration.startedAt.getTime()
-      : 0;
-
-    try {
-      sharedMetaLearner.recordOutcome({
-        sessionId: this.sessionId,
-        agentRole,
-        taskDescription: result.output.slice(0, 200),
-        success: result.success,
-        toolsUsed: [],
-        toolCalls: result.toolCalls,
-        tokensUsed: result.tokensUsed.input + result.tokensUsed.output,
-        durationMs,
-        error: result.error,
-      });
-    } catch {
-      /* fire-and-forget */
-    }
-
-    // Record in feedback loop for self-improvement (AI04)
-    try {
-      analyzeTaskOutcome({
-        taskId: this.sessionId,
-        projectId: this.projectId,
-        orgId: this.orgId,
-        agentRole,
-        succeeded: result.success,
-        toolsUsed: [],
-        errorMessages: result.error ? [result.error] : [],
-        filesModified: result.filesChanged,
-        durationMs,
-        tags: [agentRole],
-      });
-    } catch {
-      /* fire-and-forget */
-    }
   }
 
   /**
@@ -720,25 +668,7 @@ export class AgentLoop {
         }
         break;
 
-      case "complete":
-        await this.eventPublisher.publishSessionEvent(this.sessionId, {
-          type: "session_complete",
-          data: {
-            success: event.success,
-            output: event.output.slice(0, 2000),
-            filesChanged: event.filesChanged,
-            tokensUsed: event.tokensUsed,
-            toolCalls: event.toolCalls,
-            steps: event.steps,
-            status: event.success ? "completed" : "failed",
-            agentRole,
-          },
-          agentRole,
-          timestamp: event.timestamp,
-        });
-        break;
-
-      // self_review events don't need separate Redis publishing
+      // self_review and complete events don't need separate Redis publishing
       default:
         break;
     }
@@ -823,18 +753,33 @@ export class AgentLoop {
     });
   }
 
-  pause(): void {
+  async pause(): Promise<void> {
     this.status = "paused";
+    await this.eventPublisher.publishSessionEvent(this.sessionId, {
+      type: QueueEvents.AGENT_STATUS,
+      data: { status: "paused", sessionId: this.sessionId },
+      timestamp: new Date().toISOString(),
+    });
     this.logger.info("Agent loop paused");
   }
 
-  resume(): void {
+  async resume(): Promise<void> {
     this.status = "running";
+    await this.eventPublisher.publishSessionEvent(this.sessionId, {
+      type: QueueEvents.AGENT_STATUS,
+      data: { status: "resumed", sessionId: this.sessionId },
+      timestamp: new Date().toISOString(),
+    });
     this.logger.info("Agent loop resumed");
   }
 
-  stop(): void {
+  async stop(): Promise<void> {
     this.status = "stopped";
+    await this.eventPublisher.publishSessionEvent(this.sessionId, {
+      type: QueueEvents.AGENT_STATUS,
+      data: { status: "stopped", sessionId: this.sessionId },
+      timestamp: new Date().toISOString(),
+    });
     this.logger.info("Agent loop stopped");
   }
 

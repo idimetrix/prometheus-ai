@@ -29,3 +29,12 @@ export {
   PlanReviser,
   type RevisionResult,
 } from "./plan-reviser";
+export {
+  PlanSimulator,
+  type SimulationResult,
+} from "./plan-simulator";
+export {
+  type PlanningStep,
+  SeniorPlanner,
+  type SeniorPlanResult,
+} from "./senior-planner";

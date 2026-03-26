@@ -14,17 +14,43 @@ export interface DocPage {
   title: string;
 }
 
-export function getDocSlugs(): string[] {
-  if (!fs.existsSync(CONTENT_DIR)) {
+/**
+ * Recursively collect all .md files from the content directory.
+ * Files in subdirectories get slugs like "agents/orchestrator".
+ */
+function collectMarkdownFiles(
+  dir: string,
+  prefix = ""
+): Array<{ slug: string; filePath: string }> {
+  if (!fs.existsSync(dir)) {
     return [];
   }
-  return fs
-    .readdirSync(CONTENT_DIR)
-    .filter((f) => f.endsWith(".md"))
-    .map((f) => f.replace(MD_EXTENSION_RE, ""));
+
+  const results: Array<{ slug: string; filePath: string }> = [];
+
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    if (entry.isDirectory()) {
+      const subPrefix = prefix ? `${prefix}/${entry.name}` : entry.name;
+      results.push(
+        ...collectMarkdownFiles(path.join(dir, entry.name), subPrefix)
+      );
+    } else if (entry.name.endsWith(".md")) {
+      const slug = prefix
+        ? `${prefix}/${entry.name.replace(MD_EXTENSION_RE, "")}`
+        : entry.name.replace(MD_EXTENSION_RE, "");
+      results.push({ slug, filePath: path.join(dir, entry.name) });
+    }
+  }
+
+  return results;
+}
+
+export function getDocSlugs(): string[] {
+  return collectMarkdownFiles(CONTENT_DIR).map((f) => f.slug);
 }
 
 export function getDocBySlug(slug: string): DocPage | null {
+  // Try direct path first (handles both top-level and nested slugs)
   const filePath = path.join(CONTENT_DIR, `${slug}.md`);
   if (!fs.existsSync(filePath)) {
     return null;

@@ -1,25 +1,19 @@
 import { serve } from "@hono/node-server";
-import { internalAuthMiddleware } from "@prometheus/auth";
 import { createLogger } from "@prometheus/logger";
-import {
-  initSentry,
-  initTelemetry,
-  metricsHandler,
-  metricsMiddleware,
-  traceMiddleware,
-} from "@prometheus/telemetry";
+import { initSentry, traceMiddleware } from "@prometheus/telemetry";
 import {
   installShutdownHandlers,
   isProcessShuttingDown,
 } from "@prometheus/utils";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
-import { registerAzureDevOpsAdapter } from "./adapters/azure-devops";
-import { registerBitBucketAdapter } from "./adapters/bitbucket";
+import { registerAwsAdapter } from "./adapters/aws";
+import { registerAzureAdapter } from "./adapters/azure";
 import { registerConfluenceAdapter } from "./adapters/confluence";
 import { registerDatadogAdapter } from "./adapters/datadog";
 import { registerDockerHubAdapter } from "./adapters/docker-hub";
 import { registerFigmaAdapter } from "./adapters/figma";
+import { registerGcpAdapter } from "./adapters/gcp";
 import { registerGitHubAdapter } from "./adapters/github";
 import { registerGitLabAdapter } from "./adapters/gitlab";
 import { registerJiraAdapter } from "./adapters/jira";
@@ -30,7 +24,6 @@ import { registerVercelAdapter } from "./adapters/vercel";
 import { CredentialStore } from "./credential-store";
 import { ToolRegistry } from "./registry";
 
-await initTelemetry({ serviceName: "mcp-gateway" });
 initSentry({ serviceName: "mcp-gateway" });
 installShutdownHandlers();
 
@@ -46,20 +39,18 @@ credentialStore.loadAll().catch((err) => {
 
 app.use("/*", cors());
 app.use("/*", traceMiddleware("mcp-gateway"));
-app.use("/*", metricsMiddleware());
-
-// Shared-secret auth middleware for internal service-to-service calls
-app.use("/*", internalAuthMiddleware());
 
 // Register all adapters
 registerGitHubAdapter(registry);
 registerGitLabAdapter(registry);
-registerBitBucketAdapter(registry);
 registerLinearAdapter(registry);
 registerJiraAdapter(registry);
 registerSlackAdapter(registry);
 registerVercelAdapter(registry);
 registerFigmaAdapter(registry);
+registerAwsAdapter(registry);
+registerGcpAdapter(registry);
+registerAzureAdapter(registry);
 
 // Credential-based adapters — available for hot-loading via the plugin system.
 // These require explicit credentials at registration time. When credentials are
@@ -92,9 +83,6 @@ if (process.env.DOCKERHUB_TOKEN && process.env.DOCKERHUB_NAMESPACE) {
     namespace: process.env.DOCKERHUB_NAMESPACE,
   });
 }
-
-// Azure DevOps adapter — credentials provided per-request via azdo_token/azdo_org
-registerAzureDevOpsAdapter(registry);
 
 // Start health checks (every 5 minutes)
 registry.startHealthChecks(5 * 60 * 1000);
@@ -130,7 +118,7 @@ app.get("/health", async (c) => {
       status,
       checks,
       uptime: Math.floor(process.uptime()),
-      version: process.env.APP_VERSION ?? "0.0.0",
+      version: "0.1.0",
       service: "mcp-gateway",
       toolCount: registry.getToolCount(),
       adapters: registry.getAdapters(),
@@ -144,56 +132,8 @@ app.get("/health", async (c) => {
 // Liveness probe — lightweight, just confirms process is responsive
 app.get("/live", (c) => c.json({ status: "ok" }));
 
-// Readiness probe — checks adapter availability
-app.get("/ready", async (c) => {
-  const checks: Record<string, boolean> = {};
-
-  const healthStatuses = registry.getHealthStatuses();
-  checks.adapters =
-    healthStatuses.length === 0 || healthStatuses.some((s) => s.healthy);
-
-  try {
-    const { redis } = await import("@prometheus/queue");
-    const pong = await redis.ping();
-    checks.redis = pong === "PONG";
-  } catch {
-    checks.redis = false;
-  }
-
-  const allReady = Object.values(checks).every(Boolean);
-
-  if (!allReady) {
-    return c.json({ status: "not ready", checks }, 503);
-  }
-  return c.json({ status: "ready", checks });
-});
-
-// Readiness probe (alias)
-app.get("/health/ready", async (c) => {
-  const checks: Record<string, boolean> = {};
-
-  const healthStatuses = registry.getHealthStatuses();
-  checks.adapters =
-    healthStatuses.length === 0 || healthStatuses.some((s) => s.healthy);
-
-  try {
-    const { redis } = await import("@prometheus/queue");
-    const pong = await redis.ping();
-    checks.redis = pong === "PONG";
-  } catch {
-    checks.redis = false;
-  }
-
-  const allReady = Object.values(checks).every(Boolean);
-
-  if (!allReady) {
-    return c.json({ status: "not ready", checks }, 503);
-  }
-  return c.json({ status: "ready", checks });
-});
-
-// Prometheus metrics
-app.get("/metrics", metricsHandler);
+// Readiness probe — can accept traffic
+app.get("/ready", (c) => c.json({ status: "ready" }));
 
 // ---- Tool Discovery ----
 

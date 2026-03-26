@@ -55,8 +55,8 @@ const TIERS = [
       "SSO / SAML",
       "Self-hosting",
     ],
-    cta: "Get Started",
-    ctaHref: "/sign-up" as Route,
+    cta: "Start Free Trial",
+    ctaHref: "/sign-up?plan=starter" as Route,
     highlight: false,
   },
   {
@@ -78,8 +78,8 @@ const TIERS = [
       "Mixture-of-Agents (MoA)",
     ],
     excluded: ["SSO / SAML", "Audit logs", "Self-hosting"],
-    cta: "Get Started",
-    ctaHref: "/sign-up" as Route,
+    cta: "Start Free Trial",
+    ctaHref: "/sign-up?plan=pro" as Route,
     highlight: true,
   },
   {
@@ -101,8 +101,8 @@ const TIERS = [
       "Advanced analytics",
     ],
     excluded: ["Self-hosting", "On-premise deployment"],
-    cta: "Get Started",
-    ctaHref: "/sign-up" as Route,
+    cta: "Start Free Trial",
+    ctaHref: "/sign-up?plan=team" as Route,
     highlight: false,
   },
   {
@@ -124,8 +124,8 @@ const TIERS = [
       "White-glove onboarding",
     ],
     excluded: [],
-    cta: "Get Started",
-    ctaHref: "/sign-up" as Route,
+    cta: "Start Free Trial",
+    ctaHref: "/sign-up?plan=studio" as Route,
     highlight: false,
   },
   {
@@ -149,7 +149,7 @@ const TIERS = [
     ],
     excluded: [],
     cta: "Contact Sales",
-    ctaHref: "mailto:sales@prometheus.dev" as Route,
+    ctaHref: "/about" as Route,
     highlight: false,
   },
 ];
@@ -669,12 +669,12 @@ export default function PricingPage() {
             >
               Get Started Free
             </Link>
-            <a
+            <Link
               className="rounded-xl border border-zinc-700 bg-zinc-900 px-8 py-3.5 font-semibold text-sm text-zinc-300 transition-colors hover:bg-zinc-800"
-              href="mailto:sales@prometheus.dev"
+              href="/about"
             >
               Contact Sales
-            </a>
+            </Link>
           </div>
         </div>
       </div>

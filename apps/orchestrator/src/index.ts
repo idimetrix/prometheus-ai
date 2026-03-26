@@ -1,18 +1,14 @@
 import { serve } from "@hono/node-server";
-import { internalAuthMiddleware } from "@prometheus/auth";
 import { createLogger } from "@prometheus/logger";
 import {
-  createServiceMetrics,
   initSentry,
   initTelemetry,
-  metricsMiddleware,
   traceMiddleware,
 } from "@prometheus/telemetry";
 import type { AgentMode, AgentRole } from "@prometheus/types";
 import {
   installShutdownHandlers,
   isProcessShuttingDown,
-  registerShutdownHandler,
 } from "@prometheus/utils";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
@@ -22,12 +18,11 @@ import { TrustScorer } from "./governance/trust-scorer";
 import { SessionManager } from "./session-manager";
 import { TakeoverManager } from "./takeover";
 import { TaskRouter } from "./task-router";
+import { SelfPlayTrainer } from "./training/self-play-trainer";
 
 await initTelemetry({ serviceName: "orchestrator" });
 initSentry({ serviceName: "orchestrator" });
 installShutdownHandlers();
-
-const serviceMetrics = createServiceMetrics("orchestrator");
 
 const logger = createLogger("orchestrator");
 
@@ -36,50 +31,13 @@ const taskRouter = new TaskRouter(sessionManager);
 const checkpointManager = new CheckpointManager();
 const takeoverManager = new TakeoverManager();
 const trustScorer = new TrustScorer();
-
-// Initialize trust scorer persistence via Redis
-try {
-  const { redis } = await import("@prometheus/queue");
-  trustScorer.setPersistence({
-    get: (key: string) => redis.get(key),
-    set: (key: string, value: string) =>
-      redis.set(key, value).then(() => undefined),
-  });
-  await trustScorer.loadFromPersistence();
-} catch {
-  logger.warn(
-    "Redis unavailable for trust score persistence — using in-memory only"
-  );
-}
-
 const _governanceEngine = new GovernanceEngine(trustScorer);
+const selfPlayTrainer = new SelfPlayTrainer();
 
 const app = new Hono();
 
 app.use("/*", cors());
 app.use("/*", traceMiddleware("orchestrator"));
-app.use("/*", metricsMiddleware());
-
-// Shared-secret auth middleware for internal service-to-service calls
-app.use("/*", internalAuthMiddleware());
-
-// Record request latency and errors via service metrics
-app.use("/*", async (c, next) => {
-  const start = performance.now();
-  await next();
-  const durationSec = (performance.now() - start) / 1000;
-  const status = String(c.res.status);
-
-  serviceMetrics.api.requestLatencySeconds
-    .labels({ router: "http", method: c.req.method, status })
-    .observe(durationSec);
-
-  if (c.res.status >= 500) {
-    serviceMetrics.generic.errorRate
-      .labels({ error_type: "http_5xx", severity: "error" })
-      .inc();
-  }
-});
 
 // ─── Health Check ────────────────────────────────────────────────
 
@@ -125,89 +83,8 @@ app.get("/health", async (c) => {
 // Liveness probe — lightweight, just confirms process is responsive
 app.get("/live", (c) => c.json({ status: "ok" }));
 
-// Readiness probe — checks all dependencies are connected
-app.get("/ready", async (c) => {
-  const checks: Record<string, boolean> = {};
-
-  try {
-    const { db } = await import("@prometheus/db");
-    const { sql } = await import("drizzle-orm");
-    await db.execute(sql`SELECT 1`);
-    checks.db = true;
-  } catch {
-    checks.db = false;
-  }
-
-  try {
-    const { createRedisConnection } = await import("@prometheus/queue");
-    const r = createRedisConnection();
-    await r.ping();
-    await r.quit();
-    checks.redis = true;
-  } catch {
-    checks.redis = false;
-  }
-
-  try {
-    const modelRouterUrl =
-      process.env.MODEL_ROUTER_URL ?? "http://localhost:4004";
-    const resp = await fetch(`${modelRouterUrl}/live`, {
-      signal: AbortSignal.timeout(3000),
-    });
-    checks.modelRouter = resp.ok;
-  } catch {
-    checks.modelRouter = false;
-  }
-
-  const allReady = Object.values(checks).every(Boolean);
-
-  if (!allReady) {
-    return c.json({ status: "not ready", checks }, 503);
-  }
-  return c.json({ status: "ready", checks });
-});
-
-// Readiness probe (alias)
-app.get("/health/ready", async (c) => {
-  const checks: Record<string, boolean> = {};
-
-  try {
-    const { db } = await import("@prometheus/db");
-    const { sql } = await import("drizzle-orm");
-    await db.execute(sql`SELECT 1`);
-    checks.db = true;
-  } catch {
-    checks.db = false;
-  }
-
-  try {
-    const { createRedisConnection } = await import("@prometheus/queue");
-    const r = createRedisConnection();
-    await r.ping();
-    await r.quit();
-    checks.redis = true;
-  } catch {
-    checks.redis = false;
-  }
-
-  try {
-    const modelRouterUrl =
-      process.env.MODEL_ROUTER_URL ?? "http://localhost:4004";
-    const resp = await fetch(`${modelRouterUrl}/live`, {
-      signal: AbortSignal.timeout(3000),
-    });
-    checks.modelRouter = resp.ok;
-  } catch {
-    checks.modelRouter = false;
-  }
-
-  const allReady = Object.values(checks).every(Boolean);
-
-  if (!allReady) {
-    return c.json({ status: "not ready", checks }, 503);
-  }
-  return c.json({ status: "ready", checks });
-});
+// Readiness probe — can accept traffic
+app.get("/ready", (c) => c.json({ status: "ready" }));
 
 // ─── Process Task (called by queue worker) ──────────────────────
 
@@ -267,176 +144,7 @@ app.post("/process", async (c) => {
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);
     logger.error({ error: msg }, "Failed to process task");
-    return c.json({ error: "Internal server error" }, 500);
-  }
-});
-
-// ─── Task Execute (alternative entry point) ─────────────────────
-// Provides a task-centric API for the queue worker and external callers
-
-app.post("/tasks/execute", async (c) => {
-  try {
-    const body = await c.req.json();
-
-    const {
-      taskId,
-      sessionId,
-      projectId,
-      orgId,
-      userId,
-      title,
-      description,
-      mode,
-      agentRole,
-    } = body as {
-      taskId: string;
-      sessionId: string;
-      projectId: string;
-      orgId: string;
-      userId: string;
-      title: string;
-      description: string | null;
-      mode: AgentMode;
-      agentRole: AgentRole | null;
-    };
-
-    if (
-      !(taskId && sessionId && projectId && orgId && userId && title && mode)
-    ) {
-      return c.json(
-        {
-          error:
-            "Missing required fields: taskId, sessionId, projectId, orgId, userId, title, mode",
-        },
-        400
-      );
-    }
-
-    logger.info(
-      { taskId, sessionId, mode, agentRole },
-      "Executing task via /tasks/execute"
-    );
-
-    const result = await taskRouter.processTask({
-      taskId,
-      sessionId,
-      projectId,
-      orgId,
-      userId,
-      title,
-      description: description ?? null,
-      mode,
-      agentRole: agentRole ?? null,
-    });
-
-    return c.json(result);
-  } catch (error) {
-    const msg = error instanceof Error ? error.message : String(error);
-    logger.error({ error: msg }, "Failed to execute task");
-    return c.json({ error: "Internal server error" }, 500);
-  }
-});
-
-// ─── Task Status ────────────────────────────────────────────────
-
-app.get("/tasks/:id/status", async (c) => {
-  const taskId = c.req.param("id");
-
-  try {
-    const { db, tasks } = await import("@prometheus/db");
-    const { eq } = await import("drizzle-orm");
-
-    const rows = await db
-      .select()
-      .from(tasks)
-      .where(eq(tasks.id, taskId))
-      .limit(1);
-    const task = rows[0];
-
-    if (!task) {
-      return c.json({ error: "Task not found" }, 404);
-    }
-
-    // Try to find the associated session for live agent info
-    const session = sessionManager.getSession(task.sessionId);
-    const loopStatus = session?.agentLoop.getStatus() ?? null;
-    const creditsConsumed = session?.agentLoop.getCreditsConsumed() ?? 0;
-
-    return c.json({
-      taskId: task.id,
-      sessionId: task.sessionId,
-      status: task.status,
-      startedAt: task.startedAt?.toISOString() ?? null,
-      completedAt: task.completedAt?.toISOString() ?? null,
-      creditsConsumed: task.creditsConsumed ?? creditsConsumed,
-      loopStatus,
-    });
-  } catch (error) {
-    const msg = error instanceof Error ? error.message : String(error);
-    logger.error({ error: msg, taskId }, "Failed to get task status");
-    return c.json({ error: "Internal server error" }, 500);
-  }
-});
-
-// ─── Task Cancel ────────────────────────────────────────────────
-
-app.post("/tasks/cancel", async (c) => {
-  try {
-    const body = await c.req.json();
-    const { taskId, sessionId } = body as {
-      taskId: string;
-      sessionId?: string;
-    };
-
-    if (!taskId) {
-      return c.json({ error: "'taskId' is required" }, 400);
-    }
-
-    // Look up the session for this task
-    let targetSessionId = sessionId;
-    if (!targetSessionId) {
-      const { db, tasks } = await import("@prometheus/db");
-      const { eq } = await import("drizzle-orm");
-      const rows = await db
-        .select({ sessionId: tasks.sessionId })
-        .from(tasks)
-        .where(eq(tasks.id, taskId))
-        .limit(1);
-      targetSessionId = rows[0]?.sessionId;
-    }
-
-    if (!targetSessionId) {
-      return c.json({ error: "Task not found" }, 404);
-    }
-
-    // Cancel the session's agent loop
-    const session = sessionManager.getSession(targetSessionId);
-    if (session) {
-      await sessionManager.cancelSession(targetSessionId);
-    }
-
-    // Mark task as cancelled in DB
-    const { db, tasks } = await import("@prometheus/db");
-    const { eq } = await import("drizzle-orm");
-    await db
-      .update(tasks)
-      .set({
-        status: "cancelled",
-        completedAt: new Date(),
-      })
-      .where(eq(tasks.id, taskId));
-
-    logger.info({ taskId, sessionId: targetSessionId }, "Task cancelled");
-
-    return c.json({
-      status: "cancelled",
-      taskId,
-      sessionId: targetSessionId,
-    });
-  } catch (error) {
-    const msg = error instanceof Error ? error.message : String(error);
-    logger.error({ error: msg }, "Failed to cancel task");
-    return c.json({ error: "Internal server error" }, 500);
+    return c.json({ error: msg }, 500);
   }
 });
 
@@ -472,10 +180,9 @@ app.post("/sessions/:id/pause", async (c) => {
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);
     if (msg.includes("not found")) {
-      return c.json({ error: "Session not found" }, 404);
+      return c.json({ error: msg }, 404);
     }
-    logger.error({ error: msg }, "Failed to pause session");
-    return c.json({ error: "Internal server error" }, 500);
+    return c.json({ error: msg }, 500);
   }
 });
 
@@ -490,10 +197,9 @@ app.post("/sessions/:id/resume", async (c) => {
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);
     if (msg.includes("not found")) {
-      return c.json({ error: "Session not found" }, 404);
+      return c.json({ error: msg }, 404);
     }
-    logger.error({ error: msg }, "Failed to resume session");
-    return c.json({ error: "Internal server error" }, 500);
+    return c.json({ error: msg }, 500);
   }
 });
 
@@ -508,31 +214,9 @@ app.post("/sessions/:id/cancel", async (c) => {
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);
     if (msg.includes("not found")) {
-      return c.json({ error: "Session not found" }, 404);
+      return c.json({ error: msg }, 404);
     }
-    logger.error({ error: msg }, "Failed to cancel session");
-    return c.json({ error: "Internal server error" }, 500);
-  }
-});
-
-// ─── Retry Failed Session ───────────────────────────────────────
-
-app.post("/sessions/:id/retry", async (c) => {
-  const sessionId = c.req.param("id");
-
-  try {
-    const body = await c.req.json();
-    const { fromCheckpoint } = body as { fromCheckpoint?: boolean };
-
-    await sessionManager.retrySession(sessionId, "", fromCheckpoint ?? true);
-    return c.json({ status: "active", sessionId, retried: true });
-  } catch (error) {
-    const msg = error instanceof Error ? error.message : String(error);
-    if (msg.includes("not found")) {
-      return c.json({ error: "Session not found" }, 404);
-    }
-    logger.error({ error: msg }, "Failed to retry session");
-    return c.json({ error: "Internal server error" }, 500);
+    return c.json({ error: msg }, 500);
   }
 });
 
@@ -570,8 +254,7 @@ app.post("/route", async (c) => {
     return c.json(routing);
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);
-    logger.error({ error: msg }, "Failed to route task");
-    return c.json({ error: "Internal server error" }, 500);
+    return c.json({ error: msg }, 500);
   }
 });
 
@@ -603,8 +286,7 @@ app.post("/checkpoints/:id/respond", async (c) => {
 
     return c.json({ status: "resolved", checkpointId });
   } catch (error) {
-    logger.error({ error: String(error) }, "Failed to respond to checkpoint");
-    return c.json({ error: "Internal server error" }, 500);
+    return c.json({ error: String(error) }, 500);
   }
 });
 
@@ -634,8 +316,7 @@ app.post("/sessions/:id/takeover", async (c) => {
 
     return c.json({ status: "human_control", sessionId });
   } catch (error) {
-    logger.error({ error: String(error) }, "Failed to takeover session");
-    return c.json({ error: "Internal server error" }, 500);
+    return c.json({ error: String(error) }, 500);
   }
 });
 
@@ -655,168 +336,114 @@ app.post("/sessions/:id/release", async (c) => {
 
     return c.json({ status: "agent_control", sessionId });
   } catch (error) {
-    logger.error({ error: String(error) }, "Failed to release session");
-    return c.json({ error: "Internal server error" }, 500);
+    return c.json({ error: String(error) }, 500);
   }
 });
 
-// ─── Meta-Learning Stats (AI08) ──────────────────────────────
-
-import { sharedMetaLearner } from "./agent-loop";
-
-app.get("/meta-learning/stats", (c) => {
-  return c.json(sharedMetaLearner.getStats());
-});
-
-app.get("/meta-learning/patterns", (c) => {
-  return c.json({ patterns: sharedMetaLearner.getPatterns() });
-});
-
-app.post("/meta-learning/extract", (c) => {
-  const patterns = sharedMetaLearner.extractPatterns();
-  const adjustments = sharedMetaLearner.generateAdjustments();
-  return c.json({ patterns, adjustments });
-});
-
-// ─── Self-Play Training (AI04) ────────────────────────────────
-
-import { TrainingRunner } from "./training/training-runner";
-
-const trainingRunner = new TrainingRunner();
+// ─── Self-Play Training ──────────────────────────────────────
 
 app.post("/training/self-play", async (c) => {
   try {
-    if (trainingRunner.isRunning()) {
-      return c.json({ error: "Training run already in progress" }, 409);
-    }
-
     const body = await c.req.json();
-    const { projectId, orgId, agentRoles, taskTypes, maxRoundsPerRole } =
-      body as {
-        projectId: string;
-        orgId: string;
-        agentRoles?: string[];
-        taskTypes?: string[];
-        maxRoundsPerRole?: number;
-      };
-
-    if (!(projectId && orgId)) {
-      return c.json({ error: "projectId and orgId are required" }, 400);
-    }
-
-    const defaultRoles = [
-      "backend_coder",
-      "frontend_coder",
-      "test_engineer",
-      "ci_loop",
-    ];
-
-    const result = trainingRunner.runSelfPlay({
-      projectId,
-      orgId,
-      agentRoles: agentRoles ?? defaultRoles,
-      taskTypes,
-      maxRoundsPerRole,
-    });
-
-    return c.json(result);
-  } catch (error) {
-    const msg = error instanceof Error ? error.message : String(error);
-    logger.error({ error: msg }, "Self-play training failed");
-    return c.json({ error: "Internal server error" }, 500);
-  }
-});
-
-app.get("/training/metrics", (c) => {
-  return c.json(trainingRunner.getMetrics());
-});
-
-app.post("/training/recommend", async (c) => {
-  try {
-    const body = await c.req.json();
-    const { agentRole, taskType, context } = body as {
-      agentRole: string;
-      taskType: string;
-      context?: Record<string, string>;
+    const { action } = body as {
+      action: "record" | "mine" | "recommend" | "metrics";
     };
 
-    if (!(agentRole && taskType)) {
-      return c.json({ error: "agentRole and taskType are required" }, 400);
+    if (!action) {
+      return c.json({ error: "'action' is required" }, 400);
     }
 
-    const recommendation = trainingRunner.getRecommendation(
-      agentRole,
-      taskType,
-      context ?? {}
-    );
+    switch (action) {
+      case "record": {
+        const {
+          agentRole,
+          taskDescription,
+          context,
+          outcome,
+          qualityScore,
+          actions,
+          projectId,
+        } = body as {
+          agentRole: string;
+          taskDescription: string;
+          context: string;
+          outcome: "success" | "failure" | "partial";
+          qualityScore: number;
+          actions: Array<{
+            tool: string;
+            args: Record<string, unknown>;
+            result: string;
+          }>;
+          projectId: string;
+        };
 
-    return c.json({ recommendation });
-  } catch (error) {
-    const msg = error instanceof Error ? error.message : String(error);
-    logger.error({ error: msg }, "Training recommendation failed");
-    return c.json({ error: "Internal server error" }, 500);
-  }
-});
+        if (!(agentRole && taskDescription && outcome !== undefined)) {
+          return c.json(
+            { error: "agentRole, taskDescription, and outcome are required" },
+            400
+          );
+        }
 
-// ─── Benchmark Endpoints (SWE-bench) ────────────────────────
+        selfPlayTrainer.recordSession({
+          agentRole,
+          taskDescription,
+          context: context ?? "",
+          outcome,
+          qualityScore: qualityScore ?? 0,
+          actions: actions ?? [],
+          projectId: projectId ?? "",
+        });
+        return c.json({
+          status: "recorded",
+          metrics: selfPlayTrainer.getMetrics(),
+        });
+      }
 
-app.post("/benchmark/run", async (c) => {
-  try {
-    const body = await c.req.json();
-    const { filePath, commitHash } = body as {
-      filePath: string;
-      commitHash?: string;
-    };
+      case "mine": {
+        const { agentRole, taskType } = body as {
+          agentRole: string;
+          taskType: string;
+        };
 
-    if (!filePath) {
-      return c.json({ error: "'filePath' is required" }, 400);
+        if (!(agentRole && taskType)) {
+          return c.json({ error: "agentRole and taskType are required" }, 400);
+        }
+
+        const tree = selfPlayTrainer.minePatterns(agentRole, taskType);
+        return c.json({ tree });
+      }
+
+      case "recommend": {
+        const { agentRole, taskType, context } = body as {
+          agentRole: string;
+          taskType: string;
+          context: Record<string, string>;
+        };
+
+        if (!(agentRole && taskType)) {
+          return c.json({ error: "agentRole and taskType are required" }, 400);
+        }
+
+        const recommendation = selfPlayTrainer.getRecommendation(
+          agentRole,
+          taskType,
+          context ?? {}
+        );
+        return c.json({ recommendation });
+      }
+
+      case "metrics": {
+        return c.json({ metrics: selfPlayTrainer.getMetrics() });
+      }
+
+      default: {
+        return c.json({ error: `Unknown action: ${action as string}` }, 400);
+      }
     }
-
-    const { loadFromFile } = await import("./benchmarks/swe-bench");
-    const { SWEBenchRunner } = await import("./benchmarks/swe-bench-runner");
-
-    const sweTasks = await loadFromFile(filePath);
-    const instances = sweTasks.map((t) => ({
-      instanceId: t.instance_id,
-      repo: t.repo,
-      baseCommit: t.base_commit,
-      problemStatement: t.problem_statement,
-      goldPatch: t.patch,
-      testPatch: t.test_patch,
-    }));
-
-    const runner = new SWEBenchRunner();
-    const report = await runner.runBenchmark(instances, commitHash ?? "HEAD");
-
-    return c.json(report);
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);
-    logger.error({ error: msg }, "Benchmark run failed");
-    return c.json({ error: "Internal server error" }, 500);
-  }
-});
-
-app.post("/benchmark/suite", async (c) => {
-  try {
-    const body = await c.req.json();
-    const { caseIds, commitHash } = body as {
-      caseIds: string[];
-      commitHash?: string;
-    };
-
-    if (!caseIds?.length) {
-      return c.json({ error: "'caseIds' is required" }, 400);
-    }
-
-    const { SWEBenchRunner } = await import("./benchmarks/swe-bench-runner");
-    const runner = new SWEBenchRunner();
-    const report = await runner.runSuite(caseIds, commitHash ?? "HEAD");
-
-    return c.json(report);
-  } catch (error) {
-    const msg = error instanceof Error ? error.message : String(error);
-    logger.error({ error: msg }, "Benchmark suite failed");
-    return c.json({ error: "Internal server error" }, 500);
+    logger.error({ error: msg }, "Self-play training error");
+    return c.json({ error: msg }, 500);
   }
 });
 
@@ -830,28 +457,6 @@ app.get("/metrics", async (c) => {
   });
 });
 
-// ─── Graceful Shutdown ───────────────────────────────────────────
-
-registerShutdownHandler("orchestrator", async () => {
-  logger.info("Orchestrator shutting down...");
-
-  // Cancel all active sessions so agents stop processing
-  const activeSessions = sessionManager.getActiveSessions();
-  for (const s of activeSessions) {
-    try {
-      await sessionManager.cancelSession(s.session.id);
-    } catch {
-      // Best-effort cancellation
-    }
-  }
-  logger.info(
-    { cancelledSessions: activeSessions.length },
-    "Active sessions cancelled"
-  );
-
-  logger.info("Orchestrator shutdown complete");
-});
-
 // ─── Start Server ───────────────────────────────────────────────
 
 const port = Number(process.env.ORCHESTRATOR_PORT ?? 4002);
@@ -860,7 +465,7 @@ serve({ fetch: app.fetch, port }, () => {
   logger.info({ port }, "Orchestrator engine running");
 });
 
-export { AgentLoop, sharedMetaLearner } from "./agent-loop";
+export { AgentLoop } from "./agent-loop";
 export {
   BlueprintEnforcer as OrchestratorBlueprintEnforcer,
   type BlueprintViolation as OrcBlueprintViolation,
@@ -884,6 +489,20 @@ export { SessionMemory } from "./continuity/session-memory";
 export { CreditTracker } from "./credit-tracker";
 // Phase 2: Decision logging
 export { DecisionLogger } from "./decision-logger";
+export type {
+  CanaryConfig,
+  CanaryRollout,
+  CanaryStage,
+} from "./deployment/canary-manager";
+// Deployment pipeline
+export { CanaryManager } from "./deployment/canary-manager";
+export type { DeploymentPlan, DeployStep } from "./deployment/deploy-pipeline";
+export { DeployPipeline } from "./deployment/deploy-pipeline";
+export type {
+  GeneratedManifest,
+  ProjectConfig,
+} from "./deployment/iac-generator";
+export { IaCGenerator } from "./deployment/iac-generator";
 export {
   createExecutionContext,
   type ExecutionContext,
@@ -896,18 +515,9 @@ export { GovernanceEngine } from "./governance/governance-engine";
 export { TrustScorer } from "./governance/trust-scorer";
 // Phase 7: Guardian
 export { BusinessLogicGuardian } from "./guardian/business-logic-guardian";
-// Phase 7: Meta-learning
-export {
-  type LearnedPattern,
-  MetaLearner,
-  type MetaLearnerStats,
-  type RoleAdjustment,
-  type SessionOutcome,
-} from "./meta-learning/meta-learner";
-export { CodeVoter } from "./moa/code-voter";
 export { MixtureOfAgents } from "./moa/parallel-generator";
 // Phase 7: MoA
-export { MoADecisionGate, MoAVoting } from "./moa/voting";
+export { MoAVoting } from "./moa/voting";
 // Phase 2: Mode handlers
 export { getModeHandler } from "./modes";
 export type { ModeHandler, ModeHandlerParams, ModeResult } from "./modes/types";
@@ -919,20 +529,22 @@ export { AuditPhase } from "./phases/audit";
 export { IntegrationPhase } from "./phases/integration";
 // Phase 7: Pipeline phases
 export { PhaseGate } from "./phases/phase-gate";
-// MCTS Planning
-export { MCTSPlanner } from "./planning/mcts-planner";
+export type { SprintPlan } from "./phases/planning";
+export { PlanningPhase } from "./phases/planning";
+export type { PlanNode, SchedulableTask } from "./planning/dag-decomposer";
+// Planning: Sprint decomposition and DAG
+export { DAGDecomposer } from "./planning/dag-decomposer";
 // Phase 7: Planning
 export { SeniorPlanner } from "./planning/senior-planner";
 export { SessionManager } from "./session-manager";
 export { TakeoverManager } from "./takeover";
 export { TaskRouter } from "./task-router";
-// Phase: Self-play training
-export {
-  type TrainingRunConfig,
-  TrainingRunner,
-  type TrainingRunResult,
-} from "./training/training-runner";
-export { ScreenshotComparator } from "./verification/screenshot-comparator";
-// Visual regression & verification
+// Self-play training
+export { SelfPlayTrainer } from "./training/self-play-trainer";
+export { SharedLearningStore } from "./training/transfer-learning";
+export { DeployVerifier } from "./verification/deploy-verifier";
+// Verification: visual regression & deploy
 export { VisualRegressionTester } from "./verification/visual-regression";
+// Visual: screenshot-based verification
 export { ScreenshotDiffer } from "./visual/screenshot-differ";
+export { VisualVerifier } from "./visual/visual-verifier";

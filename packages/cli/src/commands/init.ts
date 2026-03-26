@@ -133,8 +133,8 @@ function detectGitRemote(directory: string): string | null {
 async function tryCreateRemoteProject(
   config: CLIConfig,
   directory: string,
-  projectInfo: DetectedProjectInfo,
-  repoUrl: string | null
+  _projectInfo: DetectedProjectInfo,
+  _repoUrl: string | null
 ): Promise<string | undefined> {
   if (!config.apiKey) {
     console.log("Note: No API key set. Skipping remote project creation.");
@@ -146,18 +146,18 @@ async function tryCreateRemoteProject(
 
   try {
     const client = new APIClient(config);
+    const projects = await client.listProjects();
     const projectName = directory.split("/").pop() ?? "unnamed-project";
-    const frameworkSuffix = projectInfo.framework
-      ? ` using ${projectInfo.framework}`
-      : "";
-    const project = await client.createProject({
-      name: projectName,
-      description: `${projectInfo.language} project${frameworkSuffix}`,
-      repoUrl: repoUrl ?? undefined,
-    });
-    console.log(`Created project on Prometheus: ${project.id}`);
-    saveConfig({ defaultProjectId: project.id });
-    return project.id;
+    const existing = projects.find((p) => p.name === projectName);
+    if (existing) {
+      console.log(`Found existing project on Prometheus: ${existing.id}`);
+      saveConfig({ defaultProjectId: existing.id });
+      return existing.id;
+    }
+    console.log(
+      "Note: Project not found on Prometheus. Continuing with local setup."
+    );
+    return undefined;
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);
     console.log(

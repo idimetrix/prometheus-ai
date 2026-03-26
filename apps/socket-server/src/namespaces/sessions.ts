@@ -1,5 +1,7 @@
+import { db, sessionEvents } from "@prometheus/db";
 import { createLogger } from "@prometheus/logger";
 import { createRedisConnection } from "@prometheus/queue";
+import { and, desc, eq, gt } from "drizzle-orm";
 import type { Namespace } from "socket.io";
 
 const logger = createLogger("socket-server:sessions");
@@ -45,39 +47,59 @@ function cleanupSocketRate(socketId: string): void {
   socketRateMap.delete(socketId);
 }
 
+/**
+ * Replay missed session events to a reconnecting socket.
+ * Fetches events newer than `lastEventTimestamp` and emits them in
+ * chronological order so the client can catch up.
+ */
+async function replayMissedEvents(
+  socket: { emit: (event: string, data: unknown) => void },
+  sessionId: string,
+  lastEventTimestamp: string
+): Promise<void> {
+  try {
+    const missedEvents = await db
+      .select()
+      .from(sessionEvents)
+      .where(
+        and(
+          eq(sessionEvents.sessionId, sessionId),
+          gt(sessionEvents.timestamp, new Date(lastEventTimestamp))
+        )
+      )
+      .orderBy(desc(sessionEvents.timestamp))
+      .limit(200);
+
+    // Send missed events in chronological order
+    const sorted = missedEvents.reverse();
+    for (const evt of sorted) {
+      socket.emit("session_event", {
+        type: evt.type,
+        data: evt.data,
+        agentRole: evt.agentRole,
+        timestamp: evt.timestamp.toISOString(),
+        replayed: true,
+      });
+    }
+
+    if (sorted.length > 0) {
+      logger.info(
+        { sessionId, replayedCount: sorted.length },
+        "Replayed missed events on reconnect"
+      );
+    }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    logger.warn({ sessionId, error: msg }, "Failed to replay missed events");
+  }
+}
+
 export function setupSessionNamespace(namespace: Namespace) {
   const subscriber = createRedisConnection();
   const publisher = createRedisConnection();
 
   // Track which session channels we've subscribed to
   const subscribedChannels = new Set<string>();
-
-  // Re-subscribe to all tracked channels on Redis reconnect
-  subscriber.on("ready", () => {
-    if (subscribedChannels.size > 0) {
-      logger.info(
-        { channels: subscribedChannels.size },
-        "Redis reconnected, re-subscribing to session channels"
-      );
-      for (const channel of subscribedChannels) {
-        subscriber.subscribe(channel, (err) => {
-          if (err) {
-            logger.error(
-              { channel, error: err.message },
-              "Failed to re-subscribe on reconnect"
-            );
-          }
-        });
-      }
-    }
-  });
-
-  subscriber.on("error", (err) => {
-    logger.error(
-      { error: err.message },
-      "Redis subscriber error in sessions namespace"
-    );
-  });
 
   namespace.on("connection", (socket) => {
     const userId = socket.data.userId as string;
@@ -87,38 +109,46 @@ export function setupSessionNamespace(namespace: Namespace) {
     );
 
     // ---- join: Join a session room to receive events ----
-    socket.on("join_session", async (data: { sessionId: string }) => {
-      const { sessionId } = data;
-      await socket.join(`session:${sessionId}`);
-      logger.debug({ userId, sessionId }, "Joined session room");
+    socket.on(
+      "join_session",
+      async (data: { sessionId: string; lastEventTimestamp?: string }) => {
+        const { sessionId } = data;
+        await socket.join(`session:${sessionId}`);
+        logger.debug({ userId, sessionId }, "Joined session room");
 
-      // Subscribe to Redis channels for this session (events + commands relay)
-      const eventsChannel = `session:${sessionId}:events`;
-      if (!subscribedChannels.has(eventsChannel)) {
-        subscriber.subscribe(eventsChannel, (err) => {
-          if (err) {
-            logger.error(
-              { sessionId, error: err.message },
-              "Failed to subscribe to session events channel"
-            );
-          } else {
-            subscribedChannels.add(eventsChannel);
-          }
+        // Subscribe to Redis channels for this session (events + commands relay)
+        const eventsChannel = `session:${sessionId}:events`;
+        if (!subscribedChannels.has(eventsChannel)) {
+          subscriber.subscribe(eventsChannel, (err) => {
+            if (err) {
+              logger.error(
+                { sessionId, error: err.message },
+                "Failed to subscribe to session events channel"
+              );
+            } else {
+              subscribedChannels.add(eventsChannel);
+            }
+          });
+        }
+
+        // Replay missed events if client provides a lastEventTimestamp (reconnection)
+        if (data.lastEventTimestamp) {
+          await replayMissedEvents(socket, sessionId, data.lastEventTimestamp);
+        }
+
+        // Notify others in the session
+        socket.to(`session:${sessionId}`).emit("user_joined", {
+          userId,
+          timestamp: new Date().toISOString(),
+        });
+
+        // Acknowledge join
+        socket.emit("session_joined", {
+          sessionId,
+          timestamp: new Date().toISOString(),
         });
       }
-
-      // Notify others in the session
-      socket.to(`session:${sessionId}`).emit("user_joined", {
-        userId,
-        timestamp: new Date().toISOString(),
-      });
-
-      // Acknowledge join
-      socket.emit("session_joined", {
-        sessionId,
-        timestamp: new Date().toISOString(),
-      });
-    });
+    );
 
     // ---- leave: Leave a session room ----
     socket.on("leave_session", async (data: { sessionId: string }) => {

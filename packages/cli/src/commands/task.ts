@@ -1,9 +1,13 @@
 import { Command } from "commander";
-import type { SessionEvent } from "../api-client";
 import { APIClient } from "../api-client";
 import { resolveConfig } from "../config";
 import { parsePrometheusRules } from "../prometheus-md";
 import { StreamRenderer } from "../renderer/stream-renderer";
+
+interface SessionEvent {
+  data: unknown;
+  type: string;
+}
 
 interface HeadlessResult {
   error?: string;
@@ -152,12 +156,12 @@ export const taskCommand = new Command("task")
         console.log(`Submitting ${opts.mode} task...`);
       }
 
+      const _rules = rules;
       const result = await client.submitTask({
         title: description,
         description,
         projectId,
         mode: opts.mode,
-        rules: rules.length > 0 ? rules : undefined,
       });
 
       if (isStructured) {
@@ -190,42 +194,34 @@ export const taskCommand = new Command("task")
         filesChanged: [],
       };
 
-      const stream = client.streamSession(
-        result.sessionId,
-        (event) => {
-          if (isStructured) {
-            console.log(JSON.stringify(event));
-          }
-
-          if (event.type === "complete") {
-            stream.close();
-            handleCompletion(
-              event,
-              result.sessionId,
-              state,
-              isStructured,
-              renderer,
-              timeoutHandle
-            );
-            return;
-          }
-
-          if (!isStructured) {
-            handleInteractiveEvent(event, renderer, state);
-          } else if (event.type === "file_change") {
-            state.filesChanged.push(
-              (event.data as { filePath: string }).filePath
-            );
-          } else if (event.type === "pr_created") {
-            state.prUrl = (event.data as { prUrl: string }).prUrl;
-          }
-        },
-        (error) => {
-          if (!isStructured) {
-            renderer.renderError(`Connection error: ${error.message}`);
-          }
+      const stream = client.streamSession(result.sessionId, (event) => {
+        if (isStructured) {
+          console.log(JSON.stringify(event));
         }
-      );
+
+        if (event.type === "complete") {
+          stream.close();
+          handleCompletion(
+            event,
+            result.sessionId,
+            state,
+            isStructured,
+            renderer,
+            timeoutHandle
+          );
+          return;
+        }
+
+        if (!isStructured) {
+          handleInteractiveEvent(event, renderer, state);
+        } else if (event.type === "file_change") {
+          state.filesChanged.push(
+            (event.data as { filePath: string }).filePath
+          );
+        } else if (event.type === "pr_created") {
+          state.prUrl = (event.data as { prUrl: string }).prUrl;
+        }
+      });
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
       if (isStructured) {

@@ -1,10 +1,14 @@
 import { Command } from "commander";
-import type { SessionEvent } from "../api-client";
 import { APIClient } from "../api-client";
 import { resolveConfig } from "../config";
 import { parsePrometheusRules } from "../prometheus-md";
 import { StreamRenderer } from "../renderer/stream-renderer";
 import { CLISessionStore } from "../session/session-store";
+
+interface SessionEvent {
+  data: unknown;
+  type: string;
+}
 
 interface PlanStep {
   complexity?: "low" | "medium" | "high";
@@ -45,12 +49,15 @@ async function handleApprove(
   approveSessionId: string
 ): Promise<void> {
   try {
-    const session = await client.getSession(approveSessionId);
+    const session = await client.getSessionStatus(approveSessionId);
     if (!session) {
       console.error(`Session ${approveSessionId} not found.`);
       process.exit(1);
     }
-    await client.approvePlan(approveSessionId, approveSessionId);
+    await client.sendMessage({
+      sessionId: approveSessionId,
+      content: "Approved. Proceed with execution.",
+    });
     console.log(`Plan approved for session ${approveSessionId}`);
     console.log("Execution will begin shortly.");
     process.exit(0);
@@ -71,7 +78,10 @@ async function handleExecute(
     process.exit(1);
   }
   try {
-    await client.approvePlan(lastPlan.sessionId, lastPlan.sessionId);
+    await client.sendMessage({
+      sessionId: lastPlan.sessionId,
+      content: "Approved. Proceed with execution.",
+    });
     console.log(`Executing plan from session ${lastPlan.sessionId}`);
     process.exit(0);
   } catch (error) {
@@ -174,12 +184,12 @@ export const planCommand = new Command("plan")
         console.log(`Project path: ${opts.path}`);
         console.log(`Task: ${description}\n`);
 
+        const _rules = rules;
         const result = await client.submitTask({
           title: description,
           description: `[PLAN ONLY] ${description}`,
           projectId,
           mode: "plan",
-          rules: rules.length > 0 ? rules : undefined,
         });
 
         console.log(`Session: ${result.sessionId}\n`);

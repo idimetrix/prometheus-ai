@@ -20,7 +20,6 @@ import { BlueprintAutoUpdater } from "./blueprint/auto-updater";
 import { BlueprintEnforcer } from "./blueprint/enforcer";
 import { ContextAssembler } from "./context/assembler";
 import { FileIndexer } from "./indexing/file-indexer";
-import { ConventionMemoryLayer } from "./layers/convention-memory";
 import { DomainKnowledgeLayer } from "./layers/domain-knowledge";
 import { EpisodicLayer } from "./layers/episodic";
 import { KnowledgeGraphLayer } from "./layers/knowledge-graph";
@@ -49,9 +48,6 @@ const knowledgeGraph = new KnowledgeGraphLayer();
 const episodic = new EpisodicLayer();
 const procedural = new ProceduralLayer();
 const workingMemory = new WorkingMemoryLayer();
-
-// Phase 8.1: Convention memory layer
-const conventionMemory = new ConventionMemoryLayer();
 
 // Phase 9: New layers and services
 const conversationalMemory = new ConversationalMemoryLayer();
@@ -297,48 +293,6 @@ app.get("/graph/dependents/:projectId", async (c) => {
   return c.json({ dependents: deps });
 });
 
-// ---- Knowledge Graph Entity Extraction ----
-
-app.post("/graph/analyze-file", async (c) => {
-  const body = await c.req.json();
-  const { projectId, filePath, content } = body;
-  if (!(projectId && filePath && content)) {
-    return c.json(
-      { error: "projectId, filePath, and content are required" },
-      400
-    );
-  }
-  await knowledgeGraph.analyzeFile(projectId, filePath, content);
-  return c.json({ success: true, filePath });
-});
-
-app.post("/graph/find-callers", async (c) => {
-  const body = await c.req.json();
-  const result = await knowledgeGraph.findCallers(
-    body.projectId,
-    body.entityName
-  );
-  return c.json(result);
-});
-
-app.post("/graph/find-type-usages", async (c) => {
-  const body = await c.req.json();
-  const result = await knowledgeGraph.findTypeUsages(
-    body.projectId,
-    body.typeName
-  );
-  return c.json(result);
-});
-
-app.post("/graph/find-importers", async (c) => {
-  const body = await c.req.json();
-  const result = await knowledgeGraph.findImporters(
-    body.projectId,
-    body.modulePath
-  );
-  return c.json(result);
-});
-
 // ---- Working Memory ----
 
 app.get("/working-memory/:sessionId", async (c) => {
@@ -561,44 +515,6 @@ app.get("/conventions/prompt/:projectId", async (c) => {
   return c.json({ prompt });
 });
 
-// ---- Phase 8.1: Convention Memory (auto-detected patterns) ----
-
-app.post("/convention-memory/store", async (c) => {
-  const body = await c.req.json();
-  const convention = await conventionMemory.store(body.projectId, {
-    category: body.category,
-    pattern: body.pattern,
-    description: body.description,
-    confidence: body.confidence,
-    fileCount: body.fileCount,
-    examples: body.examples,
-  });
-  return c.json({ success: true, convention });
-});
-
-app.get("/convention-memory/:projectId", async (c) => {
-  const projectId = c.req.param("projectId");
-  const category = c.req.query("category");
-  const conventions = await conventionMemory.list(
-    projectId,
-    category ?? undefined
-  );
-  return c.json({ conventions });
-});
-
-app.get("/convention-memory/:projectId/prompt", async (c) => {
-  const projectId = c.req.param("projectId");
-  const maxTokens = Number(c.req.query("maxTokens") ?? 1000);
-  const prompt = await conventionMemory.buildPrompt(projectId, maxTokens);
-  return c.json({ prompt });
-});
-
-app.post("/convention-memory/contradict", async (c) => {
-  const body = await c.req.json();
-  await conventionMemory.contradict(body.projectId, body.pattern);
-  return c.json({ success: true });
-});
-
 // ---- Phase 9.7: Cross-Session Learning ----
 
 app.post("/procedural/learn", async (c) => {
@@ -738,6 +654,75 @@ app.get("/metrics", async (c) => {
   return c.text(await metricsRegistry.render(), 200, {
     "Content-Type": "text/plain; charset=utf-8",
   });
+});
+
+// ---- Project Context (used by agent-sdk read_brain tool) ----
+
+app.get("/api/projects/:projectId/context", async (c) => {
+  const projectId = c.req.param("projectId");
+  try {
+    const context = await contextAssembler.assemble({
+      projectId,
+      taskDescription: "",
+      agentRole: "orchestrator",
+      maxTokens: 14_000,
+    });
+    return c.json({
+      blueprintContent: context.global || null,
+      projectSummary: context.taskSpecific || null,
+      recentCIResults: null,
+      sprintState: context.session || null,
+    });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    logger.warn(
+      { projectId, error: msg },
+      "Failed to assemble project context"
+    );
+    return c.json({
+      blueprintContent: null,
+      projectSummary: null,
+      recentCIResults: null,
+      sprintState: null,
+    });
+  }
+});
+
+app.post("/api/context/:projectId", async (c) => {
+  const projectId = c.req.param("projectId");
+  const body = await c.req.json();
+  try {
+    const context = await contextAssembler.assemble({
+      projectId,
+      taskDescription: body.query ?? "",
+      agentRole: body.category ?? "general",
+      maxTokens: 14_000,
+    });
+    return c.json({
+      context: [context.global, context.taskSpecific, context.session]
+        .filter(Boolean)
+        .join("\n\n"),
+      sources: ["blueprint", "semantic", "episodic", "procedural"],
+    });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    logger.warn({ projectId, error: msg }, "Failed to query context");
+    return c.json({ context: "", sources: [] });
+  }
+});
+
+// ---- Hybrid Search (used by search infrastructure) ----
+
+app.post("/search/hybrid", async (c) => {
+  const body = await c.req.json();
+  const { HybridSearch } = await import("./search/hybrid-search");
+  const hybridSearch = new HybridSearch(semantic);
+  const results = await hybridSearch.search(body.projectId, body.query, {
+    topK: body.limit ?? 20,
+    rerank: body.rerank ?? true,
+    trackMetrics: body.trackMetrics ?? false,
+  });
+  return c.json(results);
 });
 
 // ---- Error handling ----

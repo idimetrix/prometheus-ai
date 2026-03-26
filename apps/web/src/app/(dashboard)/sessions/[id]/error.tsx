@@ -1,7 +1,7 @@
 "use client";
 
 import { Button, Card, CardContent } from "@prometheus/ui";
-import { AlertTriangle, Home, RefreshCw } from "lucide-react";
+import { AlertTriangle, ArrowLeft, RefreshCw } from "lucide-react";
 import { useEffect } from "react";
 
 interface ErrorPageProps {
@@ -9,9 +9,8 @@ interface ErrorPageProps {
   reset: () => void;
 }
 
-export default function DashboardError({ error, reset }: ErrorPageProps) {
+export default function SessionError({ error, reset }: ErrorPageProps) {
   useEffect(() => {
-    // Error is already captured by Next.js error boundary.
     // Report to external error tracking if Sentry SDK is loaded.
     const w = globalThis as unknown as Record<string, unknown>;
     if (typeof w.Sentry === "object" && w.Sentry !== null) {
@@ -28,10 +27,10 @@ export default function DashboardError({ error, reset }: ErrorPageProps) {
             <AlertTriangle className="h-7 w-7 text-destructive" />
           </div>
           <h2 className="mt-4 font-semibold text-foreground text-lg">
-            Dashboard Error
+            Session Error
           </h2>
           <p className="mt-2 text-muted-foreground text-sm">
-            {error.message || "Something went wrong loading the dashboard."}
+            {error.message || "Something went wrong loading this session."}
           </p>
           {error.digest && (
             <p className="mt-1 font-mono text-muted-foreground text-xs">
@@ -47,8 +46,8 @@ export default function DashboardError({ error, reset }: ErrorPageProps) {
               onClick={() => (window.location.href = "/dashboard")}
               variant="outline"
             >
-              <Home className="mr-1 h-4 w-4" />
-              Dashboard Home
+              <ArrowLeft className="mr-1 h-4 w-4" />
+              Back to Dashboard
             </Button>
           </div>
         </CardContent>

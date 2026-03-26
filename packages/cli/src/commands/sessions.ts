@@ -33,33 +33,30 @@ sessionsCommand
       const client = new APIClient(config);
 
       try {
-        const result = await client.listSessions({
-          projectId: config.projectId ?? opts.project,
-          status: opts.status,
-          limit: Number(opts.limit ?? "10"),
-        });
+        const sessions = await client.listSessions(
+          config.projectId ?? opts.project
+        );
 
-        if (result.sessions.length === 0) {
+        const filteredSessions = opts.status
+          ? sessions.filter((s) => s.status === opts.status)
+          : sessions;
+
+        const limited = filteredSessions.slice(0, Number(opts.limit ?? "10"));
+
+        if (limited.length === 0) {
           console.log("No sessions found.");
           return;
         }
 
         console.log(
-          `\n${"ID".padEnd(20)} ${"Mode".padEnd(8)} ${"Status".padEnd(12)} ${"Started".padEnd(24)}`
+          `\n${"ID".padEnd(20)} ${"Mode".padEnd(8)} ${"Status".padEnd(12)} ${"Title".padEnd(24)}`
         );
         console.log("-".repeat(70));
 
-        for (const session of result.sessions) {
-          const started = session.startedAt
-            ? new Date(session.startedAt).toLocaleString()
-            : "N/A";
+        for (const session of limited) {
           console.log(
-            `${session.id.padEnd(20)} ${session.mode.padEnd(8)} ${session.status.padEnd(12)} ${started.padEnd(24)}`
+            `${session.id.padEnd(20)} ${session.mode.padEnd(8)} ${session.status.padEnd(12)} ${(session.title ?? "N/A").padEnd(24)}`
           );
-        }
-
-        if (result.nextCursor) {
-          console.log("\n... more sessions available");
         }
         console.log();
       } catch (error) {
@@ -85,18 +82,12 @@ sessionsCommand
       const client = new APIClient(config);
 
       try {
-        const session = await client.getSession(sessionId);
+        const session = await client.getSessionStatus(sessionId);
         console.log(`\nSession: ${session.id}`);
         console.log(`  Mode:    ${session.mode}`);
         console.log(`  Status:  ${session.status}`);
-        console.log(`  Project: ${session.project?.name ?? session.projectId}`);
-        console.log(
-          `  Started: ${session.startedAt ? new Date(session.startedAt).toLocaleString() : "N/A"}`
-        );
-        if (session.endedAt) {
-          console.log(
-            `  Ended:   ${new Date(session.endedAt).toLocaleString()}`
-          );
+        if (session.progress != null) {
+          console.log(`  Progress: ${session.progress}%`);
         }
         console.log();
       } catch (error) {

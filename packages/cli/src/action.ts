@@ -136,7 +136,7 @@ function waitForCompletion(
   sessionId: string,
   timeoutSec: number
 ): Promise<HeadlessResult> {
-  return new Promise((resolve, reject) => {
+  return new Promise((resolve, _reject) => {
     const filesChanged: string[] = [];
     let prUrl: string | undefined;
     let settled = false;
@@ -155,68 +155,58 @@ function waitForCompletion(
       }
     }, timeoutSec * 1000);
 
-    const stream = client.streamSession(
-      sessionId,
-      (event) => {
-        if (settled) {
-          return;
-        }
-
-        // Log progress for GitHub Actions log
-        switch (event.type) {
-          case "token": {
-            process.stdout.write(
-              String((event.data as { content: string }).content)
-            );
-            break;
-          }
-          case "tool_call": {
-            const data = event.data as { toolName: string };
-            console.log(`[Tool] ${data.toolName}`);
-            break;
-          }
-          case "file_change": {
-            const data = event.data as { filePath: string };
-            filesChanged.push(data.filePath);
-            console.log(`[File] ${data.filePath}`);
-            break;
-          }
-          case "pr_created": {
-            const data = event.data as { prUrl: string };
-            prUrl = data.prUrl;
-            console.log(`[PR] ${data.prUrl}`);
-            break;
-          }
-          case "error": {
-            const data = event.data as { error?: string };
-            console.error(`[Error] ${data.error ?? "Unknown error"}`);
-            break;
-          }
-          case "complete": {
-            clearTimeout(timeoutHandle);
-            settled = true;
-            stream.close();
-            const data = event.data as { success: boolean };
-            resolve({
-              success: data.success,
-              sessionId,
-              filesChanged,
-              prUrl,
-            });
-            break;
-          }
-          default:
-            break;
-        }
-      },
-      (error) => {
-        if (!settled) {
-          settled = true;
-          clearTimeout(timeoutHandle);
-          reject(error);
-        }
+    const stream = client.streamSession(sessionId, (event) => {
+      if (settled) {
+        return;
       }
-    );
+
+      // Log progress for GitHub Actions log
+      switch (event.type) {
+        case "token": {
+          process.stdout.write(
+            String((event.data as { content: string }).content)
+          );
+          break;
+        }
+        case "tool_call": {
+          const data = event.data as { toolName: string };
+          console.log(`[Tool] ${data.toolName}`);
+          break;
+        }
+        case "file_change": {
+          const data = event.data as { filePath: string };
+          filesChanged.push(data.filePath);
+          console.log(`[File] ${data.filePath}`);
+          break;
+        }
+        case "pr_created": {
+          const data = event.data as { prUrl: string };
+          prUrl = data.prUrl;
+          console.log(`[PR] ${data.prUrl}`);
+          break;
+        }
+        case "error": {
+          const data = event.data as { error?: string };
+          console.error(`[Error] ${data.error ?? "Unknown error"}`);
+          break;
+        }
+        case "complete": {
+          clearTimeout(timeoutHandle);
+          settled = true;
+          stream.close();
+          const data = event.data as { success: boolean };
+          resolve({
+            success: data.success,
+            sessionId,
+            filesChanged,
+            prUrl,
+          });
+          break;
+        }
+        default:
+          break;
+      }
+    });
   });
 }
 
