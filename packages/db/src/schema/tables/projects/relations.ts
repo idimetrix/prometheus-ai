@@ -13,6 +13,23 @@ import { sessions } from "../sessions/sessions";
 import { tasks } from "../tasks/tasks";
 import { projectMembers, projectSettings, projects } from "./projects";
 
+export const projectMembersRelations = relations(projectMembers, ({ one }) => ({
+  project: one(projects, {
+    fields: [projectMembers.projectId],
+    references: [projects.id],
+  }),
+}));
+
+export const projectSettingsRelations = relations(
+  projectSettings,
+  ({ one }) => ({
+    project: one(projects, {
+      fields: [projectSettings.projectId],
+      references: [projects.id],
+    }),
+  })
+);
+
 export const projectsRelations = relations(projects, ({ one, many }) => ({
   organization: one(organizations, {
     fields: [projects.orgId],

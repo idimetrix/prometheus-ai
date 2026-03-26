@@ -130,7 +130,7 @@ export function EmptyProjects() {
 export function EmptySessions() {
   return (
     <EmptyState
-      action={{ label: "New Task", href: "/dashboard/projects/new" }}
+      action={{ label: "New Task", href: "/new" }}
       description="Start a new task to see agent sessions here."
       icon={
         <svg

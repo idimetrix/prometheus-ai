@@ -605,8 +605,8 @@ export default function AnalyticsPage() {
                   No cost data yet.
                 </div>
               ) : (
-                <div className="flex items-center gap-8">
-                  <ResponsiveContainer height={320} width="60%">
+                <div className="flex flex-col items-center gap-4 md:flex-row md:gap-8">
+                  <ResponsiveContainer height={320} width="100%">
                     <PieChart>
                       <Pie
                         cx="50%"

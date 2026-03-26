@@ -2,6 +2,8 @@
 
 import { useEffect } from "react";
 
+import { logger } from "@/lib/logger";
+
 interface GlobalErrorProps {
   error: Error & { digest?: string };
   reset: () => void;
@@ -9,7 +11,7 @@ interface GlobalErrorProps {
 
 export default function GlobalError({ error, reset }: GlobalErrorProps) {
   useEffect(() => {
-    console.error("[Global Error]", error);
+    logger.error("[Global Error]", error);
   }, [error]);
 
   return (

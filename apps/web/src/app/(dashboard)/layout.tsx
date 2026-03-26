@@ -1,6 +1,6 @@
 "use client";
 
-import { useOrganization, useUser } from "@clerk/nextjs";
+import { useUser } from "@clerk/nextjs";
 import {
   Avatar,
   AvatarFallback,
@@ -41,7 +41,7 @@ const NAV_ITEMS: Array<{
     icon: <LayoutDashboard className="h-4 w-4" />,
   },
   {
-    href: "/dashboard/projects/new",
+    href: "/new" as Route,
     label: "New Task",
     icon: <Plus className="h-4 w-4" />,
   },
@@ -79,7 +79,6 @@ export default function DashboardLayout({
 }) {
   const pathname = usePathname();
   const { user } = useUser();
-  const { organization } = useOrganization();
   const { activeAgents, creditBalance } = useDashboardStore();
   const [commandOpen, setCommandOpen] = useState(false);
   const isMobile = useIsMobile();
@@ -178,7 +177,7 @@ export default function DashboardLayout({
                   {user?.firstName ?? "User"}
                 </div>
                 <div className="truncate text-[10px] text-muted-foreground">
-                  {organization?.name ?? "Personal"}
+                  {"Personal"}
                 </div>
               </div>
             </div>
@@ -191,7 +190,7 @@ export default function DashboardLayout({
           <header className="flex h-14 shrink-0 items-center justify-between border-b bg-background px-4 md:px-6">
             <div className="flex items-center gap-4">
               <h1 className="font-medium text-foreground text-sm">
-                {organization?.name ?? "Personal Workspace"}
+                {"Personal Workspace"}
               </h1>
             </div>
             <div className="flex items-center gap-2 md:gap-3">

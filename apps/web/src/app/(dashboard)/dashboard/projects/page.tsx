@@ -148,7 +148,11 @@ export default function ProjectsPage() {
                       </Button>
                       <AlertDialog>
                         <AlertDialogTrigger asChild>
-                          <Button size="icon" variant="ghost">
+                          <Button
+                            aria-label="Archive project"
+                            size="icon"
+                            variant="ghost"
+                          >
                             <Archive className="h-3.5 w-3.5" />
                           </Button>
                         </AlertDialogTrigger>

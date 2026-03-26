@@ -9,11 +9,26 @@ import superjson from "superjson";
 export const trpc: ReturnType<typeof createTRPCReact<AppRouter>> =
   createTRPCReact<AppRouter>();
 
-function getBaseUrl() {
-  if (typeof window !== "undefined") {
-    return process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000";
+// API URL resolved fully at runtime — no process.env references to avoid Turbopack inlining
+const _API_PORT = 4000;
+const _API_FALLBACK = `http://localhost:${_API_PORT}`;
+
+function getBaseUrl(): string {
+  if (typeof document !== "undefined") {
+    // Client-side: derive API URL from current page location
+    const { hostname, protocol } = window.location;
+    if (hostname === "localhost" || hostname === "127.0.0.1") {
+      return `${protocol}//${hostname}:${_API_PORT}`;
+    }
+    // Production: use meta tag or configured env (read at runtime via meta)
+    const meta = document.querySelector<HTMLMetaElement>(
+      'meta[name="api-url"]'
+    );
+    if (meta?.content) {
+      return meta.content;
+    }
   }
-  return process.env.API_URL ?? "http://localhost:4000";
+  return _API_FALLBACK;
 }
 
 async function getAuthToken(): Promise<string | null> {
@@ -35,8 +50,11 @@ async function getAuthToken(): Promise<string | null> {
     // Clerk not loaded yet
   }
 
-  // Dev auth bypass — use a dev token when Clerk is not configured
-  if (process.env.NEXT_PUBLIC_DEV_AUTH_BYPASS === "true") {
+  // Dev auth bypass — read from meta tag to avoid Turbopack compile-time inlining
+  const devBypassMeta = document.querySelector<HTMLMetaElement>(
+    'meta[name="dev-auth-bypass"]'
+  );
+  if (devBypassMeta?.content === "true") {
     return "dev_token_usr_seed_dev001__org_seed_dev001";
   }
 

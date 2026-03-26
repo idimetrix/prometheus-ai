@@ -25,6 +25,15 @@ export default function RootLayout({
         <link href="/manifest.json" rel="manifest" />
         <meta content="#7c3aed" name="theme-color" />
         <meta content="yes" name="mobile-web-app-capable" />
+        <meta content={process.env.NEXT_PUBLIC_API_URL ?? ""} name="api-url" />
+        <meta
+          content={process.env.NEXT_PUBLIC_SOCKET_URL ?? ""}
+          name="socket-url"
+        />
+        <meta
+          content={process.env.NEXT_PUBLIC_DEV_AUTH_BYPASS ?? "false"}
+          name="dev-auth-bypass"
+        />
       </head>
       <body className="min-h-screen bg-background font-sans text-foreground antialiased">
         <Providers>{children}</Providers>

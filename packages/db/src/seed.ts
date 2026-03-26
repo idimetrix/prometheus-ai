@@ -77,7 +77,7 @@ async function seed() {
   const allUsers = [
     {
       id: USER_DEV_ADMIN,
-      clerkId: "user_dev_clerk",
+      clerkId: USER_DEV_ADMIN,
       email: "dev@prometheus.local",
       name: "Dev User",
     },
@@ -206,7 +206,6 @@ async function seed() {
       description: "Full-stack e-commerce with Next.js, tRPC, and Stripe",
       techStackPreset: "modern-saas",
       status: "active" as const,
-      ownerId: USER_DEV_ADMIN,
     },
     {
       id: "proj_seed_002",
@@ -215,7 +214,6 @@ async function seed() {
       description: "Admin dashboard for managing customer data",
       techStackPreset: "fullstack-minimal",
       status: "setup" as const,
-      ownerId: USER_DEV_ENG,
     },
     {
       id: "proj_seed_003",
@@ -224,7 +222,6 @@ async function seed() {
       description: "Go-based REST API powering iOS and Android apps",
       techStackPreset: "go-microservices",
       status: "active" as const,
-      ownerId: USER_DEV_ENG,
     },
     {
       id: "proj_seed_004",
@@ -233,7 +230,6 @@ async function seed() {
       description: "Data ingestion and reporting with Django and React",
       techStackPreset: "django-react",
       status: "active" as const,
-      ownerId: USER_STAGING_LEAD,
     },
     {
       id: "proj_seed_005",
@@ -242,7 +238,6 @@ async function seed() {
       description: "Rails-based CMS for marketing landing pages",
       techStackPreset: "rails",
       status: "active" as const,
-      ownerId: USER_DEMO_PM,
     },
   ];
 

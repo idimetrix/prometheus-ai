@@ -149,7 +149,7 @@ const TIERS = [
     ],
     excluded: [],
     cta: "Contact Sales",
-    ctaHref: "/about" as Route,
+    ctaHref: "mailto:sales@prometheus.dev" as Route,
     highlight: false,
   },
 ];
@@ -669,12 +669,12 @@ export default function PricingPage() {
             >
               Get Started Free
             </Link>
-            <Link
+            <a
               className="rounded-xl border border-zinc-700 bg-zinc-900 px-8 py-3.5 font-semibold text-sm text-zinc-300 transition-colors hover:bg-zinc-800"
-              href="/about"
+              href="mailto:sales@prometheus.dev"
             >
               Contact Sales
-            </Link>
+            </a>
           </div>
         </div>
       </div>

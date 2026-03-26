@@ -573,7 +573,18 @@ export const sessionsRouter = router({
       })
     )
     .mutation(async ({ input, ctx }) => {
-      await verifySessionAccess(ctx.db, input.sessionId, ctx.orgId);
+      const session = await verifySessionAccess(
+        ctx.db,
+        input.sessionId,
+        ctx.orgId
+      );
+
+      if (session.status !== "active") {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: `Cannot approve plan on ${session.status} session`,
+        });
+      }
 
       const res = await fetch(
         `${ORCHESTRATOR_URL}/checkpoints/${input.checkpointId}/respond`,

@@ -54,10 +54,12 @@ const DEV_TOKEN_PREFIX = "dev_token_";
  * Only active when `DEV_AUTH_BYPASS=true` and `NODE_ENV !== "production"`.
  */
 function tryDevAuthBypass(token: string): AuthContext | null {
-  if (
-    process.env.DEV_AUTH_BYPASS !== "true" ||
-    process.env.NODE_ENV === "production"
-  ) {
+  if (process.env.DEV_AUTH_BYPASS !== "true") {
+    return null;
+  }
+
+  // Never allow dev bypass in production — even if the env var leaks
+  if (process.env.NODE_ENV === "production") {
     return null;
   }
 

@@ -101,9 +101,17 @@ export const integrationsRouter = router({
       })
     )
     .mutation(async ({ input, ctx }) => {
-      validateCredentials(input.provider, input.credentials);
+      // Only validate credentials if any were provided — allow empty
+      // credentials to create a "pending" connection that users can
+      // configure later in Settings > Integrations.
+      const hasCredentials = Object.keys(input.credentials).length > 0;
+      if (hasCredentials) {
+        validateCredentials(input.provider, input.credentials);
+      }
 
-      const encrypted = encrypt(JSON.stringify(input.credentials));
+      const encrypted = hasCredentials
+        ? encrypt(JSON.stringify(input.credentials))
+        : null;
 
       const existing = await ctx.db.query.mcpConnections.findFirst({
         where: and(

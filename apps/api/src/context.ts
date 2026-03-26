@@ -103,6 +103,18 @@ export async function createContext(
         );
       }
     }
+
+    // Verify user actually exists after creation attempt
+    const verified = await db.query.users.findFirst({
+      where: eq(users.clerkId, auth.userId),
+      columns: { id: true },
+    });
+    if (!verified) {
+      logger.error(
+        { userId: auth.userId },
+        "User record missing after auto-creation"
+      );
+    }
   }
 
   return { auth, db, apiKeyId: null };

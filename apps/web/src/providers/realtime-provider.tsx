@@ -292,7 +292,11 @@ export function RealtimeProvider({ children }: { children: ReactNode }) {
 
   const connectSSE = useCallback(() => {
     try {
-      const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000";
+      const apiMeta =
+        typeof document === "undefined"
+          ? null
+          : document.querySelector<HTMLMetaElement>('meta[name="api-url"]');
+      const apiUrl = apiMeta?.content || "http://localhost:4000";
       const lastSeq = lastSequenceRef.current;
       const url =
         lastSeq > 0

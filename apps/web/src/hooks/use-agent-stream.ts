@@ -27,6 +27,7 @@ export function useAgentStream(options: UseAgentStreamOptions) {
   const [toolCalls, setToolCalls] = useState<ToolCallEvent[]>([]);
   const [isStreaming, setIsStreaming] = useState(false);
   const eventSourceRef = useRef<EventSource | null>(null);
+  const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const retriesRef = useRef(0);
   const maxRetries = 10;
 
@@ -35,7 +36,7 @@ export function useAgentStream(options: UseAgentStreamOptions) {
       return;
     }
 
-    const url = `${apiUrl}/stream?sessionId=${encodeURIComponent(sessionId)}`;
+    const url = `${apiUrl}/api/sse/sessions/${encodeURIComponent(sessionId)}/stream`;
     const es = new EventSource(url);
     eventSourceRef.current = es;
 
@@ -86,12 +87,16 @@ export function useAgentStream(options: UseAgentStreamOptions) {
       if (retriesRef.current < maxRetries) {
         retriesRef.current++;
         const delay = Math.min(1000 * 2 ** retriesRef.current, 30_000);
-        setTimeout(connect, delay);
+        reconnectTimerRef.current = setTimeout(connect, delay);
       }
     };
   }, [sessionId, apiUrl]);
 
   const disconnect = useCallback(() => {
+    if (reconnectTimerRef.current) {
+      clearTimeout(reconnectTimerRef.current);
+      reconnectTimerRef.current = null;
+    }
     eventSourceRef.current?.close();
     eventSourceRef.current = null;
     setIsStreaming(false);

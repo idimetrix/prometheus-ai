@@ -214,14 +214,16 @@ function PlanPanel() {
 // ── Terminal Panel ───────────────────────────────────────────────
 
 function TerminalPanel() {
-  const { terminalLines } = useSessionStore();
+  const terminalLines = useSessionStore((s) => s.terminalLines);
   const scrollRef = useRef<HTMLDivElement>(null);
 
+  // Auto-scroll when new terminal lines arrive
+  const lineCount = terminalLines.length;
   useEffect(() => {
-    if (scrollRef.current) {
+    if (lineCount > 0 && scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
-  }, []);
+  }, [lineCount]);
 
   return (
     <div className="flex h-full flex-col rounded-xl border border-zinc-800 bg-zinc-950">
@@ -428,11 +430,12 @@ function ChatPanel({
   }
 
   // Auto-scroll on new messages
+  const messageCount = messages.length;
   useEffect(() => {
-    if (scrollRef.current) {
+    if (messageCount > 0 && scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
-  }, []);
+  }, [messageCount]);
 
   const handleSend = useCallback(() => {
     const trimmed = input.trim();

@@ -3,6 +3,7 @@ import {
   creditBalances,
   creditReservations,
   creditTransactions,
+  organizations,
   projects,
   sessions,
   taskSteps,
@@ -25,6 +26,16 @@ import { and, desc, eq, lt, sql } from "drizzle-orm";
 import { protectedProcedure, router } from "../trpc";
 
 const logger = createLogger("tasks-router");
+
+type PlanTier = "hobby" | "starter" | "pro" | "team" | "studio" | "enterprise";
+
+async function getOrgPlanTier(db: Database, orgId: string): Promise<PlanTier> {
+  const org = await db.query.organizations.findFirst({
+    where: eq(organizations.id, orgId),
+    columns: { planTier: true },
+  });
+  return (org?.planTier ?? "hobby") as PlanTier;
+}
 
 /**
  * Verify that a task belongs to the caller's org via its project.
@@ -195,10 +206,11 @@ export const tasksRouter = router({
         if (err instanceof TRPCError) {
           throw err;
         }
-        logger.warn(
-          { taskId: id, error: err },
-          "Credit reservation failed, proceeding without reservation"
-        );
+        logger.error({ taskId: id, error: err }, "Credit reservation failed");
+        throw new TRPCError({
+          code: "INTERNAL_SERVER_ERROR",
+          message: "Failed to reserve credits for task",
+        });
       }
 
       const [task] = await ctx.db
@@ -230,7 +242,7 @@ export const tasksRouter = router({
           description: input.description ?? null,
           mode: session.mode,
           agentRole: input.agentRole ?? null,
-          planTier: "hobby",
+          planTier: await getOrgPlanTier(ctx.db, ctx.orgId),
           creditsReserved: reservationId ? estimatedCredits : 0,
           dependsOn: input.dependsOn ?? [],
         },

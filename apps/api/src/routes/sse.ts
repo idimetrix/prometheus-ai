@@ -54,7 +54,10 @@ sseApp.get("/sessions/:sessionId/stream", async (c) => {
   const sessionId = c.req.param("sessionId");
 
   // --- Authentication ---
-  const token = c.req.query("token") ?? c.req.header("authorization")?.slice(7);
+  const authHeader = c.req.header("authorization");
+  const token =
+    c.req.query("token") ??
+    (authHeader?.startsWith("Bearer ") ? authHeader.slice(7) : undefined);
 
   if (!token) {
     return c.json({ error: "Unauthorized: token required" }, 401);

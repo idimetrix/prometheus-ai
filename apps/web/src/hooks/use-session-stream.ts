@@ -30,8 +30,11 @@ function getAuthTokenSync(): string | null {
     // Clerk not ready
   }
 
-  // Dev auth bypass
-  if (process.env.NEXT_PUBLIC_DEV_AUTH_BYPASS === "true") {
+  // Dev auth bypass — read from meta tag to avoid Turbopack compile-time inlining
+  const devBypassMeta = document.querySelector<HTMLMetaElement>(
+    'meta[name="dev-auth-bypass"]'
+  );
+  if (devBypassMeta?.content === "true") {
     return "dev_token_usr_seed_dev001__org_seed_dev001";
   }
 
@@ -44,6 +47,8 @@ export function useSessionStream(sessionId: string | null) {
   const reconnectTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const store = useSessionStore();
+  const storeRef = useRef(store);
+  storeRef.current = store;
 
   const connect = useCallback(() => {
     if (!sessionId) {
@@ -56,7 +61,18 @@ export function useSessionStream(sessionId: string | null) {
       eventSourceRef.current = null;
     }
 
-    const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000";
+    // Derive API URL at runtime — use meta tag for production, localhost for dev
+    const apiMeta =
+      typeof document === "undefined"
+        ? null
+        : document.querySelector<HTMLMetaElement>('meta[name="api-url"]');
+    const apiUrl =
+      apiMeta?.content ||
+      (typeof window !== "undefined" &&
+      (window.location.hostname === "localhost" ||
+        window.location.hostname === "127.0.0.1")
+        ? `http://${window.location.hostname}:4000`
+        : `${window.location.protocol}//${window.location.hostname}:4000`);
 
     // Build URL with auth token — EventSource doesn't support custom headers,
     // so we pass the token as a query parameter.
@@ -68,8 +84,8 @@ export function useSessionStream(sessionId: string | null) {
     eventSourceRef.current = es;
 
     es.onopen = () => {
-      store.setConnected(true);
-      store.setActiveSession(sessionId);
+      storeRef.current.setConnected(true);
+      storeRef.current.setActiveSession(sessionId);
       reconnectAttempts.current = 0;
     };
 
@@ -77,11 +93,11 @@ export function useSessionStream(sessionId: string | null) {
     es.addEventListener("agent_output", (e) => {
       try {
         const data = JSON.parse(e.data);
-        store.addTerminalLine({
+        storeRef.current.addTerminalLine({
           content: data.content,
           timestamp: data.timestamp,
         });
-        store.addEvent({
+        storeRef.current.addEvent({
           id: crypto.randomUUID(),
           type: "agent_output",
           data,
@@ -95,7 +111,7 @@ export function useSessionStream(sessionId: string | null) {
     es.addEventListener("terminal_output", (e) => {
       try {
         const data = JSON.parse(e.data);
-        store.addTerminalLine({
+        storeRef.current.addTerminalLine({
           content: data.content,
           timestamp: data.timestamp,
         });
@@ -109,7 +125,7 @@ export function useSessionStream(sessionId: string | null) {
       try {
         const data = JSON.parse(e.data);
         if (data.steps) {
-          store.setPlanSteps(data.steps);
+          storeRef.current.setPlanSteps(data.steps);
         }
       } catch {
         /* ignore */
@@ -120,7 +136,7 @@ export function useSessionStream(sessionId: string | null) {
       try {
         const data = JSON.parse(e.data);
         if (data.stepId) {
-          store.updatePlanStep(data.stepId, {
+          storeRef.current.updatePlanStep(data.stepId, {
             status: data.status,
             title: data.title,
             description: data.description,
@@ -136,9 +152,9 @@ export function useSessionStream(sessionId: string | null) {
       try {
         const data = JSON.parse(e.data);
         if (data.files) {
-          store.setFileTree(data.files);
+          storeRef.current.setFileTree(data.files);
         } else if (data.file) {
-          store.addFileEntry(data.file);
+          storeRef.current.addFileEntry(data.file);
         }
       } catch {
         /* ignore */
@@ -149,7 +165,7 @@ export function useSessionStream(sessionId: string | null) {
     es.addEventListener("file_diff", (e) => {
       try {
         const data = JSON.parse(e.data);
-        store.addEvent({
+        storeRef.current.addEvent({
           id: crypto.randomUUID(),
           type: "file_diff",
           data,
@@ -163,7 +179,7 @@ export function useSessionStream(sessionId: string | null) {
     es.addEventListener("code_change", (e) => {
       try {
         const data = JSON.parse(e.data);
-        store.addEvent({
+        storeRef.current.addEvent({
           id: crypto.randomUUID(),
           type: "code_change",
           data,
@@ -178,7 +194,7 @@ export function useSessionStream(sessionId: string | null) {
     es.addEventListener("agent_status", (e) => {
       try {
         const data = JSON.parse(e.data);
-        store.addEvent({
+        storeRef.current.addEvent({
           id: crypto.randomUUID(),
           type: "agent_status",
           data,
@@ -193,7 +209,7 @@ export function useSessionStream(sessionId: string | null) {
     es.addEventListener("queue_position", (e) => {
       try {
         const data = JSON.parse(e.data);
-        store.setQueuePosition(data.position);
+        storeRef.current.setQueuePosition(data.position);
       } catch {
         /* ignore */
       }
@@ -203,8 +219,8 @@ export function useSessionStream(sessionId: string | null) {
     es.addEventListener("task_status", (e) => {
       try {
         const data = JSON.parse(e.data);
-        store.setStatus(data.status);
-        store.addEvent({
+        storeRef.current.setStatus(data.status);
+        storeRef.current.addEvent({
           id: crypto.randomUUID(),
           type: "task_status",
           data,
@@ -219,8 +235,8 @@ export function useSessionStream(sessionId: string | null) {
     es.addEventListener("reasoning", (e) => {
       try {
         const data = JSON.parse(e.data);
-        store.addReasoning(data.content ?? data.thought ?? "");
-        store.addTerminalLine({
+        storeRef.current.addReasoning(data.content ?? data.thought ?? "");
+        storeRef.current.addTerminalLine({
           content: `[THINK] ${data.content ?? data.thought ?? ""}`,
           timestamp: new Date().toISOString(),
         });
@@ -233,15 +249,15 @@ export function useSessionStream(sessionId: string | null) {
     es.addEventListener("session_complete", (e) => {
       try {
         const data = JSON.parse(e.data);
-        store.setStatus(data.status ?? "completed");
+        storeRef.current.setStatus(data.status ?? "completed");
       } catch {
-        store.setStatus("completed");
+        storeRef.current.setStatus("completed");
       }
     });
 
     // Error handling with auto-reconnect
     es.onerror = () => {
-      store.setConnected(false);
+      storeRef.current.setConnected(false);
       es.close();
       eventSourceRef.current = null;
 
@@ -252,7 +268,7 @@ export function useSessionStream(sessionId: string | null) {
         reconnectTimer.current = setTimeout(connect, delay);
       }
     };
-  }, [sessionId, store]);
+  }, [sessionId]);
 
   const disconnect = useCallback(() => {
     if (reconnectTimer.current) {
@@ -263,13 +279,14 @@ export function useSessionStream(sessionId: string | null) {
       eventSourceRef.current.close();
       eventSourceRef.current = null;
     }
-    store.setConnected(false);
-  }, [store]);
+    storeRef.current.setConnected(false);
+  }, []);
 
   useEffect(() => {
     connect();
     return () => disconnect();
   }, [connect, disconnect]);
 
-  return { isConnected: store.isConnected };
+  const isConnected = useSessionStore((s) => s.isConnected);
+  return { isConnected };
 }

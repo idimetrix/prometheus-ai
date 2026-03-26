@@ -32,7 +32,7 @@ export const notificationsRouter = router({
       });
 
       const hasMore = results.length > input.limit;
-      const items = hasMore ? results.slice(0, -1) : results;
+      const items = hasMore ? results.slice(0, input.limit) : results;
 
       return {
         notifications: items.map((log) => ({

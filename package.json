@@ -34,7 +34,7 @@
     "validate": "tsx scripts/validate-boot.ts"
   },
   "devDependencies": {
-    "@biomejs/biome": "^2.4.8",
+    "@biomejs/biome": "^2.4.9",
     "@types/node": "^25.5.0",
     "lefthook": "^2.1.4",
     "tsx": "^4.21.0",

@@ -159,7 +159,7 @@ export default function SessionsPage() {
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2">
                         <span className="truncate font-medium text-foreground text-sm">
-                          {session.mode || "Untitled Session"}
+                          {session.project?.name || "Untitled Session"}
                         </span>
                         <Badge variant={config.variant}>
                           <span className="mr-1">{config.icon}</span>

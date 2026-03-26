@@ -6,10 +6,16 @@ import { protectedProcedure, router } from "../trpc";
 
 export const userRouter = router({
   profile: protectedProcedure.query(async ({ ctx }) => {
-    const user = await ctx.db.query.users.findFirst({
-      where: eq(users.clerkId, ctx.auth.userId),
-      with: { settings: true },
-    });
+    // Look up by clerkId first, then fall back to user id (for dev seed data)
+    const user =
+      (await ctx.db.query.users.findFirst({
+        where: eq(users.clerkId, ctx.auth.userId),
+        with: { settings: true },
+      })) ??
+      (await ctx.db.query.users.findFirst({
+        where: eq(users.id, ctx.auth.userId),
+        with: { settings: true },
+      }));
     return user ?? null;
   }),
 
@@ -22,10 +28,15 @@ export const userRouter = router({
       })
     )
     .mutation(async ({ input, ctx }) => {
-      const user = await ctx.db.query.users.findFirst({
-        where: eq(users.clerkId, ctx.auth.userId),
-        columns: { id: true },
-      });
+      const user =
+        (await ctx.db.query.users.findFirst({
+          where: eq(users.clerkId, ctx.auth.userId),
+          columns: { id: true },
+        })) ??
+        (await ctx.db.query.users.findFirst({
+          where: eq(users.id, ctx.auth.userId),
+          columns: { id: true },
+        }));
       if (!user) {
         throw new TRPCError({ code: "NOT_FOUND", message: "User not found" });
       }
@@ -33,7 +44,7 @@ export const userRouter = router({
       await ctx.db
         .update(users)
         .set({ name: input.name })
-        .where(eq(users.clerkId, ctx.auth.userId));
+        .where(eq(users.id, user.id));
 
       const existing = await ctx.db.query.userSettings.findFirst({
         where: eq(userSettings.userId, user.id),
@@ -65,10 +76,15 @@ export const userRouter = router({
       })
     )
     .mutation(async ({ input, ctx }) => {
-      const user = await ctx.db.query.users.findFirst({
-        where: eq(users.clerkId, ctx.auth.userId),
-        columns: { id: true },
-      });
+      const user =
+        (await ctx.db.query.users.findFirst({
+          where: eq(users.clerkId, ctx.auth.userId),
+          columns: { id: true },
+        })) ??
+        (await ctx.db.query.users.findFirst({
+          where: eq(users.id, ctx.auth.userId),
+          columns: { id: true },
+        }));
       if (!user) {
         throw new TRPCError({ code: "NOT_FOUND", message: "User not found" });
       }
@@ -95,10 +111,15 @@ export const userRouter = router({
     }),
 
   organizations: protectedProcedure.query(async ({ ctx }) => {
-    const user = await ctx.db.query.users.findFirst({
-      where: eq(users.clerkId, ctx.auth.userId),
-      columns: { id: true },
-    });
+    const user =
+      (await ctx.db.query.users.findFirst({
+        where: eq(users.clerkId, ctx.auth.userId),
+        columns: { id: true },
+      })) ??
+      (await ctx.db.query.users.findFirst({
+        where: eq(users.id, ctx.auth.userId),
+        columns: { id: true },
+      }));
     if (!user) {
       return { organizations: [] };
     }

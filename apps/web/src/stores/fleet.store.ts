@@ -303,7 +303,7 @@ export const useFleetStore = create<FleetState>((set) => ({
       if (existing) {
         timelines.set(agentId, {
           ...existing,
-          entries: [...existing.entries, entry],
+          entries: [...existing.entries, entry].slice(-500),
         });
       } else {
         const agent = state.agents.get(agentId);

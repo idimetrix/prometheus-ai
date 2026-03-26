@@ -163,7 +163,7 @@ export default function ApiReferencePage() {
       <div className="mb-10 rounded-xl border border-zinc-800 bg-zinc-900/50 p-6">
         <h3 className="mb-3 font-semibold text-zinc-200">Base URL</h3>
         <code className="rounded bg-zinc-800 px-3 py-1.5 text-sm text-violet-400">
-          https://api-prometheus.dev.apidly.com/trpc
+          https://api.prometheus.dev/trpc
         </code>
         <p className="mt-3 text-sm text-zinc-500">
           All tRPC endpoints are served under the <code>/trpc</code> path.

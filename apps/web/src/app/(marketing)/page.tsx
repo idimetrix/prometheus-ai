@@ -59,7 +59,7 @@ const FEATURES = [
   },
   {
     title: "Persistent Project Brain",
-    desc: "6-layer memory system that genuinely knows your project across sessions. No repeated context needed -- it remembers everything.",
+    desc: "8-layer memory system that genuinely knows your project across sessions. No repeated context needed -- it remembers everything.",
     icon: (
       <svg
         aria-hidden="true"
@@ -160,7 +160,7 @@ const STEPS = [
 const STATS = [
   { value: "12", label: "Specialist Agents" },
   { value: "80%+", label: "Auto-Fix Rate" },
-  { value: "6", label: "Memory Layers" },
+  { value: "8", label: "Memory Layers" },
   { value: "< 5min", label: "To First Output" },
 ];
 

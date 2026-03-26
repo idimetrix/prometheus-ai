@@ -48,7 +48,7 @@ export default function BrainPage({
     },
     { retry: 2 }
   );
-  const searchMutation = trpc.brain.search.useQuery(
+  const searchResults = trpc.brain.search.useQuery(
     { projectId, query: searchQuery, limit: 20 },
     { enabled: searchQuery.length > 2, retry: 2 }
   );
@@ -171,13 +171,13 @@ export default function BrainPage({
             )}
 
             {/* Search results */}
-            {searchQuery.length > 2 && searchMutation.data && (
+            {searchQuery.length > 2 && searchResults.data && (
               <div className="mt-4 border-zinc-800 border-t pt-4">
                 <h3 className="mb-2 font-medium text-sm text-zinc-300">
                   Search Results
                 </h3>
                 <div className="space-y-2">
-                  {searchMutation.data.results.map((result) => (
+                  {searchResults.data.results.map((result) => (
                     <div
                       className="rounded-lg border border-zinc-800 bg-zinc-950 p-3"
                       key={result.id}
@@ -191,7 +191,7 @@ export default function BrainPage({
                       </pre>
                     </div>
                   ))}
-                  {searchMutation.data.results.length === 0 && (
+                  {searchResults.data.results.length === 0 && (
                     <div className="text-sm text-zinc-500">
                       No results found for &quot;{searchQuery}&quot;
                     </div>

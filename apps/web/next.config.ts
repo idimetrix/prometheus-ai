@@ -63,18 +63,26 @@ const nextConfig: NextConfig = {
   typedRoutes: true,
   headers: async () => [
     {
-      // Cache static assets at the CDN edge for 1 year (immutable)
+      // Cache static assets at the CDN edge for 1 year (immutable) — only in production
       source: "/_next/static/(.*)",
-      headers: [
-        {
-          key: "Cache-Control",
-          value: "public, max-age=31536000, immutable",
-        },
-        {
-          key: "CDN-Cache-Control",
-          value: "public, max-age=31536000, immutable",
-        },
-      ],
+      headers:
+        process.env.NODE_ENV === "production"
+          ? [
+              {
+                key: "Cache-Control",
+                value: "public, max-age=31536000, immutable",
+              },
+              {
+                key: "CDN-Cache-Control",
+                value: "public, max-age=31536000, immutable",
+              },
+            ]
+          : [
+              {
+                key: "Cache-Control",
+                value: "no-cache, no-store, must-revalidate",
+              },
+            ],
     },
     {
       // Cache optimized images at the CDN edge for 1 day with revalidation

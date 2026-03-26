@@ -28,8 +28,11 @@ async function getClerkToken(): Promise<string | null> {
     // Clerk not loaded yet
   }
 
-  // Dev auth bypass — use a dev token when Clerk is not configured
-  if (process.env.NEXT_PUBLIC_DEV_AUTH_BYPASS === "true") {
+  // Dev auth bypass — read from meta tag to avoid Turbopack compile-time inlining
+  const devBypassMeta = document.querySelector<HTMLMetaElement>(
+    'meta[name="dev-auth-bypass"]'
+  );
+  if (devBypassMeta?.content === "true") {
     return "dev_token_usr_seed_dev001__org_seed_dev001";
   }
 
@@ -55,8 +58,9 @@ export function getSocket(config?: SocketConfig): Socket {
 
   const url =
     config?.url ??
-    process.env.NEXT_PUBLIC_SOCKET_URL ??
-    "http://localhost:4001";
+    (typeof window !== "undefined" && window.location.hostname === "localhost"
+      ? "http://localhost:4001"
+      : (process.env.NEXT_PUBLIC_SOCKET_URL ?? "http://localhost:4001"));
 
   socket = io(url, {
     autoConnect: false,
@@ -166,8 +170,9 @@ export function getNamespaceSocket(
 
   const url =
     config?.url ??
-    process.env.NEXT_PUBLIC_SOCKET_URL ??
-    "http://localhost:4001";
+    (typeof window !== "undefined" && window.location.hostname === "localhost"
+      ? "http://localhost:4001"
+      : (process.env.NEXT_PUBLIC_SOCKET_URL ?? "http://localhost:4001"));
 
   const nsSocket = io(`${url}${namespace}`, {
     autoConnect: false,

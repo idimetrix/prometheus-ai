@@ -105,11 +105,18 @@ export function useOptimisticMessage() {
       subscribe("message_confirmed", onConfirm);
       subscribe("message_rejected", onReject);
 
+      // Auto-cleanup stale subscriptions after 30 seconds
+      const cleanupTimer = setTimeout(() => {
+        unsubscribe("message_confirmed", onConfirm);
+        unsubscribe("message_rejected", onReject);
+      }, 30_000);
+
       // 4. Actually send
       try {
         await sendFn(messageId);
       } catch {
         // Network failure — reject immediately
+        clearTimeout(cleanupTimer);
         optimisticStore.reject(messageId);
         unsubscribe("message_confirmed", onConfirm);
         unsubscribe("message_rejected", onReject);

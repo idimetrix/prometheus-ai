@@ -148,7 +148,12 @@ export default function NewTaskPage() {
   const estimatedCredits = CREDIT_ESTIMATES[mode] ?? 5;
 
   async function handleSubmit() {
-    if (!(prompt.trim() && selectedProjectId)) {
+    if (!selectedProjectId) {
+      toast.error("Please select a project");
+      return;
+    }
+    if (!prompt.trim()) {
+      toast.error("Please describe what you want to build");
       return;
     }
     setIsSubmitting(true);
@@ -180,7 +185,7 @@ export default function NewTaskPage() {
         <span className="mb-2 block font-medium text-sm text-zinc-300">
           Mode
         </span>
-        <div className="grid grid-cols-5 gap-2">
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5">
           {MODES.map((m) => (
             <button
               className={`flex flex-col items-center gap-1.5 rounded-xl border p-3 text-center transition-all ${

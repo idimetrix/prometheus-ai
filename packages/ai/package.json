@@ -18,7 +18,7 @@
     "@ai-sdk/openai": "^3.0.48",
     "@prometheus/logger": "workspace:*",
     "ai": "^6.0.138",
-    "openai": "^6.32.0",
+    "openai": "^6.33.0",
     "zod": "^4.3.6"
   },
   "devDependencies": {

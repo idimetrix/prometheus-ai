@@ -289,7 +289,7 @@ export default function DashboardPage() {
           </div>
           <Link
             className="text-violet-400 text-xs hover:text-violet-300"
-            href="/dashboard/fleet"
+            href={"/dashboard/sessions" as Route}
           >
             View all
           </Link>
@@ -351,14 +351,8 @@ export default function DashboardPage() {
                   </span>
                 </div>
                 <div className="mt-2 font-medium text-sm text-zinc-200 group-hover:text-zinc-100">
-                  {("project" in session &&
-                  session.project &&
-                  typeof session.project === "object" &&
-                  "name" in session.project &&
-                  typeof (session.project as { name: unknown }).name ===
-                    "string"
-                    ? (session.project as { name: string }).name
-                    : null) || "Untitled Session"}
+                  {(session.project as { name?: string } | null)?.name ||
+                    "Untitled Session"}
                 </div>
                 <div className="mt-1 text-xs text-zinc-500">
                   Mode: {session.mode ?? "task"}
