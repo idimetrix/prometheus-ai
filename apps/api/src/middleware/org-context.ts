@@ -15,6 +15,7 @@ const logger = createLogger("api:org-context");
  * requests so that public routes (health, webhooks) still work.
  */
 export function orgContextMiddleware(): MiddlewareHandler {
+  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: auth resolution requires multiple fallback paths
   return async (c: Context, next) => {
     const authHeader = c.req.header("authorization");
     const token = authHeader?.startsWith("Bearer ")
@@ -25,18 +26,39 @@ export function orgContextMiddleware(): MiddlewareHandler {
       try {
         const auth = await getAuthContext(token);
         if (auth?.orgId) {
-          c.set("orgId", auth.orgId);
-
-          // Look up the org's plan tier
-          const org = await db
-            .select({ planTier: organizations.planTier })
+          // Try direct match first, then look up by Clerk org ID
+          let org = await db
+            .select({
+              id: organizations.id,
+              planTier: organizations.planTier,
+            })
             .from(organizations)
             .where(eq(organizations.id, auth.orgId))
             .limit(1)
             .then((rows) => rows[0] ?? null);
 
+          if (!org) {
+            org = await db
+              .select({
+                id: organizations.id,
+                planTier: organizations.planTier,
+              })
+              .from(organizations)
+              .where(eq(organizations.clerkOrgId, auth.orgId))
+              .limit(1)
+              .then((rows) => rows[0] ?? null);
+          }
+
           if (org) {
+            c.set("orgId", org.id);
             c.set("planTier", org.planTier);
+          } else {
+            // Fall back to setting the raw orgId for personal workspace
+            c.set("orgId", auth.orgId);
+          }
+
+          if (auth.orgRole) {
+            c.set("orgRole", auth.orgRole);
           }
         }
       } catch (err) {

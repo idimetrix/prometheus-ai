@@ -1,4 +1,12 @@
-import { index, integer, pgTable, real, text } from "drizzle-orm/pg-core";
+import {
+  boolean,
+  index,
+  integer,
+  pgTable,
+  real,
+  text,
+  uniqueIndex,
+} from "drizzle-orm/pg-core";
 import {
   agentAggressivenessEnum,
   blueprintEnforcementEnum,
@@ -22,11 +30,22 @@ export const projects = pgTable(
     repoUrl: text("repo_url"),
     techStackPreset: text("tech_stack_preset"),
     status: projectStatusEnum("status").notNull().default("setup"),
+    /** URL-safe slug for public sharing (null = private) */
+    shareSlug: text("share_slug"),
+    /** Whether the project is publicly visible */
+    isPublic: boolean("is_public").notNull().default(false),
+    /** ID of the project this was forked from */
+    forkedFromId: text("forked_from_id"),
+    /** Number of times this project has been forked */
+    forkCount: integer("fork_count").notNull().default(0),
     ...timestamps,
   },
   (table) => [
     index("projects_org_id_status_idx").on(table.orgId, table.status),
     index("projects_org_id_idx").on(table.orgId),
+    uniqueIndex("projects_share_slug_idx").on(table.shareSlug),
+    index("projects_is_public_idx").on(table.isPublic),
+    index("projects_forked_from_id_idx").on(table.forkedFromId),
   ]
 );
 

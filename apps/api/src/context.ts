@@ -1,7 +1,7 @@
 import type { AuthContext } from "@prometheus/auth";
 import { getAuthContext } from "@prometheus/auth";
 import type { Database } from "@prometheus/db";
-import { db, users } from "@prometheus/db";
+import { db, organizations, users } from "@prometheus/db";
 import { createLogger } from "@prometheus/logger";
 import { generateId } from "@prometheus/utils";
 import type { FetchCreateContextFnOptions } from "@trpc/server/adapters/fetch";
@@ -21,6 +21,40 @@ export interface ProtectedContext {
   auth: AuthContext;
   db: Database;
   orgId: string;
+}
+
+/**
+ * Resolve a Clerk org ID (from JWT) to our internal org ID.
+ * Clerk JWTs contain org_id like "org_xxxxx" which is the Clerk-side ID.
+ * We need to translate this to our internal org ID.
+ *
+ * If the orgId already matches an internal org (e.g. from dev auth bypass),
+ * it is returned as-is.
+ */
+async function resolveOrgId(clerkOrgId: string): Promise<string | null> {
+  // First check if it already matches an internal org (dev auth / seeded data)
+  const directMatch = await db.query.organizations.findFirst({
+    where: eq(organizations.id, clerkOrgId),
+    columns: { id: true },
+  });
+  if (directMatch) {
+    return directMatch.id;
+  }
+
+  // Look up by Clerk org ID
+  const org = await db.query.organizations.findFirst({
+    where: eq(organizations.clerkOrgId, clerkOrgId),
+    columns: { id: true },
+  });
+  if (org) {
+    return org.id;
+  }
+
+  logger.debug(
+    { clerkOrgId },
+    "Could not resolve Clerk org ID to internal org"
+  );
+  return null;
 }
 
 export async function createContext(
@@ -49,6 +83,15 @@ export async function createContext(
     process.env.DEV_AUTH_BYPASS === "true" && token.startsWith("dev_token_");
   if (isDevAuth) {
     return { auth, db, apiKeyId: null };
+  }
+
+  // Resolve Clerk org ID -> internal org ID
+  if (auth.orgId) {
+    const internalOrgId = await resolveOrgId(auth.orgId);
+    if (internalOrgId) {
+      auth.orgId = internalOrgId;
+    }
+    // If resolution fails, keep the original — it may be a personal workspace
   }
 
   // Auto-create or sync user record in DB.

@@ -107,23 +107,64 @@ describe("TaskRouter.routeTask", () => {
 - Do NOT write snapshot tests for dynamic data (timestamps, IDs).
 - Do NOT assert on console output — assert on return values and side effects.
 
-## Tool Usage Examples
+## Tool Usage
 
-### Running Tests
+You have access to the following tools. Always use the exact JSON format shown below for tool calls.
+
+### Available Tools
+| Tool | Purpose | Permission |
+|------|---------|------------|
+| \`file_read\` | Read file contents (optionally line range) | read |
+| \`file_write\` | Write content to a file (creates dirs) | write |
+| \`file_edit\` | Replace exact string in a file | write |
+| \`file_list\` | List files in a directory (glob pattern) | read |
+| \`search_content\` | Search for regex pattern across codebase | read |
+| \`search_files\` | Find files by glob pattern | read |
+| \`terminal_exec\` | Execute a shell command | execute |
+
+### Tool Call Format
+
+#### Reading the implementation under test:
 \`\`\`json
 {
-  "tool": "runCommand",
+  "tool": "file_read",
+  "args": { "path": "apps/api/src/routers/sessions.ts" }
+}
+\`\`\`
+
+#### Writing a test file:
+\`\`\`json
+{
+  "tool": "file_write",
+  "args": {
+    "path": "apps/api/src/routers/__tests__/sessions.test.ts",
+    "content": "import { describe, expect, it } from \\"vitest\\";\\n// test content..."
+  }
+}
+\`\`\`
+
+#### Running tests:
+\`\`\`json
+{
+  "tool": "terminal_exec",
   "args": { "command": "pnpm test --filter=@prometheus/api -- --run" }
 }
 \`\`\`
 
-### Reading Implementation to Extract Spec
+#### Finding existing test patterns:
 \`\`\`json
 {
-  "tool": "readFile",
-  "args": { "path": "apps/api/src/routers/sessions.ts" }
+  "tool": "search_files",
+  "args": { "pattern": "*.test.ts", "path": "apps/api/src" }
 }
 \`\`\`
+
+### Constraints
+- ALWAYS read the implementation before writing tests — never write tests blind.
+- ALWAYS run tests after writing them to confirm they pass.
+- If tests fail, read the FULL error output before attempting to fix.
+- NEVER delete or skip failing tests to make CI pass.
+- Prefer \`file_edit\` over \`file_write\` when modifying existing test files.
 
 ## Few-Shot Examples
 

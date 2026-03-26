@@ -10,6 +10,7 @@ import {
 import {
   installShutdownHandlers,
   isProcessShuttingDown,
+  registerShutdownHandler,
 } from "@prometheus/utils";
 import { Hono, type Context as HonoContext } from "hono";
 import { cors } from "hono/cors";
@@ -232,6 +233,7 @@ function handleMockRoute(
 // ─── Slot-Based Route (Primary API) ─────────────────────────────
 
 app.post("/route", async (c) => {
+  const routeStartMs = performance.now();
   try {
     const body = await c.req.json();
     const { slot, messages, stream: wantsStream, maxTokens } = body;
@@ -333,6 +335,9 @@ app.post("/route", async (c) => {
     const result = await requestCoalescer.coalesce(promptKey, () =>
       routerService.route({ slot, messages, options })
     );
+    const modelLatencyMs = Math.round(performance.now() - routeStartMs);
+    c.header("X-Model-Latency", `${modelLatencyMs}ms`);
+    c.header("X-Response-Time", `${modelLatencyMs}ms`);
     return c.json(result);
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);
@@ -386,12 +391,19 @@ app.post("/v1/embeddings", async (c) => {
 // ─── Legacy Completions Endpoint ────────────────────────────────
 
 app.post("/v1/chat/completions", async (c) => {
+  const completionStartMs = performance.now();
   try {
     const body = await c.req.json();
+    const messages = body.messages ?? [];
+    const wantsStream = body.stream === true;
 
     // Mock mode for legacy completions endpoint
     if (isMockLLMEnabled()) {
-      const messages = body.messages ?? [];
+      if (wantsStream) {
+        return handleMockRoute(c, "default", messages, true, {
+          tools: body.tools,
+        });
+      }
       const result = mockRoute({
         slot: "default",
         messages,
@@ -406,12 +418,112 @@ app.post("/v1/chat/completions", async (c) => {
       });
     }
 
+    // Streaming response (SSE format, OpenAI-compatible)
+    if (wantsStream) {
+      return streamSSE(c, async (sseStream) => {
+        try {
+          const streamResult = await routerService.routeCompletionStream(body);
+
+          for await (const chunk of streamResult.stream) {
+            await sseStream.writeSSE({
+              data: JSON.stringify({
+                id: streamResult.id,
+                object: "chat.completion.chunk",
+                model: streamResult.model,
+                provider: streamResult.provider,
+                choices: [
+                  {
+                    index: 0,
+                    delta: { content: chunk.content },
+                    finish_reason: chunk.finishReason,
+                  },
+                ],
+              }),
+            });
+          }
+
+          // Send final usage event
+          const done = await streamResult.done;
+          await sseStream.writeSSE({
+            data: JSON.stringify({
+              id: streamResult.id,
+              object: "chat.completion.chunk",
+              model: streamResult.model,
+              provider: streamResult.provider,
+              choices: [{ index: 0, delta: {}, finish_reason: "stop" }],
+              usage: done.usage,
+            }),
+          });
+
+          await sseStream.writeSSE({ data: "[DONE]" });
+        } catch (error) {
+          const msg = error instanceof Error ? error.message : String(error);
+          logger.error({ error: msg }, "Streaming completion request failed");
+          await sseStream.writeSSE({ data: JSON.stringify({ error: msg }) });
+        }
+      });
+    }
+
+    // Non-streaming response
     const result = await routerService.routeCompletion(body);
+    const modelLatencyMs = Math.round(performance.now() - completionStartMs);
+    c.header("X-Model-Latency", `${modelLatencyMs}ms`);
+    c.header("X-Response-Time", `${modelLatencyMs}ms`);
     return c.json(result);
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);
     logger.error({ error: msg }, "Completion request failed");
     return c.json({ error: "Internal server error" }, 500);
+  }
+});
+
+// ─── Test Endpoint ──────────────────────────────────────────────
+
+/**
+ * POST /v1/test - Quick connectivity test that sends a simple prompt to the
+ * configured model chain and verifies we get a response. Returns which
+ * provider/model actually responded so operators can confirm end-to-end
+ * connectivity without constructing a full request.
+ */
+app.post("/v1/test", async (c) => {
+  try {
+    // Mock mode — return immediately
+    if (isMockLLMEnabled()) {
+      return c.json({
+        ok: true,
+        response: "OK",
+        provider: "mock",
+        model: "mock/test",
+        latencyMs: 0,
+      });
+    }
+
+    const body = await c.req.json().catch(() => ({}));
+    const slot = (body as Record<string, unknown>).slot as string | undefined;
+
+    const startMs = Date.now();
+    const result = await routerService.route({
+      slot: slot ?? "default",
+      messages: [{ role: "user", content: "Hello, respond with just 'OK'" }],
+      options: { maxTokens: 16, temperature: 0 },
+    });
+
+    const latencyMs = Date.now() - startMs;
+    const content = result.choices[0]?.message?.content ?? "";
+
+    return c.json({
+      ok: true,
+      response: content.trim(),
+      provider: result.provider,
+      model: result.model,
+      slot: result.slot,
+      latencyMs,
+      usage: result.usage,
+    });
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    logger.error({ error: msg }, "Test endpoint failed");
+    return c.json({ ok: false, error: msg }, 500);
   }
 });
 
@@ -660,6 +772,20 @@ app.get("/metrics", async (c) => {
   return c.text(await metricsRegistry.render(), 200, {
     "Content-Type": "text/plain; charset=utf-8",
   });
+});
+
+// ─── Graceful Shutdown ───────────────────────────────────────────
+
+registerShutdownHandler("model-router", async () => {
+  logger.info("Model router shutting down...");
+  // Close Redis connection used by rate limiter
+  try {
+    const { redis } = await import("@prometheus/queue");
+    await redis.quit();
+  } catch {
+    // Best-effort cleanup
+  }
+  logger.info("Model router shutdown complete");
 });
 
 // ─── Start Server ───────────────────────────────────────────────

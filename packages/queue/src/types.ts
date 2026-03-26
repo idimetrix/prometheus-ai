@@ -222,6 +222,10 @@ export interface WebhookDeliveryData {
 
 /** setup-project-environment: Auto-detect stack, install deps, verify build */
 export interface SetupProjectEnvironmentData {
+  /** Git hosting provider (default: github.com) */
+  gitHost?: string;
+  /** Encrypted GitHub OAuth token for private repo access and push/PR creation */
+  gitToken?: string;
   orgId: string;
   projectId: string;
   /** Optional override for the repo clone URL */

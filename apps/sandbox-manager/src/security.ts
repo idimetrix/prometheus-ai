@@ -30,6 +30,7 @@ const COMMAND_ALLOWLIST = new Set([
   "head",
   "tail",
   "mkdir",
+  "rm",
   "cp",
   "mv",
   "touch",

@@ -723,6 +723,24 @@ app.onError((err, c) => {
   return c.json({ error: "Internal server error" }, 500);
 });
 
+// ---- Graceful Shutdown ----
+
+{
+  const { registerShutdownHandler: register } = await import(
+    "@prometheus/utils"
+  );
+  register("project-brain", async () => {
+    logger.info("Project Brain shutting down...");
+    try {
+      const { redis } = await import("@prometheus/queue");
+      await redis.quit();
+    } catch {
+      // Best-effort cleanup
+    }
+    logger.info("Project Brain shutdown complete");
+  });
+}
+
 // ---- Start server ----
 
 const port = Number(process.env.PROJECT_BRAIN_PORT ?? 4003);

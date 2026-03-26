@@ -189,6 +189,45 @@ function getInstallCommand(packageManager: string): string {
 // Main processor
 // ---------------------------------------------------------------------------
 
+async function setupGitAuth(
+  sandboxId: string,
+  projectId: string,
+  token: string,
+  host?: string
+): Promise<boolean> {
+  try {
+    const response = await fetch(
+      `${SANDBOX_MANAGER_URL}/sandbox/${sandboxId}/git`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          operation: "setupAuth",
+          token,
+          host: host ?? "github.com",
+        }),
+        signal: AbortSignal.timeout(15_000),
+      }
+    );
+
+    if (!response.ok) {
+      const text = await response.text();
+      logger.error(
+        { projectId, sandboxId, error: text },
+        "Git auth setup failed"
+      );
+      return false;
+    }
+
+    const result = (await response.json()) as { success: boolean };
+    return result.success;
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    logger.error({ projectId, sandboxId, error: msg }, "Git auth setup threw");
+    return false;
+  }
+}
+
 export async function processSetupEnvironment(
   data: SetupProjectEnvironmentData,
   onProgress?: (progress: Record<string, unknown>) => void
@@ -204,6 +243,24 @@ export async function processSetupEnvironment(
     buildVerified: false,
     techStack: null,
   };
+
+  // ---- Step 0: Configure git authentication if token provided ----
+  if (data.gitToken) {
+    onProgress?.({ step: "git_auth", status: "running" });
+    const authOk = await setupGitAuth(
+      sandboxId,
+      projectId,
+      data.gitToken,
+      data.gitHost
+    );
+    onProgress?.({
+      step: "git_auth",
+      status: authOk ? "complete" : "failed",
+    });
+    if (authOk) {
+      logger.info({ projectId, sandboxId }, "Git authentication configured");
+    }
+  }
 
   // ---- Step 1: Detect tech stack ----
   onProgress?.({ step: "detect_stack", status: "running" });

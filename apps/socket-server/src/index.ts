@@ -24,6 +24,10 @@ import { setupNotificationNamespace } from "./namespaces/notifications";
 import { setupSessionNamespace } from "./namespaces/sessions";
 import { mountYjsServer } from "./yjs-server";
 
+// Top-level regex for HTTP API route matching (lint: useTopLevelRegex)
+const EVENTS_ROUTE_RE = /^\/api\/sessions\/([^/]+)\/events$/;
+const EVENTS_BATCH_ROUTE_RE = /^\/api\/sessions\/([^/]+)\/events\/batch$/;
+
 await initTelemetry({ serviceName: "socket-server" });
 initSentry({ serviceName: "socket-server" });
 installShutdownHandlers();
@@ -97,6 +101,125 @@ const httpServer = createServer((req, res) => {
         res.writeHead(500);
         res.end("Failed to render metrics");
       });
+    return;
+  }
+
+  // ---- Internal HTTP API for event ingestion from orchestrator/services ----
+  // POST /api/sessions/:sessionId/events — publish event to session room
+  const eventsMatch = req.url?.match(EVENTS_ROUTE_RE);
+  if (eventsMatch && req.method === "POST") {
+    const internalSecret = process.env.INTERNAL_SERVICE_SECRET;
+    if (internalSecret && req.headers["x-internal-secret"] !== internalSecret) {
+      res.writeHead(403, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "Forbidden" }));
+      return;
+    }
+
+    let body = "";
+    req.on("data", (chunk: Buffer) => {
+      body += chunk.toString();
+    });
+    req.on("end", () => {
+      try {
+        const sessionId = eventsMatch[1] as string;
+        const event = JSON.parse(body) as {
+          type?: string;
+          data?: Record<string, unknown>;
+        };
+
+        if (!event.type) {
+          res.writeHead(400, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: "Missing 'type' field" }));
+          return;
+        }
+
+        const eventData = event.data ?? {};
+        const sessionsNs = io.of("/sessions");
+
+        // Emit to session room via Socket.io
+        sessionsNs.to(`session:${sessionId}`).emit(event.type, eventData);
+
+        // Also emit generic session_event for unified listeners
+        sessionsNs.to(`session:${sessionId}`).emit("session_event", {
+          type: event.type,
+          data: eventData,
+          timestamp:
+            (eventData.timestamp as string) ?? new Date().toISOString(),
+        });
+
+        logger.debug(
+          { sessionId, eventType: event.type },
+          "Event ingested via HTTP API"
+        );
+
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ ok: true }));
+      } catch (error) {
+        const msg = error instanceof Error ? error.message : String(error);
+        logger.error({ error: msg }, "Failed to ingest event via HTTP");
+        res.writeHead(500, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "Internal server error" }));
+      }
+    });
+    return;
+  }
+
+  // POST /api/sessions/:sessionId/events/batch — publish batch of events
+  const batchMatch = req.url?.match(EVENTS_BATCH_ROUTE_RE);
+  if (batchMatch && req.method === "POST") {
+    const internalSecret = process.env.INTERNAL_SERVICE_SECRET;
+    if (internalSecret && req.headers["x-internal-secret"] !== internalSecret) {
+      res.writeHead(403, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "Forbidden" }));
+      return;
+    }
+
+    let body = "";
+    req.on("data", (chunk: Buffer) => {
+      body += chunk.toString();
+    });
+    req.on("end", () => {
+      try {
+        const sessionId = batchMatch[1] as string;
+        const parsed = JSON.parse(body) as {
+          events?: Array<{
+            type: string;
+            data: Record<string, unknown>;
+          }>;
+        };
+
+        if (!Array.isArray(parsed.events) || parsed.events.length === 0) {
+          res.writeHead(400, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: "Missing or empty 'events' array" }));
+          return;
+        }
+
+        const sessionsNs = io.of("/sessions");
+        for (const evt of parsed.events) {
+          const eventData = evt.data ?? {};
+          sessionsNs.to(`session:${sessionId}`).emit(evt.type, eventData);
+          sessionsNs.to(`session:${sessionId}`).emit("session_event", {
+            type: evt.type,
+            data: eventData,
+            timestamp:
+              (eventData.timestamp as string) ?? new Date().toISOString(),
+          });
+        }
+
+        logger.debug(
+          { sessionId, count: parsed.events.length },
+          "Batch events ingested via HTTP API"
+        );
+
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ ok: true, published: parsed.events.length }));
+      } catch (error) {
+        const msg = error instanceof Error ? error.message : String(error);
+        logger.error({ error: msg }, "Failed to ingest batch events via HTTP");
+        res.writeHead(500, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "Internal server error" }));
+      }
+    });
     return;
   }
 });

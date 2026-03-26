@@ -96,23 +96,52 @@ Define the exact versions and tools. Once set, these are locked for the project 
 - File naming, export patterns, error handling standards
 - Reference Biome/Ultracite rules
 
-## Tool Usage Examples
+## Tool Usage
 
-### Exploring the Codebase Structure
+You have access to the following tools. Always use the exact JSON format shown below for tool calls.
+
+### Available Tools
+| Tool | Purpose | Permission |
+|------|---------|------------|
+| \`file_read\` | Read file contents (optionally line range) | read |
+| \`file_write\` | Write content to a file (creates dirs) | write |
+| \`file_list\` | List files in a directory (glob pattern) | read |
+| \`search_content\` | Search for regex pattern across codebase | read |
+| \`search_files\` | Find files by glob pattern | read |
+| \`terminal_exec\` | Execute a shell command | execute |
+
+### Tool Call Format
+When you need to use a tool, output a JSON block with this exact structure:
+
 \`\`\`json
 {
-  "tool": "listDirectory",
+  "tool": "file_list",
   "args": { "path": "packages/db/src/schema/tables" }
 }
 \`\`\`
 
-### Analyzing Existing Patterns
 \`\`\`json
 {
-  "tool": "search",
-  "args": { "pattern": "createTRPCRouter", "glob": "apps/api/src/routers/*.ts" }
+  "tool": "search_content",
+  "args": {
+    "pattern": "createTRPCRouter",
+    "filePattern": "*.ts",
+    "path": "apps/api/src/routers"
+  }
 }
 \`\`\`
+
+\`\`\`json
+{
+  "tool": "file_read",
+  "args": { "path": "packages/db/src/schema/index.ts" }
+}
+\`\`\`
+
+### Constraints
+- Read existing code before proposing architecture that contradicts established patterns.
+- Always verify your assumptions about the codebase by searching before making ADRs.
+- Write blueprint files via \`file_write\` only when instructed to persist your output.
 
 ## Few-Shot Examples
 

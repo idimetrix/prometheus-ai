@@ -39,6 +39,7 @@ import {
 } from "./middleware";
 import { generateOpenAPISpec } from "./openapi";
 import { appRouter } from "./routers";
+import { fastPathsApp } from "./routes/fast-paths";
 import { bitbucketOAuthApp } from "./routes/oauth/bitbucket";
 import { githubOAuthApp } from "./routes/oauth/github";
 import { gitlabOAuthApp } from "./routes/oauth/gitlab";
@@ -101,6 +102,9 @@ app.use("/*", async (c, next) => {
       .labels({ error_type: "http_5xx", severity: "error" })
       .inc();
   }
+
+  // Add X-Response-Time header to all responses for latency observability
+  c.res.headers.set("X-Response-Time", `${Math.round(durationMs)}ms`);
 });
 
 // ---------------------------------------------------------------------------
@@ -123,6 +127,10 @@ app.use(
       "X-RateLimit-Limit",
       "X-RateLimit-Remaining",
       "X-RateLimit-Reset",
+      "X-Response-Time",
+      "X-Model-Latency",
+      "X-Queue-Wait",
+      "X-Cache",
     ],
     credentials: true,
     maxAge: 600, // Cache preflight for 10 minutes
@@ -292,6 +300,11 @@ app.get("/docs", (c) => {
 // REST API v1 — public API for headless/automation use
 // ---------------------------------------------------------------------------
 app.route("/api/v1", v1App);
+
+// ---------------------------------------------------------------------------
+// Fast paths — direct LLM chat and quick actions (bypass queue/orchestrator)
+// ---------------------------------------------------------------------------
+app.route("/api", fastPathsApp);
 
 // ---------------------------------------------------------------------------
 // SSE endpoint

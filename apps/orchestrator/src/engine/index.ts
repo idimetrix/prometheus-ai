@@ -65,5 +65,20 @@ export type {
   RecoveryStrategyType,
 } from "./recovery-strategy";
 export { RecoveryStrategy } from "./recovery-strategy";
+export type {
+  AgentFileChangePayload,
+  AgentProgressPayload,
+  AgentStreamingEventType,
+  AgentTerminalPayload,
+  AgentThinkingPayload,
+  SessionCheckpointPayload,
+  SessionErrorPayload,
+  TaskCompletePayload,
+  TaskCreatedPayload,
+} from "./session-event-emitter";
+export {
+  mapExecutionEventToStreamingEvent,
+  SessionEventEmitter,
+} from "./session-event-emitter";
 export type { ApprovalResult, ApprovalTier } from "./tool-approval";
 export { ToolApprovalGate } from "./tool-approval";

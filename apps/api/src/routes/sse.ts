@@ -38,6 +38,17 @@ const VALID_EVENT_TYPES = new Set([
   "queue_position",
   "tool_call",
   "tool_result",
+  // Canonical agent streaming events (GAP-P0-08)
+  "agent:thinking",
+  "agent:terminal",
+  "agent:file-change",
+  "agent:progress",
+  "task:complete",
+  "task:created",
+  "session:checkpoint",
+  "session:error",
+  "human_input_request",
+  "human_input_resolved",
 ]);
 
 /**
@@ -109,7 +120,9 @@ sseApp.get("/sessions/:sessionId/stream", async (c) => {
   // --- Redis subscriber (dedicated connection for SUBSCRIBE mode) ---
   const subscriber = createRedisConnection();
   const channel = `session:${sessionId}:events`;
-  const lastEventId = c.req.query("lastEventId");
+  // Support Last-Event-ID header (standard SSE reconnection) and query param
+  const lastEventId =
+    c.req.header("last-event-id") ?? c.req.query("lastEventId");
 
   return c.newResponse(
     new ReadableStream({
@@ -156,14 +169,14 @@ sseApp.get("/sessions/:sessionId/stream", async (c) => {
             });
         }
 
-        // Heartbeat every 10 seconds to keep connection alive.
+        // Heartbeat every 15 seconds to keep connection alive.
         // Sent as a named event so the client EventSource can listen via
         // addEventListener("heartbeat", ...) for timeout detection.
         const heartbeatInterval = setInterval(() => {
           enqueue(
             `event: heartbeat\ndata: ${JSON.stringify({ ts: Date.now() })}\n\n`
           );
-        }, 10_000);
+        }, 15_000);
 
         // Subscribe to session events for live updates
         subscriber.subscribe(channel, (err) => {
@@ -178,16 +191,24 @@ sseApp.get("/sessions/:sessionId/stream", async (c) => {
           }
         });
 
+        // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: SSE event routing requires handling many event types
         subscriber.on("message", (_ch: string, message: string) => {
           try {
             const event = JSON.parse(message) as {
               type?: string;
               data?: Record<string, unknown>;
               id?: string;
+              sequence?: number;
+              agentRole?: string;
               [key: string]: unknown;
             };
 
             const eventType = event.type ?? "message";
+            const eventData = event.data ?? event;
+            const seqId = event.sequence
+              ? String(event.sequence)
+              : (event.id ?? "");
+            const idField = seqId ? `id: ${seqId}\n` : "";
 
             // Only forward recognized event types (plus generic "message")
             if (eventType !== "message" && !VALID_EVENT_TYPES.has(eventType)) {
@@ -197,9 +218,45 @@ sseApp.get("/sessions/:sessionId/stream", async (c) => {
               );
             }
 
-            const data = JSON.stringify(event.data ?? event);
-            const idField = event.id ? `id: ${event.id}\n` : "";
+            const data = JSON.stringify(eventData);
+
+            // Emit the raw event
             enqueue(`${idField}event: ${eventType}\ndata: ${data}\n\n`);
+
+            // Also emit canonical agent streaming events for new UI consumers
+            switch (eventType) {
+              case "agent_output": {
+                if (
+                  typeof eventData === "object" &&
+                  eventData !== null &&
+                  (eventData as Record<string, unknown>).streaming
+                ) {
+                  enqueue(`${idField}event: agent:thinking\ndata: ${data}\n\n`);
+                }
+                break;
+              }
+              case "terminal_output":
+                enqueue(`${idField}event: agent:terminal\ndata: ${data}\n\n`);
+                break;
+              case "file_change":
+                enqueue(
+                  `${idField}event: agent:file-change\ndata: ${data}\n\n`
+                );
+                break;
+              case "session_complete":
+                enqueue(`${idField}event: task:complete\ndata: ${data}\n\n`);
+                break;
+              case "checkpoint":
+                enqueue(
+                  `${idField}event: session:checkpoint\ndata: ${data}\n\n`
+                );
+                break;
+              case "error":
+                enqueue(`${idField}event: session:error\ndata: ${data}\n\n`);
+                break;
+              default:
+                break;
+            }
           } catch (error) {
             logger.error({ sessionId, error }, "SSE message parse error");
           }

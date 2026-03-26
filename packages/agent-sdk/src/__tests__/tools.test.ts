@@ -57,8 +57,8 @@ describe("TOOL_REGISTRY", () => {
     }
   });
 
-  it("should have 45 total tools", () => {
-    // 5 file + 2 terminal + 7 git (incl git_clone) + 3 search + 2 browser + 5 agent meta + 5 lsp + 4 ast-grep + 2 semgrep + 1 zoekt + 1 openhands-edit + 2 browser-automation + 1 sandbox-rollback + 5 env-setup = 45
-    expect(Object.keys(TOOL_REGISTRY)).toHaveLength(45);
+  it("should have correct total tools", () => {
+    // Original 45 + web_search + web_fetch + doc_search + git_add + git_log + git_merge = 51
+    expect(Object.keys(TOOL_REGISTRY)).toHaveLength(51);
   });
 });

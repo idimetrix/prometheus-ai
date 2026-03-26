@@ -261,7 +261,7 @@ app.get("/sandbox/:id/read", async (c) => {
 /**
  * POST /sandbox/:id/git
  * Body: { operation: string, ...params }
- * Operations: clone, createBranch, commit, push, diff, log, currentBranch
+ * Operations: clone, setupAuth, createBranch, checkout, status, add, commit, push, diff, log, currentBranch
  */
 app.post("/sandbox/:id/git", async (c) => {
   const sandboxId = c.req.param("id");
@@ -272,15 +272,21 @@ app.post("/sandbox/:id/git", async (c) => {
       repoUrl?: string;
       branch?: string;
       branchName?: string;
+      ref?: string;
+      create?: boolean;
       message?: string;
       files?: string[];
       authorName?: string;
       authorEmail?: string;
       remote?: string;
       force?: boolean;
+      setUpstream?: boolean;
       staged?: boolean;
       maxCount?: number;
       depth?: number;
+      token?: string;
+      host?: string;
+      username?: string;
     }>();
 
     if (!body.operation) {
@@ -296,6 +302,19 @@ app.post("/sandbox/:id/git", async (c) => {
           repoUrl: body.repoUrl,
           branch: body.branch,
           depth: body.depth,
+          token: body.token,
+        });
+        return c.json(result);
+      }
+
+      case "setupAuth": {
+        if (!body.token) {
+          return c.json({ error: "token is required for setupAuth" }, 400);
+        }
+        const result = await gitOps.setupAuth(sandboxId, {
+          token: body.token,
+          host: body.host,
+          username: body.username,
         });
         return c.json(result);
       }
@@ -308,6 +327,29 @@ app.post("/sandbox/:id/git", async (c) => {
           );
         }
         const result = await gitOps.createBranch(sandboxId, body.branchName);
+        return c.json(result);
+      }
+
+      case "checkout": {
+        if (!body.ref) {
+          return c.json({ error: "ref is required for checkout" }, 400);
+        }
+        const result = await gitOps.checkout(sandboxId, body.ref, {
+          create: body.create,
+        });
+        return c.json(result);
+      }
+
+      case "status": {
+        const result = await gitOps.status(sandboxId);
+        return c.json(result);
+      }
+
+      case "add": {
+        if (!body.files || body.files.length === 0) {
+          return c.json({ error: "files is required for add" }, 400);
+        }
+        const result = await gitOps.add(sandboxId, body.files);
         return c.json(result);
       }
 
@@ -328,6 +370,7 @@ app.post("/sandbox/:id/git", async (c) => {
         const result = await gitOps.push(sandboxId, {
           remote: body.remote,
           force: body.force,
+          setUpstream: body.setUpstream,
         });
         return c.json(result);
       }
@@ -356,6 +399,178 @@ app.post("/sandbox/:id/git", async (c) => {
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);
     logger.error({ sandboxId, error: msg }, "Git operation failed");
+    return c.json({ error: msg }, 500);
+  }
+});
+
+// ---- File Operations (REST API) ----
+
+/**
+ * POST /api/sandboxes/:id/files/read
+ * Body: { path: string }
+ */
+app.post("/api/sandboxes/:id/files/read", async (c) => {
+  const sandboxId = c.req.param("id");
+
+  try {
+    const body = await c.req.json<{ path: string }>();
+
+    if (!body.path) {
+      return c.json({ error: "path is required" }, 400);
+    }
+
+    const content = await containerManager.readFile(sandboxId, body.path);
+    return c.json({ path: body.path, content });
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    logger.error({ sandboxId, error: msg }, "File read failed");
+
+    if (msg.includes("ENOENT") || msg.includes("no such file")) {
+      return c.json({ error: "File not found" }, 404);
+    }
+    return c.json({ error: msg }, 500);
+  }
+});
+
+/**
+ * POST /api/sandboxes/:id/files/write
+ * Body: { path: string, content: string }
+ */
+app.post("/api/sandboxes/:id/files/write", async (c) => {
+  const sandboxId = c.req.param("id");
+
+  try {
+    const body = await c.req.json<{ path: string; content: string }>();
+
+    if (!body.path) {
+      return c.json({ error: "path is required" }, 400);
+    }
+    if (typeof body.content !== "string") {
+      return c.json({ error: "content must be a string" }, 400);
+    }
+
+    await containerManager.writeFile(sandboxId, body.path, body.content);
+    return c.json({ success: true, path: body.path });
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    logger.error({ sandboxId, error: msg }, "File write failed");
+    return c.json({ error: msg }, 500);
+  }
+});
+
+/**
+ * POST /api/sandboxes/:id/files/list
+ * Body: { path?: string }
+ */
+app.post("/api/sandboxes/:id/files/list", async (c) => {
+  const sandboxId = c.req.param("id");
+
+  try {
+    const body = await c.req
+      .json<{ path?: string }>()
+      .catch(() => ({ path: undefined }));
+    const dirPath = body.path ?? ".";
+
+    const files = await containerManager.listFiles(sandboxId, dirPath);
+    return c.json({ path: dirPath, files });
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    logger.error({ sandboxId, error: msg }, "File list failed");
+
+    if (msg.includes("ENOENT") || msg.includes("no such file")) {
+      return c.json({ error: "Directory not found" }, 404);
+    }
+    return c.json({ error: msg }, 500);
+  }
+});
+
+/**
+ * POST /api/sandboxes/:id/files/create
+ * Body: { path: string, content?: string }
+ */
+app.post("/api/sandboxes/:id/files/create", async (c) => {
+  const sandboxId = c.req.param("id");
+
+  try {
+    const body = await c.req.json<{ path: string; content?: string }>();
+
+    if (!body.path) {
+      return c.json({ error: "path is required" }, 400);
+    }
+
+    await containerManager.writeFile(sandboxId, body.path, body.content ?? "");
+    return c.json({ success: true, path: body.path }, 201);
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    logger.error({ sandboxId, error: msg }, "File create failed");
+    return c.json({ error: msg }, 500);
+  }
+});
+
+/**
+ * POST /api/sandboxes/:id/files/delete
+ * Body: { path: string }
+ */
+app.post("/api/sandboxes/:id/files/delete", async (c) => {
+  const sandboxId = c.req.param("id");
+
+  try {
+    const body = await c.req.json<{ path: string }>();
+
+    if (!body.path) {
+      return c.json({ error: "path is required" }, 400);
+    }
+
+    await containerManager.deleteFile(sandboxId, body.path);
+    return c.json({ success: true, path: body.path });
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    logger.error({ sandboxId, error: msg }, "File delete failed");
+
+    if (msg.includes("ENOENT") || msg.includes("no such file")) {
+      return c.json({ error: "File not found" }, 404);
+    }
+    return c.json({ error: msg }, 500);
+  }
+});
+
+// ---- Exec (REST API alias) ----
+
+/**
+ * POST /api/sandboxes/:id/exec
+ * Body: { command: string, timeout?: number }
+ */
+app.post("/api/sandboxes/:id/exec", async (c) => {
+  const sandboxId = c.req.param("id");
+
+  try {
+    const body = await c.req.json<{ command: string; timeout?: number }>();
+
+    if (!body.command) {
+      return c.json({ error: "command is required" }, 400);
+    }
+
+    const timeoutMs = body.timeout ?? 60_000;
+    const timeoutCheck = validateTimeout(timeoutMs);
+    if (!timeoutCheck.valid) {
+      return c.json(
+        {
+          error: `Timeout exceeds maximum (300s). Clamped to ${timeoutCheck.timeout}ms`,
+        },
+        400
+      );
+    }
+
+    const result = await containerManager.exec(
+      sandboxId,
+      body.command,
+      timeoutCheck.timeout
+    );
+
+    return c.json(result);
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    logger.error({ sandboxId, error: msg }, "Exec failed");
     return c.json({ error: msg }, 500);
   }
 });

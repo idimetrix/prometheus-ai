@@ -141,6 +141,19 @@ export class TaskProcessor {
         timestamp: new Date().toISOString(),
       });
 
+      // Emit task progress: calling orchestrator
+      await this.publisher.publishSessionEvent(sessionId, {
+        type: "task_progress",
+        data: {
+          taskId,
+          phase: "orchestrator_call",
+          progress: 20,
+          message: "Sending task to orchestrator",
+          agentRole: agentRole ?? "orchestrator",
+        },
+        timestamp: new Date().toISOString(),
+      });
+
       // Call orchestrator service to process the task
       let result: ProcessResult;
 
@@ -161,13 +174,42 @@ export class TaskProcessor {
           }
         );
         result = mapOrchestratorResponse(response.data);
-      } catch (_fetchError) {
+      } catch (fetchError) {
+        const errMsg =
+          fetchError instanceof Error ? fetchError.message : String(fetchError);
         this.logger.warn(
-          { taskId },
+          { taskId, error: errMsg },
           "Orchestrator unavailable, using fallback processing"
         );
+
+        // Emit progress indicating fallback
+        await this.publisher.publishSessionEvent(sessionId, {
+          type: "task_progress",
+          data: {
+            taskId,
+            phase: "fallback",
+            progress: 30,
+            message: "Orchestrator unavailable, using fallback processing",
+            agentRole: agentRole ?? "orchestrator",
+          },
+          timestamp: new Date().toISOString(),
+        });
+
         result = await this.fallbackProcess(taskData, agentId);
       }
+
+      // Emit task progress: finishing up
+      await this.publisher.publishSessionEvent(sessionId, {
+        type: "task_progress",
+        data: {
+          taskId,
+          phase: "finalizing",
+          progress: 90,
+          message: "Recording results and updating status",
+          agentRole: agentRole ?? "orchestrator",
+        },
+        timestamp: new Date().toISOString(),
+      });
 
       // Update agent status
       await db

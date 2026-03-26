@@ -97,11 +97,21 @@ export {
   verifyServiceRequest,
 } from "./service-auth";
 export {
+  mcpGatewayClient,
   modelRouterClient,
   orchestratorClient,
   projectBrainClient,
+  queueWorkerClient,
   sandboxManagerClient,
+  socketServerClient,
 } from "./service-clients";
+export type { ServiceName } from "./services";
+export {
+  checkServiceLiveness,
+  checkServiceReadiness,
+  servicePorts,
+  services,
+} from "./services";
 export { slugify } from "./slug";
 export { getTraceHeaders } from "./trace-headers";
 export type {

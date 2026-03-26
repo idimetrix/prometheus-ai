@@ -89,6 +89,15 @@ export default function OnboardingPage() {
   const [isLaunching, setIsLaunching] = useState(false);
 
   const currentIdx = STEPS.findIndex((s) => s.key === currentStep);
+  const [orgId, setOrgId] = useState<string | null>(null);
+  const [_isCreatingOrg, setIsCreatingOrg] = useState(false);
+
+  const createOrg = trpc.user.createOrg.useMutation({
+    onError(error) {
+      toast.error(`Failed to create organization: ${error.message}`);
+      setIsCreatingOrg(false);
+    },
+  });
 
   const createProject = trpc.projects.create.useMutation({
     onError(error) {
@@ -102,11 +111,26 @@ export default function OnboardingPage() {
     },
   });
 
-  const handleNext = useCallback(() => {
+  const handleNext = useCallback(async () => {
     // Validate current step before proceeding
     if (currentStep === "org" && !orgName.trim()) {
       toast.error("Please enter an organization name");
       return;
+    }
+
+    // Create the org when leaving the org step
+    if (currentStep === "org" && !orgId) {
+      setIsCreatingOrg(true);
+      try {
+        const org = await createOrg.mutateAsync({ name: orgName.trim() });
+        setOrgId(org.id);
+        toast.success("Organization created!");
+      } catch {
+        // Error handled by mutation callback
+        return;
+      } finally {
+        setIsCreatingOrg(false);
+      }
     }
 
     const nextIdx = currentIdx + 1;
@@ -116,7 +140,7 @@ export default function OnboardingPage() {
         setCurrentStep(nextStep.key);
       }
     }
-  }, [currentIdx, currentStep, orgName]);
+  }, [currentIdx, currentStep, orgName, orgId, createOrg]);
 
   const handleBack = useCallback(() => {
     const prevIdx = currentIdx - 1;

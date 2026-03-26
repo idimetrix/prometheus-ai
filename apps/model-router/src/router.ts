@@ -1,6 +1,5 @@
 import type { ModelProvider } from "@prometheus/ai";
 import {
-  createLLMClient,
   createVercelProvider,
   MODEL_REGISTRY,
   PROVIDER_ENDPOINTS,
@@ -75,6 +74,15 @@ const SLOT_CONFIGS: Record<string, SlotConfig> = {
     fallbacks: ["groq/llama-3.3-70b-versatile"],
     description: "Fastest available model for speculative tool pre-execution",
   },
+  fast: {
+    primary: "cerebras/qwen3-235b",
+    fallbacks: [
+      "groq/llama-3.3-70b-versatile",
+      "ollama/qwen2.5-coder:14b",
+      "ollama/qwen2.5-coder:7b",
+    ],
+    description: "Lowest-latency provider for interactive fast-path operations",
+  },
   embeddings: {
     primary: "voyage/voyage-code-3",
     fallbacks: ["ollama/nomic-embed-text"],
@@ -95,6 +103,7 @@ const SLOT_TEMPERATURES: Record<string, number> = {
   premium: 0.2,
   background: 0.0,
   speculate: 0.0,
+  fast: 0.05,
   longContext: 0.1,
   vision: 0.1,
   embeddings: 0.0,
@@ -257,6 +266,8 @@ const TASK_TYPE_TO_SLOT: Record<string, string> = {
   vision: "vision",
   indexing: "background",
   embedding: "background",
+  "quick-action": "fast",
+  chat: "fast",
 };
 
 /**
@@ -320,21 +331,27 @@ export class ModelRouterService {
       if (!config) {
         throw new Error(`Model not found: ${model}`);
       }
-      const client = createLLMClient({ provider: config.provider });
-      const response = await client.chat.completions.create({
-        model: config.id,
-        messages: messages as Parameters<
-          typeof client.chat.completions.create
-        >[0]["messages"],
-        temperature: 0.1,
-        max_tokens: 4096,
-        stream: false,
+
+      // Use the Vercel AI SDK for all providers (including Anthropic which
+      // does not expose an OpenAI-compatible API). This is the same path
+      // used by tryModel() / tryModelStream().
+      const vercelModel = createVercelProvider({
+        provider: config.provider,
+        modelId: config.id,
       });
-      const choice = response.choices[0];
+      const response = await generateText({
+        model: vercelModel,
+        messages: messages.map((m) => ({
+          role: m.role as "system" | "user" | "assistant",
+          content: m.content,
+        })),
+        temperature: 0.1,
+        maxOutputTokens: 4096,
+      });
       return {
-        content: choice?.message?.content ?? "",
-        inputTokens: response.usage?.prompt_tokens ?? 0,
-        outputTokens: response.usage?.completion_tokens ?? 0,
+        content: response.text,
+        inputTokens: response.usage?.inputTokens ?? 0,
+        outputTokens: response.usage?.outputTokens ?? 0,
       };
     });
   }
@@ -1363,6 +1380,31 @@ export class ModelRouterService {
         total_tokens: result.usage.total_tokens,
       },
     };
+  }
+
+  /**
+   * Streaming variant of routeCompletion for the /v1/chat/completions endpoint.
+   * Maps task_type to a slot and delegates to routeStream().
+   */
+  routeCompletionStream(
+    request: CompletionRequest
+  ): Promise<StreamRouteResult> {
+    const taskType = request.task_type ?? "coding";
+    const slot = TASK_TYPE_TO_SLOT[taskType] ?? "default";
+
+    return this.routeStream({
+      slot,
+      messages: request.messages,
+      options: {
+        model: request.model,
+        tools: request.tools,
+        temperature: request.temperature,
+        maxTokens: request.max_tokens,
+        stream: true,
+        orgId: request.org_id,
+        userApiKeys: request.user_api_keys,
+      },
+    });
   }
 
   /**

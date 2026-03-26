@@ -2,15 +2,38 @@ import { createInterface } from "node:readline";
 import { Command } from "commander";
 import { APIClient } from "../api-client";
 import { resolveConfig } from "../config";
+import { LocalEngine } from "../local/local-engine";
 import { StreamRenderer } from "../renderer/stream-renderer";
 
 export const chatCommand = new Command("chat")
   .description("Interactive chat with Prometheus agents")
   .option("-p, --project <id>", "Project ID")
+  .option("--resume", "Resume the most recent session")
+  .option("--session <id>", "Resume a specific session by ID")
   .option("--api-url <url>", "Prometheus API URL")
   .option("--api-key <key>", "Prometheus API key")
+  .option("--local", "Run locally using direct LLM API calls")
+  .option(
+    "--provider <provider>",
+    "LLM provider for local mode (anthropic, openai, groq, ollama)"
+  )
+  .option("--llm-key <key>", "API key for the LLM provider in local mode")
   .action(
-    async (opts: { apiKey?: string; apiUrl?: string; project?: string }) => {
+    async (opts: {
+      apiKey?: string;
+      apiUrl?: string;
+      llmKey?: string;
+      local?: boolean;
+      project?: string;
+      provider?: string;
+      resume?: boolean;
+      session?: string;
+    }) => {
+      if (opts.local) {
+        runLocalChat(opts);
+        return;
+      }
+
       const config = resolveConfig({
         apiUrl: opts.apiUrl,
         apiKey: opts.apiKey,
@@ -26,19 +49,43 @@ export const chatCommand = new Command("chat")
         process.exit(1);
       }
 
-      // Create a persistent chat session
       let sessionId: string | undefined;
 
-      try {
-        const session = await client.createSession({
-          projectId,
-          mode: "ask",
-        });
-        sessionId = session.id;
-      } catch (error) {
-        const msg = error instanceof Error ? error.message : String(error);
-        console.error(`Error creating session: ${msg}`);
-        process.exit(1);
+      // Resume an existing session
+      if (opts.session) {
+        sessionId = opts.session;
+        console.log(`Resuming session: ${sessionId}`);
+      } else if (opts.resume) {
+        try {
+          const result = await client.listSessions({
+            projectId,
+            status: "active",
+            limit: 1,
+          });
+          if (result.sessions.length > 0) {
+            sessionId = result.sessions[0]?.id;
+            console.log(`Resuming most recent session: ${sessionId}`);
+          } else {
+            console.log("No active sessions found, creating a new one...");
+          }
+        } catch {
+          console.log("Could not fetch sessions, creating a new one...");
+        }
+      }
+
+      // Create a new session if not resuming
+      if (!sessionId) {
+        try {
+          const session = await client.createSession({
+            projectId,
+            mode: "ask",
+          });
+          sessionId = session.id;
+        } catch (error) {
+          const msg = error instanceof Error ? error.message : String(error);
+          console.error(`Error creating session: ${msg}`);
+          process.exit(1);
+        }
       }
 
       console.log("Prometheus AI Chat (type 'exit' to quit)");
@@ -132,3 +179,76 @@ export const chatCommand = new Command("chat")
       });
     }
   );
+
+function runLocalChat(opts: { llmKey?: string; provider?: string }): void {
+  const projectDir = process.cwd();
+
+  const engine = new LocalEngine({
+    provider: opts.provider,
+    apiKey: opts.llmKey,
+    projectDir,
+  });
+
+  console.log("Prometheus Local Chat (type 'exit' to quit)");
+  console.log(`Provider: ${opts.provider ?? "auto-detected"}`);
+  console.log(`Project: ${projectDir}`);
+  console.log("Use '\\' at end of line for multi-line input\n");
+
+  const rl = createInterface({
+    input: process.stdin,
+    output: process.stdout,
+    prompt: "you> ",
+  });
+
+  let multilineBuffer = "";
+  let isMultiline = false;
+
+  rl.prompt();
+
+  rl.on("line", async (line) => {
+    if (line.endsWith("\\")) {
+      multilineBuffer += `${line.slice(0, -1)}\n`;
+      isMultiline = true;
+      process.stdout.write("...> ");
+      return;
+    }
+
+    let input: string;
+    if (isMultiline) {
+      input = (multilineBuffer + line).trim();
+      multilineBuffer = "";
+      isMultiline = false;
+    } else {
+      input = line.trim();
+    }
+
+    if (input === "exit" || input === "quit") {
+      console.log("Goodbye!");
+      rl.close();
+      process.exit(0);
+    }
+
+    if (!input) {
+      rl.prompt();
+      return;
+    }
+
+    try {
+      process.stdout.write("\nagent> ");
+      const stream = engine.chat(input);
+      for await (const chunk of stream) {
+        process.stdout.write(chunk);
+      }
+      console.log("\n");
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      console.error(`\nError: ${msg}\n`);
+    }
+
+    rl.prompt();
+  });
+
+  rl.on("close", () => {
+    process.exit(0);
+  });
+}

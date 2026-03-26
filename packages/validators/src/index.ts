@@ -6,6 +6,7 @@ export * from "./issue-sync";
 export * from "./marketplace";
 export * from "./model-config";
 export * from "./oauth";
+export * from "./playbooks";
 export * from "./pricing";
 export * from "./project";
 export * from "./project-repos";

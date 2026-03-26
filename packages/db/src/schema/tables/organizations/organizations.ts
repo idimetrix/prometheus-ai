@@ -2,14 +2,19 @@ import { index, pgTable, text, timestamp } from "drizzle-orm/pg-core";
 import { orgRoleEnum, planTierEnum } from "../../enums";
 import { timestamps } from "../../helpers";
 
-export const organizations = pgTable("organizations", {
-  id: text("id").primaryKey(),
-  name: text("name").notNull(),
-  slug: text("slug").notNull().unique(),
-  planTier: planTierEnum("plan_tier").notNull().default("hobby"),
-  stripeCustomerId: text("stripe_customer_id").unique(),
-  ...timestamps,
-});
+export const organizations = pgTable(
+  "organizations",
+  {
+    id: text("id").primaryKey(),
+    clerkOrgId: text("clerk_org_id").unique(),
+    name: text("name").notNull(),
+    slug: text("slug").notNull().unique(),
+    planTier: planTierEnum("plan_tier").notNull().default("hobby"),
+    stripeCustomerId: text("stripe_customer_id").unique(),
+    ...timestamps,
+  },
+  (table) => [index("organizations_clerk_org_id_idx").on(table.clerkOrgId)]
+);
 
 export const orgMembers = pgTable(
   "org_members",

@@ -98,7 +98,38 @@ export const projectMemberOutputSchema = z.object({
   email: z.string(),
 });
 
+// ---------- Share / Fork ----------
+export const shareProjectSchema = z.object({
+  projectId: z.string().min(1),
+  slug: z
+    .string()
+    .min(3)
+    .max(60)
+    .regex(
+      /^[a-z0-9][a-z0-9-]*[a-z0-9]$/,
+      "Slug must be lowercase alphanumeric with hyphens, min 3 chars"
+    )
+    .optional(),
+});
+
+export const unshareProjectSchema = z.object({
+  projectId: z.string().min(1),
+});
+
+export const forkProjectSchema = z.object({
+  projectId: z.string().min(1),
+  name: z.string().min(1).max(100).optional(),
+});
+
+export const getSharedProjectSchema = z.object({
+  slug: z.string().min(3).max(60),
+});
+
 // ---------- Types ----------
+export type ShareProjectInput = z.infer<typeof shareProjectSchema>;
+export type UnshareProjectInput = z.infer<typeof unshareProjectSchema>;
+export type ForkProjectInput = z.infer<typeof forkProjectSchema>;
+export type GetSharedProjectInput = z.infer<typeof getSharedProjectSchema>;
 export type CreateProjectInput = z.infer<typeof createProjectSchema>;
 export type UpdateProjectInput = z.infer<typeof updateProjectSchema>;
 export type ProjectSettingsInput = z.infer<typeof projectSettingsSchema>;

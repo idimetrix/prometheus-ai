@@ -67,6 +67,12 @@ const agentTaskDLQ = new Queue("agent-tasks-dlq", {
 const billingDLQ = new Queue("credit-grant-dlq", {
   connection: createRedisConnection(),
 });
+const webhookDLQ = new Queue("webhook-delivery-dlq", {
+  connection: createRedisConnection(),
+});
+const indexingDLQ = new Queue("indexing-dlq", {
+  connection: createRedisConnection(),
+});
 
 // ========== Helper: Move to DLQ ==========
 async function moveToDLQ(
@@ -90,12 +96,51 @@ async function moveToDLQ(
   }
 }
 
-// ========== Agent Task Worker ==========
-const _defaultJobOptions = {
+// ========== Retry & Timeout Configuration ==========
+/** Default job options: 3 retries with escalating backoff (1s, 5s, 30s) */
+const defaultJobOptions = {
   attempts: 3,
-  backoff: { type: "exponential" as const, delay: 1000 },
+  backoff: { type: "custom" as const, delay: 1000 },
 };
 
+/** Job timeout in ms: configurable, default 10 minutes */
+const JOB_TIMEOUT_MS = Number(process.env.JOB_TIMEOUT_MS ?? 10 * 60 * 1000);
+
+/**
+ * Custom backoff schedule: 1s -> 5s -> 30s
+ * Used instead of pure exponential for more predictable retry timing.
+ */
+const CUSTOM_BACKOFF_DELAYS = [1000, 5000, 30_000];
+
+function getCustomBackoffDelay(attemptsMade: number): number {
+  const idx = Math.min(attemptsMade, CUSTOM_BACKOFF_DELAYS.length - 1);
+  return CUSTOM_BACKOFF_DELAYS[idx] ?? 30_000;
+}
+
+/**
+ * Wrap a processor function with timeout handling.
+ * Rejects with a clear timeout error if the job exceeds the configured limit.
+ */
+function withJobTimeout<T>(
+  fn: () => Promise<T>,
+  timeoutMs: number,
+  jobId: string | undefined
+): Promise<T> {
+  return Promise.race([
+    fn(),
+    new Promise<never>((_, reject) => {
+      setTimeout(() => {
+        reject(
+          new Error(
+            `Job ${jobId ?? "unknown"} timed out after ${Math.round(timeoutMs / 1000)}s`
+          )
+        );
+      }, timeoutMs);
+    }),
+  ]);
+}
+
+// ========== Agent Task Worker ==========
 const agentWorker = new Worker<AgentTaskData>(
   "agent-tasks",
   async (job) => {
@@ -104,15 +149,32 @@ const agentWorker = new Worker<AgentTaskData>(
         jobId: job.id,
         taskId: job.data.taskId,
         attempt: job.attemptsMade + 1,
+        maxAttempts: defaultJobOptions.attempts,
         priority: job.opts.priority,
       },
       "Processing agent task"
     );
-    return await processor.process(job.data);
+
+    // Report progress phases
+    await job.updateProgress({ phase: "started", percent: 0 });
+
+    const result = await withJobTimeout(
+      () => processor.process(job.data),
+      JOB_TIMEOUT_MS,
+      job.id
+    );
+
+    await job.updateProgress({ phase: "completed", percent: 100 });
+    return result;
   },
   {
     connection: createRedisConnection(),
     concurrency: concurrency.agentTasks,
+    lockDuration: JOB_TIMEOUT_MS + 60_000, // Lock longer than timeout
+    settings: {
+      backoffStrategy: (attemptsMade: number) =>
+        getCustomBackoffDelay(attemptsMade),
+    },
     limiter: {
       max: 10,
       duration: 60_000,
@@ -128,11 +190,26 @@ const enterpriseWorker = new Worker<AgentTaskData>(
       { jobId: job.id, taskId: job.data.taskId, attempt: job.attemptsMade + 1 },
       "Processing enterprise task"
     );
-    return await processor.process(job.data);
+
+    await job.updateProgress({ phase: "started", percent: 0 });
+
+    const result = await withJobTimeout(
+      () => processor.process(job.data),
+      JOB_TIMEOUT_MS,
+      job.id
+    );
+
+    await job.updateProgress({ phase: "completed", percent: 100 });
+    return result;
   },
   {
     connection: createRedisConnection(),
     concurrency: concurrency.enterprise,
+    lockDuration: JOB_TIMEOUT_MS + 60_000,
+    settings: {
+      backoffStrategy: (attemptsMade: number) =>
+        getCustomBackoffDelay(attemptsMade),
+    },
   }
 );
 
@@ -257,6 +334,10 @@ const creditGrantWorker = new Worker<CreditGrantData>(
   {
     connection: createRedisConnection(),
     concurrency: concurrency.billing,
+    settings: {
+      backoffStrategy: (attemptsMade: number) =>
+        getCustomBackoffDelay(attemptsMade),
+    },
   }
 );
 
@@ -324,6 +405,10 @@ const webhookDeliveryWorker = new Worker<WebhookDeliveryData>(
   {
     connection: createRedisConnection(),
     concurrency: concurrency.notifications,
+    settings: {
+      backoffStrategy: (attemptsMade: number) =>
+        getCustomBackoffDelay(attemptsMade),
+    },
   }
 );
 
@@ -331,15 +416,18 @@ const webhookDeliveryWorker = new Worker<WebhookDeliveryData>(
 const workers: Record<string, { worker: Worker; dlq?: Queue }> = {
   "agent-tasks": { worker: agentWorker, dlq: agentTaskDLQ },
   "enterprise-tasks": { worker: enterpriseWorker, dlq: agentTaskDLQ },
-  "index-project": { worker: indexProjectWorker },
-  "generate-embeddings": { worker: embeddingsWorker },
+  "index-project": { worker: indexProjectWorker, dlq: indexingDLQ },
+  "generate-embeddings": { worker: embeddingsWorker, dlq: indexingDLQ },
   "send-notification": { worker: notificationWorker },
   "cleanup-sandbox": { worker: cleanupWorker },
-  "session-continuation": { worker: sessionContinuationWorker },
+  "session-continuation": {
+    worker: sessionContinuationWorker,
+    dlq: agentTaskDLQ,
+  },
   "setup-project-environment": { worker: setupEnvWorker },
   "usage-rollup": { worker: usageRollupWorker },
   "credit-grant": { worker: creditGrantWorker, dlq: billingDLQ },
-  "webhook-delivery": { worker: webhookDeliveryWorker },
+  "webhook-delivery": { worker: webhookDeliveryWorker, dlq: webhookDLQ },
 };
 
 for (const [name, { worker, dlq }] of Object.entries(workers)) {
@@ -478,8 +566,23 @@ healthServer.listen(healthPort, () => {
 registerShutdownHandler("queue-worker", async () => {
   logger.info("Shutting down workers...");
   healthServer.close();
+
+  // Close all workers (waits for in-flight jobs to complete)
   await Promise.allSettled(
     Object.values(workers).map(({ worker }) => worker.close())
   );
   logger.info("All workers closed");
+
+  // Close DLQ connections
+  const dlqQueues = [agentTaskDLQ, billingDLQ, webhookDLQ, indexingDLQ];
+  await Promise.allSettled(dlqQueues.map((q) => q.close()));
+  logger.info("All DLQ connections closed");
+
+  // Close health Redis connection
+  try {
+    await healthRedis.quit();
+  } catch {
+    // Best-effort cleanup
+  }
+  logger.info("Queue worker shutdown complete");
 });

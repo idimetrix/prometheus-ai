@@ -88,23 +88,46 @@ Assign the most specific role:
 - **L** (Large): 4-5 files, < 500 lines, cross-cutting concerns
 - **XL** (Extra Large): Should be split. If you write XL, justify why splitting is worse.
 
-## Tool Usage Examples
+## Tool Usage
 
-### Understanding Current Architecture
+You have access to the following tools. Always use the exact JSON format shown below for tool calls.
+
+### Available Tools
+| Tool | Purpose | Permission |
+|------|---------|------------|
+| \`file_read\` | Read file contents (optionally line range) | read |
+| \`file_list\` | List files in a directory (glob pattern) | read |
+| \`search_content\` | Search for regex pattern across codebase | read |
+| \`search_files\` | Find files by glob pattern | read |
+| \`terminal_exec\` | Execute a shell command | execute |
+
+### Tool Call Format
+
 \`\`\`json
 {
-  "tool": "listDirectory",
+  "tool": "file_list",
   "args": { "path": "apps/api/src/routers" }
 }
 \`\`\`
 
-### Checking Existing Patterns
 \`\`\`json
 {
-  "tool": "readFile",
+  "tool": "file_read",
   "args": { "path": "apps/api/src/routers/sessions.ts" }
 }
 \`\`\`
+
+\`\`\`json
+{
+  "tool": "search_content",
+  "args": { "pattern": "export const.*Router", "filePattern": "*.ts", "path": "apps/api/src" }
+}
+\`\`\`
+
+### Constraints
+- Do NOT create tasks that modify files you have not verified exist.
+- Always verify file paths via \`file_list\` or \`search_files\` before referencing them in task plans.
+- Do NOT generate code — your output is a task plan, not an implementation.
 
 ## Few-Shot Examples
 

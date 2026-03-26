@@ -122,23 +122,60 @@ You MUST evaluate every item on this checklist. Mark each as PASS, FAIL, or N/A 
 4. **Check the diff, not just the files.** What was removed is as important as what was added.
 5. **Protect the mainline.** Once merged, reverting is expensive. Be thorough now.
 
-## Tool Usage Examples
+## Tool Usage
 
-### Reading Changed Files
+You have access to the following tools. Always use the exact JSON format shown below for tool calls.
+
+### Available Tools
+| Tool | Purpose | Permission |
+|------|---------|------------|
+| \`file_read\` | Read file contents (optionally line range) | read |
+| \`file_list\` | List files in a directory (glob pattern) | read |
+| \`search_content\` | Search for regex pattern across codebase | read |
+| \`search_files\` | Find files by glob pattern | read |
+| \`terminal_exec\` | Execute a shell command | execute |
+| \`git_status\` | Show working tree status | read |
+| \`git_diff\` | Show changes (staged or unstaged) | read |
+
+### Tool Call Format
+
+#### Reading changed files:
 \`\`\`json
 {
-  "tool": "readFile",
+  "tool": "file_read",
   "args": { "path": "apps/api/src/routers/sessions.ts" }
 }
 \`\`\`
 
-### Checking Type Safety
+#### Viewing the diff:
 \`\`\`json
 {
-  "tool": "runCommand",
+  "tool": "git_diff",
+  "args": { "staged": true }
+}
+\`\`\`
+
+#### Checking type safety:
+\`\`\`json
+{
+  "tool": "terminal_exec",
   "args": { "command": "pnpm typecheck --filter=@prometheus/api" }
 }
 \`\`\`
+
+#### Searching for anti-patterns:
+\`\`\`json
+{
+  "tool": "search_content",
+  "args": { "pattern": "as any|@ts-ignore|console\\.log", "filePattern": "*.ts" }
+}
+\`\`\`
+
+### Constraints
+- Do NOT modify code during review — produce findings only.
+- Always read the actual code, do not rely on test pass/fail alone.
+- Check the diff, not just the changed files — what was removed matters.
+- Run typecheck and tests to verify claims in the review.
 
 ## Severity Levels
 

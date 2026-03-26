@@ -105,6 +105,40 @@ interface CompletionResponse {
   text: string;
 }
 
+interface InlineCompletionRequest {
+  filePath: string;
+  language: string;
+  openFiles?: string[];
+  prefix: string;
+  suffix: string;
+}
+
+interface InlineCompletionResponse {
+  completion: string;
+}
+
+interface InlineEditRequest {
+  code: string;
+  context?: string;
+  filePath: string;
+  instruction: string;
+  language: string;
+}
+
+interface InlineEditResponse {
+  editedCode: string;
+}
+
+interface ExplainRequest {
+  code: string;
+  filePath: string;
+  language: string;
+}
+
+interface ExplainResponse {
+  explanation: string;
+}
+
 // ---------------------------------------------------------------------------
 // Client
 // ---------------------------------------------------------------------------
@@ -365,9 +399,9 @@ export class ApiClient {
   // -------------------------------------------------------------------------
 
   /**
-   * Request an inline completion from the model-router.
+   * Request an inline completion from the model-router (legacy format).
    */
-  async getInlineCompletion(
+  async getLegacyInlineCompletion(
     req: CompletionRequest,
     signal?: AbortSignal
   ): Promise<CompletionResponse> {
@@ -387,6 +421,81 @@ export class ApiClient {
     }
 
     return response.json() as Promise<CompletionResponse>;
+  }
+
+  /**
+   * Request an inline completion with prefix/suffix context (fast model).
+   */
+  async getInlineCompletion(
+    req: InlineCompletionRequest,
+    signal?: AbortSignal
+  ): Promise<InlineCompletionResponse> {
+    const url = `${this.baseUrl}/api/completions`;
+    const init: RequestInit = {
+      method: "POST",
+      headers: this.headers,
+      body: JSON.stringify(req),
+      signal,
+    };
+
+    const response = await fetch(url, init);
+
+    if (!response.ok) {
+      const text = await response.text().catch(() => "");
+      throw new Error(`Inline completion failed (${response.status}): ${text}`);
+    }
+
+    return response.json() as Promise<InlineCompletionResponse>;
+  }
+
+  /**
+   * Request an inline edit (Cmd+K flow).
+   */
+  async getInlineEdit(
+    req: InlineEditRequest,
+    signal?: AbortSignal
+  ): Promise<InlineEditResponse> {
+    const url = `${this.baseUrl}/api/edit`;
+    const init: RequestInit = {
+      method: "POST",
+      headers: this.headers,
+      body: JSON.stringify(req),
+      signal,
+    };
+
+    const response = await fetch(url, init);
+
+    if (!response.ok) {
+      const text = await response.text().catch(() => "");
+      throw new Error(`Inline edit failed (${response.status}): ${text}`);
+    }
+
+    return response.json() as Promise<InlineEditResponse>;
+  }
+
+  /**
+   * Request a code explanation.
+   */
+  async explainCode(
+    req: ExplainRequest,
+    signal?: AbortSignal
+  ): Promise<ExplainResponse> {
+    const url = `${this.baseUrl}/api/explain`;
+    const init: RequestInit = {
+      method: "POST",
+      headers: this.headers,
+      body: JSON.stringify(req),
+      signal,
+    };
+
+    const response = await fetch(url, init);
+
+    if (!response.ok) {
+      const text = await response.text().catch(() => "");
+      throw new Error(`Explain failed (${response.status}): ${text}`);
+    }
+
+    return response.json() as Promise<ExplainResponse>;
   }
 
   // -------------------------------------------------------------------------
@@ -468,6 +577,12 @@ export type {
   ChatStreamChunk,
   CompletionRequest,
   CompletionResponse,
+  ExplainRequest,
+  ExplainResponse,
+  InlineCompletionRequest,
+  InlineCompletionResponse,
+  InlineEditRequest,
+  InlineEditResponse,
   SessionResponse,
   SSEMessage,
   StatusResponse,

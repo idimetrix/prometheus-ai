@@ -375,28 +375,184 @@ export function setupSessionNamespace(namespace: Namespace) {
   });
 
   // ---- Relay Redis pub/sub events to Socket.io rooms ----
+  // All known agent streaming event types for structured handling
+  const AGENT_EVENT_TYPES = new Set([
+    "agent_output",
+    "agent_status",
+    "agent:thinking",
+    "agent:terminal",
+    "agent:file-change",
+    "agent:progress",
+    "task:complete",
+    "task:created",
+    "session:checkpoint",
+    "session:error",
+    "file_change",
+    "file_diff",
+    "code_change",
+    "plan_update",
+    "plan_step_update",
+    "task_status",
+    "task_progress",
+    "queue_position",
+    "credit_update",
+    "checkpoint",
+    "error",
+    "reasoning",
+    "terminal_output",
+    "session_complete",
+    "session_resume",
+    "tool_call",
+    "tool_result",
+    "browser_screenshot",
+    "pr_created",
+    "human_input_request",
+    "human_input_resolved",
+  ]);
+
+  /**
+   * Emit canonical agent streaming events based on the internal event type.
+   * Extracted to a standalone function to reduce cognitive complexity.
+   */
+  function emitCanonicalEvent(
+    room: string,
+    eventType: string,
+    eventData: Record<string, unknown>,
+    event: Record<string, unknown>
+  ): void {
+    const ts = (event.timestamp as string) ?? new Date().toISOString();
+    const seq = event.sequence;
+    const role = (eventData.agentRole as string) ?? (event.agentRole as string);
+
+    switch (eventType) {
+      case "agent_output":
+        if (eventData.streaming) {
+          namespace.to(room).emit("agent:thinking", {
+            content: eventData.content,
+            agentRole: role,
+            streaming: true,
+            sequence: seq,
+            timestamp: ts,
+          });
+        }
+        break;
+      case "terminal_output":
+        namespace.to(room).emit("agent:terminal", {
+          command: eventData.command,
+          output: eventData.output,
+          success: eventData.success,
+          sequence: seq,
+          timestamp: ts,
+        });
+        break;
+      case "file_change":
+        namespace.to(room).emit("agent:file-change", {
+          filePath: eventData.filePath,
+          tool: eventData.tool,
+          diff: eventData.diff,
+          agentRole: role,
+          sequence: seq,
+          timestamp: ts,
+        });
+        break;
+      case "task_progress":
+      case "agent_status":
+        if (eventData.iteration !== undefined || eventData.step !== undefined) {
+          namespace.to(room).emit("agent:progress", {
+            step: eventData.step ?? eventData.iteration,
+            totalSteps: eventData.totalSteps,
+            status: eventData.status,
+            agentRole: role,
+            confidence: eventData.confidence,
+            sequence: seq,
+            timestamp: ts,
+          });
+        }
+        break;
+      case "session_complete":
+        namespace.to(room).emit("task:complete", {
+          success: eventData.success,
+          output: eventData.output,
+          filesChanged: eventData.filesChanged,
+          tokensUsed: eventData.tokensUsed,
+          toolCalls: eventData.toolCalls,
+          steps: eventData.steps,
+          status: eventData.status,
+          agentRole: role,
+          sequence: seq,
+          timestamp: ts,
+        });
+        break;
+      case "task_status":
+        if (eventData.status === "queued" || eventData.status === "created") {
+          namespace.to(room).emit("task:created", {
+            taskId: eventData.taskId,
+            status: eventData.status,
+            sequence: seq,
+            timestamp: ts,
+          });
+        }
+        break;
+      case "checkpoint":
+        namespace.to(room).emit("session:checkpoint", {
+          checkpointType: eventData.checkpointType,
+          reason: eventData.reason,
+          affectedFiles: eventData.affectedFiles,
+          agentRole: role,
+          sequence: seq,
+          timestamp: ts,
+        });
+        break;
+      case "error":
+        namespace.to(room).emit("session:error", {
+          error: eventData.error ?? eventData.reason ?? eventData.message,
+          recoverable: eventData.recoverable,
+          agentRole: role,
+          sequence: seq,
+          timestamp: ts,
+        });
+        break;
+      default:
+        break;
+    }
+  }
+
   subscriber.on("message", (channel: string, message: string) => {
     const match = channel.match(SESSION_EVENTS_CHANNEL_RE);
-    if (match) {
-      const sessionId = match[1];
-      try {
-        const event = JSON.parse(message);
-        const eventType = event.type ?? "unknown";
-        const eventData = event.data ?? event;
+    if (!match) {
+      return;
+    }
 
-        // Relay the event to all clients in the session room
-        namespace.to(`session:${sessionId}`).emit(eventType, eventData);
+    const sessionId = match[1];
+    try {
+      const event = JSON.parse(message);
+      const eventType = event.type ?? "unknown";
+      const eventData = event.data ?? event;
+      const room = `session:${sessionId}`;
 
-        // Also emit a generic 'session_event' for clients that want all events
-        namespace.to(`session:${sessionId}`).emit("session_event", {
-          type: eventType,
-          data: eventData,
-          agentRole: event.agentRole,
-          timestamp: event.timestamp ?? new Date().toISOString(),
-        });
-      } catch (error) {
-        logger.error({ channel, error }, "Failed to parse session event");
+      // Emit canonical agent streaming event (if applicable)
+      emitCanonicalEvent(room, eventType, eventData, event);
+
+      // Relay the raw event for backward compat
+      namespace.to(room).emit(eventType, eventData);
+
+      // Always emit a generic 'session_event' for clients that want all events
+      namespace.to(room).emit("session_event", {
+        type: eventType,
+        data: eventData,
+        agentRole: event.agentRole,
+        sequence: event.sequence,
+        timestamp: event.timestamp ?? new Date().toISOString(),
+      });
+
+      if (!AGENT_EVENT_TYPES.has(eventType)) {
+        logger.debug(
+          { sessionId, eventType },
+          "Relayed unrecognized event type"
+        );
       }
+    } catch (error) {
+      logger.error({ channel, error }, "Failed to parse session event");
     }
   });
 }

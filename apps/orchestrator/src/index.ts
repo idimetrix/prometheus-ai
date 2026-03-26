@@ -12,6 +12,7 @@ import type { AgentMode, AgentRole } from "@prometheus/types";
 import {
   installShutdownHandlers,
   isProcessShuttingDown,
+  registerShutdownHandler,
 } from "@prometheus/utils";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
@@ -266,6 +267,175 @@ app.post("/process", async (c) => {
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);
     logger.error({ error: msg }, "Failed to process task");
+    return c.json({ error: "Internal server error" }, 500);
+  }
+});
+
+// ─── Task Execute (alternative entry point) ─────────────────────
+// Provides a task-centric API for the queue worker and external callers
+
+app.post("/tasks/execute", async (c) => {
+  try {
+    const body = await c.req.json();
+
+    const {
+      taskId,
+      sessionId,
+      projectId,
+      orgId,
+      userId,
+      title,
+      description,
+      mode,
+      agentRole,
+    } = body as {
+      taskId: string;
+      sessionId: string;
+      projectId: string;
+      orgId: string;
+      userId: string;
+      title: string;
+      description: string | null;
+      mode: AgentMode;
+      agentRole: AgentRole | null;
+    };
+
+    if (
+      !(taskId && sessionId && projectId && orgId && userId && title && mode)
+    ) {
+      return c.json(
+        {
+          error:
+            "Missing required fields: taskId, sessionId, projectId, orgId, userId, title, mode",
+        },
+        400
+      );
+    }
+
+    logger.info(
+      { taskId, sessionId, mode, agentRole },
+      "Executing task via /tasks/execute"
+    );
+
+    const result = await taskRouter.processTask({
+      taskId,
+      sessionId,
+      projectId,
+      orgId,
+      userId,
+      title,
+      description: description ?? null,
+      mode,
+      agentRole: agentRole ?? null,
+    });
+
+    return c.json(result);
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    logger.error({ error: msg }, "Failed to execute task");
+    return c.json({ error: "Internal server error" }, 500);
+  }
+});
+
+// ─── Task Status ────────────────────────────────────────────────
+
+app.get("/tasks/:id/status", async (c) => {
+  const taskId = c.req.param("id");
+
+  try {
+    const { db, tasks } = await import("@prometheus/db");
+    const { eq } = await import("drizzle-orm");
+
+    const rows = await db
+      .select()
+      .from(tasks)
+      .where(eq(tasks.id, taskId))
+      .limit(1);
+    const task = rows[0];
+
+    if (!task) {
+      return c.json({ error: "Task not found" }, 404);
+    }
+
+    // Try to find the associated session for live agent info
+    const session = sessionManager.getSession(task.sessionId);
+    const loopStatus = session?.agentLoop.getStatus() ?? null;
+    const creditsConsumed = session?.agentLoop.getCreditsConsumed() ?? 0;
+
+    return c.json({
+      taskId: task.id,
+      sessionId: task.sessionId,
+      status: task.status,
+      startedAt: task.startedAt?.toISOString() ?? null,
+      completedAt: task.completedAt?.toISOString() ?? null,
+      creditsConsumed: task.creditsConsumed ?? creditsConsumed,
+      loopStatus,
+    });
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    logger.error({ error: msg, taskId }, "Failed to get task status");
+    return c.json({ error: "Internal server error" }, 500);
+  }
+});
+
+// ─── Task Cancel ────────────────────────────────────────────────
+
+app.post("/tasks/cancel", async (c) => {
+  try {
+    const body = await c.req.json();
+    const { taskId, sessionId } = body as {
+      taskId: string;
+      sessionId?: string;
+    };
+
+    if (!taskId) {
+      return c.json({ error: "'taskId' is required" }, 400);
+    }
+
+    // Look up the session for this task
+    let targetSessionId = sessionId;
+    if (!targetSessionId) {
+      const { db, tasks } = await import("@prometheus/db");
+      const { eq } = await import("drizzle-orm");
+      const rows = await db
+        .select({ sessionId: tasks.sessionId })
+        .from(tasks)
+        .where(eq(tasks.id, taskId))
+        .limit(1);
+      targetSessionId = rows[0]?.sessionId;
+    }
+
+    if (!targetSessionId) {
+      return c.json({ error: "Task not found" }, 404);
+    }
+
+    // Cancel the session's agent loop
+    const session = sessionManager.getSession(targetSessionId);
+    if (session) {
+      await sessionManager.cancelSession(targetSessionId);
+    }
+
+    // Mark task as cancelled in DB
+    const { db, tasks } = await import("@prometheus/db");
+    const { eq } = await import("drizzle-orm");
+    await db
+      .update(tasks)
+      .set({
+        status: "cancelled",
+        completedAt: new Date(),
+      })
+      .where(eq(tasks.id, taskId));
+
+    logger.info({ taskId, sessionId: targetSessionId }, "Task cancelled");
+
+    return c.json({
+      status: "cancelled",
+      taskId,
+      sessionId: targetSessionId,
+    });
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    logger.error({ error: msg }, "Failed to cancel task");
     return c.json({ error: "Internal server error" }, 500);
   }
 });
@@ -539,6 +709,28 @@ app.get("/metrics", async (c) => {
   return c.text(await metricsRegistry.render(), 200, {
     "Content-Type": "text/plain; charset=utf-8",
   });
+});
+
+// ─── Graceful Shutdown ───────────────────────────────────────────
+
+registerShutdownHandler("orchestrator", async () => {
+  logger.info("Orchestrator shutting down...");
+
+  // Cancel all active sessions so agents stop processing
+  const activeSessions = sessionManager.getActiveSessions();
+  for (const s of activeSessions) {
+    try {
+      await sessionManager.cancelSession(s.session.id);
+    } catch {
+      // Best-effort cancellation
+    }
+  }
+  logger.info(
+    { cancelledSessions: activeSessions.length },
+    "Active sessions cancelled"
+  );
+
+  logger.info("Orchestrator shutdown complete");
 });
 
 // ─── Start Server ───────────────────────────────────────────────

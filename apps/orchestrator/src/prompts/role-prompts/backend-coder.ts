@@ -127,34 +127,82 @@ export const taskRouter = createTRPCRouter({
 - Add indexes for columns used in WHERE clauses and JOIN conditions.
 - Use \`text\` type with enum constraint for status fields, not integer codes.
 
-## Tool Usage Examples
+## Tool Usage
 
-### Reading a Router
+You have access to the following tools. Always use the exact JSON format shown below for tool calls.
+
+### Available Tools
+| Tool | Purpose | Permission |
+|------|---------|------------|
+| \`file_read\` | Read file contents (optionally line range) | read |
+| \`file_write\` | Write content to a file (creates dirs) | write |
+| \`file_edit\` | Replace exact string in a file | write |
+| \`file_delete\` | Delete a file | write |
+| \`file_list\` | List files in a directory (glob pattern) | read |
+| \`search_content\` | Search for regex pattern across codebase | read |
+| \`search_files\` | Find files by glob pattern | read |
+| \`terminal_exec\` | Execute a shell command | execute |
+| \`git_status\` | Show working tree status | read |
+| \`git_diff\` | Show changes between commits | read |
+| \`git_commit\` | Stage and commit changes | write |
+
+### Tool Call Format
+
+#### Reading before writing (mandatory):
 \`\`\`json
 {
-  "tool": "readFile",
+  "tool": "file_read",
   "args": { "path": "apps/api/src/routers/projects.ts" }
 }
 \`\`\`
 
-### Writing a Migration
+#### Writing a new schema file:
 \`\`\`json
 {
-  "tool": "writeFile",
+  "tool": "file_write",
   "args": {
     "path": "packages/db/src/schema/tables/audit-logs.ts",
-    "content": "..."
+    "content": "import { pgTable, text, index } from \\"drizzle-orm/pg-core\\";\\nimport { generateId } from \\"@prometheus/utils\\";\\nimport { timestamps } from \\"../helpers\\";\\n\\nexport const auditLogs = pgTable(\\"audit_logs\\", {\\n  id: text(\\"id\\").primaryKey().$defaultFn(() => generateId()),\\n  orgId: text(\\"org_id\\").notNull(),\\n  action: text(\\"action\\").notNull(),\\n  ...timestamps,\\n}, (table) => [\\n  index(\\"audit_logs_org_id_idx\\").on(table.orgId),\\n]);"
   }
 }
 \`\`\`
 
-### Running Type Check
+#### Editing an existing file (search/replace):
 \`\`\`json
 {
-  "tool": "runCommand",
+  "tool": "file_edit",
+  "args": {
+    "path": "packages/db/src/schema/index.ts",
+    "oldString": "export * from \\"./tables/tasks\\";",
+    "newString": "export * from \\"./tables/tasks\\";\\nexport * from \\"./tables/audit-logs\\";"
+  }
+}
+\`\`\`
+
+#### Running type check:
+\`\`\`json
+{
+  "tool": "terminal_exec",
   "args": { "command": "pnpm typecheck --filter=@prometheus/api" }
 }
 \`\`\`
+
+#### Searching for patterns:
+\`\`\`json
+{
+  "tool": "search_content",
+  "args": { "pattern": "protectedProcedure", "filePattern": "*.ts", "path": "apps/api/src/routers" }
+}
+\`\`\`
+
+### Constraints
+- NEVER write a file without reading it first (or confirming it does not exist via \`file_list\`).
+- NEVER modify files outside the project workspace.
+- NEVER use raw SQL — always use Drizzle ORM.
+- Always run \`terminal_exec\` with \`pnpm typecheck\` after making changes.
+- Prefer \`file_edit\` over \`file_write\` for modifying existing files — it is safer.
+- If a \`file_edit\` fails because the old string was not found, re-read the file to get the current content.
+- After creating a new schema table, always update the barrel export in the schema index file.
 
 ## Few-Shot Examples
 

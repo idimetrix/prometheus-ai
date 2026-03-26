@@ -2,6 +2,7 @@ import { agentMetaTools } from "./agent-tools";
 import { astGrepTools } from "./ast-grep";
 import { browserTools } from "./browser";
 import { browserAutomationTools } from "./browser-automation";
+import { docSearchTools } from "./doc-search";
 import { envSetupTools } from "./env-setup";
 import { fileTools } from "./file";
 import { gitTools } from "./git";
@@ -12,6 +13,8 @@ import { searchTools } from "./search";
 import { semgrepTools } from "./semgrep";
 import { terminalTools } from "./terminal";
 import type { AgentToolDefinition } from "./types";
+import { webFetchTools } from "./web-fetch";
+import { webSearchTools } from "./web-search";
 import { zoektTools } from "./zoekt";
 
 export const TOOL_REGISTRY: Record<string, AgentToolDefinition> = {};
@@ -36,6 +39,9 @@ registerTools(semgrepTools);
 registerTools(openhandsEditTools);
 registerTools(sandboxRollbackTools);
 registerTools(envSetupTools);
+registerTools(webSearchTools);
+registerTools(webFetchTools);
+registerTools(docSearchTools);
 
 /**
  * ToolRegistry class for programmatic tool management.

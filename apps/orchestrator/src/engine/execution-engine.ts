@@ -37,6 +37,11 @@ import { ContextCompressor } from "../context/context-compressor";
 import { SecretsScanner } from "../guardian/secrets-scanner";
 import { SelfReview } from "../self-review";
 import { classifyToolDependencies } from "../tool-dependency";
+import {
+  classifyError,
+  ErrorCategory,
+  isRateLimitError,
+} from "./error-taxonomy";
 import type { ExecutionContext } from "./execution-context";
 import type {
   ASTValidationEvent,
@@ -56,6 +61,9 @@ import type {
 import { HealthWatchdog } from "./health-watchdog";
 import { QualityGate } from "./quality-gate";
 import { RecoveryStrategy } from "./recovery-strategy";
+
+const CONTEXT_WINDOW_RE =
+  /context.*window|token.*limit|maximum.*context|too many tokens/i;
 
 /**
  * Feature flag: set to true to use Vercel AI SDK streaming instead of raw SSE.
@@ -1336,8 +1344,12 @@ async function tryCompressContext(
 }
 
 interface IterationState {
+  /** Tracks whether the LLM returned a final response (no more tool calls) */
+  completedNaturally: boolean;
   consecutiveErrors: number;
   consecutiveFailures: number;
+  /** Actual number of iterations completed */
+  iterationsCompleted: number;
   lastConfidence: ConfidenceResult | null;
   lastOutput: string;
   recoveryAttempts: number;
@@ -1399,7 +1411,76 @@ async function processLLMFailure(
   ) => T
 ): Promise<IterationOutcome> {
   const updated = { ...state, consecutiveErrors: state.consecutiveErrors + 1 };
-  logger.error({ error: msg, iteration: step }, "LLM request failed");
+
+  // Classify error using the error taxonomy for targeted recovery
+  const error = new Error(msg);
+  const category = classifyError(error);
+
+  logger.error(
+    {
+      error: msg,
+      iteration: step,
+      category,
+      attempt: updated.consecutiveErrors,
+    },
+    "LLM request failed"
+  );
+
+  // Auth errors (401/403, invalid API key) - fail immediately, no retry
+  if (category === ErrorCategory.FATAL) {
+    logger.error({ error: msg }, "Fatal LLM error - stopping immediately");
+    const events = [
+      makeEvent<ErrorEvent>({
+        type: "error",
+        error: `Fatal LLM error (no retry): ${msg}`,
+        recoverable: false,
+      }),
+      makeEvent<CompleteEvent>(
+        buildFailureComplete(
+          state.lastOutput,
+          filesChanged,
+          state.totalInputTokens,
+          state.totalOutputTokens,
+          state.totalToolCalls,
+          step,
+          state.totalCreditsConsumed
+        )
+      ),
+    ];
+    return {
+      action: "return",
+      events,
+      state: updated,
+      spanStatus: { code: SpanStatusCode.ERROR, message: msg },
+    };
+  }
+
+  // Context window exceeded - compress and retry without counting as error
+  if (CONTEXT_WINDOW_RE.test(msg)) {
+    logger.warn(
+      { iteration: step },
+      "Context window exceeded - will compress on next iteration"
+    );
+    // Reset consecutive errors since this is a context issue, not an LLM failure
+    updated.consecutiveErrors = Math.max(0, updated.consecutiveErrors - 1);
+    const events = [
+      makeEvent<ErrorEvent>({
+        type: "error",
+        error: "Context window exceeded - compressing conversation history",
+        recoverable: true,
+      }),
+    ];
+    return {
+      action: "continue",
+      events,
+      state: updated,
+      spanStatus: {
+        code: SpanStatusCode.ERROR,
+        message: "context_window_exceeded",
+      },
+    };
+  }
+
   const events = handleLLMError(
     updated.consecutiveErrors,
     msg,
@@ -1422,7 +1503,31 @@ async function processLLMFailure(
     };
   }
 
-  await new Promise((r) => setTimeout(r, 2000));
+  // Rate limit errors - use longer backoff with jitter
+  if (isRateLimitError(error)) {
+    const retryAfterMs = 5000 * 2 ** (updated.consecutiveErrors - 1);
+    const jitter = Math.random() * retryAfterMs * 0.25;
+    const delay = Math.min(retryAfterMs + jitter, 60_000);
+    logger.warn(
+      { delay: Math.round(delay), attempt: updated.consecutiveErrors },
+      "Rate limited - waiting before retry"
+    );
+    await new Promise((r) => setTimeout(r, delay));
+    return {
+      action: "continue",
+      events,
+      state: updated,
+      spanStatus: { code: SpanStatusCode.ERROR, message: msg },
+    };
+  }
+
+  // Transient / network errors - exponential backoff (1s, 2s, 4s)
+  const backoffDelay = Math.min(
+    1000 * 2 ** (updated.consecutiveErrors - 1),
+    30_000
+  );
+  const jitter = Math.random() * backoffDelay * 0.25;
+  await new Promise((r) => setTimeout(r, backoffDelay + jitter));
   return {
     action: "continue",
     events,
@@ -2024,6 +2129,7 @@ export const ExecutionEngine = {
   /**
    * Default execution path: streams via the model router HTTP endpoint.
    */
+  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: streaming execution requires handling many response states
   async *_executeViaModelRouter(
     ctx: ExecutionContext
   ): AsyncGenerator<ExecutionEvent, void, undefined> {
@@ -2084,6 +2190,8 @@ export const ExecutionEngine = {
       lastOutput: "",
       lastConfidence: null,
       recoveryAttempts: 0,
+      iterationsCompleted: 0,
+      completedNaturally: false,
     };
 
     const initialSlot = resolveInitialSlot(ctx);
@@ -2161,6 +2269,7 @@ export const ExecutionEngine = {
         iterDeps
       );
       iterState = iterOutcome.state;
+      iterState.iterationsCompleted = i + 1;
       for (const evt of iterOutcome.events) {
         yield evt;
       }
@@ -2170,6 +2279,7 @@ export const ExecutionEngine = {
         return;
       }
       if (iterOutcome.action === "break") {
+        iterState.completedNaturally = true;
         break;
       }
     }
@@ -2186,17 +2296,34 @@ export const ExecutionEngine = {
       logger
     );
 
+    // If the loop ended because max iterations were exhausted (not because
+    // the LLM stopped on its own), mark the task as failed.
+    const maxIterationsExhausted = !iterState.completedNaturally;
+
+    if (maxIterationsExhausted) {
+      logger.warn(
+        {
+          maxIterations,
+          iterationsCompleted: iterState.iterationsCompleted,
+          toolCalls: iterState.totalToolCalls,
+        },
+        "Max iterations reached without task completion"
+      );
+    }
+
     yield makeEvent<CompleteEvent>({
       type: "complete",
-      success: true,
-      output: iterState.lastOutput,
+      success: !maxIterationsExhausted,
+      output: maxIterationsExhausted
+        ? `Task did not complete within ${maxIterations} iterations. Last output: ${iterState.lastOutput || "(none)"}`
+        : iterState.lastOutput,
       filesChanged: Array.from(filesChanged),
       tokensUsed: {
         input: iterState.totalInputTokens,
         output: iterState.totalOutputTokens,
       },
       toolCalls: iterState.totalToolCalls,
-      steps: ctx.options.maxIterations,
+      steps: iterState.iterationsCompleted,
       creditsConsumed: iterState.totalCreditsConsumed,
     });
   },

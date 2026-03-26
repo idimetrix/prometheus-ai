@@ -165,3 +165,98 @@ export const orgOwnerProcedure = t.procedure
       } satisfies ProtectedContext,
     });
   });
+
+// ---------------------------------------------------------------------------
+// Reusable requireRole middleware
+// ---------------------------------------------------------------------------
+
+/**
+ * Role hierarchy for RBAC enforcement.
+ *
+ * Maps the task-level role names to our DB org roles:
+ *   - "viewer"      -> read-only access (no DB role equivalent, treated as below "member")
+ *   - "member"      -> contributor-level: create/run tasks, modify code
+ *   - "admin"       -> manage settings, members, billing
+ *   - "owner"       -> full access including destructive operations
+ *
+ * The "contributor" alias is accepted and treated as "member".
+ */
+const ROLE_HIERARCHY: Record<string, number> = {
+  viewer: 0,
+  member: 1,
+  contributor: 1, // alias for member
+  admin: 2,
+  owner: 3,
+};
+
+/**
+ * Creates a tRPC middleware that enforces a minimum org role.
+ *
+ * Usage:
+ * ```ts
+ * const myProcedure = protectedProcedure.use(requireRole("admin"));
+ * ```
+ *
+ * For personal workspaces (no orgId from Clerk), the user is treated as
+ * owner to allow full access to their own resources.
+ */
+export function requireRole(
+  minRole: "viewer" | "member" | "contributor" | "admin" | "owner"
+) {
+  return t.middleware(async ({ ctx, next }) => {
+    if (!ctx.auth) {
+      throw new TRPCError({
+        code: "UNAUTHORIZED",
+        message: "Authentication required",
+      });
+    }
+
+    const orgId = ctx.auth.orgId ?? ctx.auth.userId;
+    if (!orgId) {
+      throw new TRPCError({
+        code: "FORBIDDEN",
+        message: "Organization or user context required",
+      });
+    }
+
+    // Personal workspaces (no Clerk org) grant owner-level access
+    if (!ctx.auth.orgId) {
+      return await next({
+        ctx: {
+          auth: ctx.auth,
+          db: ctx.db,
+          orgId,
+          apiKeyId: ctx.apiKeyId,
+        } satisfies ProtectedContext,
+      });
+    }
+
+    const userRank = ROLE_HIERARCHY[ctx.auth.orgRole ?? "viewer"] ?? 0;
+    const requiredRank = ROLE_HIERARCHY[minRole] ?? 0;
+
+    if (userRank < requiredRank) {
+      logger.warn(
+        {
+          userId: ctx.auth.userId,
+          orgId,
+          userRole: ctx.auth.orgRole,
+          requiredRole: minRole,
+        },
+        "RBAC: insufficient role"
+      );
+      throw new TRPCError({
+        code: "FORBIDDEN",
+        message: `Requires ${minRole} role or higher`,
+      });
+    }
+
+    return await next({
+      ctx: {
+        auth: ctx.auth,
+        db: ctx.db,
+        orgId,
+        apiKeyId: ctx.apiKeyId,
+      } satisfies ProtectedContext,
+    });
+  });
+}

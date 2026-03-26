@@ -8,6 +8,7 @@ import { billingRouter } from "./billing";
 import { blueprintsEnhancedRouter } from "./blueprints-enhanced";
 import { brainRouter } from "./brain";
 import { brandingRouter } from "./branding";
+import { chatRouter } from "./chat";
 import { codeAnalysisRouter } from "./code-analysis";
 import { costAnalyticsRouter } from "./cost-analytics";
 import { costPredictionRouter } from "./cost-prediction";
@@ -15,12 +16,14 @@ import { deploymentsRouter } from "./deployments";
 import { filesRouter } from "./files";
 import { fleetRouter } from "./fleet";
 import { gdprRouter } from "./gdpr";
+import { generateRouter } from "./generate";
 import { healthRouter } from "./health";
 import { integrationsRouter } from "./integrations";
 import { issueSyncRouter } from "./issue-sync";
 import { marketplaceRouter } from "./marketplace";
 import { notificationsRouter } from "./notifications";
 import { permissionsRouter } from "./permissions";
+import { playbooksRouter } from "./playbooks";
 import { pluginsRouter } from "./plugins";
 import { pmRouter } from "./pm";
 import { projectsRouter } from "./projects";
@@ -36,6 +39,7 @@ import { workspacesRouter } from "./workspaces";
 
 export const appRouter = router({
   health: healthRouter,
+  chat: chatRouter,
   sessions: sessionsRouter,
   tasks: tasksRouter,
   projects: projectsRouter,
@@ -46,6 +50,7 @@ export const appRouter = router({
   settings: settingsRouter,
   brain: brainRouter,
   fleet: fleetRouter,
+  generate: generateRouter,
   user: userRouter,
   integrations: integrationsRouter,
   issueSync: issueSyncRouter,
@@ -68,6 +73,7 @@ export const appRouter = router({
   uploads: uploadsRouter,
   marketplace: marketplaceRouter,
   permissions: permissionsRouter,
+  playbooks: playbooksRouter,
   team: teamRouter,
 });
 

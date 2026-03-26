@@ -97,23 +97,66 @@ When integrating real-time features:
 - Handle stale data: invalidate queries when WebSocket events indicate data changed.
 - Order matters: process events in sequence, use timestamps for conflict resolution.
 
-## Tool Usage Examples
+## Tool Usage
 
-### Verifying API Contract
+You have access to the following tools. Always use the exact JSON format shown below for tool calls.
+
+### Available Tools
+| Tool | Purpose | Permission |
+|------|---------|------------|
+| \`file_read\` | Read file contents (optionally line range) | read |
+| \`file_write\` | Write content to a file (creates dirs) | write |
+| \`file_edit\` | Replace exact string in a file | write |
+| \`file_list\` | List files in a directory (glob pattern) | read |
+| \`search_content\` | Search for regex pattern across codebase | read |
+| \`search_files\` | Find files by glob pattern | read |
+| \`terminal_exec\` | Execute a shell command | execute |
+| \`git_status\` | Show working tree status | read |
+| \`git_commit\` | Stage and commit changes | write |
+
+### Tool Call Format
+
+#### Verifying the backend API contract:
 \`\`\`json
 {
-  "tool": "readFile",
+  "tool": "file_read",
   "args": { "path": "apps/api/src/routers/tasks.ts" }
 }
 \`\`\`
 
-### Checking Frontend Consumer
+#### Finding frontend consumers:
 \`\`\`json
 {
-  "tool": "search",
-  "args": { "pattern": "trpc\\.task\\.", "glob": "apps/web/src/**/*.tsx" }
+  "tool": "search_content",
+  "args": { "pattern": "trpc\\\\.task\\\\.", "filePattern": "*.tsx", "path": "apps/web/src" }
 }
 \`\`\`
+
+#### Editing integration code:
+\`\`\`json
+{
+  "tool": "file_edit",
+  "args": {
+    "path": "apps/web/src/components/tasks/task-list.tsx",
+    "oldString": "// TODO: wire to API",
+    "newString": "const { data, isLoading } = trpc.task.list.useQuery({ limit: 20 });"
+  }
+}
+\`\`\`
+
+#### Running typecheck across all affected packages:
+\`\`\`json
+{
+  "tool": "terminal_exec",
+  "args": { "command": "pnpm typecheck" }
+}
+\`\`\`
+
+### Constraints
+- ALWAYS read both sides of the integration boundary before wiring them together.
+- NEVER cast with \`as any\` to force type alignment — fix the source type instead.
+- Always run \`pnpm typecheck\` after wiring to ensure types align across packages.
+- Prefer \`file_edit\` over \`file_write\` when modifying existing files.
 
 ## Few-Shot Examples
 

@@ -159,8 +159,10 @@ async function handleUserDeleted(data: Record<string, unknown>) {
 
 async function handleOrgCreated(data: Record<string, unknown>) {
   const orgId = generateId("org");
+  const clerkOrgId = data.id as string;
   await db.insert(organizations).values({
     id: orgId,
+    clerkOrgId,
     name: data.name as string,
     slug: data.slug as string,
     planTier: "hobby",
@@ -173,7 +175,7 @@ async function handleOrgCreated(data: Record<string, unknown>) {
   });
 
   logger.info(
-    { clerkOrgId: data.id, dbOrgId: orgId },
+    { clerkOrgId, dbOrgId: orgId },
     "Organization created with hobby plan"
   );
 }
@@ -195,32 +197,52 @@ async function handleMembershipCreated(data: Record<string, unknown>) {
     return;
   }
 
-  // Look up org by slug from the Clerk organization data
+  // Look up org by Clerk org ID first, then fall back to slug
+  const clerkOrgId = (data.organization as Record<string, unknown> | undefined)
+    ?.id as string | undefined;
   const orgSlug = (data.organization as Record<string, unknown> | undefined)
     ?.slug as string | undefined;
-  const org = orgSlug
-    ? await db.query.organizations.findFirst({
-        where: eq(organizations.slug, orgSlug),
-        columns: { id: true },
-      })
-    : null;
+
+  let org: { id: string } | null | undefined = null;
+
+  if (clerkOrgId) {
+    org = await db.query.organizations.findFirst({
+      where: eq(organizations.clerkOrgId, clerkOrgId),
+      columns: { id: true },
+    });
+  }
+
+  if (!org && orgSlug) {
+    org = await db.query.organizations.findFirst({
+      where: eq(organizations.slug, orgSlug),
+      columns: { id: true },
+    });
+  }
 
   if (!org) {
     logger.warn(
-      { orgSlug },
+      { clerkOrgId, orgSlug },
       "Organization not found for membership — skipping"
     );
     return;
   }
 
-  await db.insert(orgMembers).values({
-    id: generateId("om"),
-    orgId: org.id,
-    userId: user.id,
-    role: data.role === "admin" ? "admin" : "member",
-    joinedAt: new Date(),
-  });
-  logger.info({ userId: user.id, orgId: org.id }, "Org member added");
+  // Map Clerk role to our role enum: org:admin -> admin, org:member -> member
+  const clerkRole = data.role as string | undefined;
+  const role =
+    clerkRole === "org:admin" || clerkRole === "admin" ? "admin" : "member";
+
+  await db
+    .insert(orgMembers)
+    .values({
+      id: generateId("om"),
+      orgId: org.id,
+      userId: user.id,
+      role,
+      joinedAt: new Date(),
+    })
+    .onConflictDoNothing();
+  logger.info({ userId: user.id, orgId: org.id, role }, "Org member added");
 }
 
 function handleMembershipDeleted(data: Record<string, unknown>) {

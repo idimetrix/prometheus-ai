@@ -21,6 +21,7 @@ export * from "./memories";
 export * from "./model-usage";
 export * from "./models";
 export * from "./organizations";
+export * from "./playbooks";
 export * from "./project-configs";
 export * from "./projects";
 export * from "./quality-reviews";

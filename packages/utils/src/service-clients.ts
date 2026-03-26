@@ -1,13 +1,5 @@
 import { HttpClient } from "./http-client";
-
-const MODEL_ROUTER_URL =
-  process.env.MODEL_ROUTER_URL ?? "http://localhost:4004";
-const PROJECT_BRAIN_URL =
-  process.env.PROJECT_BRAIN_URL ?? "http://localhost:4003";
-const SANDBOX_MANAGER_URL =
-  process.env.SANDBOX_MANAGER_URL ?? "http://localhost:4006";
-const ORCHESTRATOR_URL =
-  process.env.ORCHESTRATOR_URL ?? "http://localhost:4002";
+import { services } from "./services";
 
 /**
  * Build default headers that include the internal service secret when set.
@@ -20,7 +12,7 @@ function internalHeaders(): Record<string, string> {
 
 /** Pre-configured HttpClient for model-router with long timeout for LLM inference */
 export const modelRouterClient = new HttpClient({
-  baseUrl: MODEL_ROUTER_URL,
+  baseUrl: services.modelRouter,
   timeout: 120_000,
   maxRetries: 2,
   retryBaseDelay: 2000,
@@ -31,7 +23,7 @@ export const modelRouterClient = new HttpClient({
 
 /** Pre-configured HttpClient for project-brain with moderate timeout */
 export const projectBrainClient = new HttpClient({
-  baseUrl: PROJECT_BRAIN_URL,
+  baseUrl: services.projectBrain,
   timeout: 10_000,
   maxRetries: 2,
   retryBaseDelay: 1000,
@@ -42,7 +34,7 @@ export const projectBrainClient = new HttpClient({
 
 /** Pre-configured HttpClient for sandbox-manager */
 export const sandboxManagerClient = new HttpClient({
-  baseUrl: SANDBOX_MANAGER_URL,
+  baseUrl: services.sandboxManager,
   timeout: 30_000,
   maxRetries: 2,
   retryBaseDelay: 1000,
@@ -53,11 +45,44 @@ export const sandboxManagerClient = new HttpClient({
 
 /** Pre-configured HttpClient for orchestrator (long timeout for task processing) */
 export const orchestratorClient = new HttpClient({
-  baseUrl: ORCHESTRATOR_URL,
+  baseUrl: services.orchestrator,
   timeout: 3_600_000,
   maxRetries: 1,
   retryBaseDelay: 5000,
   circuitBreakerThreshold: 3,
   circuitBreakerResetMs: 60_000,
+  defaultHeaders: internalHeaders(),
+});
+
+/** Pre-configured HttpClient for MCP Gateway with moderate timeout */
+export const mcpGatewayClient = new HttpClient({
+  baseUrl: services.mcpGateway,
+  timeout: 30_000,
+  maxRetries: 2,
+  retryBaseDelay: 1000,
+  circuitBreakerThreshold: 5,
+  circuitBreakerResetMs: 30_000,
+  defaultHeaders: internalHeaders(),
+});
+
+/** Pre-configured HttpClient for Socket Server (used for push notifications) */
+export const socketServerClient = new HttpClient({
+  baseUrl: services.socketServer,
+  timeout: 5000,
+  maxRetries: 1,
+  retryBaseDelay: 500,
+  circuitBreakerThreshold: 5,
+  circuitBreakerResetMs: 15_000,
+  defaultHeaders: internalHeaders(),
+});
+
+/** Pre-configured HttpClient for Queue Worker health checks */
+export const queueWorkerClient = new HttpClient({
+  baseUrl: services.queueWorker,
+  timeout: 5000,
+  maxRetries: 1,
+  retryBaseDelay: 500,
+  circuitBreakerThreshold: 5,
+  circuitBreakerResetMs: 15_000,
   defaultHeaders: internalHeaders(),
 });

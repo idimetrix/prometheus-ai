@@ -458,6 +458,69 @@ export class ContainerManager {
   }
 
   /**
+   * List files in a directory inside the sandbox.
+   */
+  async listFiles(sandboxId: string, dirPath: string): Promise<string[]> {
+    await this.ensureMode();
+
+    const info = this.containers.get(sandboxId);
+    if (!info) {
+      throw new Error(`Sandbox ${sandboxId} not found`);
+    }
+
+    if (!this.provider) {
+      throw new Error("No sandbox provider available");
+    }
+
+    info.lastUsedAt = new Date();
+
+    if (this.provider.listFiles) {
+      return await this.provider.listFiles(sandboxId, dirPath);
+    }
+
+    // Fallback: use exec to list files
+    const result = await this.provider.exec(
+      sandboxId,
+      `ls -1a ${dirPath}`,
+      10_000
+    );
+    if (result.exitCode !== 0) {
+      throw new Error(`Failed to list files: ${result.stderr}`);
+    }
+    return result.output
+      .split("\n")
+      .filter((f) => f && f !== "." && f !== "..");
+  }
+
+  /**
+   * Delete a file or directory inside the sandbox.
+   */
+  async deleteFile(sandboxId: string, filePath: string): Promise<void> {
+    await this.ensureMode();
+
+    const info = this.containers.get(sandboxId);
+    if (!info) {
+      throw new Error(`Sandbox ${sandboxId} not found`);
+    }
+
+    if (!this.provider) {
+      throw new Error("No sandbox provider available");
+    }
+
+    info.lastUsedAt = new Date();
+
+    const result = await this.provider.exec(
+      sandboxId,
+      `rm -rf '${filePath.replace(/'/g, "'\\''")}'`,
+      10_000
+    );
+    if (result.exitCode !== 0) {
+      throw new Error(`Failed to delete file: ${result.stderr}`);
+    }
+    logger.debug({ sandboxId, filePath }, "File deleted");
+  }
+
+  /**
    * Destroy a sandbox and clean up all resources.
    */
   async destroy(sandboxId: string): Promise<void> {

@@ -215,6 +215,15 @@ export function useHybridStream(sessionId: string): HybridStreamReturn {
       "error",
       "credit_update",
       "checkpoint",
+      // Canonical agent streaming events (GAP-P0-08)
+      "agent:thinking",
+      "agent:terminal",
+      "agent:file-change",
+      "agent:progress",
+      "task:complete",
+      "task:created",
+      "session:checkpoint",
+      "session:error",
     ];
 
     for (const eventType of eventTypes) {

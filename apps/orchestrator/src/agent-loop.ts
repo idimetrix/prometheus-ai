@@ -15,6 +15,7 @@ import {
 } from "./engine";
 import { ExecutionTracker } from "./feedback/execution-tracker";
 import { LearningExtractor } from "./feedback/learning-extractor";
+import { loadProjectContext } from "./prompts/project-context";
 
 export type AgentLoopStatus = "idle" | "running" | "paused" | "stopped";
 
@@ -214,8 +215,13 @@ export class AgentLoop {
     iteration: LoopIteration,
     options?: ExecutionOptions
   ): Promise<ReturnType<typeof createExecutionContext>> {
-    const brainContext = await this.loadProjectBrainContext();
-    const priorContext = await this.loadPriorContext();
+    const [brainContext, priorContext, projectRulesContext] = await Promise.all(
+      [
+        this.loadProjectBrainContext(),
+        this.loadPriorContext(),
+        loadProjectContext(this.projectId),
+      ]
+    );
 
     this.logger.info(
       { iteration: iteration.iteration, agentRole },
@@ -229,6 +235,14 @@ export class AgentLoop {
       agentRole
     );
 
+    // Merge project brain summary with .prometheus.md rules
+    const mergedProjectContext = [
+      brainContext.projectSummary ?? "",
+      projectRulesContext,
+    ]
+      .filter(Boolean)
+      .join("\n\n");
+
     return createExecutionContext({
       sessionId: this.sessionId,
       projectId: this.projectId,
@@ -238,7 +252,7 @@ export class AgentLoop {
       taskDescription: enrichedDescription,
       sandboxId: this.sandboxId ?? this.sessionId,
       blueprintContent: brainContext.blueprintContent,
-      projectContext: brainContext.projectSummary,
+      projectContext: mergedProjectContext || null,
       sprintState: brainContext.sprintState,
       recentCIResults: brainContext.recentCIResults,
       priorSessionContext:

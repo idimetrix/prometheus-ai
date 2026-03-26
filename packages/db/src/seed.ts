@@ -2,21 +2,25 @@
  * Database seed script for development.
  * Usage: pnpm db:seed (or tsx packages/db/src/seed.ts)
  *
+ * Idempotent: uses onConflictDoNothing() so it can run multiple times safely.
+ *
  * Creates sample data for local development:
  * - 3 organizations (dev, staging, demo)
- * - Multiple users per org
- * - 5 projects with different tech stacks
+ * - 7 users across organizations
+ * - 5 projects with different tech stacks and settings
  * - Sample sessions and tasks
  * - Credit balances
- * - Subscription plan definitions
- * - Tech stack presets
+ * - 5 subscription plan definitions
+ * - 5 tech stack presets
  */
 
-import { db } from "./client";
+import { sql } from "drizzle-orm";
+import { closeDatabase, db } from "./client";
 import {
   creditBalances,
   organizations,
   orgMembers,
+  playbooks,
   projectMembers,
   projectSettings,
   projects,
@@ -25,15 +29,17 @@ import {
   subscriptionPlans,
   tasks,
   techStackPresets,
+  userSettings,
   users,
 } from "./schema";
+import { builtinPlaybooks } from "./seed/playbooks";
 
-// Organization IDs
+// ── Deterministic seed IDs (stable for idempotent re-runs) ────────────────
+
 const ORG_DEV_ID = "org_seed_dev001";
 const ORG_STAGING_ID = "org_seed_staging001";
 const ORG_DEMO_ID = "org_seed_demo001";
 
-// User IDs
 const USER_DEV_ADMIN = "usr_seed_dev001";
 const USER_DEV_ENG = "usr_seed_dev002";
 const USER_DEV_DESIGNER = "usr_seed_dev003";
@@ -42,11 +48,13 @@ const USER_STAGING_QA = "usr_seed_staging002";
 const USER_DEMO_PM = "usr_seed_demo001";
 const USER_DEMO_ENG = "usr_seed_demo002";
 
-async function seed() {
-  console.log("Seeding database...");
+async function ensureExtensions(): Promise<void> {
+  console.log("Ensuring required extensions...");
+  await db.execute(sql`CREATE EXTENSION IF NOT EXISTS vector`);
+  await db.execute(sql`CREATE EXTENSION IF NOT EXISTS pg_trgm`);
+}
 
-  // ── Organizations ──────────────────────────────────────────────
-
+async function seedOrganizations(): Promise<void> {
   const orgs = [
     {
       id: ORG_DEV_ID,
@@ -71,9 +79,9 @@ async function seed() {
   for (const org of orgs) {
     await db.insert(organizations).values(org).onConflictDoNothing();
   }
+}
 
-  // ── Users ──────────────────────────────────────────────────────
-
+async function seedUsers(): Promise<void> {
   const allUsers = [
     {
       id: USER_DEV_ADMIN,
@@ -123,8 +131,16 @@ async function seed() {
     await db.insert(users).values(user).onConflictDoNothing();
   }
 
-  // ── Org memberships ────────────────────────────────────────────
+  // Default user settings for all users
+  for (const user of allUsers) {
+    await db
+      .insert(userSettings)
+      .values({ userId: user.id })
+      .onConflictDoNothing();
+  }
+}
 
+async function seedOrgMemberships(): Promise<void> {
   const memberships = [
     // Dev org
     {
@@ -132,21 +148,21 @@ async function seed() {
       orgId: ORG_DEV_ID,
       userId: USER_DEV_ADMIN,
       role: "owner" as const,
-      joinedAt: new Date(),
+      joinedAt: new Date("2026-01-01T00:00:00Z"),
     },
     {
       id: "om_seed_002",
       orgId: ORG_DEV_ID,
       userId: USER_DEV_ENG,
       role: "member" as const,
-      joinedAt: new Date(),
+      joinedAt: new Date("2026-01-15T00:00:00Z"),
     },
     {
       id: "om_seed_003",
       orgId: ORG_DEV_ID,
       userId: USER_DEV_DESIGNER,
       role: "member" as const,
-      joinedAt: new Date(),
+      joinedAt: new Date("2026-02-01T00:00:00Z"),
     },
     // Staging org
     {
@@ -154,14 +170,14 @@ async function seed() {
       orgId: ORG_STAGING_ID,
       userId: USER_STAGING_LEAD,
       role: "owner" as const,
-      joinedAt: new Date(),
+      joinedAt: new Date("2026-01-01T00:00:00Z"),
     },
     {
       id: "om_seed_005",
       orgId: ORG_STAGING_ID,
       userId: USER_STAGING_QA,
       role: "member" as const,
-      joinedAt: new Date(),
+      joinedAt: new Date("2026-01-10T00:00:00Z"),
     },
     // Demo org
     {
@@ -169,23 +185,23 @@ async function seed() {
       orgId: ORG_DEMO_ID,
       userId: USER_DEMO_PM,
       role: "owner" as const,
-      joinedAt: new Date(),
+      joinedAt: new Date("2026-02-01T00:00:00Z"),
     },
     {
       id: "om_seed_007",
       orgId: ORG_DEMO_ID,
       userId: USER_DEMO_ENG,
       role: "member" as const,
-      joinedAt: new Date(),
+      joinedAt: new Date("2026-02-15T00:00:00Z"),
     },
   ];
 
   for (const membership of memberships) {
     await db.insert(orgMembers).values(membership).onConflictDoNothing();
   }
+}
 
-  // ── Credit balances ────────────────────────────────────────────
-
+async function seedCredits(): Promise<void> {
   const credits = [
     { orgId: ORG_DEV_ID, balance: 2000, reserved: 0 },
     { orgId: ORG_STAGING_ID, balance: 8000, reserved: 150 },
@@ -195,9 +211,9 @@ async function seed() {
   for (const credit of credits) {
     await db.insert(creditBalances).values(credit).onConflictDoNothing();
   }
+}
 
-  // ── Projects (5 with different tech stacks) ────────────────────
-
+async function seedProjects(): Promise<void> {
   const projectData = [
     {
       id: "proj_seed_001",
@@ -285,9 +301,9 @@ async function seed() {
         .onConflictDoNothing();
     }
   }
+}
 
-  // ── Sessions ───────────────────────────────────────────────────
-
+async function seedSessions(): Promise<void> {
   const sessionData = [
     {
       id: "sess_seed_001",
@@ -337,9 +353,9 @@ async function seed() {
   for (const session of sessionData) {
     await db.insert(sessions).values(session).onConflictDoNothing();
   }
+}
 
-  // ── Session events ─────────────────────────────────────────────
-
+async function seedSessionEvents(): Promise<void> {
   const eventData = [
     {
       id: "sevt_seed_001",
@@ -370,9 +386,9 @@ async function seed() {
   for (const event of eventData) {
     await db.insert(sessionEvents).values(event).onConflictDoNothing();
   }
+}
 
-  // ── Tasks ──────────────────────────────────────────────────────
-
+async function seedTasks(): Promise<void> {
   const taskData = [
     {
       id: "task_seed_001",
@@ -483,9 +499,9 @@ async function seed() {
   for (const task of taskData) {
     await db.insert(tasks).values(task).onConflictDoNothing();
   }
+}
 
-  // ── Subscription plans ─────────────────────────────────────────
-
+async function seedSubscriptionPlans(): Promise<void> {
   const plans = [
     {
       id: "plan_hobby",
@@ -531,24 +547,47 @@ async function seed() {
   for (const plan of plans) {
     await db.insert(subscriptionPlans).values(plan).onConflictDoNothing();
   }
+}
 
-  // ── Tech stack presets ─────────────────────────────────────────
-
+async function seedTechStackPresets(): Promise<void> {
   const presets = [
     {
       id: "preset_modern_saas",
       name: "Modern SaaS",
       slug: "modern-saas",
       description: "Next.js + tRPC + Drizzle + PostgreSQL",
-      configJson: { framework: "nextjs" },
+      configJson: {
+        framework: "nextjs",
+        language: "typescript",
+        orm: "drizzle",
+        database: "postgresql",
+      },
       icon: "rocket",
+    },
+    {
+      id: "preset_fullstack_minimal",
+      name: "Fullstack Minimal",
+      slug: "fullstack-minimal",
+      description: "Lightweight full-stack with React + Express + SQLite",
+      configJson: {
+        framework: "react",
+        language: "typescript",
+        orm: "drizzle",
+        database: "sqlite",
+      },
+      icon: "zap",
     },
     {
       id: "preset_django_react",
       name: "Django + React",
       slug: "django-react",
       description: "Django REST + React SPA",
-      configJson: { framework: "django" },
+      configJson: {
+        framework: "django",
+        language: "python",
+        orm: "django-orm",
+        database: "postgresql",
+      },
       icon: "snake",
     },
     {
@@ -556,7 +595,12 @@ async function seed() {
       name: "Rails + Hotwire",
       slug: "rails",
       description: "Ruby on Rails full-stack",
-      configJson: { framework: "rails" },
+      configJson: {
+        framework: "rails",
+        language: "ruby",
+        orm: "activerecord",
+        database: "postgresql",
+      },
       icon: "gem",
     },
     {
@@ -564,7 +608,12 @@ async function seed() {
       name: "Go Microservices",
       slug: "go-microservices",
       description: "Go + gRPC + PostgreSQL",
-      configJson: { framework: "go" },
+      configJson: {
+        framework: "go",
+        language: "go",
+        orm: "sqlc",
+        database: "postgresql",
+      },
       icon: "server",
     },
   ];
@@ -572,22 +621,91 @@ async function seed() {
   for (const preset of presets) {
     await db.insert(techStackPresets).values(preset).onConflictDoNothing();
   }
-
-  console.log("Seed complete!");
-  console.log("  - 3 organizations (dev/pro, staging/team, demo/starter)");
-  console.log("  - 7 users across organizations");
-  console.log("  - 5 projects with different tech stacks");
-  console.log("  - 5 sessions (3 completed, 2 active)");
-  console.log("  - 7 tasks (4 completed, 2 in-progress, 1 pending)");
-  console.log("  - 4 session events");
-  console.log("  - Credit balances per org");
-  console.log("  - 5 subscription plans");
-  console.log("  - 4 tech stack presets");
-
-  process.exit(0);
 }
 
-seed().catch((err) => {
-  console.error("Seed failed:", err);
-  process.exit(1);
-});
+async function seedPlaybooks(): Promise<void> {
+  let order = 0;
+  for (const pb of builtinPlaybooks) {
+    order += 1;
+    await db
+      .insert(playbooks)
+      .values({
+        id: `pb_builtin_${String(order).padStart(3, "0")}`,
+        orgId: null,
+        name: pb.name,
+        description: pb.description,
+        category: pb.category,
+        steps: [...pb.steps],
+        parameters: [...pb.parameters],
+        isBuiltin: true,
+        isPublic: true,
+        usageCount: 0,
+        tags: [...pb.tags],
+      })
+      .onConflictDoNothing();
+  }
+}
+
+async function seed(): Promise<void> {
+  console.log("Seeding database...\n");
+
+  // Ensure extensions are available (pgvector, pg_trgm)
+  await ensureExtensions();
+
+  // Seed in dependency order: orgs -> users -> memberships -> projects -> sessions -> tasks
+  await seedOrganizations();
+  console.log("  [1/10] Organizations");
+
+  await seedUsers();
+  console.log("  [2/10] Users + settings");
+
+  await seedOrgMemberships();
+  console.log("  [3/10] Org memberships");
+
+  await seedCredits();
+  console.log("  [4/10] Credit balances");
+
+  await seedProjects();
+  console.log("  [5/10] Projects + settings + members");
+
+  await seedSessions();
+  console.log("  [6/10] Sessions");
+
+  await seedSessionEvents();
+  console.log("  [7/10] Session events");
+
+  await seedTasks();
+  console.log("  [8/10] Tasks");
+
+  await seedSubscriptionPlans();
+  console.log("  [9/10] Subscription plans + tech stack presets");
+
+  await seedTechStackPresets();
+
+  await seedPlaybooks();
+  console.log("  [10/10] Built-in playbooks");
+
+  console.log("\nSeed complete!");
+  console.log("  - 3 organizations (dev/pro, staging/team, demo/starter)");
+  console.log("  - 7 users with default settings");
+  console.log("  - 7 org memberships across 3 organizations");
+  console.log("  - 5 projects with settings and members");
+  console.log("  - 5 sessions (3 completed, 2 active)");
+  console.log("  - 4 session events");
+  console.log("  - 7 tasks (4 completed, 2 in-progress, 1 pending)");
+  console.log("  - Credit balances per org");
+  console.log("  - 5 subscription plans");
+  console.log("  - 5 tech stack presets");
+  console.log(`  - ${builtinPlaybooks.length} built-in playbooks`);
+}
+
+seed()
+  .then(async () => {
+    await closeDatabase();
+    process.exit(0);
+  })
+  .catch(async (err: unknown) => {
+    console.error("Seed failed:", err);
+    await closeDatabase();
+    process.exit(1);
+  });

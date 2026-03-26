@@ -85,10 +85,14 @@ export {
   fileWriteSchema,
 } from "./tools/file";
 export {
+  gitAddSchema,
   gitBranchSchema,
+  gitCheckoutSchema,
+  gitCloneSchema,
   gitCommitSchema,
   gitCreatePrSchema,
   gitDiffSchema,
+  gitLogSchema,
   gitPushSchema,
   gitStatusSchema,
   gitTools,

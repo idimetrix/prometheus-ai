@@ -22,6 +22,7 @@ import {
   createProjectSchema,
   createRuleSchema,
   deleteRuleSchema,
+  forkProjectSchema,
   getProjectSchema,
   importRulesFromFileSchema,
   listProjectReposSchema,
@@ -32,6 +33,8 @@ import {
   removeProjectRepoSchema,
   rulesFileSchema,
   setDefaultRepoSchema,
+  shareProjectSchema,
+  unshareProjectSchema,
   updateProjectMemberSchema,
   updateProjectSchema,
   updateProjectSettingsSchema,
@@ -823,6 +826,148 @@ export const projectsRouter = router({
         return { rules: created, importedCount: created.length };
       }),
   }),
+
+  share: protectedProcedure
+    .input(shareProjectSchema)
+    .mutation(async ({ input, ctx }) => {
+      await verifyProjectAccess(ctx.db, input.projectId, ctx.orgId);
+      await verifyProjectRole(
+        ctx.db,
+        input.projectId,
+        ctx.auth.userId,
+        "owner"
+      );
+      const slug =
+        input.slug ??
+        `${input.projectId.slice(0, 8)}-${Date.now().toString(36)}`;
+      // Check slug uniqueness
+      const existing = await ctx.db.query.projects.findFirst({
+        where: eq(projects.shareSlug, slug),
+        columns: { id: true },
+      });
+      if (existing) {
+        throw new TRPCError({
+          code: "CONFLICT",
+          message: "Share slug is already taken. Choose a different slug.",
+        });
+      }
+      const [updated] = await ctx.db
+        .update(projects)
+        .set({ shareSlug: slug, isPublic: true, updatedAt: new Date() })
+        .where(
+          and(eq(projects.id, input.projectId), eq(projects.orgId, ctx.orgId))
+        )
+        .returning();
+      if (!updated) {
+        throw new TRPCError({
+          code: "NOT_FOUND",
+          message: "Project not found",
+        });
+      }
+      logger.info(
+        { projectId: input.projectId, slug },
+        "Project shared publicly"
+      );
+      return { slug: updated.shareSlug, isPublic: true };
+    }),
+
+  unshare: protectedProcedure
+    .input(unshareProjectSchema)
+    .mutation(async ({ input, ctx }) => {
+      await verifyProjectAccess(ctx.db, input.projectId, ctx.orgId);
+      await verifyProjectRole(
+        ctx.db,
+        input.projectId,
+        ctx.auth.userId,
+        "owner"
+      );
+      const [updated] = await ctx.db
+        .update(projects)
+        .set({
+          shareSlug: null,
+          isPublic: false,
+          updatedAt: new Date(),
+        })
+        .where(
+          and(eq(projects.id, input.projectId), eq(projects.orgId, ctx.orgId))
+        )
+        .returning();
+      if (!updated) {
+        throw new TRPCError({
+          code: "NOT_FOUND",
+          message: "Project not found",
+        });
+      }
+      logger.info({ projectId: input.projectId }, "Project unshared");
+      return { success: true };
+    }),
+
+  fork: protectedProcedure
+    .input(forkProjectSchema)
+    .mutation(async ({ input, ctx }) => {
+      // The source project must be public (no org check needed)
+      const source = await ctx.db.query.projects.findFirst({
+        where: and(
+          eq(projects.id, input.projectId),
+          eq(projects.isPublic, true)
+        ),
+        with: { settings: true },
+      });
+      if (!source) {
+        throw new TRPCError({
+          code: "NOT_FOUND",
+          message: "Public project not found",
+        });
+      }
+      const forkName = input.name ?? `${source.name} (fork)`;
+      const forkId = generateId("proj");
+      const [forked] = await ctx.db
+        .insert(projects)
+        .values({
+          id: forkId,
+          orgId: ctx.orgId,
+          name: forkName,
+          description: source.description,
+          repoUrl: source.repoUrl,
+          techStackPreset: source.techStackPreset,
+          status: "setup",
+          forkedFromId: source.id,
+        })
+        .returning();
+      // Copy settings
+      if (source.settings) {
+        await ctx.db.insert(projectSettings).values({
+          projectId: forkId,
+          agentAggressiveness: source.settings.agentAggressiveness,
+          ciLoopMaxIterations: source.settings.ciLoopMaxIterations,
+          parallelAgentCount: source.settings.parallelAgentCount,
+          blueprintEnforcement: source.settings.blueprintEnforcement,
+          testCoverageTarget: source.settings.testCoverageTarget,
+          securityScanLevel: source.settings.securityScanLevel,
+          deployTarget: source.settings.deployTarget,
+          modelCostBudget: source.settings.modelCostBudget,
+        });
+      } else {
+        await ctx.db.insert(projectSettings).values({ projectId: forkId });
+      }
+      // Add forker as owner
+      await ctx.db.insert(projectMembers).values({
+        id: generateId("pm"),
+        projectId: forkId,
+        userId: ctx.auth.userId,
+        role: "owner",
+      });
+      // Increment fork count on source
+      await ctx.db
+        .update(projects)
+        .set({ forkCount: sql`${projects.forkCount} + 1` })
+        .where(eq(projects.id, source.id));
+      logger.info(
+        { forkId, sourceId: source.id, orgId: ctx.orgId },
+        "Project forked"
+      );
+      return forked as NonNullable<typeof forked>;
+    }),
 
   repos: router({
     list: protectedProcedure

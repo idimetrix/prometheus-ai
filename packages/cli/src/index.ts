@@ -8,6 +8,7 @@ import { initCommand } from "./commands/init";
 import { planCommand } from "./commands/plan";
 import { reviewCommand } from "./commands/review";
 import { searchCommand } from "./commands/search";
+import { sessionsCommand } from "./commands/sessions";
 import { statusCommand } from "./commands/status";
 import { taskCommand } from "./commands/task";
 
@@ -25,6 +26,7 @@ program.addCommand(planCommand);
 program.addCommand(fleetCommand);
 program.addCommand(reviewCommand);
 program.addCommand(searchCommand);
+program.addCommand(sessionsCommand);
 program.addCommand(initCommand);
 program.addCommand(benchmarkCommand);
 

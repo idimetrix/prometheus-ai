@@ -255,6 +255,147 @@ export function useSessionStream(sessionId: string | null) {
       }
     });
 
+    // ---- Canonical agent streaming events (GAP-P0-08) ----
+
+    // agent:thinking — LLM token streaming (partial text)
+    es.addEventListener("agent:thinking", (e) => {
+      try {
+        const data = JSON.parse(e.data);
+        if (data.content) {
+          storeRef.current.addTerminalLine({
+            content: data.content,
+            timestamp: data.timestamp,
+          });
+        }
+        storeRef.current.addEvent({
+          id: crypto.randomUUID(),
+          type: "agent:thinking",
+          data,
+          timestamp: data.timestamp ?? new Date().toISOString(),
+        });
+      } catch {
+        /* ignore */
+      }
+    });
+
+    // agent:terminal — Terminal command output
+    es.addEventListener("agent:terminal", (e) => {
+      try {
+        const data = JSON.parse(e.data);
+        const content = data.output
+          ? `$ ${data.command ?? ""}\n${data.output}`
+          : `$ ${data.command ?? ""}`;
+        storeRef.current.addTerminalLine({
+          content,
+          timestamp: data.timestamp,
+        });
+        storeRef.current.addEvent({
+          id: crypto.randomUUID(),
+          type: "agent:terminal",
+          data,
+          timestamp: data.timestamp ?? new Date().toISOString(),
+        });
+      } catch {
+        /* ignore */
+      }
+    });
+
+    // agent:file-change — File write with diff
+    es.addEventListener("agent:file-change", (e) => {
+      try {
+        const data = JSON.parse(e.data);
+        if (data.filePath) {
+          storeRef.current.addFileEntry({
+            path: data.filePath,
+            name: data.filePath.split("/").pop() ?? data.filePath,
+            type: "file",
+            status: "modified",
+          });
+        }
+        storeRef.current.addEvent({
+          id: crypto.randomUUID(),
+          type: "agent:file-change",
+          data,
+          timestamp: data.timestamp ?? new Date().toISOString(),
+        });
+      } catch {
+        /* ignore */
+      }
+    });
+
+    // agent:progress — Task progress (step N of M)
+    es.addEventListener("agent:progress", (e) => {
+      try {
+        const data = JSON.parse(e.data);
+        if (data.status) {
+          storeRef.current.setStatus(data.status);
+        }
+        storeRef.current.addEvent({
+          id: crypto.randomUUID(),
+          type: "agent:progress",
+          data,
+          timestamp: data.timestamp ?? new Date().toISOString(),
+        });
+      } catch {
+        /* ignore */
+      }
+    });
+
+    // task:complete — Task completion with summary
+    es.addEventListener("task:complete", (e) => {
+      try {
+        const data = JSON.parse(e.data);
+        storeRef.current.setStatus(data.status ?? "completed");
+      } catch {
+        storeRef.current.setStatus("completed");
+      }
+    });
+
+    // task:created — New task enqueued
+    es.addEventListener("task:created", (e) => {
+      try {
+        const data = JSON.parse(e.data);
+        storeRef.current.addEvent({
+          id: crypto.randomUUID(),
+          type: "task:created",
+          data,
+          timestamp: data.timestamp ?? new Date().toISOString(),
+        });
+      } catch {
+        /* ignore */
+      }
+    });
+
+    // session:checkpoint — Checkpoint saved
+    es.addEventListener("session:checkpoint", (e) => {
+      try {
+        const data = JSON.parse(e.data);
+        storeRef.current.addEvent({
+          id: crypto.randomUUID(),
+          type: "session:checkpoint",
+          data,
+          timestamp: data.timestamp ?? new Date().toISOString(),
+        });
+      } catch {
+        /* ignore */
+      }
+    });
+
+    // session:error — Error event
+    es.addEventListener("session:error", (e) => {
+      try {
+        const data = JSON.parse(e.data);
+        storeRef.current.addEvent({
+          id: crypto.randomUUID(),
+          type: "session:error",
+          data,
+          timestamp: data.timestamp ?? new Date().toISOString(),
+        });
+      } catch {
+        /* ignore */
+      }
+    });
+
     // Error handling with auto-reconnect
     es.onerror = () => {
       storeRef.current.setConnected(false);

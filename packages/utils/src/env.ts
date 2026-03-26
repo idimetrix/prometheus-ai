@@ -155,6 +155,8 @@ const serviceUrlsSchema = z.object({
   MODEL_ROUTER_URL: z.string().default("http://localhost:4004"),
   MCP_GATEWAY_URL: z.string().default("http://localhost:4005"),
   SANDBOX_MANAGER_URL: z.string().default("http://localhost:4006"),
+  SOCKET_SERVER_URL: z.string().default("http://localhost:4001"),
+  QUEUE_WORKER_URL: z.string().default("http://localhost:4007"),
 });
 
 const servicePortsSchema = z.object({
@@ -240,6 +242,8 @@ export const apiEnvSchema = baseSchema
       CORS_ORIGIN: true,
       ORCHESTRATOR_URL: true,
       PROJECT_BRAIN_URL: true,
+      MODEL_ROUTER_URL: true,
+      MCP_GATEWAY_URL: true,
       SANDBOX_MANAGER_URL: true,
     })
   )
@@ -247,7 +251,7 @@ export const apiEnvSchema = baseSchema
   .merge(emailSchema)
   .merge(monitoringSchema);
 
-/** Orchestrator — calls model-router and project-brain */
+/** Orchestrator — calls model-router, project-brain, sandbox-manager, socket-server */
 export const orchestratorEnvSchema = baseSchema
   .merge(databaseSchema)
   .merge(redisSchema)
@@ -256,12 +260,13 @@ export const orchestratorEnvSchema = baseSchema
       MODEL_ROUTER_URL: true,
       PROJECT_BRAIN_URL: true,
       SANDBOX_MANAGER_URL: true,
+      SOCKET_SERVER_URL: true,
     })
   )
   .merge(servicePortsSchema.pick({ ORCHESTRATOR_PORT: true }))
   .merge(monitoringSchema);
 
-/** Queue Worker — processes background jobs */
+/** Queue Worker — processes background jobs, calls orchestrator and sandbox */
 export const queueWorkerEnvSchema = baseSchema
   .merge(databaseSchema)
   .merge(redisSchema)
@@ -271,6 +276,7 @@ export const queueWorkerEnvSchema = baseSchema
       APP_URL: true,
       ORCHESTRATOR_URL: true,
       PROJECT_BRAIN_URL: true,
+      SANDBOX_MANAGER_URL: true,
     })
   )
   .merge(emailSchema)
@@ -285,17 +291,21 @@ export const socketServerEnvSchema = baseSchema
 
 /** Model Router — routes LLM requests to providers */
 export const modelRouterEnvSchema = baseSchema
+  .merge(redisSchema)
   .merge(llmProvidersSchema)
   .merge(servicePortsSchema.pick({ MODEL_ROUTER_PORT: true }))
   .merge(monitoringSchema);
 
 /** MCP Gateway — Model Context Protocol gateway */
 export const mcpGatewayEnvSchema = baseSchema
+  .merge(redisSchema)
   .merge(servicePortsSchema.pick({ MCP_GATEWAY_PORT: true }))
   .merge(monitoringSchema);
 
 /** Project Brain — codebase analysis & embeddings */
 export const projectBrainEnvSchema = baseSchema
+  .merge(databaseSchema)
+  .merge(redisSchema)
   .merge(llmProvidersSchema.pick({ OLLAMA_BASE_URL: true }))
   .merge(projectBrainSchema)
   .merge(servicePortsSchema.pick({ PROJECT_BRAIN_PORT: true }))

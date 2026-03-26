@@ -136,6 +136,7 @@ vi.mock("@prometheus/ai", () => ({
 vi.mock("ai", () => ({
   generateText: (...args: unknown[]) => mockGenerateText(...args),
   streamText: vi.fn(),
+  jsonSchema: vi.fn((schema: unknown) => schema),
 }));
 
 vi.mock("@prometheus/utils", () => ({
@@ -232,16 +233,14 @@ describe("ModelRouterService", () => {
 
     it("routes to primary model successfully via cascade", async () => {
       // Cascade routing starts with the cheap tier (qwen2.5-coder:14b)
-      // for default slot non-streaming requests
-      mockCreate.mockResolvedValueOnce({
-        id: "cmpl_1",
-        choices: [
-          {
-            message: { role: "assistant", content: "Hi there" },
-            finish_reason: "stop",
-          },
-        ],
-        usage: { prompt_tokens: 10, completion_tokens: 5 },
+      // for default slot non-streaming requests. The cascade uses
+      // generateText via the Vercel AI SDK.
+      mockGenerateText.mockResolvedValueOnce({
+        text: "Hi there",
+        finishReason: "stop",
+        usage: { inputTokens: 10, outputTokens: 5 },
+        toolCalls: [],
+        response: { id: "cmpl_1" },
       });
 
       const result = await service.route(baseRequest);
@@ -255,14 +254,12 @@ describe("ModelRouterService", () => {
 
     it("calculates usage tokens correctly", async () => {
       // Cascade routing zeroes out individual token counts
-      mockCreate.mockResolvedValueOnce({
-        choices: [
-          {
-            message: { role: "assistant", content: "Response" },
-            finish_reason: "stop",
-          },
-        ],
-        usage: { prompt_tokens: 100, completion_tokens: 50 },
+      mockGenerateText.mockResolvedValueOnce({
+        text: "Response",
+        finishReason: "stop",
+        usage: { inputTokens: 100, outputTokens: 50 },
+        toolCalls: [],
+        response: { id: "cmpl_1" },
       });
 
       const result = await service.route(baseRequest);
@@ -275,17 +272,15 @@ describe("ModelRouterService", () => {
 
     it("falls back to next model when primary fails", async () => {
       // Cascade: cheap tier fails -> standard tier succeeds
-      mockCreate
+      mockGenerateText
         .mockRejectedValueOnce(new Error("Model unavailable")) // cheap tier fails
         .mockResolvedValueOnce({
           // standard tier succeeds
-          choices: [
-            {
-              message: { role: "assistant", content: "Fallback response" },
-              finish_reason: "stop",
-            },
-          ],
-          usage: { prompt_tokens: 10, completion_tokens: 5 },
+          text: "Fallback response",
+          finishReason: "stop",
+          usage: { inputTokens: 10, outputTokens: 5 },
+          toolCalls: [],
+          response: { id: "cmpl_1" },
         });
 
       const result = await service.route(baseRequest);
@@ -321,7 +316,7 @@ describe("ModelRouterService", () => {
     });
 
     it("throws when all models in the chain are exhausted", async () => {
-      mockCreate.mockRejectedValue(new Error("All fail"));
+      mockGenerateText.mockRejectedValue(new Error("All fail"));
 
       await expect(service.route(baseRequest)).rejects.toThrow(
         "All models exhausted"
@@ -381,17 +376,17 @@ describe("ModelRouterService", () => {
     });
 
     it("falls through to slot routing when override model fails", async () => {
-      // Override fails, then cascade routing kicks in for default slot
-      mockGenerateText.mockRejectedValueOnce(new Error("Override failed"));
-      mockCreate.mockResolvedValueOnce({
-        choices: [
-          {
-            message: { role: "assistant", content: "Primary" },
-            finish_reason: "stop",
-          },
-        ],
-        usage: { prompt_tokens: 10, completion_tokens: 5 },
-      });
+      // Override fails via generateText, then cascade routing kicks in for
+      // default slot — also via generateText
+      mockGenerateText
+        .mockRejectedValueOnce(new Error("Override failed"))
+        .mockResolvedValueOnce({
+          text: "Primary",
+          finishReason: "stop",
+          usage: { inputTokens: 10, outputTokens: 5 },
+          toolCalls: [],
+          response: { id: "cmpl_1" },
+        });
 
       const result = await service.route({
         slot: "default",
@@ -461,14 +456,12 @@ describe("ModelRouterService", () => {
     });
 
     it("handles missing usage in response gracefully", async () => {
-      mockCreate.mockResolvedValueOnce({
-        choices: [
-          {
-            message: { role: "assistant", content: "OK" },
-            finish_reason: "stop",
-          },
-        ],
-        // No usage field
+      mockGenerateText.mockResolvedValueOnce({
+        text: "OK",
+        finishReason: "stop",
+        usage: undefined,
+        toolCalls: [],
+        response: { id: "cmpl_1" },
       });
 
       const result = await service.route(baseRequest);
@@ -571,14 +564,13 @@ describe("ModelRouterService", () => {
 
   describe("routeCompletion (legacy)", () => {
     it("maps task_type to slot and returns completion", async () => {
-      mockCreate.mockResolvedValueOnce({
-        choices: [
-          {
-            message: { role: "assistant", content: "Code" },
-            finish_reason: "stop",
-          },
-        ],
-        usage: { prompt_tokens: 10, completion_tokens: 5 },
+      // coding -> default slot -> cascade -> generateText
+      mockGenerateText.mockResolvedValueOnce({
+        text: "Code",
+        finishReason: "stop",
+        usage: { inputTokens: 10, outputTokens: 5 },
+        toolCalls: [],
+        response: { id: "cmpl_1" },
       });
 
       const result = await service.routeCompletion({
@@ -591,14 +583,13 @@ describe("ModelRouterService", () => {
     });
 
     it("defaults to coding task_type when not specified", async () => {
-      mockCreate.mockResolvedValueOnce({
-        choices: [
-          {
-            message: { role: "assistant", content: "OK" },
-            finish_reason: "stop",
-          },
-        ],
-        usage: { prompt_tokens: 10, completion_tokens: 5 },
+      // default -> cascade -> generateText
+      mockGenerateText.mockResolvedValueOnce({
+        text: "OK",
+        finishReason: "stop",
+        usage: { inputTokens: 10, outputTokens: 5 },
+        toolCalls: [],
+        response: { id: "cmpl_1" },
       });
 
       const result = await service.routeCompletion({
@@ -609,14 +600,13 @@ describe("ModelRouterService", () => {
     });
 
     it("returns simplified response without routing metadata", async () => {
-      mockCreate.mockResolvedValueOnce({
-        choices: [
-          {
-            message: { role: "assistant", content: "OK" },
-            finish_reason: "stop",
-          },
-        ],
-        usage: { prompt_tokens: 10, completion_tokens: 5 },
+      // default -> cascade -> generateText
+      mockGenerateText.mockResolvedValueOnce({
+        text: "OK",
+        finishReason: "stop",
+        usage: { inputTokens: 10, outputTokens: 5 },
+        toolCalls: [],
+        response: { id: "cmpl_1" },
       });
 
       const result = await service.routeCompletion({

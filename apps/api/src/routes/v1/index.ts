@@ -6,6 +6,7 @@ import type { MiddlewareHandler } from "hono";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { apiKeysV1 } from "./api-keys";
+import { chatV1 } from "./chat";
 import { openapiApp } from "./openapi";
 import { projectsV1 } from "./projects";
 import { sessionsV1 } from "./sessions";
@@ -129,11 +130,14 @@ v1App.use("/projects/*", requireScope("projects:read"));
 v1App.use("/projects", requireScope("projects:read"));
 v1App.use("/api-keys/*", requireScope("settings:read"));
 v1App.use("/api-keys", requireScope("settings:read"));
+v1App.use("/chat/*", requireScope("sessions:read"));
+v1App.use("/chat", requireScope("sessions:read"));
 
 // ── Mount sub-routers ───────────────────────────────────────────────────────
 v1App.route("/tasks", tasksV1);
 v1App.route("/sessions", sessionsV1);
 v1App.route("/projects", projectsV1);
 v1App.route("/api-keys", apiKeysV1);
+v1App.route("/chat", chatV1);
 
 export { v1App };

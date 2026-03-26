@@ -6,7 +6,13 @@ const logger = createLogger("auth:internal");
 const HEADER_NAME = "x-internal-secret";
 
 /** Paths that bypass internal auth (health/readiness probes, metrics) */
-const BYPASS_PATHS = new Set(["/health", "/live", "/ready", "/metrics"]);
+const BYPASS_PATHS = new Set([
+  "/health",
+  "/health/ready",
+  "/live",
+  "/ready",
+  "/metrics",
+]);
 
 /**
  * Hono middleware that validates the `x-internal-secret` header on incoming

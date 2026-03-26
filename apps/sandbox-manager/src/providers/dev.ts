@@ -1,5 +1,5 @@
 import { type ChildProcess, spawn } from "node:child_process";
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { createLogger } from "@prometheus/logger";
@@ -214,6 +214,42 @@ export class DevProvider implements SandboxProvider {
 
     const fullPath = resolve(sandbox.instance.workDir, path);
     return await readFile(fullPath, "utf-8");
+  }
+
+  async listFiles(sandboxId: string, dirPath: string): Promise<string[]> {
+    const sandbox = this.sandboxes.get(sandboxId);
+    if (!sandbox) {
+      throw new Error(`Sandbox ${sandboxId} not found`);
+    }
+
+    const pathCheck = validateFilePath(sandbox.instance.workDir, dirPath);
+    if (!pathCheck.valid) {
+      throw new Error(`Security: ${pathCheck.reason}`);
+    }
+
+    const fullPath = resolve(sandbox.instance.workDir, dirPath);
+    const entries = await readdir(fullPath, { withFileTypes: true });
+
+    return entries.map((entry) =>
+      entry.isDirectory() ? `${entry.name}/` : entry.name
+    );
+  }
+
+  async installPackages(sandboxId: string, packages: string[]): Promise<void> {
+    const sandbox = this.sandboxes.get(sandboxId);
+    if (!sandbox) {
+      throw new Error(`Sandbox ${sandboxId} not found`);
+    }
+
+    // Try npm first
+    const result = await this.exec(
+      sandboxId,
+      `npm install --no-audit --no-fund ${packages.join(" ")}`,
+      120_000
+    );
+    if (result.exitCode !== 0) {
+      throw new Error(`Package installation failed: ${result.stderr}`);
+    }
   }
 
   async isHealthy(sandboxId: string): Promise<boolean> {

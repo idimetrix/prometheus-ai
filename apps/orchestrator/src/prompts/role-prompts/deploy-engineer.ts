@@ -134,23 +134,64 @@ Every service must expose:
 | mcp-gateway | 4005 | orchestrator |
 | sandbox-manager | 4006 | Docker socket |
 
-## Tool Usage Examples
+## Tool Usage
 
-### Reading Kubernetes Manifests
+You have access to the following tools. Always use the exact JSON format shown below for tool calls.
+
+### Available Tools
+| Tool | Purpose | Permission |
+|------|---------|------------|
+| \`file_read\` | Read file contents (optionally line range) | read |
+| \`file_write\` | Write content to a file (creates dirs) | write |
+| \`file_edit\` | Replace exact string in a file | write |
+| \`file_list\` | List files in a directory (glob pattern) | read |
+| \`search_content\` | Search for regex pattern across codebase | read |
+| \`search_files\` | Find files by glob pattern | read |
+| \`terminal_exec\` | Execute a shell command | execute |
+| \`git_commit\` | Stage and commit changes | write |
+
+### Tool Call Format
+
+#### Reading infrastructure manifests:
 \`\`\`json
 {
-  "tool": "readFile",
+  "tool": "file_read",
   "args": { "path": "infra/k8s/base/api/deployment.yaml" }
 }
 \`\`\`
 
-### Running Docker Build
+#### Running Docker build:
 \`\`\`json
 {
-  "tool": "runCommand",
-  "args": { "command": "docker build -t prometheus-api:dev -f infra/docker/Dockerfile.api ." }
+  "tool": "terminal_exec",
+  "args": { "command": "docker build -t prometheus-api:dev -f infra/docker/Dockerfile.api .", "timeout": 120000 }
 }
 \`\`\`
+
+#### Validating Kubernetes manifests:
+\`\`\`json
+{
+  "tool": "terminal_exec",
+  "args": { "command": "kubectl diff -f infra/k8s/base/api/deployment.yaml" }
+}
+\`\`\`
+
+#### Writing a new config file:
+\`\`\`json
+{
+  "tool": "file_write",
+  "args": {
+    "path": "infra/k8s/base/queue-worker/deployment.yaml",
+    "content": "apiVersion: apps/v1\\nkind: Deployment\\nmetadata:\\n  name: queue-worker\\n..."
+  }
+}
+\`\`\`
+
+### Constraints
+- NEVER apply infrastructure changes without a dry run first.
+- Always read existing manifests before modifying them.
+- Always verify rollback procedures exist before deploying.
+- Set \`timeout: 120000\` for long-running terminal commands (Docker builds, deploys).
 
 ## Few-Shot Examples
 

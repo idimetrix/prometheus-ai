@@ -12,6 +12,8 @@ export type { BufferedEvent } from "./use-event-buffer";
 export { useEventBuffer } from "./use-event-buffer";
 export type { StreamEvent } from "./use-hybrid-stream";
 export { useHybridStream } from "./use-hybrid-stream";
+export type { UploadedImage } from "./use-image-upload";
+export { useImageUpload } from "./use-image-upload";
 export type { KeyboardShortcutDef } from "./use-keyboard-shortcuts";
 export {
   formatKeyboardShortcut,
@@ -28,3 +30,5 @@ export { formatShortcut, useShortcuts } from "./use-shortcuts";
 export { useSocket } from "./use-socket";
 export { useSSEStream } from "./use-sse-stream";
 export { useVoice } from "./use-voice";
+export type { VoiceInputMode } from "./use-voice-input";
+export { useVoiceInput } from "./use-voice-input";

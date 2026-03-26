@@ -1,5 +1,6 @@
 import { createLogger } from "@prometheus/logger";
 import type { MCPToolResult, ToolRegistry } from "../../registry";
+import { registerGitHubCILogsAdapter } from "./ci-logs";
 
 const logger = createLogger("mcp-gateway:github");
 const GITHUB_API = "https://api.github.com";
@@ -1231,4 +1232,395 @@ export function registerGitHubAdapter(registry: ToolRegistry): void {
       };
     }
   );
+
+  // ---- get_pr ----
+  registry.register(
+    {
+      name: "github_get_pr",
+      adapter: "github",
+      description:
+        "Get details of a specific pull request including merge status",
+      inputSchema: {
+        type: "object",
+        properties: {
+          owner: { type: "string" },
+          repo: { type: "string" },
+          pull_number: { type: "number", description: "PR number" },
+        },
+        required: ["owner", "repo", "pull_number"],
+      },
+      requiresAuth: true,
+    },
+    async (input, credentials) => {
+      const tokenOrErr = requireToken(credentials);
+      if (typeof tokenOrErr !== "string") {
+        return tokenOrErr;
+      }
+
+      const { owner, repo, pull_number } = input as {
+        owner: string;
+        repo: string;
+        pull_number: number;
+      };
+
+      const { status, data } = await githubFetch(
+        `/repos/${owner}/${repo}/pulls/${pull_number}`,
+        tokenOrErr
+      );
+
+      if (status !== 200) {
+        return {
+          success: false,
+          error: `Failed to get PR (${status}): ${JSON.stringify(data)}`,
+        };
+      }
+
+      const pr = data as Record<string, unknown>;
+      return {
+        success: true,
+        data: {
+          number: pr.number,
+          title: pr.title,
+          state: pr.state,
+          draft: pr.draft,
+          mergeable: pr.mergeable,
+          mergeable_state: pr.mergeable_state,
+          merged: pr.merged,
+          head_branch:
+            (pr.head as Record<string, unknown> | undefined)?.ref ?? null,
+          base_branch:
+            (pr.base as Record<string, unknown> | undefined)?.ref ?? null,
+          user: (pr.user as Record<string, unknown> | undefined)?.login ?? null,
+          html_url: pr.html_url,
+          diff_url: pr.diff_url,
+          commits: pr.commits,
+          additions: pr.additions,
+          deletions: pr.deletions,
+          changed_files: pr.changed_files,
+        },
+      };
+    }
+  );
+
+  // ---- merge_pr ----
+  registry.register(
+    {
+      name: "github_merge_pr",
+      adapter: "github",
+      description: "Merge a pull request",
+      inputSchema: {
+        type: "object",
+        properties: {
+          owner: { type: "string" },
+          repo: { type: "string" },
+          pull_number: { type: "number", description: "PR number" },
+          merge_method: {
+            type: "string",
+            enum: ["merge", "squash", "rebase"],
+            description: "Merge method (default: squash)",
+          },
+          commit_title: {
+            type: "string",
+            description: "Custom merge commit title",
+          },
+          commit_message: {
+            type: "string",
+            description: "Custom merge commit message",
+          },
+        },
+        required: ["owner", "repo", "pull_number"],
+      },
+      requiresAuth: true,
+    },
+    async (input, credentials) => {
+      const tokenOrErr = requireToken(credentials);
+      if (typeof tokenOrErr !== "string") {
+        return tokenOrErr;
+      }
+
+      const {
+        owner,
+        repo,
+        pull_number,
+        merge_method,
+        commit_title,
+        commit_message,
+      } = input as {
+        owner: string;
+        repo: string;
+        pull_number: number;
+        merge_method?: string;
+        commit_title?: string;
+        commit_message?: string;
+      };
+
+      const requestBody: Record<string, unknown> = {
+        merge_method: merge_method ?? "squash",
+      };
+      if (commit_title) {
+        requestBody.commit_title = commit_title;
+      }
+      if (commit_message) {
+        requestBody.commit_message = commit_message;
+      }
+
+      const { status, data } = await githubFetch(
+        `/repos/${owner}/${repo}/pulls/${pull_number}/merge`,
+        tokenOrErr,
+        { method: "PUT", body: requestBody }
+      );
+
+      if (status !== 200) {
+        return {
+          success: false,
+          error: `Failed to merge PR (${status}): ${JSON.stringify(data)}`,
+        };
+      }
+
+      const mergeResult = data as Record<string, unknown>;
+      return {
+        success: true,
+        data: {
+          sha: mergeResult.sha,
+          merged: mergeResult.merged,
+          message: mergeResult.message,
+        },
+      };
+    }
+  );
+
+  // ---- get_issue ----
+  registry.register(
+    {
+      name: "github_get_issue",
+      adapter: "github",
+      description: "Get details of a specific issue by number",
+      inputSchema: {
+        type: "object",
+        properties: {
+          owner: { type: "string", description: "Repository owner" },
+          repo: { type: "string", description: "Repository name" },
+          issue_number: { type: "number", description: "Issue number" },
+        },
+        required: ["owner", "repo", "issue_number"],
+      },
+      requiresAuth: true,
+    },
+    async (input, credentials) => {
+      const tokenOrErr = requireToken(credentials);
+      if (typeof tokenOrErr !== "string") {
+        return tokenOrErr;
+      }
+
+      const { owner, repo, issue_number } = input as {
+        owner: string;
+        repo: string;
+        issue_number: number;
+      };
+
+      const { status, data } = await githubFetch(
+        `/repos/${owner}/${repo}/issues/${issue_number}`,
+        tokenOrErr
+      );
+
+      if (status !== 200) {
+        return {
+          success: false,
+          error: `Failed to get issue (${status}): ${JSON.stringify(data)}`,
+        };
+      }
+
+      const issue = data as Record<string, unknown>;
+      return {
+        success: true,
+        data: {
+          number: issue.number,
+          title: issue.title,
+          body: issue.body,
+          state: issue.state,
+          labels:
+            (issue.labels as Record<string, unknown>[] | undefined)?.map(
+              (l: Record<string, unknown>) => l.name
+            ) ?? [],
+          assignees:
+            (issue.assignees as Record<string, unknown>[] | undefined)?.map(
+              (a: Record<string, unknown>) => a.login
+            ) ?? [],
+          user:
+            (issue.user as Record<string, unknown> | undefined)?.login ?? null,
+          html_url: issue.html_url,
+          created_at: issue.created_at,
+          updated_at: issue.updated_at,
+          comments: issue.comments,
+          pull_request: !!issue.pull_request,
+        },
+      };
+    }
+  );
+
+  // ---- post_comment ----
+  registry.register(
+    {
+      name: "github_post_comment",
+      adapter: "github",
+      description:
+        "Post a comment on an issue or pull request (alias for add_comment with Prometheus branding)",
+      inputSchema: {
+        type: "object",
+        properties: {
+          owner: { type: "string", description: "Repository owner" },
+          repo: { type: "string", description: "Repository name" },
+          issue_number: {
+            type: "number",
+            description: "Issue or PR number",
+          },
+          body: { type: "string", description: "Comment body (markdown)" },
+          branded: {
+            type: "boolean",
+            description: "Prefix with Prometheus Agent header (default: true)",
+          },
+        },
+        required: ["owner", "repo", "issue_number", "body"],
+      },
+      requiresAuth: true,
+    },
+    async (input, credentials) => {
+      const tokenOrErr = requireToken(credentials);
+      if (typeof tokenOrErr !== "string") {
+        return tokenOrErr;
+      }
+
+      const { owner, repo, issue_number, body, branded } = input as {
+        owner: string;
+        repo: string;
+        issue_number: number;
+        body: string;
+        branded?: boolean;
+      };
+
+      const commentBody =
+        branded === false ? body : `**Prometheus Agent**\n\n${body}`;
+
+      const { status, data } = await githubFetch(
+        `/repos/${owner}/${repo}/issues/${issue_number}/comments`,
+        tokenOrErr,
+        { method: "POST", body: { body: commentBody } }
+      );
+
+      if (status !== 201) {
+        return {
+          success: false,
+          error: `Failed to post comment (${status}): ${JSON.stringify(data)}`,
+        };
+      }
+
+      const comment = data as Record<string, unknown>;
+      return {
+        success: true,
+        data: {
+          comment_id: comment.id,
+          html_url: comment.html_url,
+          body: commentBody,
+        },
+      };
+    }
+  );
+
+  // ---- get_pr_checks ----
+  registry.register(
+    {
+      name: "github_get_pr_checks",
+      adapter: "github",
+      description:
+        "Get the status checks and CI results for a pull request's head commit",
+      inputSchema: {
+        type: "object",
+        properties: {
+          owner: { type: "string" },
+          repo: { type: "string" },
+          pull_number: { type: "number", description: "PR number" },
+        },
+        required: ["owner", "repo", "pull_number"],
+      },
+      requiresAuth: true,
+    },
+    async (input, credentials) => {
+      const tokenOrErr = requireToken(credentials);
+      if (typeof tokenOrErr !== "string") {
+        return tokenOrErr;
+      }
+
+      const { owner, repo, pull_number } = input as {
+        owner: string;
+        repo: string;
+        pull_number: number;
+      };
+
+      // First get the PR to find the head SHA
+      const prResult = await githubFetch(
+        `/repos/${owner}/${repo}/pulls/${pull_number}`,
+        tokenOrErr
+      );
+      if (prResult.status !== 200) {
+        return { success: false, error: "Failed to get PR details" };
+      }
+
+      const headSha = (
+        (prResult.data as Record<string, unknown>).head as Record<
+          string,
+          unknown
+        >
+      ).sha as string;
+
+      // Get check runs for the commit
+      const checksResult = await githubFetch(
+        `/repos/${owner}/${repo}/commits/${headSha}/check-runs`,
+        tokenOrErr
+      );
+
+      if (checksResult.status !== 200) {
+        return {
+          success: false,
+          error: `Failed to get checks (${checksResult.status})`,
+        };
+      }
+
+      const checksData = checksResult.data as Record<string, unknown>;
+      const checkRuns = (
+        (checksData.check_runs as Record<string, unknown>[]) ?? []
+      ).map((run) => ({
+        name: run.name,
+        status: run.status,
+        conclusion: run.conclusion,
+        started_at: run.started_at,
+        completed_at: run.completed_at,
+        html_url: run.html_url,
+      }));
+
+      // Also get combined status
+      const statusResult = await githubFetch(
+        `/repos/${owner}/${repo}/commits/${headSha}/status`,
+        tokenOrErr
+      );
+
+      let combinedState = "unknown";
+      if (statusResult.status === 200) {
+        combinedState = (statusResult.data as Record<string, unknown>)
+          .state as string;
+      }
+
+      return {
+        success: true,
+        data: {
+          head_sha: headSha,
+          combined_state: combinedState,
+          check_runs: checkRuns,
+          total_count: checksData.total_count,
+        },
+      };
+    }
+  );
+
+  // ---- CI logs (from ci-logs.ts) ----
+  registerGitHubCILogsAdapter(registry);
 }

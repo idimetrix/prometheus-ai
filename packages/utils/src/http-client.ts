@@ -108,6 +108,36 @@ export class HttpClient {
     return this.request<T>(path, { ...options, method: "DELETE" });
   }
 
+  /**
+   * Convenience method for LLM chat completions (used by model-router client).
+   */
+  async chat(body: {
+    model?: string;
+    messages: Array<{ role: string; content: string }>;
+    temperature?: number;
+  }): Promise<{ content: string }> {
+    const response = await this.post<{
+      choices?: Array<{ message?: { content?: string } }>;
+      content?: string;
+    }>("/v1/chat/completions", body);
+    const content =
+      response.data?.choices?.[0]?.message?.content ??
+      response.data?.content ??
+      "";
+    return { content };
+  }
+
+  /**
+   * Convenience method for fetching project context from the brain service.
+   */
+  async getContext(params: {
+    projectId: string;
+    query?: string;
+  }): Promise<{ context: string }> {
+    const response = await this.post<{ context?: string }>("/context", params);
+    return { context: response.data?.context ?? "" };
+  }
+
   private checkCircuitBreaker(): void {
     if (this.circuitState !== "open") {
       return;

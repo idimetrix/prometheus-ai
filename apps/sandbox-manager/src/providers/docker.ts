@@ -1,4 +1,7 @@
 import { spawn } from "node:child_process";
+import { mkdir } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { createLogger } from "@prometheus/logger";
 import { generateId } from "@prometheus/utils";
 import type {
@@ -13,6 +16,7 @@ const logger = createLogger("sandbox-manager:provider:docker");
 const DEFAULT_CPU_LIMIT = 1;
 const DEFAULT_MEMORY_MB = 2048;
 const DEFAULT_DISK_MB = 10_240;
+const MAX_OUTPUT_BYTES = 1024 * 1024; // 1MB
 
 /** Default network allowlist for package registries */
 const DEFAULT_NETWORK_ALLOWLIST = [
@@ -26,6 +30,8 @@ const DEFAULT_NETWORK_ALLOWLIST = [
 
 interface DockerSandbox {
   containerId: string;
+  /** Host-side workspace directory bind-mounted into the container */
+  hostWorkDir: string;
   instance: SandboxInstance;
 }
 
@@ -33,7 +39,10 @@ interface DockerSandbox {
  * Docker-based sandbox provider.
  *
  * Runs sandboxes as isolated Docker containers with resource limits,
- * capability dropping, and read-only root filesystems.
+ * capability dropping, and a bind-mounted workspace volume.
+ *
+ * The workspace is a host directory mounted at /workspace inside the container,
+ * enabling both file operations through Docker exec and direct host access.
  *
  * Note: Uses spawn() with explicit argument arrays to avoid shell injection.
  * The sandbox exec path intentionally uses "sh -c" because the command string
@@ -43,9 +52,13 @@ export class DockerProvider implements SandboxProvider {
   readonly name = "docker" as const;
   private readonly sandboxes = new Map<string, DockerSandbox>();
   private readonly image: string;
+  private readonly baseDir: string;
 
   constructor(image?: string) {
-    this.image = image ?? process.env.SANDBOX_IMAGE ?? "node:22-alpine";
+    this.image = image ?? process.env.SANDBOX_IMAGE ?? "node:20-slim";
+    this.baseDir =
+      process.env.SANDBOX_BASE_DIR ??
+      join(tmpdir(), "prometheus-sandboxes", "docker");
   }
 
   async create(config: SandboxConfig): Promise<SandboxInstance> {
@@ -55,6 +68,10 @@ export class DockerProvider implements SandboxProvider {
     const diskMb = config.diskMb ?? DEFAULT_DISK_MB;
     const containerName = `prometheus-sandbox-${id}`;
 
+    // Create host workspace directory for bind mount
+    const hostWorkDir = join(this.baseDir, id, "workspace");
+    await mkdir(hostWorkDir, { recursive: true });
+
     const args = [
       "create",
       "--name",
@@ -62,20 +79,18 @@ export class DockerProvider implements SandboxProvider {
       "--cpus",
       String(cpuLimit),
       "--memory",
-      String(memoryMb * 1024 * 1024),
+      `${memoryMb}m`,
       "--memory-swap",
-      String(memoryMb * 1024 * 1024),
+      `${memoryMb}m`,
       "--network",
       config.networkEnabled === false ? "none" : "bridge",
       "--security-opt",
       "no-new-privileges",
-      "--read-only",
+      // Bind-mount the host workspace directory into the container
+      "-v",
+      `${hostWorkDir}:/workspace`,
       "--tmpfs",
       `/tmp:rw,noexec,nosuid,size=${Math.min(512, diskMb)}m`,
-      "--tmpfs",
-      "/home/sandbox:rw,nosuid,size=256m",
-      "--tmpfs",
-      `/workspace:rw,nosuid,size=${diskMb}m`,
       "--cap-drop",
       "ALL",
       "--cap-add",
@@ -96,6 +111,8 @@ export class DockerProvider implements SandboxProvider {
       "NODE_ENV=development",
       "--env",
       "HOME=/home/sandbox",
+      "--env",
+      "TERM=xterm-256color",
       "--label",
       "prometheus.sandbox=true",
       "--label",
@@ -129,8 +146,21 @@ export class DockerProvider implements SandboxProvider {
 
     const startResult = await this.spawnDocker(["start", containerId]);
     if (startResult.exitCode !== 0) {
+      // Clean up on failure
+      await this.spawnDocker(["rm", "-f", containerId]).catch(() => {
+        /* best-effort cleanup */
+      });
       throw new Error(`Failed to start container: ${startResult.stderr}`);
     }
+
+    // Install commonly needed tools in the container (best-effort, non-blocking)
+    this.installBaseTools(containerId).catch((err) => {
+      const msg = err instanceof Error ? err.message : String(err);
+      logger.debug(
+        { containerId: containerId.slice(0, 12), error: msg },
+        "Base tool installation skipped (non-critical)"
+      );
+    });
 
     const instance: SandboxInstance = {
       id,
@@ -141,7 +171,7 @@ export class DockerProvider implements SandboxProvider {
       createdAt: new Date(),
     };
 
-    this.sandboxes.set(id, { containerId, instance });
+    this.sandboxes.set(id, { containerId, instance, hostWorkDir });
 
     // Apply network allowlist via iptables if specified
     if (config.networkEnabled !== false && config.networkAllowlist) {
@@ -149,11 +179,66 @@ export class DockerProvider implements SandboxProvider {
     }
 
     logger.info(
-      { sandboxId: id, containerId: containerId.slice(0, 12) },
+      {
+        sandboxId: id,
+        containerId: containerId.slice(0, 12),
+        image: this.image,
+        hostWorkDir,
+      },
       "Docker sandbox created"
     );
 
     return instance;
+  }
+
+  /**
+   * Install base tools that may not be in the image.
+   * Runs in the background after container creation.
+   */
+  private async installBaseTools(containerId: string): Promise<void> {
+    // Check if apt-get is available (Debian/Ubuntu-based images)
+    const aptCheck = await this.spawnDocker(
+      ["exec", containerId, "which", "apt-get"],
+      5000
+    );
+    if (aptCheck.exitCode === 0) {
+      // Install git and python3 if not already present
+      const installResult = await this.spawnDocker(
+        [
+          "exec",
+          containerId,
+          "sh",
+          "-c",
+          "apt-get update -qq && apt-get install -y -qq --no-install-recommends git python3 2>/dev/null || true",
+        ],
+        120_000
+      );
+      if (installResult.exitCode === 0) {
+        logger.debug(
+          { containerId: containerId.slice(0, 12) },
+          "Base tools installed in container"
+        );
+      }
+      return;
+    }
+
+    // Check if apk is available (Alpine-based images)
+    const apkCheck = await this.spawnDocker(
+      ["exec", containerId, "which", "apk"],
+      5000
+    );
+    if (apkCheck.exitCode === 0) {
+      await this.spawnDocker(
+        [
+          "exec",
+          containerId,
+          "sh",
+          "-c",
+          "apk add --no-cache git python3 2>/dev/null || true",
+        ],
+        120_000
+      );
+    }
   }
 
   async destroy(sandboxId: string): Promise<void> {
@@ -171,6 +256,15 @@ export class DockerProvider implements SandboxProvider {
     await this.spawnDocker(["rm", "-f", sandbox.containerId]).catch(() => {
       /* best-effort */
     });
+
+    // Clean up host workspace directory
+    try {
+      const { rm } = await import("node:fs/promises");
+      const hostDir = join(this.baseDir, sandboxId);
+      await rm(hostDir, { recursive: true, force: true });
+    } catch {
+      // Best-effort cleanup
+    }
 
     sandbox.instance.status = "stopped";
     this.sandboxes.delete(sandboxId);
@@ -190,15 +284,25 @@ export class DockerProvider implements SandboxProvider {
 
     const startTime = Date.now();
     const result = await this.spawnDocker(
-      ["exec", sandbox.containerId, "sh", "-c", command],
+      ["exec", "-w", "/workspace", sandbox.containerId, "sh", "-c", command],
       timeout
     );
     const duration = Date.now() - startTime;
 
+    // Truncate output if too large
+    const output =
+      result.stdout.length > MAX_OUTPUT_BYTES
+        ? `${result.stdout.slice(0, MAX_OUTPUT_BYTES)}\n... (output truncated)`
+        : result.stdout;
+    const stderr =
+      result.stderr.length > MAX_OUTPUT_BYTES
+        ? `${result.stderr.slice(0, MAX_OUTPUT_BYTES)}\n... (output truncated)`
+        : result.stderr;
+
     return {
       exitCode: result.exitCode,
-      output: result.stdout,
-      stderr: result.stderr,
+      output,
+      stderr,
       duration,
     };
   }
@@ -249,6 +353,120 @@ export class DockerProvider implements SandboxProvider {
     }
 
     return result.stdout;
+  }
+
+  async listFiles(sandboxId: string, dirPath: string): Promise<string[]> {
+    const sandbox = this.sandboxes.get(sandboxId);
+    if (!sandbox) {
+      throw new Error(`Sandbox ${sandboxId} not found`);
+    }
+
+    const result = await this.spawnDocker(
+      [
+        "exec",
+        sandbox.containerId,
+        "find",
+        dirPath,
+        "-maxdepth",
+        "1",
+        "-not",
+        "-path",
+        dirPath,
+        "-printf",
+        "%y %p\\n",
+      ],
+      10_000
+    );
+
+    if (result.exitCode !== 0) {
+      // Fallback to ls if find doesn't support -printf
+      const lsResult = await this.spawnDocker(
+        ["exec", sandbox.containerId, "ls", "-1a", dirPath],
+        10_000
+      );
+      if (lsResult.exitCode !== 0) {
+        throw new Error(`Failed to list files: ${lsResult.stderr}`);
+      }
+      return lsResult.stdout
+        .split("\n")
+        .filter((f) => f && f !== "." && f !== "..");
+    }
+
+    return result.stdout
+      .trim()
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => {
+        const spaceIdx = line.indexOf(" ");
+        const type = line.slice(0, spaceIdx);
+        const path = line.slice(spaceIdx + 1);
+        const name = path.split("/").pop() ?? path;
+        return type === "d" ? `${name}/` : name;
+      });
+  }
+
+  async installPackages(sandboxId: string, packages: string[]): Promise<void> {
+    const sandbox = this.sandboxes.get(sandboxId);
+    if (!sandbox) {
+      throw new Error(`Sandbox ${sandboxId} not found`);
+    }
+
+    // Detect package manager
+    const npmCheck = await this.spawnDocker(
+      ["exec", sandbox.containerId, "which", "npm"],
+      5000
+    );
+    if (npmCheck.exitCode === 0) {
+      const result = await this.spawnDocker(
+        [
+          "exec",
+          "-w",
+          "/workspace",
+          sandbox.containerId,
+          "npm",
+          "install",
+          "--no-audit",
+          "--no-fund",
+          ...packages,
+        ],
+        120_000
+      );
+      if (result.exitCode !== 0) {
+        throw new Error(`npm install failed: ${result.stderr}`);
+      }
+      return;
+    }
+
+    // Fallback to pip
+    const pipCheck = await this.spawnDocker(
+      ["exec", sandbox.containerId, "which", "pip3"],
+      5000
+    );
+    if (pipCheck.exitCode === 0) {
+      const result = await this.spawnDocker(
+        [
+          "exec",
+          "-w",
+          "/workspace",
+          sandbox.containerId,
+          "pip3",
+          "install",
+          ...packages,
+        ],
+        120_000
+      );
+      if (result.exitCode !== 0) {
+        throw new Error(`pip install failed: ${result.stderr}`);
+      }
+      return;
+    }
+
+    throw new Error("No supported package manager found in container");
+  }
+
+  /** Get the host-side workspace path for a sandbox */
+  getHostWorkDir(sandboxId: string): string | undefined {
+    return this.sandboxes.get(sandboxId)?.hostWorkDir;
   }
 
   async isHealthy(sandboxId: string): Promise<boolean> {
@@ -344,7 +562,9 @@ export class DockerProvider implements SandboxProvider {
       createdAt: new Date(),
     };
 
-    this.sandboxes.set(id, { containerId, instance });
+    const hostWorkDir = join(this.baseDir, id, "workspace");
+    await mkdir(hostWorkDir, { recursive: true });
+    this.sandboxes.set(id, { containerId, instance, hostWorkDir });
 
     logger.info(
       { sandboxId: id, snapshotTag: snapshotId },

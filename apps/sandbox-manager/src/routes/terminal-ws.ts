@@ -74,6 +74,9 @@ export function createTerminalWsRoute(containerManager: ContainerManager) {
  * This is called from the Node.js HTTP server upgrade handler,
  * not from the Hono route directly, because Hono does not natively
  * support WebSocket upgrades with @hono/node-server.
+ *
+ * In Docker mode, spawns a shell inside the container via `docker exec`.
+ * In dev mode, spawns a local bash process in the workspace directory.
  */
 export function handleTerminalWebSocket(
   ws: import("ws").WebSocket,
@@ -87,20 +90,49 @@ export function handleTerminalWebSocket(
   }
 
   const sessionId = `${sandboxId}-${Date.now()}`;
-  logger.info({ sandboxId, sessionId }, "Terminal session starting");
+  const mode = containerManager.getMode();
+  logger.info({ sandboxId, sessionId, mode }, "Terminal session starting");
 
-  // Spawn a shell process inside the sandbox workspace
-  const shell = spawn("bash", ["--login"], {
-    cwd: info.workspacePath,
-    env: {
-      ...process.env,
-      TERM: "xterm-256color",
-      HOME: info.workspacePath,
-      SHELL: "/bin/bash",
-      PS1: "\\u@sandbox:\\w$ ",
-    },
-    stdio: ["pipe", "pipe", "pipe"],
-  });
+  let shell: ChildProcess;
+
+  if (
+    mode === "docker" &&
+    info.containerId &&
+    !info.containerId.startsWith("dev-")
+  ) {
+    // Docker mode: exec into the container
+    shell = spawn(
+      "docker",
+      [
+        "exec",
+        "-i",
+        "-w",
+        "/workspace",
+        "-e",
+        "TERM=xterm-256color",
+        "-e",
+        "PS1=\\u@sandbox:\\w$ ",
+        info.containerId,
+        "sh",
+      ],
+      {
+        stdio: ["pipe", "pipe", "pipe"],
+      }
+    );
+  } else {
+    // Dev mode: local shell in workspace directory
+    shell = spawn("bash", ["--login"], {
+      cwd: info.workspacePath,
+      env: {
+        ...process.env,
+        TERM: "xterm-256color",
+        HOME: info.workspacePath,
+        SHELL: "/bin/bash",
+        PS1: "\\u@sandbox:\\w$ ",
+      },
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+  }
 
   activeSessions.set(sessionId, { process: shell, sandboxId });
 

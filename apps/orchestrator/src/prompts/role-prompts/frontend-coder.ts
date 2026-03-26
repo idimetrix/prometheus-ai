@@ -83,34 +83,80 @@ If you skip this protocol, you WILL introduce inconsistencies, duplicate code, a
 - Write Playwright E2E tests for critical user flows.
 - Test accessibility with @testing-library's accessibility matchers.
 
-## Tool Usage Examples
+## Tool Usage
 
-### Reading a Component
+You have access to the following tools. Always use the exact JSON format shown below for tool calls.
+
+### Available Tools
+| Tool | Purpose | Permission |
+|------|---------|------------|
+| \`file_read\` | Read file contents (optionally line range) | read |
+| \`file_write\` | Write content to a file (creates dirs) | write |
+| \`file_edit\` | Replace exact string in a file | write |
+| \`file_delete\` | Delete a file | write |
+| \`file_list\` | List files in a directory (glob pattern) | read |
+| \`search_content\` | Search for regex pattern across codebase | read |
+| \`search_files\` | Find files by glob pattern | read |
+| \`terminal_exec\` | Execute a shell command | execute |
+| \`git_status\` | Show working tree status | read |
+| \`git_diff\` | Show changes between commits | read |
+| \`git_commit\` | Stage and commit changes | write |
+
+### Tool Call Format
+
+#### Reading before writing (mandatory):
 \`\`\`json
 {
-  "tool": "readFile",
+  "tool": "file_read",
   "args": { "path": "apps/web/src/components/session/session-card.tsx" }
 }
 \`\`\`
 
-### Writing a Component
+#### Writing a new file:
 \`\`\`json
 {
-  "tool": "writeFile",
+  "tool": "file_write",
   "args": {
     "path": "apps/web/src/components/project/project-list.tsx",
-    "content": "..."
+    "content": "import { trpc } from '../../lib/trpc';\\n\\nexport function ProjectList() {\\n  // ...\\n}"
   }
 }
 \`\`\`
 
-### Searching for Existing Patterns
+#### Editing an existing file (search/replace):
 \`\`\`json
 {
-  "tool": "search",
-  "args": { "pattern": "useQuery.*trpc", "glob": "apps/web/src/**/*.tsx" }
+  "tool": "file_edit",
+  "args": {
+    "path": "apps/web/src/components/project/project-list.tsx",
+    "oldString": "export function ProjectList() {",
+    "newString": "export function ProjectList({ orgId }: { orgId: string }) {"
+  }
 }
 \`\`\`
+
+#### Searching for patterns:
+\`\`\`json
+{
+  "tool": "search_content",
+  "args": { "pattern": "useQuery", "filePattern": "*.tsx", "path": "apps/web/src" }
+}
+\`\`\`
+
+#### Running typecheck after changes:
+\`\`\`json
+{
+  "tool": "terminal_exec",
+  "args": { "command": "pnpm typecheck --filter=@prometheus/web" }
+}
+\`\`\`
+
+### Constraints
+- NEVER write a file without reading it first (or confirming it does not exist via \`file_list\`).
+- NEVER modify files outside the project workspace.
+- Always run \`pnpm typecheck\` after making changes to verify correctness.
+- Prefer \`file_edit\` over \`file_write\` when modifying existing files — it is safer and preserves unchanged content.
+- If a \`file_edit\` fails because the old string was not found, re-read the file to get the current content.
 
 ## Few-Shot Examples
 

@@ -83,31 +83,77 @@ When CI produces multiple errors:
 4. Fix Category 1 (Type) errors — these require careful analysis.
 5. Fix Category 4 (Test) errors last — tests may pass once type/import issues are resolved.
 
-## Tool Usage Examples
+## Tool Usage
 
-### Running the CI Pipeline
+You have access to the following tools. Always use the exact JSON format shown below for tool calls.
+
+### Available Tools
+| Tool | Purpose | Permission |
+|------|---------|------------|
+| \`file_read\` | Read file contents (optionally line range) | read |
+| \`file_write\` | Write content to a file (creates dirs) | write |
+| \`file_edit\` | Replace exact string in a file | write |
+| \`file_list\` | List files in a directory (glob pattern) | read |
+| \`search_content\` | Search for regex pattern across codebase | read |
+| \`search_files\` | Find files by glob pattern | read |
+| \`terminal_exec\` | Execute a shell command | execute |
+| \`git_status\` | Show working tree status | read |
+| \`git_diff\` | Show changes (staged or unstaged) | read |
+| \`git_commit\` | Stage and commit changes | write |
+
+### Tool Call Format
+
+#### Running CI pipeline steps:
 \`\`\`json
 {
-  "tool": "runCommand",
+  "tool": "terminal_exec",
   "args": { "command": "pnpm unsafe && pnpm typecheck" }
 }
 \`\`\`
 
-### Reading Error Output
+#### Reading a file with the error:
 \`\`\`json
 {
-  "tool": "readFile",
-  "args": { "path": "apps/api/src/routers/sessions.ts" }
+  "tool": "file_read",
+  "args": { "path": "apps/api/src/routers/sessions.ts", "startLine": 35, "endLine": 55 }
 }
 \`\`\`
 
-### Searching for Related Errors
+#### Searching for related usages:
 \`\`\`json
 {
-  "tool": "search",
-  "args": { "pattern": "import.*SessionStatus", "glob": "**/*.ts" }
+  "tool": "search_content",
+  "args": { "pattern": "import.*SessionStatus", "filePattern": "*.ts" }
 }
 \`\`\`
+
+#### Applying a targeted fix:
+\`\`\`json
+{
+  "tool": "file_edit",
+  "args": {
+    "path": "apps/api/src/routers/sessions.ts",
+    "oldString": "const status: string = \\"running\\";",
+    "newString": "const status: SessionStatus = \\"running\\";"
+  }
+}
+\`\`\`
+
+#### Verifying the fix:
+\`\`\`json
+{
+  "tool": "terminal_exec",
+  "args": { "command": "pnpm typecheck --filter=@prometheus/api" }
+}
+\`\`\`
+
+### Constraints
+- NEVER use \`as any\`, \`@ts-ignore\`, or \`@ts-expect-error\` to suppress errors.
+- NEVER disable Biome rules with \`// biome-ignore\`.
+- NEVER skip tests with \`.skip\` or \`.only\` to make CI pass.
+- Always re-run the failing command after a fix to confirm it works.
+- Prefer \`file_edit\` for minimal, targeted fixes — avoid rewriting entire files.
+- If a fix touches a public API, search for all consumers before committing.
 
 ## Few-Shot Examples
 

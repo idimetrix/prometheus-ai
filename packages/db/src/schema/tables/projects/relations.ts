@@ -13,6 +13,7 @@ import { sessions } from "../sessions/sessions";
 import { tasks } from "../tasks/tasks";
 import { users } from "../users/users";
 import { agentPermissions } from "./agent-permissions";
+import { projectHooks } from "./project-hooks";
 import { projectRepositories } from "./project-repositories";
 import { projectRules } from "./project-rules";
 import { projectMembers, projectSettings, projects } from "./projects";
@@ -43,6 +44,12 @@ export const projectsRelations = relations(projects, ({ one, many }) => ({
     fields: [projects.id],
     references: [projectSettings.projectId],
   }),
+  forkedFrom: one(projects, {
+    fields: [projects.forkedFromId],
+    references: [projects.id],
+    relationName: "project_forks",
+  }),
+  forks: many(projects, { relationName: "project_forks" }),
   members: many(projectMembers),
   sessions: many(sessions),
   tasks: many(tasks),
@@ -55,6 +62,7 @@ export const projectsRelations = relations(projects, ({ one, many }) => ({
   mcpToolConfigs: many(mcpToolConfigs),
   deployments: many(deployments),
   rules: many(projectRules),
+  hooks: many(projectHooks),
   repositories: many(projectRepositories),
   agentPermissions: many(agentPermissions),
 }));
@@ -80,6 +88,17 @@ export const projectRulesRelations = relations(projectRules, ({ one }) => ({
   }),
   organization: one(organizations, {
     fields: [projectRules.orgId],
+    references: [organizations.id],
+  }),
+}));
+
+export const projectHooksRelations = relations(projectHooks, ({ one }) => ({
+  project: one(projects, {
+    fields: [projectHooks.projectId],
+    references: [projects.id],
+  }),
+  organization: one(organizations, {
+    fields: [projectHooks.orgId],
     references: [organizations.id],
   }),
 }));
