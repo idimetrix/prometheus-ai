@@ -104,18 +104,18 @@ interface CascadeMetrics {
 const DEFAULT_TIERS: CascadeTierConfig[] = [
   {
     name: "cheap",
-    model: "ollama/qwen2.5-coder:14b",
-    costPerToken: 0.000_000_1,
+    model: "anthropic/claude-sonnet-4-6",
+    costPerToken: 0.000_003,
   },
   {
     name: "standard",
-    model: "ollama/qwen2.5-coder:32b",
-    costPerToken: 0.000_001,
+    model: "anthropic/claude-sonnet-4-6",
+    costPerToken: 0.000_003,
   },
   {
     name: "premium",
-    model: "anthropic/claude-sonnet-4-6",
-    costPerToken: 0.000_01,
+    model: "anthropic/claude-opus-4-6",
+    costPerToken: 0.000_015,
   },
 ];
 

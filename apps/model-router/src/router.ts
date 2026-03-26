@@ -27,8 +27,9 @@ export interface SlotConfig {
 
 const SLOT_CONFIGS: Record<string, SlotConfig> = {
   default: {
-    primary: "ollama/qwen2.5-coder:32b",
+    primary: "anthropic/claude-sonnet-4-6",
     fallbacks: [
+      "ollama/qwen2.5-coder:32b",
       "ollama/qwen2.5-coder:14b",
       "cerebras/qwen3-235b",
       "groq/llama-3.3-70b-versatile",
@@ -36,18 +37,18 @@ const SLOT_CONFIGS: Record<string, SlotConfig> = {
     description: "General coding tasks",
   },
   think: {
-    primary: "ollama/qwen2.5-coder:32b",
-    fallbacks: ["ollama/qwen2.5:14b", "anthropic/claude-sonnet-4-6"],
+    primary: "anthropic/claude-sonnet-4-6",
+    fallbacks: ["ollama/qwen2.5-coder:32b", "ollama/qwen2.5:14b"],
     description: "Deep reasoning and planning",
   },
   longContext: {
-    primary: "gemini/gemini-2.5-flash",
-    fallbacks: ["anthropic/claude-sonnet-4-6", "ollama/qwen2.5-coder:32b"],
+    primary: "anthropic/claude-sonnet-4-6",
+    fallbacks: ["gemini/gemini-2.5-flash", "ollama/qwen2.5-coder:32b"],
     description: "Long context windows (>32K tokens)",
   },
   background: {
     primary: "ollama/qwen2.5-coder:7b",
-    fallbacks: ["ollama/qwen2.5-coder:14b"],
+    fallbacks: ["ollama/qwen2.5-coder:14b", "anthropic/claude-sonnet-4-6"],
     description: "Background indexing and lightweight tasks",
   },
   vision: {
@@ -61,8 +62,12 @@ const SLOT_CONFIGS: Record<string, SlotConfig> = {
     description: "Code review and quality analysis",
   },
   fastLoop: {
-    primary: "cerebras/qwen3-235b",
-    fallbacks: ["groq/llama-3.3-70b-versatile", "ollama/qwen2.5-coder:14b"],
+    primary: "anthropic/claude-sonnet-4-6",
+    fallbacks: [
+      "cerebras/qwen3-235b",
+      "groq/llama-3.3-70b-versatile",
+      "ollama/qwen2.5-coder:14b",
+    ],
     description: "Fast CI loop iterations",
   },
   premium: {
@@ -71,13 +76,14 @@ const SLOT_CONFIGS: Record<string, SlotConfig> = {
     description: "Premium tier for complex tasks",
   },
   speculate: {
-    primary: "cerebras/qwen3-235b",
-    fallbacks: ["groq/llama-3.3-70b-versatile"],
+    primary: "anthropic/claude-sonnet-4-6",
+    fallbacks: ["cerebras/qwen3-235b", "groq/llama-3.3-70b-versatile"],
     description: "Fastest available model for speculative tool pre-execution",
   },
   fast: {
-    primary: "cerebras/qwen3-235b",
+    primary: "anthropic/claude-sonnet-4-6",
     fallbacks: [
+      "cerebras/qwen3-235b",
       "groq/llama-3.3-70b-versatile",
       "ollama/qwen2.5-coder:14b",
       "ollama/qwen2.5-coder:7b",
@@ -85,8 +91,8 @@ const SLOT_CONFIGS: Record<string, SlotConfig> = {
     description: "Lowest-latency provider for interactive fast-path operations",
   },
   embeddings: {
-    primary: "voyage/voyage-code-3",
-    fallbacks: ["ollama/nomic-embed-text"],
+    primary: "ollama/nomic-embed-text",
+    fallbacks: ["voyage/voyage-code-3"],
     description:
       "Text embedding generation for semantic search and classification",
   },
