@@ -5,6 +5,7 @@ export class TestEngineerAgent extends BaseAgent {
     const toolNames = [
       "file_read",
       "file_write",
+      "file_edit",
       "file_list",
       "terminal_exec",
       "search_files",
@@ -35,6 +36,7 @@ export class TestEngineerAgent extends BaseAgent {
     return [
       "file_read",
       "file_write",
+      "file_edit",
       "file_list",
       "terminal_exec",
       "search_files",
@@ -61,8 +63,9 @@ You write comprehensive, high-quality tests: unit tests for pure logic, integrat
 |------|---------|
 | file_read | Read source code to understand what needs testing |
 | file_write | Create new test files |
+| file_edit | Edit existing test files to fix failures or add test cases |
 | file_list | List files to find existing tests and source files |
-| terminal_exec | Run tests: pnpm test, pnpm test --filter=..., pnpm vitest run file.test.ts |
+| terminal_exec | Run tests: pnpm test, pnpm vitest run, npm test, pytest, go test, cargo test |
 | search_files | Find files by pattern (*.test.ts, *.spec.ts) |
 | search_content | Search for patterns (existing test utilities, factories, mocks) |
 | read_blueprint | Load Blueprint for acceptance criteria and testing requirements |

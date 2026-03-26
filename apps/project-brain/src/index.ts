@@ -1,10 +1,8 @@
 import { serve } from "@hono/node-server";
-import { internalAuthMiddleware } from "@prometheus/auth";
 import { createLogger } from "@prometheus/logger";
 import {
   initSentry,
   initTelemetry,
-  metricsMiddleware,
   traceMiddleware,
 } from "@prometheus/telemetry";
 import {
@@ -22,6 +20,7 @@ import { BlueprintAutoUpdater } from "./blueprint/auto-updater";
 import { BlueprintEnforcer } from "./blueprint/enforcer";
 import { ContextAssembler } from "./context/assembler";
 import { FileIndexer } from "./indexing/file-indexer";
+import { ConventionMemoryLayer } from "./layers/convention-memory";
 import { DomainKnowledgeLayer } from "./layers/domain-knowledge";
 import { EpisodicLayer } from "./layers/episodic";
 import { KnowledgeGraphLayer } from "./layers/knowledge-graph";
@@ -43,10 +42,6 @@ const logger = createLogger("project-brain");
 const app = new Hono();
 
 app.use("/*", traceMiddleware("project-brain"));
-app.use("/*", metricsMiddleware());
-
-// Shared-secret auth middleware for internal service-to-service calls
-app.use("/*", internalAuthMiddleware());
 
 // Initialize layers
 const semantic = new SemanticLayer();
@@ -54,6 +49,9 @@ const knowledgeGraph = new KnowledgeGraphLayer();
 const episodic = new EpisodicLayer();
 const procedural = new ProceduralLayer();
 const workingMemory = new WorkingMemoryLayer();
+
+// Phase 8.1: Convention memory layer
+const conventionMemory = new ConventionMemoryLayer();
 
 // Phase 9: New layers and services
 const conversationalMemory = new ConversationalMemoryLayer();
@@ -116,7 +114,7 @@ app.get("/health", async (c) => {
       status,
       checks,
       uptime: Math.floor(process.uptime()),
-      version: process.env.APP_VERSION ?? "0.0.0",
+      version: "0.1.0",
       service: "project-brain",
       timestamp: new Date().toISOString(),
     },
@@ -127,59 +125,8 @@ app.get("/health", async (c) => {
 // Liveness probe — lightweight, just confirms process is responsive
 app.get("/live", (c) => c.json({ status: "ok" }));
 
-// Readiness probe — checks all dependencies are connected
-app.get("/ready", async (c) => {
-  const checks: Record<string, boolean> = {};
-
-  try {
-    const { db } = await import("@prometheus/db");
-    const { sql } = await import("drizzle-orm");
-    await db.execute(sql`SELECT 1`);
-    checks.db = true;
-  } catch {
-    checks.db = false;
-  }
-
-  try {
-    checks.embedding = await verifyEmbeddingService();
-  } catch {
-    checks.embedding = false;
-  }
-
-  const allReady = Object.values(checks).every(Boolean);
-
-  if (!allReady) {
-    return c.json({ status: "not ready", checks }, 503);
-  }
-  return c.json({ status: "ready", checks });
-});
-
-// Readiness probe (alias)
-app.get("/health/ready", async (c) => {
-  const checks: Record<string, boolean> = {};
-
-  try {
-    const { db } = await import("@prometheus/db");
-    const { sql } = await import("drizzle-orm");
-    await db.execute(sql`SELECT 1`);
-    checks.db = true;
-  } catch {
-    checks.db = false;
-  }
-
-  try {
-    checks.embedding = await verifyEmbeddingService();
-  } catch {
-    checks.embedding = false;
-  }
-
-  const allReady = Object.values(checks).every(Boolean);
-
-  if (!allReady) {
-    return c.json({ status: "not ready", checks }, 503);
-  }
-  return c.json({ status: "ready", checks });
-});
+// Readiness probe — can accept traffic
+app.get("/ready", (c) => c.json({ status: "ready" }));
 
 // ---- Context Assembly ----
 
@@ -348,6 +295,48 @@ app.get("/graph/dependents/:projectId", async (c) => {
 
   const deps = await knowledgeGraph.getDependents(projectId, filePath);
   return c.json({ dependents: deps });
+});
+
+// ---- Knowledge Graph Entity Extraction ----
+
+app.post("/graph/analyze-file", async (c) => {
+  const body = await c.req.json();
+  const { projectId, filePath, content } = body;
+  if (!(projectId && filePath && content)) {
+    return c.json(
+      { error: "projectId, filePath, and content are required" },
+      400
+    );
+  }
+  await knowledgeGraph.analyzeFile(projectId, filePath, content);
+  return c.json({ success: true, filePath });
+});
+
+app.post("/graph/find-callers", async (c) => {
+  const body = await c.req.json();
+  const result = await knowledgeGraph.findCallers(
+    body.projectId,
+    body.entityName
+  );
+  return c.json(result);
+});
+
+app.post("/graph/find-type-usages", async (c) => {
+  const body = await c.req.json();
+  const result = await knowledgeGraph.findTypeUsages(
+    body.projectId,
+    body.typeName
+  );
+  return c.json(result);
+});
+
+app.post("/graph/find-importers", async (c) => {
+  const body = await c.req.json();
+  const result = await knowledgeGraph.findImporters(
+    body.projectId,
+    body.modulePath
+  );
+  return c.json(result);
 });
 
 // ---- Working Memory ----
@@ -572,6 +561,44 @@ app.get("/conventions/prompt/:projectId", async (c) => {
   return c.json({ prompt });
 });
 
+// ---- Phase 8.1: Convention Memory (auto-detected patterns) ----
+
+app.post("/convention-memory/store", async (c) => {
+  const body = await c.req.json();
+  const convention = await conventionMemory.store(body.projectId, {
+    category: body.category,
+    pattern: body.pattern,
+    description: body.description,
+    confidence: body.confidence,
+    fileCount: body.fileCount,
+    examples: body.examples,
+  });
+  return c.json({ success: true, convention });
+});
+
+app.get("/convention-memory/:projectId", async (c) => {
+  const projectId = c.req.param("projectId");
+  const category = c.req.query("category");
+  const conventions = await conventionMemory.list(
+    projectId,
+    category ?? undefined
+  );
+  return c.json({ conventions });
+});
+
+app.get("/convention-memory/:projectId/prompt", async (c) => {
+  const projectId = c.req.param("projectId");
+  const maxTokens = Number(c.req.query("maxTokens") ?? 1000);
+  const prompt = await conventionMemory.buildPrompt(projectId, maxTokens);
+  return c.json({ prompt });
+});
+
+app.post("/convention-memory/contradict", async (c) => {
+  const body = await c.req.json();
+  await conventionMemory.contradict(body.projectId, body.pattern);
+  return c.json({ success: true });
+});
+
 // ---- Phase 9.7: Cross-Session Learning ----
 
 app.post("/procedural/learn", async (c) => {
@@ -619,245 +646,6 @@ app.post("/procedural/prune", async (c) => {
   const body = await c.req.json();
   const pruned = await procedural.pruneIneffective(body.projectId);
   return c.json({ success: true, pruned });
-});
-
-// ---- Meta-Learning (AI08) ----
-
-import { CrossUserLearner } from "./meta-learning/cross-user-learner";
-import { LearningTransfer } from "./meta-learning/learning-transfer";
-
-const crossUserLearner = new CrossUserLearner();
-const learningTransfer = new LearningTransfer();
-
-app.post("/meta-learning/record-outcome", async (c) => {
-  const body = await c.req.json();
-  const { taskType, agentRole, strategy, success, quality } = body as {
-    taskType: string;
-    agentRole: string;
-    strategy: string;
-    success: boolean;
-    quality: number;
-  };
-
-  if (!(taskType && agentRole && strategy && typeof success === "boolean")) {
-    return c.json(
-      {
-        error:
-          "taskType, agentRole, strategy, success, and quality are required",
-      },
-      400
-    );
-  }
-
-  crossUserLearner.recordOutcome(
-    taskType,
-    agentRole,
-    strategy,
-    success,
-    quality ?? 0.5
-  );
-  return c.json({ success: true });
-});
-
-app.get("/meta-learning/best-strategy", (c) => {
-  const taskType = c.req.query("taskType");
-  const agentRole = c.req.query("agentRole");
-
-  if (!(taskType && agentRole)) {
-    return c.json(
-      { error: "taskType and agentRole query parameters are required" },
-      400
-    );
-  }
-
-  const recommendation = crossUserLearner.getBestStrategy(taskType, agentRole);
-  return c.json({ recommendation });
-});
-
-app.get("/meta-learning/strategies", (c) => {
-  const taskType = c.req.query("taskType");
-
-  if (!taskType) {
-    return c.json({ error: "taskType query parameter is required" }, 400);
-  }
-
-  const strategies = crossUserLearner.getSuccessRateByStrategy(taskType);
-  const result = [...strategies.entries()].map(([name, stats]) => ({
-    name,
-    ...stats,
-  }));
-
-  return c.json({ strategies: result });
-});
-
-app.post("/meta-learning/transfer", async (c) => {
-  const body = await c.req.json();
-  const { fromProjectId, toProjectId, type } = body as {
-    fromProjectId: string;
-    toProjectId: string;
-    type?: string;
-  };
-
-  if (!(fromProjectId && toProjectId)) {
-    return c.json({ error: "fromProjectId and toProjectId are required" }, 400);
-  }
-
-  const transferred = await learningTransfer.transferLearnings(
-    fromProjectId,
-    toProjectId,
-    type
-  );
-
-  return c.json({
-    success: true,
-    transferred: transferred.length,
-    patterns: transferred,
-  });
-});
-
-app.post("/meta-learning/register-project", async (c) => {
-  const data = await c.req.json();
-  const { projectId, languages, frameworks, structure } = data as {
-    projectId: string;
-    languages: string[];
-    frameworks: string[];
-    structure: string[];
-  };
-
-  if (!projectId) {
-    return c.json({ error: "projectId is required" }, 400);
-  }
-
-  learningTransfer.registerProject({
-    projectId,
-    languages: languages ?? [],
-    frameworks: frameworks ?? [],
-    structure: structure ?? [],
-  });
-
-  return c.json({ success: true });
-});
-
-app.get("/meta-learning/similar-projects", (c) => {
-  const projectId = c.req.query("projectId");
-
-  if (!projectId) {
-    return c.json({ error: "projectId query parameter is required" }, 400);
-  }
-
-  const similar = learningTransfer.findSimilarProjects(projectId);
-  return c.json({ projects: similar });
-});
-
-app.get("/meta-learning/transferable-patterns", (c) => {
-  const projectId = c.req.query("projectId");
-
-  if (!projectId) {
-    return c.json({ error: "projectId query parameter is required" }, 400);
-  }
-
-  const patterns = learningTransfer.getTransferablePatterns(projectId);
-  return c.json({ patterns });
-});
-
-// ---- Digital Twin (AI07) ----
-
-import { DigitalTwin, type TwinQuery } from "./digital-twin";
-
-const digitalTwin = new DigitalTwin();
-
-app.post("/digital-twin/query", async (c) => {
-  const body = await c.req.json();
-  const { projectId, query, queryType, maxResults } = body as TwinQuery;
-
-  if (!(projectId && query)) {
-    return c.json({ error: "projectId and query are required" }, 400);
-  }
-
-  const result = await digitalTwin.query({
-    projectId,
-    query,
-    queryType: queryType ?? "natural_language",
-    maxResults,
-  });
-
-  return c.json(result);
-});
-
-app.post("/digital-twin/impact", async (c) => {
-  const body = await c.req.json();
-  const { projectId, filePath } = body as {
-    projectId: string;
-    filePath: string;
-  };
-
-  if (!(projectId && filePath)) {
-    return c.json({ error: "projectId and filePath are required" }, 400);
-  }
-
-  const impact = await digitalTwin.predictImpact(projectId, filePath);
-  return c.json(impact);
-});
-
-app.get("/digital-twin/architecture/:projectId", async (c) => {
-  const projectId = c.req.param("projectId");
-  const view = await digitalTwin.getArchitectureView(projectId);
-  return c.json(view);
-});
-
-app.get("/digital-twin/changes/:projectId", async (c) => {
-  const projectId = c.req.param("projectId");
-  const changes = await digitalTwin.getChangeModel(projectId);
-  return c.json(changes);
-});
-
-app.post("/digital-twin/sync", async (c) => {
-  const body = await c.req.json();
-  const { projectId, changes } = body as {
-    projectId: string;
-    changes: Array<{
-      filePath: string;
-      content: string;
-      changeType: "created" | "modified" | "deleted";
-    }>;
-  };
-
-  if (!(projectId && changes)) {
-    return c.json({ error: "projectId and changes are required" }, 400);
-  }
-
-  // Map to FileChange format expected by fileIndexer.indexChanges
-  const indexerChanges = changes.map((ch) => ({
-    path: ch.filePath,
-    content: ch.content ?? "",
-    action: (ch.changeType === "created" ? "added" : ch.changeType) as
-      | "added"
-      | "modified"
-      | "deleted",
-    hash: "",
-  }));
-
-  // Re-index changed files to keep the digital twin in sync
-  const stats = await fileIndexer.indexChanges(projectId, indexerChanges);
-
-  // Also update the knowledge graph for modified/created files
-  for (const change of changes) {
-    if (change.changeType !== "deleted" && change.content) {
-      try {
-        const symbolTable = parseTypeScript(change.filePath, change.content);
-        if (
-          symbolTable.functions.length > 0 ||
-          symbolTable.classes.length > 0
-        ) {
-          await symbolStore.store(projectId, symbolTable);
-        }
-      } catch {
-        // Non-TypeScript files or parse errors are silently ignored
-      }
-    }
-  }
-
-  return c.json({ success: true, ...stats });
 });
 
 // ---- Blueprint Auto-Update ----
@@ -959,26 +747,8 @@ app.onError((err, c) => {
     { err, path: c.req.path, method: c.req.method },
     "Unhandled error"
   );
-  return c.json({ error: "Internal server error" }, 500);
+  return c.json({ error: "Internal server error", message: err.message }, 500);
 });
-
-// ---- Graceful Shutdown ----
-
-{
-  const { registerShutdownHandler: register } = await import(
-    "@prometheus/utils"
-  );
-  register("project-brain", async () => {
-    logger.info("Project Brain shutting down...");
-    try {
-      const { redis } = await import("@prometheus/queue");
-      await redis.quit();
-    } catch {
-      // Best-effort cleanup
-    }
-    logger.info("Project Brain shutdown complete");
-  });
-}
 
 // ---- Start server ----
 

@@ -114,6 +114,9 @@ export class SwarmCoordinator {
     running: Set<string>
   ): SwarmTask[] {
     const ready: SwarmTask[] = [];
+    // Collect candidates separately to avoid modifying pending while iterating
+    const failedIds: string[] = [];
+
     for (const id of pending) {
       const task = this.tasks.get(id);
       if (!task) {
@@ -124,22 +127,32 @@ export class SwarmCoordinator {
           this.results.has(dep) && this.results.get(dep)?.status === "failed"
       );
       if (depFailed) {
-        pending.delete(id);
-        this.results.set(id, {
-          taskId: id,
-          status: "failed",
-          error: "Dependency failed",
-        });
+        failedIds.push(id);
         continue;
       }
       const depsResolved = task.dependencies.every(
         (dep) =>
           this.results.has(dep) && this.results.get(dep)?.status === "completed"
       );
-      if (depsResolved && running.size < this.maxConcurrency) {
+      // Respect maxConcurrency: available slots = maxConcurrency - running - already selected
+      if (depsResolved && running.size + ready.length < this.maxConcurrency) {
         ready.push(task);
       }
     }
+
+    // Mark failed dependencies after iteration to avoid mutating set mid-loop
+    for (const id of failedIds) {
+      pending.delete(id);
+      this.results.set(id, {
+        taskId: id,
+        status: "failed",
+        error: "Dependency failed",
+      });
+    }
+
+    // Sort by priority (higher priority first) for deterministic scheduling
+    ready.sort((a, b) => (b.priority ?? 0) - (a.priority ?? 0));
+
     return ready;
   }
 

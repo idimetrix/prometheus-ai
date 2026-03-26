@@ -4,24 +4,14 @@
  * Handles slash commands from Slack:
  * - /prometheus status  -> Returns active tasks as Slack blocks
  * - /prometheus create [description] -> Creates a task
- * - /prometheus stop [task-id] -> Cancel a task
- * - /prometheus [description] -> Shorthand: creates a task directly
- *
- * Resolves the org from the Slack team_id using the oauthTokens table.
+ * - /prometheus stop [task-id] -> Cancels a task
  */
 
 import { createHmac, timingSafeEqual } from "node:crypto";
-import {
-  db,
-  oauthTokens,
-  organizations,
-  projects,
-  sessions,
-  tasks,
-} from "@prometheus/db";
+import { db, projects, sessions, tasks } from "@prometheus/db";
 import { createLogger } from "@prometheus/logger";
 import { agentTaskQueue } from "@prometheus/queue";
-import { decrypt, generateId } from "@prometheus/utils";
+import { generateId } from "@prometheus/utils";
 import { and, desc, eq } from "drizzle-orm";
 import { Hono } from "hono";
 
@@ -32,7 +22,6 @@ const SLACK_SIGNING_SECRET = process.env.SLACK_SIGNING_SECRET ?? "";
 const WHITESPACE_RE = /\s+/;
 const SIGNATURE_VERSION = "v0";
 const MAX_TIMESTAMP_DRIFT_SEC = 300;
-const FRONTEND_URL = process.env.FRONTEND_URL ?? "http://localhost:3000";
 
 function verifySlackSignature(
   body: string,
@@ -65,83 +54,14 @@ function verifySlackSignature(
 }
 
 // ---------------------------------------------------------------------------
-// Types
+// Slack block builders
 // ---------------------------------------------------------------------------
-
-interface OrgInfo {
-  botToken: string;
-  id: string;
-  planTier: string;
-  userId: string;
-}
 
 interface SlackBlock {
   elements?: Record<string, unknown>[];
   text?: { text: string; type: string };
   type: string;
 }
-
-// ---------------------------------------------------------------------------
-// Org resolution
-// ---------------------------------------------------------------------------
-
-/** Resolve org + bot token from Slack team ID. */
-async function resolveOrgFromTeam(teamId: string): Promise<OrgInfo | null> {
-  const token = await db.query.oauthTokens.findFirst({
-    where: and(
-      eq(oauthTokens.provider, "slack"),
-      eq(oauthTokens.providerAccountId, teamId)
-    ),
-  });
-
-  if (!token) {
-    const defaultOrgId = process.env.SLACK_DEFAULT_ORG_ID;
-    const envBotToken = process.env.SLACK_BOT_TOKEN;
-    if (defaultOrgId && envBotToken) {
-      const org = await db.query.organizations.findFirst({
-        where: eq(organizations.id, defaultOrgId),
-      });
-      if (org) {
-        return {
-          id: org.id,
-          planTier: org.planTier,
-          botToken: envBotToken,
-          userId: defaultOrgId,
-        };
-      }
-    }
-    return null;
-  }
-
-  const org = await db.query.organizations.findFirst({
-    where: eq(organizations.id, token.orgId),
-  });
-
-  if (!org) {
-    return null;
-  }
-
-  let botToken = process.env.SLACK_BOT_TOKEN ?? "";
-  try {
-    botToken = decrypt(token.accessToken);
-  } catch {
-    logger.warn(
-      { orgId: org.id },
-      "Failed to decrypt Slack token, using env SLACK_BOT_TOKEN"
-    );
-  }
-
-  return {
-    id: org.id,
-    planTier: org.planTier,
-    botToken,
-    userId: token.userId,
-  };
-}
-
-// ---------------------------------------------------------------------------
-// Block builders
-// ---------------------------------------------------------------------------
 
 function buildStatusBlocks(
   activeTasks: Array<{
@@ -157,7 +77,7 @@ function buildStatusBlocks(
         type: "section",
         text: {
           type: "mrkdwn",
-          text: "No active tasks right now. Use `/prometheus <task description>` to start one.",
+          text: "No active tasks right now. Use `/prometheus create [description]` to start one.",
         },
       },
     ];
@@ -185,7 +105,7 @@ function buildStatusBlocks(
       type: "section",
       text: {
         type: "mrkdwn",
-        text: `${statusIcon} \`${task.id}\` -- *${task.title}* (priority: ${task.priority})`,
+        text: `${statusIcon} \`${task.id}\` — *${task.title}* (priority: ${task.priority})`,
       },
     });
   }
@@ -214,6 +134,7 @@ async function handleStatusCommand(orgId: string): Promise<{
     .orderBy(desc(tasks.createdAt))
     .limit(10);
 
+  // Also include queued tasks
   const queuedTasks = await db
     .select({
       id: tasks.id,
@@ -236,9 +157,8 @@ async function handleStatusCommand(orgId: string): Promise<{
 }
 
 async function handleCreateCommand(
-  org: OrgInfo,
-  description: string,
-  slackUserId: string
+  orgId: string,
+  description: string
 ): Promise<{
   blocks: SlackBlock[];
   response_type: string;
@@ -253,7 +173,7 @@ async function handleCreateCommand(
           type: "section",
           text: {
             type: "mrkdwn",
-            text: "Usage: `/prometheus create <task description>`\n\nOr just: `/prometheus <task description>`",
+            text: "Usage: `/prometheus create [task description]`",
           },
         },
       ],
@@ -263,7 +183,7 @@ async function handleCreateCommand(
   const project = await db
     .select({ id: projects.id, orgId: projects.orgId })
     .from(projects)
-    .where(eq(projects.orgId, org.id))
+    .where(eq(projects.orgId, orgId))
     .limit(1);
 
   if (!project[0]) {
@@ -275,7 +195,7 @@ async function handleCreateCommand(
           type: "section",
           text: {
             type: "mrkdwn",
-            text: ":warning: No project found. Please create a project first at your Prometheus dashboard.",
+            text: ":warning: No project found. Please create a project first.",
           },
         },
       ],
@@ -289,7 +209,7 @@ async function handleCreateCommand(
   await db.insert(sessions).values({
     id: sessionId,
     projectId: proj.id,
-    userId: org.userId,
+    userId: proj.orgId,
     status: "active",
     mode: "task",
   });
@@ -310,21 +230,16 @@ async function handleCreateCommand(
     sessionId,
     projectId: proj.id,
     orgId: proj.orgId,
-    userId: org.userId,
+    userId: proj.orgId,
     title: description.slice(0, 80),
     description,
     mode: "task",
     agentRole: null,
     creditsReserved: 100,
-    planTier: org.planTier as "pro",
+    planTier: "pro",
   });
 
-  logger.info(
-    { taskId, sessionId, slackUserId },
-    "Task created via slash command"
-  );
-
-  const sessionUrl = `${FRONTEND_URL}/dashboard/sessions/${sessionId}`;
+  logger.info({ taskId, sessionId }, "Task created via slash command");
 
   return {
     response_type: "in_channel",
@@ -334,17 +249,8 @@ async function handleCreateCommand(
         type: "section",
         text: {
           type: "mrkdwn",
-          text: `:rocket: *Task submitted!*\n${description}`,
+          text: `:white_check_mark: *Task created*\n\`${taskId}\`\n\n${description}`,
         },
-      },
-      {
-        type: "context",
-        elements: [
-          {
-            type: "mrkdwn",
-            text: `Task \`${taskId}\` | Submitted by <@${slackUserId}> | <${sessionUrl}|Track progress>`,
-          },
-        ],
       },
     ],
   };
@@ -367,7 +273,7 @@ async function handleStopCommand(
           type: "section",
           text: {
             type: "mrkdwn",
-            text: "Usage: `/prometheus stop <task-id>`",
+            text: "Usage: `/prometheus stop [task-id]`",
           },
         },
       ],
@@ -409,7 +315,7 @@ async function handleStopCommand(
         type: "section",
         text: {
           type: "mrkdwn",
-          text: `:octagonal_sign: *Task cancelled*\n\`${task.id}\` -- ${task.title}`,
+          text: `:octagonal_sign: *Task cancelled*\n\`${task.id}\` — ${task.title}`,
         },
       },
     ],
@@ -419,8 +325,6 @@ async function handleStopCommand(
 // ---------------------------------------------------------------------------
 // Route
 // ---------------------------------------------------------------------------
-
-const KNOWN_SUBCOMMANDS = new Set(["status", "create", "stop", "help"]);
 
 slackCommandsApp.post("/", async (c) => {
   const rawBody = await c.req.text();
@@ -435,27 +339,12 @@ slackCommandsApp.post("/", async (c) => {
   try {
     const formData = new URLSearchParams(rawBody);
     const commandText = formData.get("text") ?? "";
-    const teamId = formData.get("team_id") ?? "";
-    const slackUserId = formData.get("user_id") ?? "";
+    const orgId = process.env.SLACK_DEFAULT_ORG_ID ?? "__slack__";
 
-    // Resolve org from team_id
-    const org = await resolveOrgFromTeam(teamId);
-    if (!org) {
-      return c.json({
-        response_type: "ephemeral",
-        text: "Your Slack workspace is not connected to Prometheus. Please connect via Settings > Integrations > Slack.",
-      });
-    }
-
-    // Parse subcommand
+    // Parse command: "status", "create [desc]", "stop [id]"
     const parts = commandText.trim().split(WHITESPACE_RE);
-    const firstWord = parts[0]?.toLowerCase() ?? "";
+    const subCommand = parts[0]?.toLowerCase() ?? "status";
     const args = parts.slice(1).join(" ");
-
-    // If the first word is not a known subcommand, treat the entire text as a task description
-    const isKnownSubcommand = KNOWN_SUBCOMMANDS.has(firstWord);
-    const subCommand = isKnownSubcommand ? firstWord : "create";
-    const taskDescription = isKnownSubcommand ? args : commandText.trim();
 
     let response: {
       blocks: SlackBlock[];
@@ -465,36 +354,34 @@ slackCommandsApp.post("/", async (c) => {
 
     switch (subCommand) {
       case "status":
-        response = await handleStatusCommand(org.id);
+        response = await handleStatusCommand(orgId);
         break;
       case "create":
-        response = await handleCreateCommand(org, taskDescription, slackUserId);
+        response = await handleCreateCommand(orgId, args);
         break;
       case "stop":
-        response = await handleStopCommand(org.id, args);
+        response = await handleStopCommand(orgId, args);
         break;
       default:
-        response = {
-          response_type: "ephemeral",
-          text: "Prometheus Slack Commands",
-          blocks: [
-            {
-              type: "section",
-              text: {
-                type: "mrkdwn",
-                text: [
-                  "*Prometheus Slack Commands:*",
-                  "",
-                  "`/prometheus <task description>` -- Create a new task",
-                  "`/prometheus create <description>` -- Create a new task (explicit)",
-                  "`/prometheus status` -- View active tasks",
-                  "`/prometheus stop <task-id>` -- Cancel a task",
-                  "`/prometheus help` -- Show this help",
-                ].join("\n"),
+        // Treat any unrecognized subcommand as a task description:
+        // `/prometheus build a REST API for users` => create task
+        if (commandText.trim()) {
+          response = await handleCreateCommand(orgId, commandText.trim());
+        } else {
+          response = {
+            response_type: "ephemeral",
+            text: "Unknown command",
+            blocks: [
+              {
+                type: "section",
+                text: {
+                  type: "mrkdwn",
+                  text: "Available commands:\n- `/prometheus [task description]` — Create a new task\n- `/prometheus status` — View active tasks\n- `/prometheus create [description]` — Create a new task\n- `/prometheus stop [task-id]` — Cancel a task",
+                },
               },
-            },
-          ],
-        };
+            ],
+          };
+        }
     }
 
     return c.json(response);
@@ -504,7 +391,7 @@ slackCommandsApp.post("/", async (c) => {
     return c.json(
       {
         response_type: "ephemeral",
-        text: "An error occurred processing your command. Please try again.",
+        text: "An error occurred processing your command",
       },
       500
     );

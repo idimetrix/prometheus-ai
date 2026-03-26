@@ -1,7 +1,6 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { logger } from "@/lib/logger";
 import { useNotificationStore } from "@/stores/notification.store";
 import { useSessionStore } from "@/stores/session.store";
 
@@ -53,106 +52,12 @@ export function useSSEStream(sessionId: string | null) {
     return false;
   }, []);
 
-  /** Handle canonical agent streaming events (agent:*, task:*, session:*) */
-  const dispatchCanonicalEvent = useCallback(
-    function dispatchCanonicalEvent(
-      type: string,
-      data: Record<string, unknown>,
-      ts: string,
-      nowTs: string
-    ): boolean {
-      const addEvt = (eventType: string) => {
-        store.addEvent({
-          id: crypto.randomUUID(),
-          type: eventType,
-          data,
-          timestamp: nowTs,
-        });
-      };
+  const dispatchEvent = useCallback(
+    function dispatchEvent(type: string, data: Record<string, unknown>) {
+      const ts = (data.timestamp as string) ?? new Date().toISOString();
+      const nowTs = new Date().toISOString();
 
-      switch (type) {
-        case "agent:thinking":
-          if (data.content) {
-            store.addTerminalLine({
-              content: data.content as string,
-              timestamp: ts,
-            });
-          }
-          addEvt("agent:thinking");
-          return true;
-        case "agent:terminal": {
-          const termContent = data.output
-            ? `$ ${(data.command as string) ?? ""}\n${data.output as string}`
-            : `$ ${(data.command as string) ?? ""}`;
-          store.addTerminalLine({ content: termContent, timestamp: ts });
-          addEvt("agent:terminal");
-          return true;
-        }
-        case "agent:file-change":
-          if (data.filePath) {
-            store.addFileEntry({
-              path: data.filePath as string,
-              name:
-                (data.filePath as string).split("/").pop() ??
-                (data.filePath as string),
-              type: "file",
-              status: "modified",
-            });
-          }
-          addEvt("agent:file-change");
-          return true;
-        case "agent:progress":
-          if (data.status) {
-            store.setStatus(data.status as string);
-          }
-          addEvt("agent:progress");
-          return true;
-        case "task:complete":
-          store.setStatus((data.status as string) ?? "completed");
-          notifications.addNotification({
-            id: crypto.randomUUID(),
-            type: "success",
-            title: "Task Complete",
-            message: (data.output as string) ?? "Task has finished",
-            timestamp: nowTs,
-          });
-          addEvt("task:complete");
-          return true;
-        case "task:created":
-          addEvt("task:created");
-          return true;
-        case "session:checkpoint":
-          addEvt("session:checkpoint");
-          return true;
-        case "session:error":
-          addEvt("session:error");
-          notifications.addNotification({
-            id: crypto.randomUUID(),
-            type: "error",
-            title: "Session Error",
-            message:
-              (data.error as string) ??
-              (data.message as string) ??
-              "An error occurred",
-            timestamp: nowTs,
-          });
-          return true;
-        default:
-          return false;
-      }
-    },
-    [store, notifications]
-  );
-
-  /** Handle legacy event types (agent_output, terminal_output, etc.) */
-  const dispatchLegacyEvent = useCallback(
-    function dispatchLegacyEvent(
-      type: string,
-      data: Record<string, unknown>,
-      ts: string,
-      nowTs: string
-    ): void {
-      const addEvt = (eventType: string) => {
+      const addSimpleEvent = (eventType: string) => {
         store.addEvent({
           id: crypto.randomUUID(),
           type: eventType,
@@ -207,12 +112,16 @@ export function useSSEStream(sessionId: string | null) {
             );
           }
           break;
+        case "file_diff":
+        case "code_change":
+          addSimpleEvent(type);
+          break;
         case "queue_position":
           store.setQueuePosition(data.position as number);
           break;
         case "task_status":
           store.setStatus(data.status as string);
-          addEvt("task_status");
+          addSimpleEvent("task_status");
           break;
         case "reasoning":
           store.addReasoning(
@@ -223,8 +132,12 @@ export function useSSEStream(sessionId: string | null) {
             timestamp: nowTs,
           });
           break;
+        case "checkpoint":
+        case "credit_update":
+          addSimpleEvent(type);
+          break;
         case "error":
-          addEvt("error");
+          addSimpleEvent("error");
           notifications.addNotification({
             id: crypto.randomUUID(),
             type: "error",
@@ -244,24 +157,11 @@ export function useSSEStream(sessionId: string | null) {
           });
           break;
         default:
-          addEvt(type);
+          addSimpleEvent(type);
           break;
       }
     },
     [store, notifications]
-  );
-
-  const dispatchEvent = useCallback(
-    function dispatchEvent(type: string, data: Record<string, unknown>) {
-      const ts = (data.timestamp as string) ?? new Date().toISOString();
-      const nowTs = new Date().toISOString();
-
-      // Try canonical events first, fall back to legacy
-      if (!dispatchCanonicalEvent(type, data, ts, nowTs)) {
-        dispatchLegacyEvent(type, data, ts, nowTs);
-      }
-    },
-    [dispatchCanonicalEvent, dispatchLegacyEvent]
   );
 
   const processEvent = useCallback(
@@ -307,7 +207,7 @@ export function useSSEStream(sessionId: string | null) {
     }
     heartbeatTimer.current = setTimeout(() => {
       // No heartbeat received in 15s - reconnect
-      logger.warn("[SSE] Heartbeat timeout, reconnecting...");
+      console.warn("[SSE] Heartbeat timeout, reconnecting...");
       eventSourceRef.current?.close();
       eventSourceRef.current = null;
       setIsConnected(false);
@@ -364,7 +264,7 @@ export function useSSEStream(sessionId: string | null) {
       resetHeartbeat();
     });
 
-    // All known event types (legacy + canonical agent streaming events)
+    // All known event types
     const eventTypes = [
       "agent_output",
       "agent_status",
@@ -376,31 +276,18 @@ export function useSSEStream(sessionId: string | null) {
       "code_change",
       "queue_position",
       "task_status",
+      "task_progress",
       "reasoning",
       "checkpoint",
       "credit_update",
       "error",
       "session_complete",
-      // Canonical agent streaming events (GAP-P0-08)
-      "agent:thinking",
-      "agent:terminal",
-      "agent:file-change",
-      "agent:progress",
-      "task:complete",
-      "task:created",
-      "session:checkpoint",
-      "session:error",
     ];
 
     for (const eventType of eventTypes) {
       es.addEventListener(eventType, (e) => {
         resetHeartbeat();
         try {
-          // Track the SSE event ID (set via `id:` field) for resume on reconnect
-          const me = e as MessageEvent;
-          if (me.lastEventId) {
-            lastEventId.current = me.lastEventId;
-          }
           const data = JSON.parse(e.data);
           queueEvent(eventType, data);
         } catch {
@@ -413,9 +300,6 @@ export function useSSEStream(sessionId: string | null) {
     es.onmessage = (e) => {
       resetHeartbeat();
       try {
-        if (e.lastEventId) {
-          lastEventId.current = e.lastEventId;
-        }
         const data = JSON.parse(e.data);
         if (data.type) {
           queueEvent(data.type, data);

@@ -28,31 +28,14 @@ export interface CostOptimizationResult {
   recommendedSlot: string;
 }
 
-export interface TaskCostEstimate {
-  confidenceInterval: { high: number; low: number; mid: number };
-  estimatedDurationMs: number;
-  estimatedTokens: number;
-  estimatedUsd: number;
-  recommendedModel: string;
-}
-
-export interface CostSavingsRecord {
-  actualCost: number;
-  baselineCost: number;
-  modelUsed: string;
-  savedUsd: number;
-  savingsPercent: number;
-  timestamp: number;
-}
-
 // ─── Constants ────────────────────────────────────────────────────────────────
 
 /** Models that are completely free (local or free-tier APIs) */
 const FREE_MODELS = new Set([
-  "ollama/qwen2.5-coder:32b",
-  "ollama/qwen2.5:14b",
+  "ollama/qwen3-coder-next",
+  "ollama/qwen3.5:27b",
+  "ollama/deepseek-r1:32b",
   "ollama/qwen2.5-coder:14b",
-  "ollama/qwen2.5-coder:7b",
   "cerebras/qwen3-235b",
   "cerebras/llama-3.3-70b",
   "groq/llama-3.3-70b-versatile",
@@ -83,10 +66,10 @@ const MODEL_SLOT_MAP: Record<string, string> = {
   "cerebras/qwen3-235b": "fastLoop",
   "groq/llama-3.3-70b-versatile": "fastLoop",
   "groq/mixtral-8x7b-32768": "fastLoop",
-  "ollama/qwen2.5-coder:32b": "default",
-  "ollama/qwen2.5:14b": "think",
+  "ollama/qwen3-coder-next": "default",
+  "ollama/qwen3.5:27b": "think",
+  "ollama/deepseek-r1:32b": "think",
   "ollama/qwen2.5-coder:14b": "background",
-  "ollama/qwen2.5-coder:7b": "background",
   "cerebras/llama-3.3-70b": "fastLoop",
   "deepseek/deepseek-coder": "default",
   "deepseek/deepseek-r1": "think",
@@ -119,31 +102,9 @@ interface HistoryEntry {
 
 // ─── Cost Optimizer ───────────────────────────────────────────────────────────
 
-/** Duration estimates (ms) for tasks by complexity (1-5 scale) */
-const _COMPLEXITY_DURATION_MS: Record<number, number> = {
-  1: 5000,
-  2: 15_000,
-  3: 45_000,
-  4: 120_000,
-  5: 300_000,
-};
-
-/** Token estimates for tasks by complexity (1-5 scale) */
-const _COMPLEXITY_TOKEN_ESTIMATES: Record<number, number> = {
-  1: 500,
-  2: 2000,
-  3: 8000,
-  4: 25_000,
-  5: 60_000,
-};
-
-/** Premium model baseline for savings calculations ($/1M tokens) */
-const _PREMIUM_BASELINE_COST = 40.0; // claude-opus pricing
-
 export class CostOptimizer {
   private readonly profiles = new Map<string, CostProfile>();
   private readonly history = new Map<string, HistoryEntry[]>();
-  private readonly savingsHistory: CostSavingsRecord[] = [];
   private dailyCost = 0;
   private dailyCostResetAt = 0;
   private freeRequestCount = 0;
@@ -242,7 +203,6 @@ export class CostOptimizer {
 
     // Step 2: Look up historical cost profile
     const profileKey = `${agentRole}:${taskType}`;
-    const _profile = this.profiles.get(profileKey);
     const entries = this.history.get(profileKey) ?? [];
 
     // Step 3: No history — use defaults
@@ -382,163 +342,6 @@ export class CostOptimizer {
       estimatedCost: isFree ? 0 : best.avgCost,
       reasoning: `No model met quality threshold (${QUALITY_THRESHOLD}). Using highest-quality model: "${best.modelKey}" (avg quality ${best.avgQuality.toFixed(2)}).`,
       isFreeModel: isFree,
-    };
-  }
-
-  /**
-   * Estimate the cost of a task before execution.
-   * Uses complexity (1-5 scale) plus task description keywords
-   * to predict token usage, duration, and dollar cost.
-   */
-  estimateTaskCost(
-    taskDescription: string,
-    complexity: number
-  ): TaskCostEstimate {
-    const clampedComplexity = Math.max(1, Math.min(5, Math.round(complexity)));
-    const estimatedTokens =
-      _COMPLEXITY_TOKEN_ESTIMATES[clampedComplexity] ?? 8000;
-    const estimatedDurationMs =
-      _COMPLEXITY_DURATION_MS[clampedComplexity] ?? 45_000;
-
-    // Pick best model for this complexity level
-    const recommendation = this.selectOptimalModel(taskDescription, {
-      maxCostPerDay: 100,
-      maxCostPerTask: 1,
-      preferFreeModels: clampedComplexity <= 2,
-    });
-
-    const costPerToken = MODEL_COSTS[recommendation.recommendedModel] ?? 0;
-    const estimatedUsd = (costPerToken / 1_000_000) * estimatedTokens;
-
-    const confidenceInterval = {
-      low: estimatedUsd * 0.5,
-      mid: estimatedUsd,
-      high: estimatedUsd * 2.2,
-    };
-
-    logger.info(
-      {
-        complexity: clampedComplexity,
-        model: recommendation.recommendedModel,
-        estimatedTokens,
-        estimatedUsd: estimatedUsd.toFixed(6),
-      },
-      "Task cost estimated"
-    );
-
-    return {
-      estimatedTokens,
-      estimatedDurationMs,
-      estimatedUsd,
-      confidenceInterval,
-      recommendedModel: recommendation.recommendedModel,
-    };
-  }
-
-  /**
-   * Select the cheapest model that meets a minimum quality threshold
-   * for the given task and budget constraints.
-   */
-  selectOptimalModel(
-    task: string,
-    budget: BudgetConstraint
-  ): CostOptimizationResult {
-    const lowerTask = task.toLowerCase();
-    let detectedTaskType = "general";
-
-    for (const simpleType of SIMPLE_TASK_TYPES) {
-      if (lowerTask.includes(simpleType)) {
-        detectedTaskType = simpleType;
-        break;
-      }
-    }
-
-    return this.optimize("auto", detectedTaskType, budget);
-  }
-
-  /**
-   * Record cost savings vs the premium baseline.
-   * Tracks how much was saved by choosing an optimized model
-   * instead of always using the most expensive option.
-   */
-  trackCostSavings(
-    actualCost: number,
-    modelUsed: string,
-    tokenCount: number
-  ): CostSavingsRecord {
-    const baselineCost = (_PREMIUM_BASELINE_COST / 1_000_000) * tokenCount;
-    const savedUsd = Math.max(0, baselineCost - actualCost);
-    const savingsPercent =
-      baselineCost > 0 ? (savedUsd / baselineCost) * 100 : 0;
-
-    const record: CostSavingsRecord = {
-      actualCost,
-      baselineCost,
-      savedUsd,
-      savingsPercent,
-      modelUsed,
-      timestamp: Date.now(),
-    };
-
-    this.savingsHistory.push(record);
-
-    // Keep last 1000 records
-    if (this.savingsHistory.length > 1000) {
-      this.savingsHistory.splice(0, this.savingsHistory.length - 1000);
-    }
-
-    logger.debug(
-      {
-        modelUsed,
-        actualCost: actualCost.toFixed(6),
-        baselineCost: baselineCost.toFixed(6),
-        savedUsd: savedUsd.toFixed(6),
-        savingsPercent: savingsPercent.toFixed(1),
-      },
-      "Cost savings tracked"
-    );
-
-    return record;
-  }
-
-  /**
-   * Get aggregate savings statistics.
-   */
-  getSavingsSummary(): {
-    avgSavingsPercent: number;
-    recordCount: number;
-    totalActualUsd: number;
-    totalBaselineUsd: number;
-    totalSavedUsd: number;
-  } {
-    if (this.savingsHistory.length === 0) {
-      return {
-        totalSavedUsd: 0,
-        totalActualUsd: 0,
-        totalBaselineUsd: 0,
-        avgSavingsPercent: 0,
-        recordCount: 0,
-      };
-    }
-
-    const totalActualUsd = this.savingsHistory.reduce(
-      (sum, r) => sum + r.actualCost,
-      0
-    );
-    const totalBaselineUsd = this.savingsHistory.reduce(
-      (sum, r) => sum + r.baselineCost,
-      0
-    );
-    const totalSavedUsd = totalBaselineUsd - totalActualUsd;
-    const avgSavingsPercent =
-      totalBaselineUsd > 0 ? (totalSavedUsd / totalBaselineUsd) * 100 : 0;
-
-    return {
-      totalSavedUsd,
-      totalActualUsd,
-      totalBaselineUsd,
-      avgSavingsPercent,
-      recordCount: this.savingsHistory.length,
     };
   }
 

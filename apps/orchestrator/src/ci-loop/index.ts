@@ -1,21 +1,9 @@
 export {
   AutoDebugger,
-  type AutoDebugResult,
-  type ErrorLocation,
+  type DebugRequest,
+  type DebugResult,
 } from "./auto-debugger";
-export {
-  type CIFailureCategory,
-  type CIFailureData,
-  CILogFetcher,
-  type ParsedCILog,
-} from "./ci-log-fetcher";
 export { type CILoopResult, CILoopRunner } from "./ci-loop-runner";
-export {
-  type CheckRunPayload,
-  type CheckSuitePayload,
-  type CIWebhookEvent,
-  CIWebhookHandler,
-} from "./ci-webhook-handler";
 export {
   type CoverageData,
   type CoverageSummary,
@@ -42,4 +30,3 @@ export {
   PropertyTesting,
   type PropertyTestResult,
 } from "./property-testing";
-export { TargetedRunner } from "./targeted-runner";

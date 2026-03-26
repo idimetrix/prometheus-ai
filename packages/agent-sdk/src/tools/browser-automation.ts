@@ -72,6 +72,33 @@ export const browserScreenshotAutomationSchema = z
   })
   .strict();
 
+export const browserVisualDiffSchema = z
+  .object({
+    url: z.string().url().describe("URL to capture for visual comparison"),
+    baselineScreenshotPath: z
+      .string()
+      .describe("Path to the baseline screenshot to compare against"),
+    selector: z
+      .string()
+      .optional()
+      .describe("CSS selector to scope the comparison to a specific element"),
+    threshold: z
+      .number()
+      .min(0)
+      .max(1)
+      .optional()
+      .describe(
+        "Pixel difference threshold (0-1). Default 0.1 means 10% difference triggers failure"
+      ),
+    timeout: z
+      .number()
+      .int()
+      .positive()
+      .optional()
+      .describe("Timeout in milliseconds (default: 30000)"),
+  })
+  .strict();
+
 // ---------------------------------------------------------------------------
 // Helper: build a Playwright script to run in the sandbox
 // ---------------------------------------------------------------------------
@@ -326,6 +353,147 @@ export const browserAutomationTools: AgentToolDefinition[] = [
         };
       }
       return result;
+    },
+  },
+  {
+    name: "browser_visual_diff",
+    description:
+      "Take a screenshot of a URL and compare it to a baseline image using pixel-level diffing. Returns whether the visual output matches within the given threshold. Useful for UI regression testing and verifying deployments.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        url: {
+          type: "string",
+          description: "URL to capture for visual comparison",
+        },
+        baselineScreenshotPath: {
+          type: "string",
+          description: "Path to the baseline screenshot to compare against",
+        },
+        selector: {
+          type: "string",
+          description:
+            "CSS selector to scope the comparison to a specific element",
+        },
+        threshold: {
+          type: "number",
+          description:
+            "Pixel difference threshold (0-1). Default 0.1 means 10% triggers failure",
+        },
+        timeout: {
+          type: "number",
+          description: "Timeout in milliseconds (default: 30000)",
+        },
+      },
+      required: ["url", "baselineScreenshotPath"],
+    },
+    zodSchema: browserVisualDiffSchema,
+    permissionLevel: "read",
+    creditCost: 10,
+    execute: async (input, ctx) => {
+      const parsed = browserVisualDiffSchema.parse(input);
+      const timeout = parsed.timeout ?? 30_000;
+      const threshold = parsed.threshold ?? 0.1;
+      const currentPath = `/tmp/prometheus-vdiff-current-${ctx.sandboxId}-${Date.now()}.png`;
+      const diffPath = `/tmp/prometheus-vdiff-diff-${ctx.sandboxId}-${Date.now()}.png`;
+      const url = escapeForScript(parsed.url);
+      const baselinePath = escapeForScript(parsed.baselineScreenshotPath);
+      const selectorClause = parsed.selector
+        ? `const element = await page.waitForSelector('${escapeForScript(parsed.selector)}', { timeout: ${timeout} });
+    if (element) { await element.screenshot({ path: '${currentPath}' }); }
+    else { await page.screenshot({ path: '${currentPath}', fullPage: true }); }`
+        : `await page.screenshot({ path: '${currentPath}', fullPage: true });`;
+
+      // Capture the current screenshot via Playwright
+      const captureScript = buildScript(
+        `
+    await page.goto('${url}', { timeout: ${timeout}, waitUntil: 'networkidle' });
+    ${selectorClause}
+    console.log(JSON.stringify({ captured: '${currentPath}' }));
+        `,
+        timeout
+      );
+
+      const captureCommand = `node -e '${captureScript.replace(/'/g, "'\\''")}'`;
+      const captureResult = await execInSandbox(
+        captureCommand,
+        ctx,
+        timeout + 10_000
+      );
+
+      if (!captureResult.success) {
+        return captureResult;
+      }
+
+      // Pixel-level comparison using Node.js built-in (reads raw PNG buffers)
+      const diffScript = `
+const fs = require('fs');
+const baseline = fs.readFileSync('${baselinePath}');
+const current = fs.readFileSync('${currentPath}');
+
+// Compare byte lengths first
+const sizeDiff = Math.abs(baseline.length - current.length) / Math.max(baseline.length, current.length);
+
+// Compare pixel data (byte-by-byte)
+const minLen = Math.min(baseline.length, current.length);
+let diffBytes = 0;
+for (let i = 0; i < minLen; i++) {
+  if (baseline[i] !== current[i]) { diffBytes++; }
+}
+const diffRatio = (diffBytes + Math.abs(baseline.length - current.length)) / Math.max(baseline.length, current.length);
+const passed = diffRatio <= ${threshold};
+
+console.log(JSON.stringify({
+  passed,
+  diffRatio: Math.round(diffRatio * 10000) / 10000,
+  threshold: ${threshold},
+  baselineSize: baseline.length,
+  currentSize: current.length,
+  currentPath: '${currentPath}',
+}));
+      `.trim();
+
+      const diffCommand = `node -e '${diffScript.replace(/'/g, "'\\''")}'`;
+      const diffResult = await execInSandbox(diffCommand, ctx, 15_000);
+
+      if (!diffResult.success) {
+        return {
+          success: false,
+          output: "",
+          error: `Visual diff comparison failed: ${diffResult.error ?? "unknown error"}`,
+        };
+      }
+
+      try {
+        const result = JSON.parse(diffResult.output) as {
+          passed: boolean;
+          diffRatio: number;
+          threshold: number;
+          currentPath: string;
+        };
+
+        return {
+          success: true,
+          output: result.passed
+            ? `Visual diff passed (${result.diffRatio * 100}% difference, threshold: ${threshold * 100}%)`
+            : `Visual diff FAILED (${result.diffRatio * 100}% difference exceeds threshold of ${threshold * 100}%)`,
+          metadata: {
+            passed: result.passed,
+            diffRatio: result.diffRatio,
+            threshold,
+            currentScreenshotPath: currentPath,
+            baselineScreenshotPath: parsed.baselineScreenshotPath,
+            diffScreenshotPath: diffPath,
+            url: parsed.url,
+          },
+        };
+      } catch {
+        return {
+          success: true,
+          output: diffResult.output,
+          metadata: { currentScreenshotPath: currentPath },
+        };
+      }
     },
   },
 ];

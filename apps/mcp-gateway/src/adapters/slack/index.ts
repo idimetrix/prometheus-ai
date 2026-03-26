@@ -404,6 +404,130 @@ export function registerSlackAdapter(registry: ToolRegistry): void {
     }
   );
 
+  // ---- post_progress_update ----
+  registry.register(
+    {
+      name: "slack_post_progress_update",
+      adapter: "slack",
+      description:
+        "Post a task progress update to a Slack thread with optional Approve/Reject buttons for destructive actions",
+      inputSchema: {
+        type: "object",
+        properties: {
+          channel: { type: "string", description: "Channel ID" },
+          thread_ts: {
+            type: "string",
+            description: "Thread timestamp to reply in",
+          },
+          sessionId: {
+            type: "string",
+            description:
+              "Session ID (used as action value for approve/reject buttons)",
+          },
+          status: {
+            type: "string",
+            enum: ["progress", "completed", "failed", "needs_approval"],
+          },
+          message: { type: "string", description: "Update message" },
+          requiresApproval: {
+            type: "boolean",
+            description:
+              "If true, adds Approve/Reject buttons (for destructive actions)",
+          },
+        },
+        required: ["channel", "thread_ts", "sessionId", "status", "message"],
+      },
+      requiresAuth: true,
+    },
+    async (input, credentials) => {
+      const tokenOrErr = requireToken(credentials);
+      if (typeof tokenOrErr !== "string") {
+        return tokenOrErr;
+      }
+
+      const {
+        channel,
+        thread_ts,
+        sessionId,
+        status,
+        message,
+        requiresApproval,
+      } = input as {
+        channel: string;
+        thread_ts: string;
+        sessionId: string;
+        status: string;
+        message: string;
+        requiresApproval?: boolean;
+      };
+
+      const statusEmoji: Record<string, string> = {
+        progress: ":hourglass_flowing_sand:",
+        completed: ":white_check_mark:",
+        failed: ":x:",
+        needs_approval: ":warning:",
+      };
+
+      const blocks: unknown[] = [
+        {
+          type: "section",
+          text: {
+            type: "mrkdwn",
+            text: `${statusEmoji[status] ?? ""} ${message}`,
+          },
+        },
+      ];
+
+      // Add Approve/Reject buttons for destructive actions
+      if (requiresApproval || status === "needs_approval") {
+        blocks.push({
+          type: "actions",
+          block_id: `approval_${sessionId}`,
+          elements: [
+            {
+              type: "button",
+              text: { type: "plain_text", text: "Approve", emoji: true },
+              style: "primary",
+              action_id: "approve_checkpoint",
+              value: sessionId,
+            },
+            {
+              type: "button",
+              text: { type: "plain_text", text: "Reject", emoji: true },
+              style: "danger",
+              action_id: "reject_checkpoint",
+              value: sessionId,
+            },
+          ],
+        });
+      }
+
+      const fallbackText = `${statusEmoji[status] ?? ""} ${message}`;
+
+      const result = await slackFetch("chat.postMessage", tokenOrErr, {
+        channel,
+        thread_ts,
+        text: fallbackText,
+        blocks,
+      });
+
+      if (!result.ok) {
+        return { success: false, error: `Slack API error: ${result.error}` };
+      }
+
+      const msg = result.data as Record<string, unknown>;
+      return {
+        success: true,
+        data: {
+          ts: msg.ts,
+          channel: msg.channel,
+          thread_ts,
+          hasApprovalButtons: requiresApproval || status === "needs_approval",
+        },
+      };
+    }
+  );
+
   // ---- create_channel_message (rich formatted task summary) ----
   registry.register(
     {

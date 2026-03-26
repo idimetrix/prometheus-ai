@@ -1,7 +1,7 @@
 import { getInternalAuthHeaders } from "@prometheus/auth";
 import {
-  generateScaffold,
-  PROJECT_TEMPLATES_LIST,
+  generateScaffoldBlueprint,
+  listScaffoldTemplates,
 } from "@prometheus/config-stacks";
 import type { Database } from "@prometheus/db";
 import {
@@ -156,14 +156,19 @@ export const projectsRouter = router({
       let scaffoldMode: "prompt" | "template" = "template";
 
       if (input.template) {
-        const result = generateScaffold(input.template, input.name);
-        if (!result) {
+        const blueprint = generateScaffoldBlueprint(input.template, input.name);
+        if (!blueprint) {
           throw new TRPCError({
             code: "BAD_REQUEST",
             message: `Unknown template: ${input.template}. Use projects.listTemplates to see available templates.`,
           });
         }
-        scaffoldedFiles = result.files;
+        scaffoldedFiles = Object.entries(blueprint.files).map(
+          ([path, content]) => ({
+            path,
+            content: String(content),
+          })
+        );
       } else {
         scaffoldMode = "prompt";
       }
@@ -207,16 +212,13 @@ export const projectsRouter = router({
     }),
 
   listTemplates: protectedProcedure.query(() => {
+    const templates = listScaffoldTemplates();
     return {
-      templates: PROJECT_TEMPLATES_LIST.map((t) => ({
-        category: t.category,
-        description: t.description,
-        estimatedMinutes: t.estimatedMinutes,
-        icon: t.icon,
+      templates: templates.map((t) => ({
         id: t.id,
-        languages: t.languages,
         name: t.name,
-        techStack: t.techStack,
+        description: t.description,
+        languages: t.languages,
       })),
     };
   }),

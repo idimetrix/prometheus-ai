@@ -352,6 +352,123 @@ export function registerVercelAdapter(registry: ToolRegistry): void {
     }
   );
 
+  // ---- smoke_test ----
+  registry.register(
+    {
+      name: "vercel_smoke_test",
+      adapter: "vercel",
+      description:
+        "Run a smoke test against a deployed Vercel preview URL. Checks that the URL responds with 200, loads within the timeout, and optionally verifies a CSS selector is present.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          url: {
+            type: "string",
+            description: "Preview deployment URL to test",
+          },
+          expectedStatus: {
+            type: "number",
+            description: "Expected HTTP status code (default: 200)",
+          },
+          waitForSelector: {
+            type: "string",
+            description: "CSS selector that must be present on the page",
+          },
+          timeout: {
+            type: "number",
+            description: "Timeout in milliseconds (default: 30000)",
+          },
+        },
+        required: ["url"],
+      },
+      requiresAuth: false,
+    },
+    async (input) => {
+      const { url, expectedStatus, waitForSelector, timeout } = input as {
+        url: string;
+        expectedStatus?: number;
+        waitForSelector?: string;
+        timeout?: number;
+      };
+
+      const timeoutMs = timeout ?? 30_000;
+      const expected = expectedStatus ?? 200;
+      const startTime = Date.now();
+
+      try {
+        const response = await fetch(url, {
+          method: "GET",
+          headers: { "User-Agent": "Prometheus-Smoke-Test/1.0" },
+          signal: AbortSignal.timeout(timeoutMs),
+        });
+
+        const durationMs = Date.now() - startTime;
+        const body = await response.text();
+
+        const checks: Array<{
+          check: string;
+          passed: boolean;
+          detail: string;
+        }> = [];
+
+        // Check HTTP status
+        checks.push({
+          check: "http_status",
+          passed: response.status === expected,
+          detail: `Expected ${expected}, got ${response.status}`,
+        });
+
+        // Check response time
+        const isWithinTimeout = durationMs < timeoutMs;
+        checks.push({
+          check: "response_time",
+          passed: isWithinTimeout,
+          detail: `${durationMs}ms (limit: ${timeoutMs}ms)`,
+        });
+
+        // Check for selector if specified
+        if (waitForSelector) {
+          // Simple HTML check — look for an element matching the selector name
+          // (full DOM check requires a browser; this is a lightweight smoke test)
+          const selectorTag = waitForSelector.replace(/[.#[\]='"]/g, "");
+          const found =
+            body.includes(waitForSelector) || body.includes(selectorTag);
+          checks.push({
+            check: "selector_present",
+            passed: found,
+            detail: `Selector "${waitForSelector}" ${found ? "found" : "not found"} in HTML`,
+          });
+        }
+
+        // Check for non-empty body
+        checks.push({
+          check: "non_empty_body",
+          passed: body.length > 0,
+          detail: `Response body: ${body.length} bytes`,
+        });
+
+        const allPassed = checks.every((c) => c.passed);
+
+        return {
+          success: true,
+          data: {
+            url,
+            passed: allPassed,
+            durationMs,
+            httpStatus: response.status,
+            checks,
+          },
+        };
+      } catch (error: unknown) {
+        const msg = error instanceof Error ? error.message : String(error);
+        return {
+          success: false,
+          error: `Smoke test failed for ${url}: ${msg}`,
+        };
+      }
+    }
+  );
+
   // ---- set_env ----
   registry.register(
     {

@@ -16,8 +16,7 @@ export async function execInSandbox(
   ctx: ToolExecutionContext,
   timeoutMs: number = DEFAULT_TIMEOUT_MS
 ): Promise<ToolResult> {
-  const sandboxManagerUrl =
-    ctx.sandboxManagerUrl || process.env.SANDBOX_MANAGER_URL;
+  const sandboxManagerUrl = process.env.SANDBOX_MANAGER_URL;
 
   if (sandboxManagerUrl) {
     return await execRemoteSandbox(sandboxManagerUrl, command, ctx, timeoutMs);
@@ -33,15 +32,18 @@ async function execRemoteSandbox(
   timeoutMs: number
 ): Promise<ToolResult> {
   try {
-    const response = await fetch(`${baseUrl}/sandbox/${ctx.sandboxId}/exec`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        command,
-        timeout: timeoutMs,
-      }),
-      signal: AbortSignal.timeout(timeoutMs + 5000),
-    });
+    const response = await fetch(
+      `${baseUrl}/sandbox/${encodeURIComponent(ctx.sandboxId)}/exec`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          command,
+          timeout: timeoutMs,
+        }),
+        signal: AbortSignal.timeout(timeoutMs + 5000),
+      }
+    );
 
     if (!response.ok) {
       const errorText = await response.text();

@@ -113,6 +113,65 @@ const MODEL_ESCALATION: Record<string, string> = {
   premium: "premium",
 };
 
+/**
+ * Strategy resolver: given an attempt count and optional context,
+ * returns the appropriate recovery strategy for a specific reason.
+ */
+type StrategyResolver = (
+  attemptCount: number,
+  context?: Partial<RecoveryContext>
+) => RecoveryStrategyType;
+
+/** Default resolver: reflection on first attempt, then abort. */
+const defaultResolver: StrategyResolver = (attemptCount) =>
+  attemptCount === 0 ? "inject_reflection" : "abort_partial";
+
+/**
+ * Lookup table mapping stuck-agent reasons to strategy resolvers.
+ * Each resolver encapsulates the escalation logic for that reason.
+ */
+const REASON_STRATEGIES: Record<string, StrategyResolver> = {
+  infinite_loop: (attemptCount, context) => {
+    if (attemptCount === 0) {
+      return "inject_reflection";
+    }
+    if (attemptCount === 1 && context?.lastCheckpointId) {
+      return "rollback_checkpoint";
+    }
+    return "upgrade_model";
+  },
+
+  stale_timeout: (attemptCount) =>
+    attemptCount === 0 ? "inject_reflection" : "upgrade_model",
+
+  extended_stale: (attemptCount) =>
+    attemptCount === 0 ? "upgrade_model" : "abort_partial",
+
+  llm_rate_limit: defaultResolver,
+
+  llm_timeout: (attemptCount) =>
+    attemptCount === 0 ? "inject_reflection" : "upgrade_model",
+
+  llm_server_error: (attemptCount, context) => {
+    if (attemptCount === 0) {
+      return "inject_reflection";
+    }
+    if (attemptCount === 1 && context?.lastCheckpointId) {
+      return "rollback_checkpoint";
+    }
+    return "abort_partial";
+  },
+
+  sandbox_crash: (attemptCount, context) => {
+    if (context?.lastCheckpointId) {
+      return "rollback_checkpoint";
+    }
+    return attemptCount === 0 ? "inject_reflection" : "abort_partial";
+  },
+
+  redis_disconnect: defaultResolver,
+};
+
 export class RecoveryStrategy {
   /**
    * Determine the best recovery strategy for a stuck agent.
@@ -133,36 +192,8 @@ export class RecoveryStrategy {
       return "abort_partial";
     }
 
-    // Determine strategy based on reason
-    if (reason === "infinite_loop") {
-      // First attempt: inject reflection, then rollback, then upgrade
-      if (attemptCount === 0) {
-        return "inject_reflection";
-      }
-      if (attemptCount === 1 && context?.lastCheckpointId) {
-        return "rollback_checkpoint";
-      }
-      return "upgrade_model";
-    }
-
-    if (reason === "stale_timeout") {
-      // Stale agent: try reflection first, then upgrade model
-      if (attemptCount === 0) {
-        return "inject_reflection";
-      }
-      return "upgrade_model";
-    }
-
-    if (reason === "extended_stale") {
-      // Long stale period: upgrade model immediately
-      if (attemptCount === 0) {
-        return "upgrade_model";
-      }
-      return "abort_partial";
-    }
-
-    // Default: try reflection
-    return attemptCount === 0 ? "inject_reflection" : "abort_partial";
+    const resolver = REASON_STRATEGIES[reason] ?? defaultResolver;
+    return resolver(attemptCount, context);
   }
 
   /**

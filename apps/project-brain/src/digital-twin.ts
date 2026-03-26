@@ -5,7 +5,6 @@
  * into a unified query interface that agents use for impact analysis,
  * architectural understanding, and change prediction.
  */
-import { getInternalAuthHeaders } from "@prometheus/auth";
 import { createLogger } from "@prometheus/logger";
 
 const logger = createLogger("project-brain:digital-twin");
@@ -157,6 +156,17 @@ export class DigitalTwin {
           });
           break;
         }
+
+        case "runtime": {
+          const runtime = await this.getRuntimeSnapshot(twinQuery.projectId);
+          answer = formatRuntimeAnswer(runtime);
+          sources.push({
+            type: "runtime",
+            relevance: 1,
+            content: JSON.stringify(runtime, null, 2),
+          });
+          break;
+        }
         default: {
           // Combine graph + semantic search
           const [graphResult, semanticResult] = await Promise.allSettled([
@@ -216,10 +226,7 @@ export class DigitalTwin {
         `${this.projectBrainUrl}/graph/related-context`,
         {
           method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            ...getInternalAuthHeaders(),
-          },
+          headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ projectId, filePath, maxHops: 3 }),
         }
       );
@@ -345,6 +352,32 @@ export class DigitalTwin {
   }
 
   /**
+   * Get runtime snapshot for the project (endpoints, errors, coverage).
+   */
+  async getRuntimeSnapshot(projectId: string): Promise<RuntimeSnapshot> {
+    try {
+      const response = await fetch(
+        `${this.projectBrainUrl}/runtime/snapshot/${projectId}`
+      );
+
+      if (response.ok) {
+        return (await response.json()) as RuntimeSnapshot;
+      }
+    } catch (error) {
+      logger.warn(
+        { projectId, error: String(error) },
+        "Runtime snapshot fetch failed"
+      );
+    }
+
+    return {
+      endpoints: [],
+      errorHotspots: [],
+      testCoverage: {},
+    };
+  }
+
+  /**
    * Get change model from git history.
    */
   getChangeModel(_projectId: string): Promise<ChangeModel> {
@@ -366,10 +399,7 @@ export class DigitalTwin {
     try {
       const response = await fetch(`${this.projectBrainUrl}/graph/query`, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          ...getInternalAuthHeaders(),
-        },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ projectId, query }),
       });
 
@@ -424,10 +454,7 @@ export class DigitalTwin {
     try {
       const response = await fetch(`${this.projectBrainUrl}/search/semantic`, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          ...getInternalAuthHeaders(),
-        },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ projectId, query, limit: 10 }),
       });
 
@@ -505,6 +532,38 @@ function formatArchitectureAnswer(arch: ArchitectureView): string {
     for (const layer of arch.layers.slice(0, 10)) {
       lines.push(
         `  - ${layer.name}: ${layer.files.length} files, ${layer.dependencies.length} external deps`
+      );
+    }
+  }
+
+  return lines.join("\n");
+}
+
+function formatRuntimeAnswer(runtime: RuntimeSnapshot): string {
+  const lines = [
+    "Runtime snapshot:",
+    `- ${runtime.endpoints.length} endpoints tracked`,
+    `- ${runtime.errorHotspots.length} error hotspots`,
+    `- ${Object.keys(runtime.testCoverage).length} files with test coverage data`,
+  ];
+
+  if (runtime.errorHotspots.length > 0) {
+    lines.push("", "Error hotspots:");
+    for (const hotspot of runtime.errorHotspots.slice(0, 5)) {
+      lines.push(
+        `  - ${hotspot.filePath}: ${hotspot.errorCount} errors (last: ${hotspot.lastError})`
+      );
+    }
+  }
+
+  if (runtime.endpoints.length > 0) {
+    lines.push("", "Slowest endpoints:");
+    const slowest = [...runtime.endpoints]
+      .sort((a, b) => b.avgLatencyMs - a.avgLatencyMs)
+      .slice(0, 5);
+    for (const ep of slowest) {
+      lines.push(
+        `  - ${ep.method} ${ep.path}: ${ep.avgLatencyMs.toFixed(0)}ms avg, ${(ep.errorRate * 100).toFixed(1)}% errors`
       );
     }
   }

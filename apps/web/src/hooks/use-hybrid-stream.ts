@@ -187,7 +187,7 @@ export function useHybridStream(sessionId: string): HybridStreamReturn {
 
   const connectSSE = useCallback((): void => {
     const seqParam =
-      lastSequence.current > 0 ? `?lastEventId=${lastSequence.current}` : "";
+      lastSequence.current > 0 ? `?after=${lastSequence.current}` : "";
     const url = `${apiUrl}/api/sse/sessions/${sessionId}/stream${seqParam}`;
 
     const es = new EventSource(url);
@@ -210,20 +210,13 @@ export function useHybridStream(sessionId: string): HybridStreamReturn {
       "file_diff",
       "code_change",
       "task_status",
+      "queue_position",
       "reasoning",
       "session_complete",
       "error",
       "credit_update",
       "checkpoint",
-      // Canonical agent streaming events (GAP-P0-08)
-      "agent:thinking",
-      "agent:terminal",
-      "agent:file-change",
-      "agent:progress",
-      "task:complete",
-      "task:created",
-      "session:checkpoint",
-      "session:error",
+      "agent_status",
     ];
 
     for (const eventType of eventTypes) {

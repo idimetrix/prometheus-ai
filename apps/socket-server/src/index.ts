@@ -1,15 +1,10 @@
 import { createServer } from "node:http";
 import { createLogger } from "@prometheus/logger";
 import { createRedisConnection } from "@prometheus/queue";
-import {
-  initSentry,
-  initTelemetry,
-  metricsRegistry,
-} from "@prometheus/telemetry";
+import { initSentry } from "@prometheus/telemetry";
 import {
   installShutdownHandlers,
   isProcessShuttingDown,
-  registerShutdownHandler,
 } from "@prometheus/utils";
 import { createAdapter } from "@socket.io/redis-adapter";
 // MessagePack binary protocol for improved WebSocket performance (Phase 5.3)
@@ -22,18 +17,11 @@ import { setupCollaborationNamespace } from "./namespaces/collaboration";
 import { setupFleetNamespace } from "./namespaces/fleet";
 import { setupNotificationNamespace } from "./namespaces/notifications";
 import { setupSessionNamespace } from "./namespaces/sessions";
-import { mountYjsServer } from "./yjs-server";
 
-// Top-level regex for HTTP API route matching (lint: useTopLevelRegex)
-const EVENTS_ROUTE_RE = /^\/api\/sessions\/([^/]+)\/events$/;
-const EVENTS_BATCH_ROUTE_RE = /^\/api\/sessions\/([^/]+)\/events\/batch$/;
-
-await initTelemetry({ serviceName: "socket-server" });
 initSentry({ serviceName: "socket-server" });
 installShutdownHandlers();
 
 const logger = createLogger("socket-server");
-const healthRedis = createRedisConnection();
 const httpServer = createServer((req, res) => {
   if (req.url === "/health") {
     if (isProcessShuttingDown()) {
@@ -45,7 +33,9 @@ const httpServer = createServer((req, res) => {
     (async () => {
       const dependencies: Record<string, string> = {};
       try {
-        await healthRedis.ping();
+        const redis = createRedisConnection();
+        await redis.ping();
+        await redis.quit();
         dependencies.redis = "ok";
       } catch {
         dependencies.redis = "unavailable";
@@ -70,156 +60,9 @@ const httpServer = createServer((req, res) => {
     res.end(JSON.stringify({ status: "ok" }));
     return;
   }
-  if (req.url === "/ready" || req.url === "/health/ready") {
-    (async () => {
-      const checks: Record<string, boolean> = {};
-
-      try {
-        await healthRedis.ping();
-        checks.redis = true;
-      } catch {
-        checks.redis = false;
-      }
-
-      const allReady = Object.values(checks).every(Boolean);
-      const statusCode = allReady ? 200 : 503;
-      const status = allReady ? "ready" : "not ready";
-
-      res.writeHead(statusCode, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ status, checks }));
-    })();
-    return;
-  }
-  if (req.url === "/metrics") {
-    metricsRegistry
-      .render()
-      .then((body) => {
-        res.writeHead(200, { "Content-Type": "text/plain; charset=utf-8" });
-        res.end(body);
-      })
-      .catch(() => {
-        res.writeHead(500);
-        res.end("Failed to render metrics");
-      });
-    return;
-  }
-
-  // ---- Internal HTTP API for event ingestion from orchestrator/services ----
-  // POST /api/sessions/:sessionId/events — publish event to session room
-  const eventsMatch = req.url?.match(EVENTS_ROUTE_RE);
-  if (eventsMatch && req.method === "POST") {
-    const internalSecret = process.env.INTERNAL_SERVICE_SECRET;
-    if (internalSecret && req.headers["x-internal-secret"] !== internalSecret) {
-      res.writeHead(403, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ error: "Forbidden" }));
-      return;
-    }
-
-    let body = "";
-    req.on("data", (chunk: Buffer) => {
-      body += chunk.toString();
-    });
-    req.on("end", () => {
-      try {
-        const sessionId = eventsMatch[1] as string;
-        const event = JSON.parse(body) as {
-          type?: string;
-          data?: Record<string, unknown>;
-        };
-
-        if (!event.type) {
-          res.writeHead(400, { "Content-Type": "application/json" });
-          res.end(JSON.stringify({ error: "Missing 'type' field" }));
-          return;
-        }
-
-        const eventData = event.data ?? {};
-        const sessionsNs = io.of("/sessions");
-
-        // Emit to session room via Socket.io
-        sessionsNs.to(`session:${sessionId}`).emit(event.type, eventData);
-
-        // Also emit generic session_event for unified listeners
-        sessionsNs.to(`session:${sessionId}`).emit("session_event", {
-          type: event.type,
-          data: eventData,
-          timestamp:
-            (eventData.timestamp as string) ?? new Date().toISOString(),
-        });
-
-        logger.debug(
-          { sessionId, eventType: event.type },
-          "Event ingested via HTTP API"
-        );
-
-        res.writeHead(200, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ ok: true }));
-      } catch (error) {
-        const msg = error instanceof Error ? error.message : String(error);
-        logger.error({ error: msg }, "Failed to ingest event via HTTP");
-        res.writeHead(500, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ error: "Internal server error" }));
-      }
-    });
-    return;
-  }
-
-  // POST /api/sessions/:sessionId/events/batch — publish batch of events
-  const batchMatch = req.url?.match(EVENTS_BATCH_ROUTE_RE);
-  if (batchMatch && req.method === "POST") {
-    const internalSecret = process.env.INTERNAL_SERVICE_SECRET;
-    if (internalSecret && req.headers["x-internal-secret"] !== internalSecret) {
-      res.writeHead(403, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ error: "Forbidden" }));
-      return;
-    }
-
-    let body = "";
-    req.on("data", (chunk: Buffer) => {
-      body += chunk.toString();
-    });
-    req.on("end", () => {
-      try {
-        const sessionId = batchMatch[1] as string;
-        const parsed = JSON.parse(body) as {
-          events?: Array<{
-            type: string;
-            data: Record<string, unknown>;
-          }>;
-        };
-
-        if (!Array.isArray(parsed.events) || parsed.events.length === 0) {
-          res.writeHead(400, { "Content-Type": "application/json" });
-          res.end(JSON.stringify({ error: "Missing or empty 'events' array" }));
-          return;
-        }
-
-        const sessionsNs = io.of("/sessions");
-        for (const evt of parsed.events) {
-          const eventData = evt.data ?? {};
-          sessionsNs.to(`session:${sessionId}`).emit(evt.type, eventData);
-          sessionsNs.to(`session:${sessionId}`).emit("session_event", {
-            type: evt.type,
-            data: eventData,
-            timestamp:
-              (eventData.timestamp as string) ?? new Date().toISOString(),
-          });
-        }
-
-        logger.debug(
-          { sessionId, count: parsed.events.length },
-          "Batch events ingested via HTTP API"
-        );
-
-        res.writeHead(200, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ ok: true, published: parsed.events.length }));
-      } catch (error) {
-        const msg = error instanceof Error ? error.message : String(error);
-        logger.error({ error: msg }, "Failed to ingest batch events via HTTP");
-        res.writeHead(500, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ error: "Internal server error" }));
-      }
-    });
+  if (req.url === "/ready") {
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ status: "ready" }));
     return;
   }
 });
@@ -370,22 +213,21 @@ function setupGlobalSubscriber() {
 const port = Number(process.env.SOCKET_PORT ?? 4001);
 
 Promise.all([setupRedisAdapter(), setupGlobalSubscriber()]).then(() => {
-  // Mount Yjs CRDT collaboration WebSocket server on /yjs/:docId
-  mountYjsServer(httpServer);
-
   httpServer.listen(port, () => {
     logger.info(`Socket.io server running on port ${port}`);
     logger.info(
       "Namespaces: /sessions, /fleet, /notifications, /collaboration"
     );
-    logger.info("Yjs collaboration server mounted on /yjs/:docId");
   });
 });
 
-// Register custom cleanup with the centralized shutdown handler
-registerShutdownHandler("socket-server", () => {
+// Graceful shutdown
+const shutdown = () => {
   logger.info("Shutting down socket server...");
   io.close();
   httpServer.close();
-  return Promise.resolve();
-});
+  process.exit(0);
+};
+
+process.on("SIGTERM", shutdown);
+process.on("SIGINT", shutdown);

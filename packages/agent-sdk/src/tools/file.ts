@@ -1,88 +1,6 @@
 import { z } from "zod";
 import { execInSandbox } from "./sandbox";
-import type {
-  AgentToolDefinition,
-  ToolExecutionContext,
-  ToolResult,
-} from "./types";
-
-// ---------------------------------------------------------------------------
-// Remote sandbox-manager helpers (bypass shell exec for file I/O)
-// ---------------------------------------------------------------------------
-
-function getSandboxManagerUrl(ctx: ToolExecutionContext): string | undefined {
-  return ctx.sandboxManagerUrl || process.env.SANDBOX_MANAGER_URL;
-}
-
-async function readFileRemote(
-  baseUrl: string,
-  sandboxId: string,
-  filePath: string
-): Promise<ToolResult> {
-  try {
-    const url = `${baseUrl}/sandbox/${sandboxId}/read?path=${encodeURIComponent(filePath)}`;
-    const response = await fetch(url, {
-      method: "GET",
-      signal: AbortSignal.timeout(30_000),
-    });
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      return {
-        success: false,
-        output: "",
-        error: `Failed to read file (${response.status}): ${errorText}`,
-      };
-    }
-
-    const content = await response.text();
-    return { success: true, output: content };
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    return {
-      success: false,
-      output: "",
-      error: `Sandbox read error: ${message}`,
-    };
-  }
-}
-
-async function writeFileRemote(
-  baseUrl: string,
-  sandboxId: string,
-  filePath: string,
-  content: string
-): Promise<ToolResult> {
-  try {
-    const response = await fetch(`${baseUrl}/sandbox/${sandboxId}/write`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ path: filePath, content }),
-      signal: AbortSignal.timeout(30_000),
-    });
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      return {
-        success: false,
-        output: "",
-        error: `Failed to write file (${response.status}): ${errorText}`,
-      };
-    }
-
-    return {
-      success: true,
-      output: `Successfully wrote ${content.length} bytes to ${filePath}`,
-    };
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    return {
-      success: false,
-      output: "",
-      error: `Sandbox write error: ${message}`,
-    };
-  }
-}
+import type { AgentToolDefinition } from "./types";
 
 // ---------------------------------------------------------------------------
 // Zod Schemas
@@ -137,6 +55,27 @@ export const fileListSchema = z
   })
   .strict();
 
+export const multiFileEditSchema = z
+  .object({
+    edits: z
+      .array(
+        z.object({
+          path: z.string().describe("File path relative to project root"),
+          oldString: z.string().describe("Exact string to find and replace"),
+          newString: z.string().describe("Replacement string"),
+        })
+      )
+      .min(1)
+      .max(20)
+      .describe("Array of file edits to apply atomically"),
+    reason: z
+      .string()
+      .describe(
+        "Brief explanation of why these files must be changed together (e.g., rename, move, interface change)"
+      ),
+  })
+  .strict();
+
 // ---------------------------------------------------------------------------
 // Helper
 // ---------------------------------------------------------------------------
@@ -182,35 +121,6 @@ export const fileTools: AgentToolDefinition[] = [
       const parsed = fileReadSchema.parse(input);
       const filePath = resolveProjectPath(ctx.workDir, parsed.path);
 
-      const baseUrl = getSandboxManagerUrl(ctx);
-      if (baseUrl) {
-        // Use dedicated read endpoint for remote sandboxes
-        const result = await readFileRemote(baseUrl, ctx.sandboxId, filePath);
-        if (!result.success) {
-          return result;
-        }
-        // Apply line range filtering if requested
-        if (parsed.startLine !== undefined || parsed.endLine !== undefined) {
-          const lines = result.output.split("\n");
-          const start = (parsed.startLine ?? 1) - 1;
-          const end = parsed.endLine ?? lines.length;
-          const sliced = lines.slice(start, end);
-          const numbered = sliced
-            .map(
-              (line, i) => `${String(start + i + 1).padStart(6, " ")}\t${line}`
-            )
-            .join("\n");
-          return { success: true, output: numbered };
-        }
-        // Add line numbers like cat -n
-        const numbered = result.output
-          .split("\n")
-          .map((line, i) => `${String(i + 1).padStart(6, " ")}\t${line}`)
-          .join("\n");
-        return { success: true, output: numbered };
-      }
-
-      // Fallback: execute via shell command in local sandbox
       let command: string;
       if (parsed.startLine !== undefined && parsed.endLine !== undefined) {
         command = `sed -n '${parsed.startLine},${parsed.endLine}p' "${filePath}" | cat -n`;
@@ -247,30 +157,7 @@ export const fileTools: AgentToolDefinition[] = [
     execute: async (input, ctx) => {
       const parsed = fileWriteSchema.parse(input);
       const filePath = resolveProjectPath(ctx.workDir, parsed.path);
-
-      const baseUrl = getSandboxManagerUrl(ctx);
-      if (baseUrl) {
-        // Use dedicated write endpoint for remote sandboxes
-        const result = await writeFileRemote(
-          baseUrl,
-          ctx.sandboxId,
-          filePath,
-          parsed.content
-        );
-        if (result.success) {
-          return {
-            success: true,
-            output: `Successfully wrote ${parsed.content.length} bytes to ${parsed.path}`,
-            metadata: {
-              path: parsed.path,
-              bytesWritten: parsed.content.length,
-            },
-          };
-        }
-        return result;
-      }
-
-      // Fallback: execute via shell command in local sandbox
+      // Ensure parent directory exists, then write content via heredoc
       const command = `mkdir -p "$(dirname "${filePath}")" && cat > "${filePath}" << 'PROMETHEUS_EOF'\n${parsed.content}\nPROMETHEUS_EOF`;
 
       const result = await execInSandbox(command, ctx);
@@ -418,6 +305,121 @@ export const fileTools: AgentToolDefinition[] = [
       }
 
       return await execInSandbox(command, ctx);
+    },
+  },
+  {
+    name: "multi_file_edit",
+    description:
+      "Apply coordinated edits across multiple files atomically. Use when renaming symbols, updating interfaces, or changing imports that span multiple files. All edits succeed or all are rolled back.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        edits: {
+          type: "array",
+          description: "Array of file edits to apply atomically",
+          items: {
+            type: "object",
+            properties: {
+              path: {
+                type: "string",
+                description: "File path relative to project root",
+              },
+              oldString: {
+                type: "string",
+                description: "Exact string to find and replace",
+              },
+              newString: { type: "string", description: "Replacement string" },
+            },
+            required: ["path", "oldString", "newString"],
+          },
+        },
+        reason: {
+          type: "string",
+          description:
+            "Brief explanation of why these files must be changed together",
+        },
+      },
+      required: ["edits", "reason"],
+    },
+    zodSchema: multiFileEditSchema,
+    permissionLevel: "write",
+    creditCost: 5,
+    execute: async (input, ctx) => {
+      const parsed = multiFileEditSchema.parse(input);
+
+      // Phase 1: Read all files and validate edits
+      const originals = new Map<string, string>();
+      for (const edit of parsed.edits) {
+        const filePath = resolveProjectPath(ctx.workDir, edit.path);
+        const readResult = await execInSandbox(`cat "${filePath}"`, ctx);
+        if (!readResult.success) {
+          return {
+            success: false,
+            output: "",
+            error: `Failed to read ${edit.path}: ${readResult.error}`,
+          };
+        }
+
+        const content = readResult.output;
+        if (!content.includes(edit.oldString)) {
+          return {
+            success: false,
+            output: "",
+            error: `String to replace not found in ${edit.path}. Ensure oldString is exact.`,
+          };
+        }
+
+        const occurrences = content.split(edit.oldString).length - 1;
+        if (occurrences > 1) {
+          return {
+            success: false,
+            output: "",
+            error: `Found ${occurrences} occurrences in ${edit.path}. Provide more context for uniqueness.`,
+          };
+        }
+
+        originals.set(edit.path, content);
+      }
+
+      // Phase 2: Apply all edits
+      const appliedPaths: string[] = [];
+      for (const edit of parsed.edits) {
+        const filePath = resolveProjectPath(ctx.workDir, edit.path);
+        const original = originals.get(edit.path) ?? "";
+        const updated = original.replace(edit.oldString, edit.newString);
+
+        const writeCommand = `cat > "${filePath}" << 'PROMETHEUS_EOF'\n${updated}\nPROMETHEUS_EOF`;
+        const writeResult = await execInSandbox(writeCommand, ctx);
+
+        if (!writeResult.success) {
+          // Phase 3 (rollback): Restore files already written
+          for (const path of appliedPaths) {
+            const origContent = originals.get(path) ?? "";
+            const rollbackPath = resolveProjectPath(ctx.workDir, path);
+            await execInSandbox(
+              `cat > "${rollbackPath}" << 'PROMETHEUS_EOF'\n${origContent}\nPROMETHEUS_EOF`,
+              ctx
+            );
+          }
+          return {
+            success: false,
+            output: "",
+            error: `Failed to write ${edit.path}, rolled back ${appliedPaths.length} file(s)`,
+          };
+        }
+
+        appliedPaths.push(edit.path);
+      }
+
+      return {
+        success: true,
+        output: `Successfully applied ${parsed.edits.length} coordinated edits: ${parsed.reason}`,
+        metadata: {
+          filesEdited: appliedPaths,
+          reason: parsed.reason,
+          editCount: parsed.edits.length,
+        },
+      };
     },
   },
 ];

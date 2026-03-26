@@ -1,25 +1,20 @@
 import { serve } from "@hono/node-server";
-import { internalAuthMiddleware } from "@prometheus/auth";
 import { createLogger } from "@prometheus/logger";
 import {
   initSentry,
   initTelemetry,
-  metricsMiddleware,
   traceMiddleware,
 } from "@prometheus/telemetry";
 import {
   installShutdownHandlers,
   isProcessShuttingDown,
-  registerShutdownHandler,
 } from "@prometheus/utils";
-import { Hono, type Context as HonoContext } from "hono";
+import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { streamSSE } from "hono/streaming";
 import { BYOModelManager } from "./byo-model";
 import { CascadeRouter } from "./cascade";
-import { CostOptimizer } from "./cost-optimizer";
 import { initLangfuse } from "./langfuse";
-import { isMockLLMEnabled, mockRoute, mockRouteStream } from "./mock-provider";
 import { PromptCacheManager } from "./prompt-cache";
 import { RateLimitManager } from "./rate-limiter";
 import { NearIdenticalCoalescer } from "./request-coalescer";
@@ -27,18 +22,14 @@ import { ModelRouterService, routeEmbedding } from "./router";
 
 await initTelemetry({ serviceName: "model-router" });
 initSentry({ serviceName: "model-router" });
-initLangfuse();
 installShutdownHandlers();
+initLangfuse();
 
 const logger = createLogger("model-router");
 const app = new Hono();
 
 app.use("/*", cors());
 app.use("/*", traceMiddleware("model-router"));
-app.use("/*", metricsMiddleware());
-
-// Shared-secret auth middleware for internal service-to-service calls
-app.use("/*", internalAuthMiddleware());
 
 const rateLimiter = new RateLimitManager();
 const routerService = new ModelRouterService(rateLimiter);
@@ -46,7 +37,6 @@ const cascadeRouter = new CascadeRouter(routerService);
 const byoManager = new BYOModelManager();
 const promptCacheManager = new PromptCacheManager();
 const requestCoalescer = new NearIdenticalCoalescer();
-const costOptimizer = new CostOptimizer();
 
 // ─── Health Check (verifies connectivity to all configured providers) ──
 
@@ -54,21 +44,6 @@ app.get("/health", async (c) => {
   if (isProcessShuttingDown()) {
     return c.json({ status: "draining" }, 503);
   }
-
-  // In mock mode, always report healthy — no real providers needed
-  if (isMockLLMEnabled()) {
-    return c.json({
-      status: "ok",
-      checks: { providers: true, redis: true },
-      uptime: Math.floor(process.uptime()),
-      version: "0.1.0",
-      service: "model-router",
-      mode: "mock",
-      providers: { mock: { healthy: true, latencyMs: 0 } },
-      timestamp: new Date().toISOString(),
-    });
-  }
-
   try {
     const checks: Record<string, boolean> = {};
 
@@ -101,22 +76,22 @@ app.get("/health", async (c) => {
         status,
         checks,
         uptime: Math.floor(process.uptime()),
-        version: process.env.APP_VERSION ?? "0.0.0",
+        version: "0.1.0",
         service: "model-router",
         providers: providerHealth,
         timestamp: new Date().toISOString(),
       },
       statusCode
     );
-  } catch (_error) {
+  } catch (error) {
     return c.json(
       {
         status: "unhealthy",
         checks: { providers: false },
         uptime: Math.floor(process.uptime()),
-        version: process.env.APP_VERSION ?? "0.0.0",
+        version: "0.1.0",
         service: "model-router",
-        error: "Health check failed",
+        error: error instanceof Error ? error.message : String(error),
         timestamp: new Date().toISOString(),
       },
       503
@@ -127,51 +102,8 @@ app.get("/health", async (c) => {
 // Liveness probe — lightweight, just confirms process is responsive
 app.get("/live", (c) => c.json({ status: "ok" }));
 
-// Readiness probe — verifies the service can route requests
-app.get("/ready", async (c) => {
-  if (isMockLLMEnabled()) {
-    return c.json({ status: "ready", checks: { mock: true } });
-  }
-
-  const checks: Record<string, boolean> = {};
-
-  try {
-    const providerHealth = await routerService.checkProviderHealth();
-    checks.providers = Object.values(providerHealth).some((h) => h.healthy);
-  } catch {
-    checks.providers = false;
-  }
-
-  const allReady = Object.values(checks).every(Boolean);
-
-  if (!allReady) {
-    return c.json({ status: "not ready", checks }, 503);
-  }
-  return c.json({ status: "ready", checks });
-});
-
-// Readiness probe (alias)
-app.get("/health/ready", async (c) => {
-  if (isMockLLMEnabled()) {
-    return c.json({ status: "ready", checks: { mock: true } });
-  }
-
-  const checks: Record<string, boolean> = {};
-
-  try {
-    const providerHealth = await routerService.checkProviderHealth();
-    checks.providers = Object.values(providerHealth).some((h) => h.healthy);
-  } catch {
-    checks.providers = false;
-  }
-
-  const allReady = Object.values(checks).every(Boolean);
-
-  if (!allReady) {
-    return c.json({ status: "not ready", checks }, 503);
-  }
-  return c.json({ status: "ready", checks });
-});
+// Readiness probe — can accept traffic
+app.get("/ready", (c) => c.json({ status: "ready" }));
 
 // ─── Models listing ─────────────────────────────────────────────
 
@@ -180,60 +112,9 @@ app.get("/models", (c) => {
   return c.json({ data: models });
 });
 
-// ─── Mock LLM Handler ───────────────────────────────────────────
-
-/**
- * Handle a mock LLM request — returns canned responses without calling
- * real providers. Used when DEV_MOCK_LLM=true.
- */
-function handleMockRoute(
-  c: HonoContext,
-  slot: string,
-  messages: Array<{ role: string; content: string }>,
-  wantsStream: boolean | undefined,
-  options?: Record<string, unknown>
-) {
-  const mockReq = { slot, messages, options };
-
-  if (wantsStream && !(options?.tools as unknown[] | undefined)?.length) {
-    return streamSSE(c, async (sseStream) => {
-      const streamResult = mockRouteStream(mockReq);
-      for await (const chunk of streamResult.stream) {
-        await sseStream.writeSSE({
-          data: JSON.stringify({
-            id: streamResult.id,
-            model: streamResult.model,
-            provider: streamResult.provider,
-            choices: [
-              {
-                delta: { content: chunk.content },
-                finish_reason: chunk.finishReason,
-              },
-            ],
-          }),
-        });
-      }
-      const done = await streamResult.done;
-      await sseStream.writeSSE({
-        data: JSON.stringify({
-          id: streamResult.id,
-          model: streamResult.model,
-          provider: streamResult.provider,
-          choices: [{ delta: {}, finish_reason: "stop" }],
-          usage: done.usage,
-        }),
-      });
-      await sseStream.writeSSE({ data: "[DONE]" });
-    });
-  }
-
-  return c.json(mockRoute(mockReq));
-}
-
 // ─── Slot-Based Route (Primary API) ─────────────────────────────
 
 app.post("/route", async (c) => {
-  const routeStartMs = performance.now();
   try {
     const body = await c.req.json();
     const { slot, messages, stream: wantsStream, maxTokens } = body;
@@ -245,11 +126,6 @@ app.post("/route", async (c) => {
         },
         400
       );
-    }
-
-    // Mock LLM mode — return canned responses without calling real providers
-    if (isMockLLMEnabled()) {
-      return handleMockRoute(c, slot, messages, wantsStream, body.options);
     }
 
     const options = {
@@ -275,13 +151,8 @@ app.post("/route", async (c) => {
       }
     }
 
-    // When tools are present, use non-streaming path since SSE streaming
-    // doesn't support tool_call deltas. The orchestrator's callModelRouter
-    // already handles JSON responses alongside SSE.
-    const hasTools = Array.isArray(options.tools) && options.tools.length > 0;
-
     // Streaming response (SSE format, compatible with OpenAI streaming)
-    if (options.stream && !hasTools) {
+    if (options.stream) {
       return streamSSE(c, async (sseStream) => {
         try {
           const streamResult = await routerService.routeStream({
@@ -335,14 +206,11 @@ app.post("/route", async (c) => {
     const result = await requestCoalescer.coalesce(promptKey, () =>
       routerService.route({ slot, messages, options })
     );
-    const modelLatencyMs = Math.round(performance.now() - routeStartMs);
-    c.header("X-Model-Latency", `${modelLatencyMs}ms`);
-    c.header("X-Response-Time", `${modelLatencyMs}ms`);
     return c.json(result);
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);
     logger.error({ error: msg }, "Route request failed");
-    return c.json({ error: "Internal server error" }, 500);
+    return c.json({ error: msg }, 500);
   }
 });
 
@@ -360,22 +228,6 @@ app.post("/v1/embeddings", async (c) => {
       );
     }
 
-    // Mock embeddings — return a zero vector for dev/testing
-    if (isMockLLMEnabled()) {
-      const dimensions = 1536;
-      const inputs = Array.isArray(input) ? input : [input];
-      return c.json({
-        data: inputs.map((_, idx) => ({
-          embedding: new Array(dimensions)
-            .fill(0)
-            .map(() => Math.random() * 0.01 - 0.005),
-          index: idx,
-        })),
-        model: "mock/embedding-model",
-        usage: { prompt_tokens: 10, total_tokens: 10 },
-      });
-    }
-
     const result = await routeEmbedding(input);
     return c.json({
       data: [{ embedding: result.embedding, index: 0 }],
@@ -384,146 +236,21 @@ app.post("/v1/embeddings", async (c) => {
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);
     logger.error({ error: msg }, "Embedding request failed");
-    return c.json({ error: "Internal server error" }, 500);
+    return c.json({ error: msg }, 500);
   }
 });
 
 // ─── Legacy Completions Endpoint ────────────────────────────────
 
 app.post("/v1/chat/completions", async (c) => {
-  const completionStartMs = performance.now();
   try {
     const body = await c.req.json();
-    const messages = body.messages ?? [];
-    const wantsStream = body.stream === true;
-
-    // Mock mode for legacy completions endpoint
-    if (isMockLLMEnabled()) {
-      if (wantsStream) {
-        return handleMockRoute(c, "default", messages, true, {
-          tools: body.tools,
-        });
-      }
-      const result = mockRoute({
-        slot: "default",
-        messages,
-        options: { tools: body.tools },
-      });
-      return c.json({
-        id: result.id,
-        model: result.model,
-        provider: result.provider,
-        choices: result.choices,
-        usage: result.usage,
-      });
-    }
-
-    // Streaming response (SSE format, OpenAI-compatible)
-    if (wantsStream) {
-      return streamSSE(c, async (sseStream) => {
-        try {
-          const streamResult = await routerService.routeCompletionStream(body);
-
-          for await (const chunk of streamResult.stream) {
-            await sseStream.writeSSE({
-              data: JSON.stringify({
-                id: streamResult.id,
-                object: "chat.completion.chunk",
-                model: streamResult.model,
-                provider: streamResult.provider,
-                choices: [
-                  {
-                    index: 0,
-                    delta: { content: chunk.content },
-                    finish_reason: chunk.finishReason,
-                  },
-                ],
-              }),
-            });
-          }
-
-          // Send final usage event
-          const done = await streamResult.done;
-          await sseStream.writeSSE({
-            data: JSON.stringify({
-              id: streamResult.id,
-              object: "chat.completion.chunk",
-              model: streamResult.model,
-              provider: streamResult.provider,
-              choices: [{ index: 0, delta: {}, finish_reason: "stop" }],
-              usage: done.usage,
-            }),
-          });
-
-          await sseStream.writeSSE({ data: "[DONE]" });
-        } catch (error) {
-          const msg = error instanceof Error ? error.message : String(error);
-          logger.error({ error: msg }, "Streaming completion request failed");
-          await sseStream.writeSSE({ data: JSON.stringify({ error: msg }) });
-        }
-      });
-    }
-
-    // Non-streaming response
     const result = await routerService.routeCompletion(body);
-    const modelLatencyMs = Math.round(performance.now() - completionStartMs);
-    c.header("X-Model-Latency", `${modelLatencyMs}ms`);
-    c.header("X-Response-Time", `${modelLatencyMs}ms`);
     return c.json(result);
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);
     logger.error({ error: msg }, "Completion request failed");
-    return c.json({ error: "Internal server error" }, 500);
-  }
-});
-
-// ─── Test Endpoint ──────────────────────────────────────────────
-
-/**
- * POST /v1/test - Quick connectivity test that sends a simple prompt to the
- * configured model chain and verifies we get a response. Returns which
- * provider/model actually responded so operators can confirm end-to-end
- * connectivity without constructing a full request.
- */
-app.post("/v1/test", async (c) => {
-  try {
-    // Mock mode — return immediately
-    if (isMockLLMEnabled()) {
-      return c.json({
-        ok: true,
-        response: "OK",
-        provider: "mock",
-        model: "mock/test",
-        latencyMs: 0,
-      });
-    }
-
-    const body = await c.req.json().catch(() => ({}));
-    const slot = (body as Record<string, unknown>).slot as string | undefined;
-
-    const startMs = Date.now();
-    const result = await routerService.route({
-      slot: slot ?? "default",
-      messages: [{ role: "user", content: "Hello, respond with just 'OK'" }],
-      options: { maxTokens: 16, temperature: 0 },
-    });
-
-    const latencyMs = Date.now() - startMs;
-    const content = result.choices[0]?.message?.content ?? "";
-
-    return c.json({
-      ok: true,
-      response: content.trim(),
-      provider: result.provider,
-      model: result.model,
-      slot: result.slot,
-      latencyMs,
-      usage: result.usage,
-    });
-  } catch (error) {
-    const msg = error instanceof Error ? error.message : String(error);
-    logger.error({ error: msg }, "Test endpoint failed");
-    return c.json({ ok: false, error: msg }, 500);
+    return c.json({ error: msg }, 500);
   }
 });
 
@@ -563,8 +290,7 @@ app.post("/v1/estimate-tokens", async (c) => {
     });
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);
-    logger.error({ error: msg }, "Token estimation failed");
-    return c.json({ error: "Internal server error" }, 400);
+    return c.json({ error: msg }, 400);
   }
 });
 
@@ -600,8 +326,7 @@ app.post("/v1/byo/keys", async (c) => {
     });
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);
-    logger.error({ error: msg }, "Failed to register BYO key");
-    return c.json({ error: "Internal server error" }, 500);
+    return c.json({ error: msg }, 500);
   }
 });
 
@@ -657,8 +382,7 @@ app.post("/v1/byo/test", async (c) => {
     return c.json(result);
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);
-    logger.error({ error: msg }, "Failed to test BYO model");
-    return c.json({ error: "Internal server error" }, 500);
+    return c.json({ error: msg }, 500);
   }
 });
 
@@ -679,8 +403,7 @@ app.post("/v1/byo/verify/:provider", async (c) => {
     return c.json(result);
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);
-    logger.error({ error: msg }, "Failed to verify BYO key");
-    return c.json({ error: "Internal server error" }, 500);
+    return c.json({ error: msg }, 500);
   }
 });
 
@@ -690,138 +413,6 @@ app.post("/v1/byo/verify/:provider", async (c) => {
 app.get("/v1/byo/providers", (c) => {
   const providers = byoManager.getSupportedProviders();
   return c.json({ data: providers });
-});
-
-// ─── Cost Report ────────────────────────────────────────────
-
-/**
- * GET /v1/cost-report - Cost breakdown showing free vs paid model usage
- * and estimated savings compared to an all-premium approach.
- */
-app.get("/v1/cost-report", (c) => {
-  const dailySpend = costOptimizer.getDailySpend();
-  const profiles = costOptimizer.getProfiles();
-  const promptCacheStats = promptCacheManager.getCacheHitRates();
-  const cascadeMetrics = cascadeRouter.getMetrics();
-
-  // Estimate all-premium cost: assume every request at $9/M tokens (Sonnet pricing)
-  const totalRequests =
-    Math.round(dailySpend.freePercentage + dailySpend.paidPercentage) || 0;
-  const estimatedPremiumCostPerRequest = 0.018; // ~2K tokens at $9/M
-  const allPremiumEstimate = totalRequests * estimatedPremiumCostPerRequest;
-  const actualCost = dailySpend.totalUsd;
-  const savingsUsd = Math.max(0, allPremiumEstimate - actualCost);
-  const savingsPercent =
-    allPremiumEstimate > 0 ? (savingsUsd / allPremiumEstimate) * 100 : 0;
-
-  return c.json({
-    daily: {
-      totalCostUsd: Math.round(actualCost * 10_000) / 10_000,
-      freePercent: Math.round(dailySpend.freePercentage * 10) / 10,
-      freeCloudPercent: 0,
-      paidPercent: Math.round(dailySpend.paidPercentage * 10) / 10,
-    },
-    savings: {
-      allPremiumEstimateUsd: Math.round(allPremiumEstimate * 10_000) / 10_000,
-      actualCostUsd: Math.round(actualCost * 10_000) / 10_000,
-      savingsUsd: Math.round(savingsUsd * 10_000) / 10_000,
-      savingsPercent: Math.round(savingsPercent * 10) / 10,
-    },
-    promptCache: promptCacheStats,
-    cascade: cascadeMetrics,
-    profiles: profiles.slice(0, 20),
-    optimizationSavings: costOptimizer.getSavingsSummary(),
-  });
-});
-
-// ─── Cost Optimization Endpoints ────────────────────────────────
-
-/**
- * POST /v1/cost/estimate - Pre-execution cost estimate for a task.
- * Body: { taskDescription, complexity }
- */
-app.post("/v1/cost/estimate", async (c) => {
-  try {
-    const body = await c.req.json();
-    const { taskDescription, complexity } = body;
-
-    if (!taskDescription) {
-      return c.json({ error: "'taskDescription' is required" }, 400);
-    }
-
-    const estimate = costOptimizer.estimateTaskCost(
-      taskDescription,
-      complexity ?? 3
-    );
-    return c.json({ data: estimate });
-  } catch (error) {
-    const msg = error instanceof Error ? error.message : String(error);
-    logger.error({ error: msg }, "Cost estimation failed");
-    return c.json({ error: "Internal server error" }, 500);
-  }
-});
-
-/**
- * POST /v1/cost/select-model - Select the optimal model for a task within budget.
- * Body: { task, budget: { maxCostPerDay, maxCostPerTask, preferFreeModels } }
- */
-app.post("/v1/cost/select-model", async (c) => {
-  try {
-    const body = await c.req.json();
-    const { task, budget } = body;
-
-    if (!task) {
-      return c.json({ error: "'task' is required" }, 400);
-    }
-
-    const result = costOptimizer.selectOptimalModel(task, {
-      maxCostPerDay: budget?.maxCostPerDay ?? 50,
-      maxCostPerTask: budget?.maxCostPerTask ?? 1,
-      preferFreeModels: budget?.preferFreeModels ?? true,
-    });
-    return c.json({ data: result });
-  } catch (error) {
-    const msg = error instanceof Error ? error.message : String(error);
-    logger.error({ error: msg }, "Model selection failed");
-    return c.json({ error: "Internal server error" }, 500);
-  }
-});
-
-/**
- * POST /v1/cost/track-savings - Record cost savings for a completed request.
- * Body: { actualCost, modelUsed, tokenCount }
- */
-app.post("/v1/cost/track-savings", async (c) => {
-  try {
-    const body = await c.req.json();
-    const { actualCost, modelUsed, tokenCount } = body;
-
-    if (actualCost === undefined || !modelUsed || !tokenCount) {
-      return c.json(
-        { error: "'actualCost', 'modelUsed', and 'tokenCount' are required" },
-        400
-      );
-    }
-
-    const record = costOptimizer.trackCostSavings(
-      actualCost,
-      modelUsed,
-      tokenCount
-    );
-    return c.json({ data: record });
-  } catch (error) {
-    const msg = error instanceof Error ? error.message : String(error);
-    logger.error({ error: msg }, "Cost savings tracking failed");
-    return c.json({ error: "Internal server error" }, 500);
-  }
-});
-
-/**
- * GET /v1/cost/savings - Get aggregate savings summary.
- */
-app.get("/v1/cost/savings", (c) => {
-  const summary = costOptimizer.getSavingsSummary();
-  return c.json({ data: summary });
 });
 
 // ─── Cascade Routing ─────────────────────────────────────────
@@ -847,7 +438,7 @@ app.post("/v1/cascade/route", async (c) => {
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);
     logger.error({ error: msg }, "Cascade route request failed");
-    return c.json({ error: "Internal server error" }, 500);
+    return c.json({ error: msg }, 500);
   }
 });
 
@@ -863,20 +454,6 @@ app.get("/metrics", async (c) => {
   return c.text(await metricsRegistry.render(), 200, {
     "Content-Type": "text/plain; charset=utf-8",
   });
-});
-
-// ─── Graceful Shutdown ───────────────────────────────────────────
-
-registerShutdownHandler("model-router", async () => {
-  logger.info("Model router shutting down...");
-  // Close Redis connection used by rate limiter
-  try {
-    const { redis } = await import("@prometheus/queue");
-    await redis.quit();
-  } catch {
-    // Best-effort cleanup
-  }
-  logger.info("Model router shutdown complete");
 });
 
 // ─── Start Server ───────────────────────────────────────────────
@@ -899,20 +476,44 @@ export type {
   RegisteredModel,
 } from "./byo-model";
 export { BYOModelManager } from "./byo-model";
+export { BYOModelStore } from "./byo-model-store";
+export type {
+  BYOModelBenchmark,
+  BYOModelValidation,
+} from "./byo-model-validator";
+export { BYOModelValidator } from "./byo-model-validator";
 export type { QualityAssessment } from "./cascade";
 export { CascadeRouter } from "./cascade";
-export type { OptimalModelResult } from "./cost-monitor";
+export type {
+  ComplexityEstimate,
+  ComplexitySignals,
+} from "./complexity-estimator";
+export { ComplexityEstimator } from "./complexity-estimator";
+export type { BudgetStatus, OptimalModelResult } from "./cost-monitor";
 export { CostMonitor } from "./cost-monitor";
 export type {
+  BudgetConstraint,
   CostOptimizationResult,
   CostProfile,
-  CostSavingsRecord,
-  TaskCostEstimate,
 } from "./cost-optimizer";
 export { CostOptimizer } from "./cost-optimizer";
-export { isMockLLMEnabled, mockRoute, mockRouteStream } from "./mock-provider";
+export {
+  getMetrics as getLangfuseMetrics,
+  getRecentTraces,
+  initLangfuse,
+  recordTrace,
+} from "./langfuse";
+export type { ModelScore } from "./model-scorer";
+export { ModelScorer } from "./model-scorer";
 export { PromptCacheManager } from "./prompt-cache";
 export { RateLimitManager } from "./rate-limiter";
 export type { CoalescingStats } from "./request-coalescer";
-export { NearIdenticalCoalescer, normalizePrompt } from "./request-coalescer";
+export {
+  EmbeddingCoalescer,
+  NearIdenticalCoalescer,
+  normalizePrompt,
+  RequestCoalescer,
+} from "./request-coalescer";
 export { ModelRouterService } from "./router";
+export type { SpeculativeConfig, SpeculativeResult } from "./speculative";
+export { SpeculativeExecutor } from "./speculative";

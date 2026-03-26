@@ -1,446 +1,308 @@
 /**
- * AutoDebugger — Autonomous debugging engine that parses stack traces,
- * reads surrounding code context, generates targeted fixes based on
- * error type, and verifies fixes compile before running tests.
+ * Autonomous Debugger
  *
- * Integrates with the CI loop as the first-pass fix generator for
- * individual failures before escalating to the full agent loop.
+ * Integrates the FailureAnalyzer, FiveWhyDebugger, and CILoopRunner into
+ * a single autonomous debugging pipeline that the execution engine can
+ * invoke. Given an error message or test output, the auto-debugger:
+ *
+ * 1. Reads the error message and classifies the failure
+ * 2. Identifies the root cause via structured analysis
+ * 3. Generates a targeted fix
+ * 4. Tests the fix
+ * 5. Reports the outcome
  */
 
 import { createLogger } from "@prometheus/logger";
 import type { AgentLoop } from "../agent-loop";
-import type { FailureAnalysis, FailureType } from "./failure-analyzer";
-import { TargetedRunner } from "./targeted-runner";
+import { type FailureAnalysis, FailureAnalyzer } from "./failure-analyzer";
+import { FiveWhyDebugger, type RootCauseAnalysis } from "./five-why-debugger";
 
 const logger = createLogger("orchestrator:ci-loop:auto-debugger");
 
-// ─── Top-level regex constants ───────────────────────────────────────────
-const PACKAGE_PATH_RE = /(?:apps|packages)\/([^/]+)/;
-
-// ─── Stack trace parsing regexes ─────────────────────────────────────────
-const STACK_TRACE_FILE_LINE_RE =
-  /(?:at\s+.+?\s+\(|at\s+)((?:\/[\w./-]+|[\w./-]+)\.\w+):(\d+)(?::(\d+))?\)?/;
-const TS_ERROR_LOCATION_RE =
-  /((?:\/[\w./-]+|[\w./-]+)\.tsx?)\((\d+),(\d+)\):\s*error/;
-const JEST_FAIL_LOCATION_RE =
-  /●\s+.*\n\n\s+.*\n\n\s+at\s+.*\((.*):(\d+):(\d+)\)/;
-
-/** Parsed location from a stack trace or error message */
-export interface ErrorLocation {
-  column?: number;
-  filePath: string;
-  line: number;
+export interface DebugRequest {
+  /** The error message or test output to debug */
+  errorOutput: string;
+  /** Optional: the specific file where the error occurred */
+  filePath?: string;
+  /** Maximum fix attempts before escalating */
+  maxAttempts?: number;
+  /** Optional: the test command to re-run after fix */
+  testCommand?: string;
 }
 
-/** Result of an auto-debug fix attempt */
-export interface AutoDebugResult {
-  compilePassed: boolean;
-  confidence: number;
-  fixApplied: boolean;
-  fixDescription: string;
-  location: ErrorLocation | null;
-  testPassed: boolean;
+export interface DebugResult {
+  /** Number of fix attempts made */
+  attempts: number;
+  /** Whether the issue was escalated (too many attempts) */
+  escalated: boolean;
+  /** The failure analyses from the error output */
+  failures: FailureAnalysis[];
+  /** Files that were modified to fix the issue */
+  filesChanged: string[];
+  /** Whether the fix was successful */
+  resolved: boolean;
+  /** The root cause analysis, if performed */
+  rootCauseAnalysis: RootCauseAnalysis | null;
+  /** Summary of what was fixed */
+  summary: string;
 }
 
 /**
- * Strategy for generating a fix based on the error type.
- * Each strategy returns a prompt tailored to the specific class of error.
+ * AutoDebugger wraps the failure analysis and fix pipeline into a
+ * self-contained debugging loop. It can be invoked by the execution
+ * engine when tool calls fail or tests break.
  */
-interface FixStrategy {
-  buildPrompt(
-    failure: FailureAnalysis,
-    location: ErrorLocation | null,
-    codeContext: string
-  ): string;
-  errorTypes: FailureType[];
-}
-
-const FIX_STRATEGIES: FixStrategy[] = [
-  {
-    errorTypes: ["syntax"],
-    buildPrompt(failure, location, codeContext) {
-      return `Fix the syntax error in ${location?.filePath ?? "the affected file"}.
-
-Error: ${failure.rootCause}
-${location ? `Location: line ${location.line}${location.column ? `, column ${location.column}` : ""}` : ""}
-
-Code context:
-\`\`\`
-${codeContext}
-\`\`\`
-
-Instructions:
-1. Identify the exact syntax issue (missing bracket, semicolon, invalid token, etc.)
-2. Apply the minimal fix to resolve the syntax error
-3. Do NOT change any logic or behavior — only fix the syntax
-4. Verify the file is syntactically valid after the fix`;
-    },
-  },
-  {
-    errorTypes: ["type", "import"],
-    buildPrompt(failure, location, codeContext) {
-      return `Fix the TypeScript type/import error in ${location?.filePath ?? "the affected file"}.
-
-Error: ${failure.rootCause}
-${location ? `Location: line ${location.line}` : ""}
-
-Code context:
-\`\`\`
-${codeContext}
-\`\`\`
-
-Instructions:
-1. Read the error message carefully to understand the type mismatch or missing import
-2. Check if the issue is a wrong type annotation, missing property, or incorrect import path
-3. Fix the type annotation, add the missing import, or correct the import path
-4. Ensure the fix is consistent with the rest of the file's type patterns
-5. Run "pnpm typecheck" on just this file to verify the fix`;
-    },
-  },
-  {
-    errorTypes: ["runtime"],
-    buildPrompt(failure, location, codeContext) {
-      return `Fix the runtime error in ${location?.filePath ?? "the affected file"}.
-
-Error: ${failure.rootCause}
-${location ? `Location: line ${location.line}` : ""}
-
-Code context:
-\`\`\`
-${codeContext}
-\`\`\`
-
-Instructions:
-1. Identify the runtime error type (TypeError, ReferenceError, null access, etc.)
-2. Add appropriate null checks, type guards, or default values
-3. If a variable is undefined, trace its origin and fix the initialization
-4. Prefer defensive coding (optional chaining, nullish coalescing) over try-catch
-5. Ensure the fix handles edge cases without changing the happy-path behavior`;
-    },
-  },
-  {
-    errorTypes: ["logic"],
-    buildPrompt(failure, location, codeContext) {
-      return `Fix the logic/assertion error in ${location?.filePath ?? "the affected file"}.
-
-Error: ${failure.rootCause}
-${location ? `Location: line ${location.line}` : ""}
-
-Code context:
-\`\`\`
-${codeContext}
-\`\`\`
-
-Instructions:
-1. Read the expected vs actual values from the assertion error
-2. Trace the logic that produces the actual value
-3. Fix the implementation to produce the expected result
-4. Do NOT change the test expectation unless it is clearly wrong
-5. Verify your fix handles all relevant edge cases`;
-    },
-  },
-  {
-    errorTypes: ["timeout", "integration", "environment"],
-    buildPrompt(failure, location, codeContext) {
-      return `Fix the ${failure.failureType} error in ${location?.filePath ?? "the affected file"}.
-
-Error: ${failure.rootCause}
-${location ? `Location: line ${location.line}` : ""}
-
-Code context:
-\`\`\`
-${codeContext}
-\`\`\`
-
-Instructions:
-1. For timeout errors: check for unresolved promises, infinite loops, or missing mock responses
-2. For integration errors: verify service endpoints, mock configurations, and data contracts
-3. For environment errors: check env variables, config files, and service dependencies
-4. Apply the most targeted fix possible without broad changes`;
-    },
-  },
-];
-
 export class AutoDebugger {
-  private readonly targetedRunner = new TargetedRunner();
+  private readonly analyzer = new FailureAnalyzer();
+  private readonly fiveWhy = new FiveWhyDebugger();
 
   /**
-   * Attempt to automatically debug and fix a single failure.
-   *
-   * Flow:
-   * 1. Parse the stack trace to identify the failing file and line
-   * 2. Read surrounding code context (20 lines around the error)
-   * 3. Select a fix strategy based on the error type
-   * 4. Generate and apply a targeted fix via the agent loop
-   * 5. Verify the fix compiles
-   * 6. Run only the relevant test(s) to verify
+   * Run the autonomous debugging loop on an error.
    */
   async debug(
     agentLoop: AgentLoop,
-    failure: FailureAnalysis
-  ): Promise<AutoDebugResult> {
-    logger.info(
-      {
-        testName: failure.testName,
-        failureType: failure.failureType,
-        affectedFiles: failure.affectedFiles,
-      },
-      "AutoDebugger: starting targeted fix"
-    );
-
-    // Step 1: Parse error location from root cause / stack trace
-    const location = this.parseErrorLocation(
-      failure.rootCause,
-      failure.affectedFiles
-    );
-
-    // Step 2: Read code context around the error
-    const codeContext = await this.readCodeContext(
-      agentLoop,
-      location,
-      failure
-    );
-
-    // Step 3: Select the appropriate fix strategy
-    const strategy = this.selectStrategy(failure.failureType);
-    const fixPrompt = strategy.buildPrompt(failure, location, codeContext);
-
-    // Step 4: Apply the fix
-    const fixResult = await agentLoop.executeTask(
-      `${fixPrompt}\n\nAfter making the fix, output a brief description of what you changed.`,
-      failure.fixAgentRole
-    );
-
-    if (!fixResult.success) {
-      logger.warn(
-        { testName: failure.testName, error: fixResult.error },
-        "AutoDebugger: fix generation failed"
-      );
-      return {
-        fixApplied: false,
-        compilePassed: false,
-        testPassed: false,
-        confidence: 0,
-        fixDescription: fixResult.error ?? "Fix generation failed",
-        location,
-      };
-    }
-
-    // Step 5: Verify the fix compiles
-    const compileResult = await this.verifyCompilation(agentLoop, failure);
-
-    if (!compileResult.success) {
-      logger.warn(
-        { testName: failure.testName },
-        "AutoDebugger: fix did not compile, reverting"
-      );
-      return {
-        fixApplied: true,
-        compilePassed: false,
-        testPassed: false,
-        confidence: 0.2,
-        fixDescription: `Fix applied but failed compilation: ${compileResult.error ?? "unknown"}`,
-        location,
-      };
-    }
-
-    // Step 6: Run targeted tests
-    const testResult = await this.runTargetedTests(agentLoop, failure);
+    request: DebugRequest
+  ): Promise<DebugResult> {
+    const maxAttempts = request.maxAttempts ?? 3;
+    const testCommand = request.testCommand ?? "pnpm test";
+    const filesChanged = new Set<string>();
+    let attempts = 0;
+    let rootCauseAnalysis: RootCauseAnalysis | null = null;
 
     logger.info(
       {
-        testName: failure.testName,
-        compilePassed: true,
-        testPassed: testResult.passed,
+        filePath: request.filePath,
+        maxAttempts,
+        errorLength: request.errorOutput.length,
       },
-      "AutoDebugger: fix attempt complete"
+      "Starting autonomous debugging"
     );
 
-    return {
-      fixApplied: true,
-      compilePassed: true,
-      testPassed: testResult.passed,
-      confidence: testResult.passed ? 0.95 : 0.5,
-      fixDescription: fixResult.output.slice(0, 500),
-      location,
-    };
-  }
+    // Step 1: Analyze the error output
+    const failures = this.analyzer.analyze(request.errorOutput);
 
-  /**
-   * Batch debug: attempt to fix multiple failures, ordered by priority.
-   * Returns early if a high-priority fix cascades to resolve others.
-   */
-  async debugBatch(
-    agentLoop: AgentLoop,
-    failures: FailureAnalysis[]
-  ): Promise<AutoDebugResult[]> {
-    const results: AutoDebugResult[] = [];
+    if (failures.length === 0) {
+      return this.buildNoFailuresResult();
+    }
 
-    for (const failure of failures) {
-      const result = await this.debug(agentLoop, failure);
-      results.push(result);
+    logger.info(
+      {
+        failureCount: failures.length,
+        types: failures.map((f) => f.failureType),
+      },
+      "Failures identified"
+    );
 
-      // If a fix resolved and tests pass, remaining failures may be
-      // cascade-resolved — return early so caller can re-analyze
-      if (result.testPassed && failure.failureType === "type") {
-        logger.info(
-          "AutoDebugger: type fix passed, returning early for re-analysis"
+    // Step 2: Attempt to fix each failure
+    while (attempts < maxAttempts) {
+      attempts++;
+
+      const resolved = await this.attemptFix(
+        agentLoop,
+        failures,
+        request.filePath,
+        attempts,
+        maxAttempts,
+        testCommand,
+        filesChanged
+      );
+
+      if (resolved) {
+        return this.buildResolvedResult(
+          attempts,
+          filesChanged,
+          rootCauseAnalysis,
+          failures
         );
-        break;
+      }
+
+      // If we're on the second failed attempt, run root cause analysis
+      if (attempts >= 2 && !rootCauseAnalysis) {
+        rootCauseAnalysis = await this.runRootCauseAnalysis(
+          agentLoop,
+          failures,
+          attempts
+        );
       }
     }
 
-    return results;
+    return this.buildEscalatedResult(
+      attempts,
+      filesChanged,
+      rootCauseAnalysis,
+      failures
+    );
   }
 
   /**
-   * Parse the error location from the failure's root cause string.
+   * Attempt a single fix iteration: apply fix then verify.
+   * Returns true if the fix resolved all failures.
    */
-  parseErrorLocation(
-    rootCause: string,
-    affectedFiles: string[]
-  ): ErrorLocation | null {
-    // Try TypeScript error format: file.ts(line,col): error TS...
-    const tsMatch = rootCause.match(TS_ERROR_LOCATION_RE);
-    if (tsMatch?.[1] && tsMatch[2]) {
-      return {
-        filePath: tsMatch[1],
-        line: Number.parseInt(tsMatch[2], 10),
-        column: tsMatch[3] ? Number.parseInt(tsMatch[3], 10) : undefined,
-      };
-    }
-
-    // Try stack trace format: at Function (/path/file.ts:line:col)
-    const stackMatch = rootCause.match(STACK_TRACE_FILE_LINE_RE);
-    if (stackMatch?.[1] && stackMatch[2]) {
-      return {
-        filePath: stackMatch[1],
-        line: Number.parseInt(stackMatch[2], 10),
-        column: stackMatch[3] ? Number.parseInt(stackMatch[3], 10) : undefined,
-      };
-    }
-
-    // Try Jest failure format
-    const jestMatch = rootCause.match(JEST_FAIL_LOCATION_RE);
-    if (jestMatch?.[1] && jestMatch[2]) {
-      return {
-        filePath: jestMatch[1],
-        line: Number.parseInt(jestMatch[2], 10),
-        column: jestMatch[3] ? Number.parseInt(jestMatch[3], 10) : undefined,
-      };
-    }
-
-    // Fallback: use the first affected file with line 1
-    if (affectedFiles.length > 0 && affectedFiles[0]) {
-      const parts = affectedFiles[0].split(":");
-      const filePath = parts[0] as string;
-      const line = parts[1] ? Number.parseInt(parts[1], 10) : 1;
-      return { filePath, line };
-    }
-
-    return null;
-  }
-
-  /**
-   * Read code context around the error location.
-   */
-  private async readCodeContext(
+  private async attemptFix(
     agentLoop: AgentLoop,
-    location: ErrorLocation | null,
-    failure: FailureAnalysis
-  ): Promise<string> {
-    if (!location) {
-      return `No specific location found. Affected files: ${failure.affectedFiles.join(", ") || "unknown"}`;
+    failures: FailureAnalysis[],
+    filePath: string | undefined,
+    attempt: number,
+    maxAttempts: number,
+    testCommand: string,
+    filesChanged: Set<string>
+  ): Promise<boolean> {
+    const fixPrompt = this.buildFixPrompt(failures, filePath, attempt);
+
+    logger.info({ attempt, maxAttempts }, "Attempting fix");
+
+    const fixResult = await agentLoop.executeTask(fixPrompt, "ci_loop");
+
+    for (const file of fixResult.filesChanged) {
+      filesChanged.add(file);
     }
 
-    const startLine = Math.max(1, location.line - 10);
-    const endLine = location.line + 10;
-
-    const readResult = await agentLoop.executeTask(
-      `Read the file "${location.filePath}" from line ${startLine} to line ${endLine}. Output only the file contents with line numbers.`,
+    const verifyResult = await agentLoop.executeTask(
+      `Run the following command and return the complete output:\n${testCommand}`,
       "ci_loop"
     );
 
-    if (readResult.success && readResult.output.trim()) {
-      return readResult.output;
-    }
-
-    return `Could not read context from ${location.filePath}:${location.line}`;
+    const remainingFailures = this.analyzer.analyze(verifyResult.output);
+    return remainingFailures.length === 0;
   }
 
   /**
-   * Select the best fix strategy for the given failure type.
+   * Run five-why root cause analysis on the primary failure.
    */
-  private selectStrategy(failureType: FailureType): FixStrategy {
-    const strategy = FIX_STRATEGIES.find((s) =>
-      s.errorTypes.includes(failureType)
-    );
-    // Fallback to the last (most generic) strategy
-    const fallback = FIX_STRATEGIES.at(-1);
-    if (!fallback) {
-      throw new Error("No fix strategies defined");
-    }
-    return strategy ?? fallback;
-  }
-
-  /**
-   * Verify that the fix compiles by running typecheck on affected files.
-   */
-  private async verifyCompilation(
+  private async runRootCauseAnalysis(
     agentLoop: AgentLoop,
-    failure: FailureAnalysis
-  ): Promise<{ success: boolean; error?: string }> {
-    // Determine the package containing the affected file
-    const affectedFile = failure.affectedFiles[0] ?? "";
-    const packageMatch = affectedFile.match(PACKAGE_PATH_RE);
-    const filterArg = packageMatch
-      ? ` --filter=@prometheus/${packageMatch[1]}`
-      : "";
+    failures: FailureAnalysis[],
+    attempts: number
+  ): Promise<RootCauseAnalysis | null> {
+    const primaryFailure = failures[0];
+    if (!primaryFailure) {
+      return null;
+    }
 
-    const compileResult = await agentLoop.executeTask(
-      `Run the following command and capture all output: pnpm typecheck${filterArg}
-If there are errors, list them. If it passes, say "COMPILE_OK".`,
-      "ci_loop"
+    logger.info(
+      { testName: primaryFailure.testName },
+      "Running root cause analysis"
     );
 
-    const passed =
-      compileResult.success &&
-      (compileResult.output.includes("COMPILE_OK") ||
-        !compileResult.output.includes("error TS"));
+    const previousAttempts = Array.from(
+      { length: attempts },
+      (_, i) =>
+        `Attempt ${i + 1}: Applied ${primaryFailure.failureType} fix to ${primaryFailure.affectedFiles.join(", ") || "unknown files"}`
+    );
 
+    try {
+      return await this.fiveWhy.analyze(
+        agentLoop,
+        primaryFailure,
+        previousAttempts
+      );
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      logger.warn({ error: msg }, "Root cause analysis failed");
+      return null;
+    }
+  }
+
+  private buildNoFailuresResult(): DebugResult {
+    logger.info("No failures detected in error output");
     return {
-      success: passed,
-      error: passed ? undefined : compileResult.output.slice(0, 500),
+      resolved: true,
+      attempts: 0,
+      filesChanged: [],
+      rootCauseAnalysis: null,
+      failures: [],
+      summary: "No failures detected in the provided error output",
+      escalated: false,
+    };
+  }
+
+  private buildResolvedResult(
+    attempts: number,
+    filesChanged: Set<string>,
+    rootCauseAnalysis: RootCauseAnalysis | null,
+    failures: FailureAnalysis[]
+  ): DebugResult {
+    logger.info(
+      { attempts, filesChanged: Array.from(filesChanged) },
+      "All failures resolved"
+    );
+    return {
+      resolved: true,
+      attempts,
+      filesChanged: Array.from(filesChanged),
+      rootCauseAnalysis,
+      failures,
+      summary: `Resolved ${failures.length} failure(s) in ${attempts} attempt(s)`,
+      escalated: false,
+    };
+  }
+
+  private buildEscalatedResult(
+    attempts: number,
+    filesChanged: Set<string>,
+    rootCauseAnalysis: RootCauseAnalysis | null,
+    failures: FailureAnalysis[]
+  ): DebugResult {
+    logger.warn(
+      {
+        attempts,
+        remainingFailures: failures.length,
+        filesChanged: Array.from(filesChanged),
+      },
+      "Auto-debugger exhausted attempts, escalating"
+    );
+    return {
+      resolved: false,
+      attempts,
+      filesChanged: Array.from(filesChanged),
+      rootCauseAnalysis,
+      failures,
+      summary: `Failed to resolve all failures after ${attempts} attempts. ${failures.length} failure(s) remaining.`,
+      escalated: true,
     };
   }
 
   /**
-   * Run only the tests relevant to the failure.
+   * Build a targeted fix prompt for the ci_loop agent.
    */
-  private async runTargetedTests(
-    agentLoop: AgentLoop,
-    failure: FailureAnalysis
-  ): Promise<{ passed: boolean; output: string }> {
-    const { command, targeted } = this.targetedRunner.buildCommand(
-      failure.affectedFiles
-    );
+  private buildFixPrompt(
+    failures: FailureAnalysis[],
+    filePath: string | undefined,
+    attempt: number
+  ): string {
+    const failureDescriptions = failures
+      .map(
+        (f, i) =>
+          `### Failure ${i + 1}: ${f.testName}
+- Type: ${f.failureType} (severity: ${f.severity})
+- Root cause: ${f.rootCause}
+- Affected files: ${f.affectedFiles.join(", ") || "unknown"}
+- Suggested fix: ${f.suggestedFix}`
+      )
+      .join("\n\n");
 
-    const testResult = await agentLoop.executeTask(
-      `Run the following test command and capture all output: ${command}
-Report whether the tests pass or fail.`,
-      "ci_loop"
-    );
+    const fileContext = filePath
+      ? `\nThe error originated in: ${filePath}\nStart by reading this file to understand the context.`
+      : "";
 
-    const passed =
-      testResult.success &&
-      !testResult.output.includes("FAIL") &&
-      !testResult.output.includes("failed");
+    const attemptContext =
+      attempt > 1
+        ? `\nThis is attempt ${attempt}. Previous attempts did not fully resolve the issue. Try a different approach.`
+        : "";
 
-    logger.info(
-      { targeted, command, passed },
-      "AutoDebugger: targeted test result"
-    );
+    return `You are debugging ${failures.length} failure(s). Analyze each failure, identify the root cause, and apply the minimal fix.
+${fileContext}
+${attemptContext}
 
-    return { passed, output: testResult.output };
+${failureDescriptions}
+
+Instructions:
+1. Read the affected files to understand the current code
+2. Identify the TRUE root cause (not just the symptom)
+3. Apply a MINIMAL, TARGETED fix
+4. Do NOT suppress errors with try-catch
+5. Do NOT change test expectations unless the test itself is wrong
+6. Fix the source code, not the tests
+7. Verify your fix makes logical sense before proceeding`;
   }
 }

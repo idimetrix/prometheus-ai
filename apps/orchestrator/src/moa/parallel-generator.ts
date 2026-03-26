@@ -1,4 +1,3 @@
-import { getInternalAuthHeaders } from "@prometheus/auth";
 import { createLogger } from "@prometheus/logger";
 
 const logger = createLogger("orchestrator:moa");
@@ -51,10 +50,7 @@ export class MixtureOfAgents {
         try {
           const res = await fetch(`${this.modelRouterUrl}/route`, {
             method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              ...getInternalAuthHeaders(),
-            },
+            headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
               slot: "default",
               model,
@@ -181,10 +177,7 @@ export class MixtureOfAgents {
     try {
       const res = await fetch(`${this.modelRouterUrl}/route`, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          ...getInternalAuthHeaders(),
-        },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           slot: "review",
           messages: [
@@ -267,10 +260,7 @@ Synthesize the best combined solution, taking the strongest elements from each.`
     try {
       const res = await fetch(`${this.modelRouterUrl}/route`, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          ...getInternalAuthHeaders(),
-        },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           slot: "review",
           messages: [{ role: "user", content: synthesisPrompt }],
@@ -281,7 +271,7 @@ Synthesize the best combined solution, taking the strongest elements from each.`
       if (res.ok) {
         const data = (await res.json()) as { content: string };
         return {
-          synthesized: data.content ?? responses[0]?.output,
+          synthesized: data.content ?? responses[0]?.output ?? "",
           selectedModel: "synthesized",
         };
       }
@@ -307,10 +297,7 @@ Synthesize the best combined solution, taking the strongest elements from each.`
     try {
       const res = await fetch(`${this.modelRouterUrl}/route`, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          ...getInternalAuthHeaders(),
-        },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           slot: "review",
           messages: [

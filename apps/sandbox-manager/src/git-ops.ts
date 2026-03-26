@@ -3,14 +3,10 @@ import type { ContainerManager } from "./container";
 
 const logger = createLogger("sandbox-manager:git-ops");
 
-/** Default working directory for git operations inside the sandbox */
-const REPO_DIR = "/workspace/repo";
-
 export interface GitCloneOptions {
   branch?: string;
   depth?: number;
   repoUrl: string;
-  /** OAuth token for HTTPS authentication (private repos) */
   token?: string;
 }
 
@@ -37,11 +33,6 @@ export interface GitDiffResult {
   };
 }
 
-export interface GitStatusEntry {
-  path: string;
-  status: string;
-}
-
 export interface WorktreeInfo {
   branch: string;
   isMainWorktree: boolean;
@@ -55,97 +46,14 @@ export class GitOperations {
     this.containerManager = containerManager;
   }
 
-  // ─── Authentication ────────────────────────────────────────────────────
-
-  /**
-   * Configure git authentication inside the sandbox.
-   * Sets up a credential helper backed by a file, and writes the token
-   * so that subsequent push/pull operations authenticate automatically.
-   */
-  async setupAuth(
-    sandboxId: string,
-    options: {
-      token: string;
-      host?: string;
-      username?: string;
-    }
-  ): Promise<{ success: boolean; error?: string }> {
-    const host = options.host ?? "github.com";
-    const username = options.username ?? "x-access-token";
-
-    logger.info({ sandboxId, host }, "Setting up git authentication");
-
-    // Configure the credential store helper
-    const credResult = await this.containerManager.exec(
-      sandboxId,
-      `git config --global credential.helper 'store --file=/tmp/.git-credentials'`,
-      10_000
-    );
-    if (credResult.exitCode !== 0) {
-      return {
-        success: false,
-        error: `Failed to configure credential helper: ${credResult.stderr}`,
-      };
-    }
-
-    // Write the credential entry
-    const credLine = `https://${encodeShellArg(username).slice(1, -1)}:${encodeShellArg(options.token).slice(1, -1)}@${host}`;
-    const writeResult = await this.containerManager.exec(
-      sandboxId,
-      `printf '%s\\n' ${encodeShellArg(credLine)} > /tmp/.git-credentials && chmod 600 /tmp/.git-credentials`,
-      10_000
-    );
-    if (writeResult.exitCode !== 0) {
-      return {
-        success: false,
-        error: `Failed to write credentials: ${writeResult.stderr}`,
-      };
-    }
-
-    // Also set GH_TOKEN so that `gh` CLI works for PR creation
-    const ghTokenResult = await this.containerManager.exec(
-      sandboxId,
-      `echo 'export GH_TOKEN=${encodeShellArg(options.token)}' >> /etc/profile.d/github.sh`,
-      10_000
-    );
-    if (ghTokenResult.exitCode !== 0) {
-      logger.warn(
-        { sandboxId, stderr: ghTokenResult.stderr },
-        "Failed to set GH_TOKEN profile (gh CLI may not work)"
-      );
-    }
-
-    logger.info({ sandboxId, host }, "Git authentication configured");
-    return { success: true };
-  }
-
-  // ─── Clone ─────────────────────────────────────────────────────────────
-
   /**
    * Clone a repository into the sandbox workspace.
-   * If a token is provided, injects it for HTTPS authentication.
    */
   async clone(
     sandboxId: string,
     options: GitCloneOptions
   ): Promise<{ success: boolean; error?: string }> {
-    const { repoUrl, branch, depth, token } = options;
-
-    // Build clone URL with optional authentication
-    let cloneUrl = repoUrl;
-    if (token && repoUrl.startsWith("https://")) {
-      try {
-        const url = new URL(repoUrl);
-        url.username = "x-access-token";
-        url.password = token;
-        cloneUrl = url.toString();
-      } catch {
-        cloneUrl = repoUrl.replace(
-          "https://",
-          `https://x-access-token:${token}@`
-        );
-      }
-    }
+    const { repoUrl, branch, depth } = options;
 
     let cmd = "git clone";
     if (depth && depth > 0) {
@@ -154,7 +62,7 @@ export class GitOperations {
     if (branch) {
       cmd += ` --branch ${encodeShellArg(branch)}`;
     }
-    cmd += ` ${encodeShellArg(cloneUrl)} ${REPO_DIR}`;
+    cmd += ` ${encodeShellArg(repoUrl)} /workspace/repo`;
 
     logger.info({ sandboxId, repoUrl, branch }, "Cloning repository");
 
@@ -168,33 +76,13 @@ export class GitOperations {
     // Configure git safe directory
     await this.containerManager.exec(
       sandboxId,
-      `git config --global --add safe.directory ${REPO_DIR}`,
+      "git config --global --add safe.directory /workspace/repo",
       10_000
     );
-
-    // Set default user identity for the sandbox
-    await this.containerManager.exec(
-      sandboxId,
-      `cd ${REPO_DIR} && git config user.name "Prometheus Agent" && git config user.email "agent@prometheus.dev"`,
-      10_000
-    );
-
-    // If we used an authenticated URL, replace the remote with the clean URL
-    // and set up credential storage for future operations
-    if (token) {
-      await this.containerManager.exec(
-        sandboxId,
-        `cd ${REPO_DIR} && git remote set-url origin ${encodeShellArg(repoUrl)}`,
-        10_000
-      );
-      await this.setupAuth(sandboxId, { token });
-    }
 
     logger.info({ sandboxId }, "Repository cloned successfully");
     return { success: true };
   }
-
-  // ─── Branch ────────────────────────────────────────────────────────────
 
   /**
    * Create a new branch in the sandbox repo.
@@ -207,7 +95,7 @@ export class GitOperations {
 
     const result = await this.containerManager.exec(
       sandboxId,
-      `cd ${REPO_DIR} && git checkout -b ${safeBranch}`,
+      `cd /workspace/repo && git checkout -b ${safeBranch}`,
       15_000
     );
 
@@ -224,98 +112,6 @@ export class GitOperations {
   }
 
   /**
-   * Checkout an existing branch, tag, or commit.
-   */
-  async checkout(
-    sandboxId: string,
-    ref: string,
-    options?: { create?: boolean }
-  ): Promise<{ success: boolean; error?: string }> {
-    const safeRef = encodeShellArg(ref);
-    const flag = options?.create ? " -b" : "";
-
-    const result = await this.containerManager.exec(
-      sandboxId,
-      `cd ${REPO_DIR} && git checkout${flag} ${safeRef}`,
-      15_000
-    );
-
-    if (result.exitCode !== 0) {
-      logger.error(
-        { sandboxId, ref, stderr: result.stderr },
-        "Checkout failed"
-      );
-      return { success: false, error: result.stderr };
-    }
-
-    logger.info({ sandboxId, ref }, "Checked out ref");
-    return { success: true };
-  }
-
-  // ─── Status ────────────────────────────────────────────────────────────
-
-  /**
-   * Get the working tree status.
-   */
-  async status(
-    sandboxId: string
-  ): Promise<{ success: boolean; entries: GitStatusEntry[]; raw: string }> {
-    const result = await this.containerManager.exec(
-      sandboxId,
-      `cd ${REPO_DIR} && git status --porcelain`,
-      10_000
-    );
-
-    const raw = result.stdout.trim();
-    const entries: GitStatusEntry[] = [];
-
-    if (raw) {
-      for (const line of raw.split("\n")) {
-        if (line.length < 4) {
-          continue;
-        }
-        const statusCode = line.slice(0, 2).trim();
-        const path = line.slice(3);
-        entries.push({ status: statusCode, path });
-      }
-    }
-
-    return { success: result.exitCode === 0, entries, raw };
-  }
-
-  // ─── Add ───────────────────────────────────────────────────────────────
-
-  /**
-   * Stage files for the next commit.
-   */
-  async add(
-    sandboxId: string,
-    files: string[]
-  ): Promise<{ success: boolean; error?: string }> {
-    if (files.length === 0) {
-      return { success: false, error: "No files specified" };
-    }
-
-    const safeFiles = files.map(encodeShellArg).join(" ");
-    const result = await this.containerManager.exec(
-      sandboxId,
-      `cd ${REPO_DIR} && git add ${safeFiles}`,
-      30_000
-    );
-
-    if (result.exitCode !== 0) {
-      return {
-        success: false,
-        error: `Failed to stage files: ${result.stderr}`,
-      };
-    }
-
-    return { success: true };
-  }
-
-  // ─── Commit ────────────────────────────────────────────────────────────
-
-  /**
    * Stage files and commit changes.
    */
   async commit(
@@ -323,7 +119,7 @@ export class GitOperations {
     options: GitCommitOptions
   ): Promise<{ success: boolean; commitSha?: string; error?: string }> {
     const { message, files, authorName, authorEmail } = options;
-    const workDir = REPO_DIR;
+    const workDir = "/workspace/repo";
 
     if (authorName) {
       await this.containerManager.exec(
@@ -415,10 +211,10 @@ export class GitOperations {
     return { success: true, commitSha };
   }
 
-  // ─── Push ──────────────────────────────────────────────────────────────
-
   /**
    * Push current branch to remote.
+   * Configures git credential helper from GITHUB_TOKEN / GIT_TOKEN env vars
+   * so push can authenticate to the remote without interactive prompts.
    */
   async push(
     sandboxId: string,
@@ -426,7 +222,37 @@ export class GitOperations {
   ): Promise<{ success: boolean; error?: string }> {
     const remote = options?.remote ?? "origin";
     const force = options?.force ? " --force-with-lease" : "";
-    const workDir = REPO_DIR;
+    const workDir = "/workspace/repo";
+
+    // Configure credential helper if a token is available
+    const gitToken = process.env.GITHUB_TOKEN ?? process.env.GIT_TOKEN;
+    if (gitToken) {
+      // Use store-based credential helper so git push can authenticate
+      await this.containerManager.exec(
+        sandboxId,
+        `cd ${workDir} && git config credential.helper store`,
+        10_000
+      );
+      // Inject credentials for the remote origin URL
+      const remoteUrlResult = await this.containerManager.exec(
+        sandboxId,
+        `cd ${workDir} && git remote get-url ${encodeShellArg(remote)}`,
+        10_000
+      );
+      const remoteUrl = remoteUrlResult.stdout.trim();
+      if (remoteUrl.startsWith("https://")) {
+        // Replace https://host/... with https://token@host/...
+        const credUrl = remoteUrl.replace(
+          "https://",
+          `https://x-access-token:${gitToken}@`
+        );
+        await this.containerManager.exec(
+          sandboxId,
+          `cd ${workDir} && git remote set-url ${encodeShellArg(remote)} ${encodeShellArg(credUrl)}`,
+          10_000
+        );
+      }
+    }
 
     const branchResult = await this.containerManager.exec(
       sandboxId,
@@ -435,11 +261,10 @@ export class GitOperations {
     );
     const branch = branchResult.stdout.trim();
 
-    const setUpstream = options?.setUpstream === false ? "" : " -u";
-
+    const pushCmd = `cd ${workDir} && git push${force} -u ${encodeShellArg(remote)} ${encodeShellArg(branch)}`;
     const result = await this.containerManager.exec(
       sandboxId,
-      `cd ${workDir} && git push${force}${setUpstream} ${encodeShellArg(remote)} ${encodeShellArg(branch)}`,
+      pushCmd,
       120_000
     );
 
@@ -452,7 +277,99 @@ export class GitOperations {
     return { success: true };
   }
 
-  // ─── Diff ──────────────────────────────────────────────────────────────
+  /**
+   * Configure git credential store for authenticated operations.
+   */
+  async setupAuth(
+    sandboxId: string,
+    options: { token: string; host?: string; username?: string }
+  ): Promise<{ success: boolean; error?: string }> {
+    const host = options.host ?? "github.com";
+    const username = options.username ?? "x-access-token";
+    const workDir = "/workspace/repo";
+    const credUrl = `https://${username}:${options.token}@${host}`;
+    const cmds = [
+      "git config --global credential.helper store",
+      `echo '${credUrl}' >> ~/.git-credentials`,
+    ];
+    const result = await this.containerManager.exec(
+      sandboxId,
+      `cd ${workDir} && ${cmds.join(" && ")}`,
+      30_000
+    );
+    if (result.exitCode !== 0) {
+      return { success: false, error: result.stderr };
+    }
+    return { success: true };
+  }
+
+  /**
+   * Checkout a ref (branch, tag, commit).
+   */
+  async checkout(
+    sandboxId: string,
+    ref: string,
+    options?: { create?: boolean }
+  ): Promise<{ success: boolean; error?: string }> {
+    const flag = options?.create ? " -b" : "";
+    const workDir = "/workspace/repo";
+    const result = await this.containerManager.exec(
+      sandboxId,
+      `cd ${workDir} && git checkout${flag} ${encodeShellArg(ref)}`,
+      30_000
+    );
+    if (result.exitCode !== 0) {
+      return { success: false, error: result.stderr };
+    }
+    return { success: true };
+  }
+
+  /**
+   * Get git status (porcelain).
+   */
+  async status(sandboxId: string): Promise<{
+    success: boolean;
+    files: Array<{ path: string; status: string }>;
+    error?: string;
+  }> {
+    const workDir = "/workspace/repo";
+    const result = await this.containerManager.exec(
+      sandboxId,
+      `cd ${workDir} && git status --porcelain`,
+      30_000
+    );
+    if (result.exitCode !== 0) {
+      return { success: false, files: [], error: result.stderr };
+    }
+    const files = result.stdout
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => ({
+        status: line.slice(0, 2).trim(),
+        path: line.slice(3),
+      }));
+    return { success: true, files };
+  }
+
+  /**
+   * Stage files for commit.
+   */
+  async add(
+    sandboxId: string,
+    files: string[]
+  ): Promise<{ success: boolean; error?: string }> {
+    const workDir = "/workspace/repo";
+    const fileArgs = files.map(encodeShellArg).join(" ");
+    const result = await this.containerManager.exec(
+      sandboxId,
+      `cd ${workDir} && git add ${fileArgs}`,
+      30_000
+    );
+    if (result.exitCode !== 0) {
+      return { success: false, error: result.stderr };
+    }
+    return { success: true };
+  }
 
   /**
    * Get the current diff of the working directory.
@@ -461,13 +378,19 @@ export class GitOperations {
     sandboxId: string,
     options?: { staged?: boolean }
   ): Promise<GitDiffResult> {
-    const workDir = REPO_DIR;
+    const workDir = "/workspace/repo";
     const stagedFlag = options?.staged ? " --cached" : "";
 
     const diffResult = await this.containerManager.exec(
       sandboxId,
       `cd ${workDir} && git diff${stagedFlag}`,
       30_000
+    );
+
+    const _statResult = await this.containerManager.exec(
+      sandboxId,
+      `cd ${workDir} && git diff${stagedFlag} --stat`,
+      10_000
     );
 
     const numstatResult = await this.containerManager.exec(
@@ -547,54 +470,17 @@ export class GitOperations {
     };
   }
 
-  // ─── Log ───────────────────────────────────────────────────────────────
-
-  /**
-   * Get the git log.
-   */
-  async log(
-    sandboxId: string,
-    maxCount = 10
-  ): Promise<
-    Array<{ sha: string; message: string; author: string; date: string }>
-  > {
-    const result = await this.containerManager.exec(
-      sandboxId,
-      `cd ${REPO_DIR} && git log --format="%H|||%s|||%an|||%aI" -n ${maxCount}`,
-      10_000
-    );
-
-    if (!result.stdout.trim()) {
-      return [];
-    }
-
-    return result.stdout
-      .trim()
-      .split("\n")
-      .map((line) => {
-        const [sha, message, author, date] = line.split("|||");
-        return {
-          sha: sha ?? "",
-          message: message ?? "",
-          author: author ?? "",
-          date: date ?? "",
-        };
-      });
-  }
-
   /**
    * Get the current branch name.
    */
   async getCurrentBranch(sandboxId: string): Promise<string> {
     const result = await this.containerManager.exec(
       sandboxId,
-      `cd ${REPO_DIR} && git rev-parse --abbrev-ref HEAD`,
+      "cd /workspace/repo && git rev-parse --abbrev-ref HEAD",
       10_000
     );
     return result.stdout.trim();
   }
-
-  // ─── Sparse Checkout ──────────────────────────────────────────────────
 
   /**
    * Sparse checkout for large repos -- only check out specified paths.
@@ -604,7 +490,7 @@ export class GitOperations {
     repoUrl: string,
     paths: string[]
   ): Promise<void> {
-    const workDir = REPO_DIR;
+    const workDir = "/workspace/repo";
     const safeRepoUrl = encodeShellArg(repoUrl);
 
     logger.info(
@@ -747,7 +633,7 @@ export class GitOperations {
 
     await this.containerManager.exec(
       sandboxId,
-      `cd ${REPO_DIR} && git worktree prune`,
+      "cd /workspace/repo && git worktree prune",
       10_000
     );
 
@@ -847,7 +733,7 @@ export class GitOperations {
     branch: string,
     path: string
   ): Promise<void> {
-    const repoDir = REPO_DIR;
+    const repoDir = "/workspace/repo";
     const safeBranch = encodeShellArg(branch);
     const safePath = encodeShellArg(path);
 
@@ -889,7 +775,7 @@ export class GitOperations {
     options: GitCommitOptions & { signingKey: string }
   ): Promise<string> {
     const { message, files, authorName, authorEmail, signingKey } = options;
-    const workDir = REPO_DIR;
+    const workDir = "/workspace/repo";
 
     const importResult = await this.containerManager.exec(
       sandboxId,
@@ -979,6 +865,39 @@ export class GitOperations {
     );
 
     return commitSha;
+  }
+
+  /**
+   * Get the git log.
+   */
+  async log(
+    sandboxId: string,
+    maxCount = 10
+  ): Promise<
+    Array<{ sha: string; message: string; author: string; date: string }>
+  > {
+    const result = await this.containerManager.exec(
+      sandboxId,
+      `cd /workspace/repo && git log --format="%H|||%s|||%an|||%aI" -n ${maxCount}`,
+      10_000
+    );
+
+    if (!result.stdout.trim()) {
+      return [];
+    }
+
+    return result.stdout
+      .trim()
+      .split("\n")
+      .map((line) => {
+        const [sha, message, author, date] = line.split("|||");
+        return {
+          sha: sha ?? "",
+          message: message ?? "",
+          author: author ?? "",
+          date: date ?? "",
+        };
+      });
   }
 }
 

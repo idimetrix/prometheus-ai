@@ -9,39 +9,26 @@
  * tool dependency classification for parallel execution, and context window
  * management via progressive summarization.
  */
-
 import {
   AGENT_ROLES,
   type AgentContext,
   TOOL_REGISTRY,
   type ToolCall,
 } from "@prometheus/agent-sdk";
-import { getInternalAuthHeaders } from "@prometheus/auth";
 import { createLogger } from "@prometheus/logger";
 import { SpanStatusCode, startSpan } from "@prometheus/telemetry";
 import type { AgentRole } from "@prometheus/types";
 import { AgentError, modelRouterClient } from "@prometheus/utils";
 import { BlueprintEnforcer } from "../blueprint-enforcer";
-import { CheckpointManager } from "../checkpoint";
 import {
   CheckpointPersistence,
   type CheckpointState,
 } from "../checkpoint-persistence";
-import {
-  type ConfidenceResult,
-  ConfidenceScorer,
-  ModelEscalator,
-  type ModelSlot,
-} from "../confidence";
+import { type ConfidenceResult, ConfidenceScorer } from "../confidence";
 import { ContextCompressor } from "../context/context-compressor";
 import { SecretsScanner } from "../guardian/secrets-scanner";
 import { SelfReview } from "../self-review";
 import { classifyToolDependencies } from "../tool-dependency";
-import {
-  classifyError,
-  ErrorCategory,
-  isRateLimitError,
-} from "./error-taxonomy";
 import type { ExecutionContext } from "./execution-context";
 import type {
   ASTValidationEvent,
@@ -61,15 +48,6 @@ import type {
 import { HealthWatchdog } from "./health-watchdog";
 import { QualityGate } from "./quality-gate";
 import { RecoveryStrategy } from "./recovery-strategy";
-import {
-  ApproachSpeculator,
-  type MCTSStrategy,
-} from "./speculation/approach-speculator";
-import { BranchExecutor } from "./speculation/branch-executor";
-import { SpeculationMetrics } from "./speculation/metrics";
-
-const CONTEXT_WINDOW_RE =
-  /context.*window|token.*limit|maximum.*context|too many tokens/i;
 
 /**
  * Feature flag: set to true to use Vercel AI SDK streaming instead of raw SSE.
@@ -144,7 +122,7 @@ function resolveActionType(
  * destructive command detection, RBAC) on a tool call.
  * Returns null if all guards pass, or a rejection result with events.
  */
-async function runToolCallGuards(
+function runToolCallGuards(
   tc: { id: string; name: string; args: Record<string, unknown> },
   secretsScanner: SecretsScanner,
   blueprintEnforcer: BlueprintEnforcer,
@@ -152,13 +130,11 @@ async function runToolCallGuards(
   agentRole: string,
   makeEvent: <T extends ExecutionEvent>(
     partial: Omit<T, "sessionId" | "agentRole" | "sequence" | "timestamp">
-  ) => T,
-  checkpointManager?: CheckpointManager,
-  sessionId?: string
-): Promise<{
+  ) => T
+): {
   toolResponse: { success: false; error: string };
   events: ExecutionEvent[];
-} | null> {
+} | null {
   // Secrets scanning
   if (
     (tc.name === "file_write" || tc.name === "file_edit") &&
@@ -214,38 +190,25 @@ async function runToolCallGuards(
     }
   }
 
-  // Destructive command detection — pause and wait for human approval
+  // Destructive command detection
   if (
     tc.name === "terminal_exec" &&
     tc.args.command &&
     isDestructiveCommand(String(tc.args.command))
   ) {
-    const checkpointEvent = makeEvent<CheckpointEvent>({
-      type: "checkpoint",
-      checkpointType: "large_change",
-      reason: `Destructive command detected: ${tc.args.command}`,
-      affectedFiles: [],
-    });
-
-    if (checkpointManager && sessionId) {
-      const response = await checkpointManager.requestHighStakesApproval(
-        sessionId,
-        "destructive_command",
-        { command: String(tc.args.command) }
-      );
-
-      if (response.action === "approve") {
-        // User approved — allow execution to proceed
-        return null;
-      }
-    }
-
     return {
       toolResponse: {
         success: false,
         error: "Destructive command blocked: requires human approval.",
       },
-      events: [checkpointEvent],
+      events: [
+        makeEvent<CheckpointEvent>({
+          type: "checkpoint",
+          checkpointType: "large_change",
+          reason: `Destructive command detected: ${tc.args.command}`,
+          affectedFiles: [],
+        }),
+      ],
     };
   }
 
@@ -458,7 +421,6 @@ function accumulateToolCallDeltas(
   }
 }
 
-// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: post-write validation coordinates file parsing, import checking, and error reporting
 async function runPostWriteValidation(
   tc: { id: string; name: string; args: Record<string, unknown> },
   agent: {
@@ -518,51 +480,6 @@ async function runPostWriteValidation(
       if (feedback) {
         agent.addUserMessage(feedback);
       }
-    }
-  }
-
-  // Multi-file coordination: validate import consistency for TS files
-  if (fileStr.endsWith(".ts") || fileStr.endsWith(".tsx")) {
-    try {
-      const { FileCoordinator } = await import(
-        "../coordination/file-coordinator"
-      );
-      const coordinator = new FileCoordinator();
-      const content = String(tc.args.content ?? tc.args.newString ?? "");
-      if (content.length > 0) {
-        const structure = coordinator.parseFileStructure(fileStr, content);
-
-        // Check for broken imports within the single file (quick check)
-        const hasRelativeImports = structure.imports.some((imp) =>
-          imp.modulePath.startsWith(".")
-        );
-        if (hasRelativeImports) {
-          const suggestions = coordinator.suggestRelatedFiles(
-            fileStr,
-            Array.from(
-              new Set([
-                ...structure.imports
-                  .filter((imp) => imp.modulePath.startsWith("."))
-                  .map((imp) => imp.modulePath),
-              ])
-            )
-          );
-          if (suggestions.length > 0) {
-            const suggestionText = suggestions
-              .slice(0, 3)
-              .map(
-                (s) =>
-                  `- ${s.filePath} (${s.reason}, confidence: ${s.confidence})`
-              )
-              .join("\n");
-            agent.addUserMessage(
-              `[System] File coordination: after modifying ${filePath}, you may also need to update:\n${suggestionText}`
-            );
-          }
-        }
-      }
-    } catch {
-      // File coordinator not available, continue without it
     }
   }
 }
@@ -775,17 +692,15 @@ async function injectBlueprintContext(
   }
 }
 
-async function generateCheckpointEvents(
+function generateCheckpointEvents(
   filesChanged: Set<string>,
   iteration: number,
   totalCreditsConsumed: number,
   agent: { addUserMessage: (msg: string) => void },
   makeEvent: <T extends ExecutionEvent>(
     partial: Omit<T, "sessionId" | "agentRole" | "sequence" | "timestamp">
-  ) => T,
-  checkpointManager: CheckpointManager,
-  sessionId: string
-): Promise<ExecutionEvent[]> {
+  ) => T
+): ExecutionEvent[] {
   const events: ExecutionEvent[] = [];
   if (filesChanged.size > 5 && iteration > 3) {
     events.push(
@@ -796,33 +711,9 @@ async function generateCheckpointEvents(
         affectedFiles: Array.from(filesChanged),
       })
     );
-
-    // Actually pause and wait for user confirmation
-    const response = await checkpointManager.requestPlanConfirmation(
-      sessionId,
-      {
-        steps: Array.from(filesChanged).map((f, idx) => ({
-          id: `file-${idx}`,
-          title: `Modified: ${f}`,
-          description: "File changed during execution",
-          estimatedCredits: 0,
-        })),
-      }
+    agent.addUserMessage(
+      "[System] A strategic checkpoint was triggered. Continue with your current approach unless directed otherwise."
     );
-
-    if (response.action === "reject") {
-      agent.addUserMessage(
-        "[System] User rejected the current plan. Stop and await further instructions."
-      );
-    } else if (response.action === "modify" && response.message) {
-      agent.addUserMessage(
-        `[System] User requests modifications: ${response.message}`
-      );
-    } else {
-      agent.addUserMessage(
-        "[System] A strategic checkpoint was triggered. User approved — continue with your current approach."
-      );
-    }
   }
   if (totalCreditsConsumed > 50 && iteration > 10) {
     events.push(
@@ -833,19 +724,6 @@ async function generateCheckpointEvents(
         affectedFiles: [],
       })
     );
-
-    // Pause and wait for approval to continue spending credits
-    const response = await checkpointManager.requestHighStakesApproval(
-      sessionId,
-      "high_credit_consumption",
-      { creditsConsumed: totalCreditsConsumed, iterations: iteration }
-    );
-
-    if (response.action === "reject") {
-      agent.addUserMessage(
-        "[System] User rejected continued execution due to high cost. Stop and summarize work so far."
-      );
-    }
   }
   return events;
 }
@@ -875,19 +753,13 @@ function handleWatchdog(
     return { abort: true, recoveryAttempts };
   }
 
-  if (watchdogAction !== "escalate" && watchdogAction !== "reset") {
+  if (watchdogAction !== "escalate") {
     return { abort: false, recoveryAttempts };
   }
 
-  const status = healthWatchdog.getStatus(ctx.sessionId);
-  let reason: string;
-  if (status?.isLooping) {
-    reason = "infinite_loop";
-  } else if (watchdogAction === "escalate") {
-    reason = "extended_stale";
-  } else {
-    reason = "stale_timeout";
-  }
+  const reason = healthWatchdog.getStatus(ctx.sessionId)?.isLooping
+    ? "infinite_loop"
+    : "extended_stale";
   const strategy = recoveryStrategy.handleStuckAgent(ctx.sessionId, reason, {
     attemptCount: recoveryAttempts,
     currentModelSlot: slot,
@@ -928,7 +800,6 @@ interface ToolCallDeps {
   };
   allowedTools: Set<string>;
   blueprintEnforcer: BlueprintEnforcer;
-  checkpointManager: CheckpointManager;
   ctx: ExecutionContext;
   healthWatchdog: HealthWatchdog;
   logger: ReturnType<typeof createLogger>;
@@ -969,15 +840,13 @@ async function executeSingleToolCall(
     })
   );
 
-  const guardResult = await runToolCallGuards(
+  const guardResult = runToolCallGuards(
     tc,
     deps.secretsScanner,
     deps.blueprintEnforcer,
     deps.allowedTools,
     deps.ctx.agentRole,
-    deps.makeEvent,
-    deps.checkpointManager,
-    deps.ctx.sessionId
+    deps.makeEvent
   );
   if (guardResult) {
     deps.agent.addToolResult(tc.id, JSON.stringify(guardResult.toolResponse));
@@ -1008,8 +877,7 @@ async function executeSingleToolCall(
     const toolResult = await toolDef.execute(tc.args, {
       sessionId: deps.ctx.sessionId,
       projectId: deps.ctx.projectId,
-      sandboxId: deps.ctx.sandboxId,
-      sandboxManagerUrl: deps.ctx.sandboxManagerUrl,
+      sandboxId: deps.ctx.sessionId,
       workDir: deps.ctx.workDir,
       orgId: deps.ctx.orgId,
       userId: deps.ctx.userId,
@@ -1113,16 +981,23 @@ async function executeToolGroups(
 }
 
 function scoreIterationConfidence(
-  actualToolResults: Array<{ success: boolean; name: string }>,
+  toolCalls: Array<{
+    id: string;
+    function: { name: string; arguments: string };
+  }>,
   assistantContent: string,
   filesChangedCount: number,
   staleIterations: number,
   lastOutputLength: number,
   confidenceScorer: ConfidenceScorer
 ): { confidence: ConfidenceResult; staleIterations: number } {
+  const iterationToolResults = toolCalls.map((tc) => {
+    const toolDef = TOOL_REGISTRY[tc.function.name];
+    return { success: !!toolDef, name: tc.function.name };
+  });
   const signals = ConfidenceScorer.extractSignals(
     assistantContent,
-    actualToolResults,
+    iterationToolResults,
     filesChangedCount,
     staleIterations,
     lastOutputLength
@@ -1183,10 +1058,7 @@ async function callModelRouter(
       `${process.env.MODEL_ROUTER_URL ?? "http://localhost:4004"}/route`,
       {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          ...getInternalAuthHeaders(),
-        },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           slot,
           messages,
@@ -1201,15 +1073,29 @@ async function callModelRouter(
       }
     );
   } catch (err) {
+    const errObj = err instanceof Error ? err : new Error(String(err));
+    // Tag timeout errors for better retry handling
+    if (
+      errObj.name === "TimeoutError" ||
+      errObj.message.includes("timed out") ||
+      errObj.message.includes("timeout")
+    ) {
+      return {
+        response: null,
+        error: new Error(`LLM request timed out after 120s: ${errObj.message}`),
+        streamed: false,
+      };
+    }
     return {
       response: null,
-      error: err instanceof Error ? err : new Error(String(err)),
+      error: errObj,
       streamed: false,
     };
   }
 
   if (!routeResponse.ok) {
     const errBody = await routeResponse.text();
+    // Include HTTP status code in error message for retry classification
     return {
       response: null,
       error: new Error(
@@ -1396,12 +1282,8 @@ async function tryCompressContext(
 }
 
 interface IterationState {
-  /** Tracks whether the LLM returned a final response (no more tool calls) */
-  completedNaturally: boolean;
   consecutiveErrors: number;
   consecutiveFailures: number;
-  /** Actual number of iterations completed */
-  iterationsCompleted: number;
   lastConfidence: ConfidenceResult | null;
   lastOutput: string;
   recoveryAttempts: number;
@@ -1425,239 +1307,54 @@ interface IterationOutcome {
   state: IterationState;
 }
 
-// ---------------------------------------------------------------------------
-// AE06: Speculative Multi-Approach Execution
-// ---------------------------------------------------------------------------
-
-const SPECULATION_CONFIDENCE_THRESHOLD = 0.5;
-const SPECULATION_MAX_APPROACHES = 3;
-
-interface SpeculationOutcome {
-  approachesAttempted: number;
-  recommendedSlot: string | null;
-  winnerOutput: string;
-  winnerScore: number;
-}
-
-async function trySpeculativeExecution(
-  ctx: ExecutionContext,
-  state: IterationState,
-  _step: number,
-  _agent: ReturnType<(typeof AGENT_ROLES)[keyof typeof AGENT_ROLES]["create"]>,
-  deps: {
-    logger: ReturnType<typeof createLogger>;
-    makeEvent: <T extends ExecutionEvent>(
-      partial: Omit<T, "sessionId" | "agentRole" | "sequence" | "timestamp">
-    ) => T;
-    [key: string]: unknown;
-  }
-): Promise<SpeculationOutcome | null> {
-  if (
-    state.lastConfidence &&
-    state.lastConfidence.score > SPECULATION_CONFIDENCE_THRESHOLD
-  ) {
-    return null;
-  }
-
-  deps.logger.info(
-    {
-      confidence: state.lastConfidence?.score ?? 0,
-      iteration: _step,
-      task: ctx.taskDescription.slice(0, 100),
-    },
-    "Starting speculative multi-approach execution"
-  );
-
-  const metrics = new SpeculationMetrics();
-
-  try {
-    const branchExecutor = new BranchExecutor();
-    const strategies = generateAlternativeStrategies(ctx, state);
-
-    if (strategies.length === 0) {
-      return null;
-    }
-
-    const branchResult = await branchExecutor.executeBranches(
-      ctx.taskDescription,
-      strategies
-    );
-
-    metrics.record(
-      "branch_execution",
-      branchResult.best.success,
-      branchResult.totalDuration
-    );
-
-    if (branchResult.best.success && branchResult.best.qualityScore >= 0.5) {
-      deps.logger.info(
-        {
-          strategy: branchResult.best.strategy.slice(0, 50),
-          qualityScore: branchResult.best.qualityScore.toFixed(3),
-          totalBranches: branchResult.allBranches.length,
-          selectionReason: branchResult.selectionReason,
-        },
-        "Branch execution found viable approach"
-      );
-
-      return {
-        winnerOutput: branchResult.best.output,
-        winnerScore: branchResult.best.qualityScore,
-        approachesAttempted: branchResult.allBranches.length,
-        recommendedSlot: null,
-      };
-    }
-
-    const speculator = new ApproachSpeculator();
-    const mctsStrategies = generateMCTSStrategies(ctx, state);
-
-    if (mctsStrategies.length === 0) {
-      return null;
-    }
-
-    const speculationResult = await speculator.speculate(mctsStrategies, ctx);
-
-    if (speculationResult.winner) {
-      deps.logger.info(
-        {
-          winnerId: speculationResult.winner.strategy.id,
-          winnerScore: speculationResult.winner.qualityScore.toFixed(3),
-          allApproaches: speculationResult.allApproaches.length,
-          reasoning: speculationResult.winnerReasoning.slice(0, 200),
-        },
-        "ApproachSpeculator found viable approach"
-      );
-
-      metrics.record("approach_speculation", true, 0);
-
-      return {
-        winnerOutput: speculationResult.winner.output,
-        winnerScore: speculationResult.winner.qualityScore,
-        approachesAttempted: speculationResult.allApproaches.length,
-        recommendedSlot: "think",
-      };
-    }
-
-    deps.logger.info(
-      {
-        reason: speculationResult.winnerReasoning.slice(0, 200),
-        attempted: speculationResult.allApproaches.length,
-      },
-      "Speculative execution found no viable approach"
-    );
-
-    return null;
-  } catch (error) {
-    const msg = error instanceof Error ? error.message : String(error);
-    deps.logger.warn(
-      { error: msg },
-      "Speculative execution failed, falling back to escalation"
-    );
-    return null;
-  }
-}
-
-function generateAlternativeStrategies(
-  ctx: ExecutionContext,
-  state: IterationState
-): string[] {
-  const strategies: string[] = [];
-  const task = ctx.taskDescription;
-
-  strategies.push(
-    "You are a systematic problem solver. Break down this task into the smallest possible steps and execute them one at a time. " +
-      "Focus on correctness over speed. If unsure about any step, verify before proceeding.\n\n" +
-      `Previous attempt had low confidence (${state.lastConfidence?.score?.toFixed(2) ?? "unknown"}). Take a different approach.`
-  );
-
-  strategies.push(
-    "You are a focused engineer. Identify the single most critical file or component for this task and solve it completely before moving on. " +
-      "Prioritize getting one thing right rather than partially solving everything.\n\n" +
-      "Previous attempt struggled. Re-read the requirements carefully and focus on the core change needed."
-  );
-
-  if (
-    task.includes("test") ||
-    task.includes("fix") ||
-    task.includes("implement")
-  ) {
-    strategies.push(
-      "You are a test-driven developer. First write or identify the test that defines success, then implement the minimal code to make it pass. " +
-        "Work backwards from the expected output to the implementation.\n\n" +
-        "Previous attempt had issues. Start fresh with a TDD approach."
-    );
-  }
-
-  return strategies.slice(0, SPECULATION_MAX_APPROACHES);
-}
-
-function generateMCTSStrategies(
-  _ctx: ExecutionContext,
-  state: IterationState
-): MCTSStrategy[] {
-  const strategies: MCTSStrategy[] = [];
-
-  strategies.push({
-    id: "incremental",
-    description:
-      "Incremental step-by-step approach with verification at each step",
-    score: 0.8,
-    systemPrompt:
-      "Solve this task incrementally. After each change, verify it works before proceeding. " +
-      "Use small, focused edits. Read files before editing. Run tests after each change.",
-  });
-
-  strategies.push({
-    id: "architecture-first",
-    description: "Understand the full architecture before making changes",
-    score: 0.7,
-    systemPrompt:
-      "Before making any changes, thoroughly read and understand all related files. " +
-      "Map out the dependencies and data flow. Then make all changes in the correct order " +
-      "to avoid breaking intermediate states.",
-  });
-
-  strategies.push({
-    id: "minimal-diff",
-    description: "Minimal change strategy - smallest possible diff",
-    score: 0.6,
-    systemPrompt:
-      "Find the absolute minimum change needed to accomplish this task. " +
-      "Avoid refactoring or improving code beyond what is strictly necessary. " +
-      "The goal is a small, correct, reviewable diff.",
-    expectedFiles: state.lastConfidence?.factors
-      ?.filter((f) => f.name === "files_changed")
-      .map(() => "identified-from-context"),
-  });
-
-  return strategies;
-}
-
 function buildAgentMessages(agent: {
   getMessages: () => Array<{
     role: string;
     content: string | null;
     toolCallId?: string;
-    toolCalls?: ToolCall[];
+    toolCalls?: unknown[];
   }>;
 }): Record<string, unknown>[] {
   return agent.getMessages().map((m) => ({
     role: m.role,
     content: m.content,
     ...(m.toolCallId ? { tool_call_id: m.toolCallId } : {}),
-    ...(m.toolCalls && m.toolCalls.length > 0
-      ? {
-          tool_calls: m.toolCalls.map((tc) => ({
-            id: tc.id,
-            type: "function",
-            function: {
-              name: tc.name,
-              arguments: tc.arguments,
-            },
-          })),
-        }
-      : {}),
+    ...(m.toolCalls ? { tool_calls: m.toolCalls } : {}),
   }));
+}
+
+/**
+ * Calculate exponential backoff delay with jitter for LLM retries.
+ * Uses the llm_call retry policy: base 1s, max 16s, with jitter.
+ */
+function getLLMRetryDelayMs(attempt: number): number {
+  const baseDelay = 1000;
+  const maxDelay = 16_000;
+  const delay = Math.min(baseDelay * 2 ** attempt, maxDelay);
+  // Add jitter (0-25% of delay) to avoid thundering herd
+  const jitter = delay * 0.25 * Math.random();
+  return Math.round(delay + jitter);
+}
+
+/**
+ * Check if an LLM error is a rate-limit (429) or server error (5xx)
+ * that warrants a longer backoff.
+ */
+function isRateLimitError(msg: string): boolean {
+  return (
+    msg.includes("429") ||
+    msg.includes("rate limit") ||
+    msg.includes("Rate limit")
+  );
+}
+
+function isServerError(msg: string): boolean {
+  return (
+    msg.includes("500") ||
+    msg.includes("502") ||
+    msg.includes("503") ||
+    msg.includes("504")
+  );
 }
 
 async function processLLMFailure(
@@ -1671,76 +1368,7 @@ async function processLLMFailure(
   ) => T
 ): Promise<IterationOutcome> {
   const updated = { ...state, consecutiveErrors: state.consecutiveErrors + 1 };
-
-  // Classify error using the error taxonomy for targeted recovery
-  const error = new Error(msg);
-  const category = classifyError(error);
-
-  logger.error(
-    {
-      error: msg,
-      iteration: step,
-      category,
-      attempt: updated.consecutiveErrors,
-    },
-    "LLM request failed"
-  );
-
-  // Auth errors (401/403, invalid API key) - fail immediately, no retry
-  if (category === ErrorCategory.FATAL) {
-    logger.error({ error: msg }, "Fatal LLM error - stopping immediately");
-    const events = [
-      makeEvent<ErrorEvent>({
-        type: "error",
-        error: `Fatal LLM error (no retry): ${msg}`,
-        recoverable: false,
-      }),
-      makeEvent<CompleteEvent>(
-        buildFailureComplete(
-          state.lastOutput,
-          filesChanged,
-          state.totalInputTokens,
-          state.totalOutputTokens,
-          state.totalToolCalls,
-          step,
-          state.totalCreditsConsumed
-        )
-      ),
-    ];
-    return {
-      action: "return",
-      events,
-      state: updated,
-      spanStatus: { code: SpanStatusCode.ERROR, message: msg },
-    };
-  }
-
-  // Context window exceeded - compress and retry without counting as error
-  if (CONTEXT_WINDOW_RE.test(msg)) {
-    logger.warn(
-      { iteration: step },
-      "Context window exceeded - will compress on next iteration"
-    );
-    // Reset consecutive errors since this is a context issue, not an LLM failure
-    updated.consecutiveErrors = Math.max(0, updated.consecutiveErrors - 1);
-    const events = [
-      makeEvent<ErrorEvent>({
-        type: "error",
-        error: "Context window exceeded - compressing conversation history",
-        recoverable: true,
-      }),
-    ];
-    return {
-      action: "continue",
-      events,
-      state: updated,
-      spanStatus: {
-        code: SpanStatusCode.ERROR,
-        message: "context_window_exceeded",
-      },
-    };
-  }
-
+  logger.error({ error: msg, iteration: step }, "LLM request failed");
   const events = handleLLMError(
     updated.consecutiveErrors,
     msg,
@@ -1763,31 +1391,23 @@ async function processLLMFailure(
     };
   }
 
-  // Rate limit errors - use longer backoff with jitter
-  if (isRateLimitError(error)) {
-    const retryAfterMs = 5000 * 2 ** (updated.consecutiveErrors - 1);
-    const jitter = Math.random() * retryAfterMs * 0.25;
-    const delay = Math.min(retryAfterMs + jitter, 60_000);
+  // Exponential backoff with extra delay for rate-limit errors
+  let delayMs = getLLMRetryDelayMs(updated.consecutiveErrors - 1);
+  if (isRateLimitError(msg)) {
+    // Double the delay for rate-limit errors to respect provider limits
+    delayMs = Math.min(delayMs * 2, 30_000);
     logger.warn(
-      { delay: Math.round(delay), attempt: updated.consecutiveErrors },
-      "Rate limited - waiting before retry"
+      { delayMs, attempt: updated.consecutiveErrors },
+      "Rate-limited by LLM provider, backing off"
     );
-    await new Promise((r) => setTimeout(r, delay));
-    return {
-      action: "continue",
-      events,
-      state: updated,
-      spanStatus: { code: SpanStatusCode.ERROR, message: msg },
-    };
+  } else if (isServerError(msg)) {
+    logger.warn(
+      { delayMs, attempt: updated.consecutiveErrors },
+      "LLM server error, retrying with backoff"
+    );
   }
 
-  // Transient / network errors - exponential backoff (1s, 2s, 4s)
-  const backoffDelay = Math.min(
-    1000 * 2 ** (updated.consecutiveErrors - 1),
-    30_000
-  );
-  const jitter = Math.random() * backoffDelay * 0.25;
-  await new Promise((r) => setTimeout(r, backoffDelay + jitter));
+  await new Promise((r) => setTimeout(r, delayMs));
   return {
     action: "continue",
     events,
@@ -1850,7 +1470,6 @@ async function processToolCallsAndConfidence(
   ctx: ExecutionContext,
   filesChanged: Set<string>,
   deps: {
-    checkpointManager: CheckpointManager;
     confidenceScorer: ConfidenceScorer;
     secretsScanner: SecretsScanner;
     blueprintEnforcer: BlueprintEnforcer;
@@ -1886,7 +1505,6 @@ async function processToolCallsAndConfidence(
   const toolExecDeps: ToolCallDeps = {
     ctx,
     agent,
-    checkpointManager: deps.checkpointManager,
     secretsScanner: deps.secretsScanner,
     blueprintEnforcer: deps.blueprintEnforcer,
     allowedTools: deps.allowedTools,
@@ -1949,12 +1567,9 @@ async function processToolCallsAndConfidence(
     )
   );
 
-  // Confidence — use actual tool execution results, not just registry lookups
-  const actualToolResults = toolExecResult.events
-    .filter((evt): evt is ToolResultEvent => evt.type === "tool_result")
-    .map((evt) => ({ success: evt.success, name: evt.toolName }));
+  // Confidence
   const confResult = scoreIterationConfidence(
-    actualToolResults,
+    toolCalls,
     assistantContent,
     filesChanged.size,
     updated.staleIterations,
@@ -1985,87 +1600,20 @@ async function processToolCallsAndConfidence(
   }
 
   events.push(
-    ...(await generateCheckpointEvents(
+    ...generateCheckpointEvents(
       filesChanged,
       step,
       updated.totalCreditsConsumed,
       agent,
-      deps.makeEvent,
-      deps.checkpointManager,
-      ctx.sessionId
-    ))
+      deps.makeEvent
+    )
   );
 
   if (confResult.confidence.action === "escalate") {
     deps.logger.warn(
       { confidence: confResult.confidence.score, iteration: step },
-      "Low confidence - attempting speculative execution before escalating"
+      "Low confidence - escalating"
     );
-
-    // AE06: Try speculative multi-approach execution before giving up.
-    // When speculation is enabled and confidence drops, generate alternative
-    // approaches and execute them in parallel to find a viable path forward.
-    if (ctx.options.speculate) {
-      const speculationOutcome = await trySpeculativeExecution(
-        ctx,
-        updated,
-        step,
-        agent,
-        deps
-      );
-
-      if (speculationOutcome) {
-        // Speculation found a viable approach — inject the winning output
-        // back into the agent conversation and continue the loop.
-        deps.logger.info(
-          {
-            winnerScore: speculationOutcome.winnerScore,
-            approachesAttempted: speculationOutcome.approachesAttempted,
-          },
-          "Speculative execution recovered from low confidence"
-        );
-
-        agent.addUserMessage(
-          `[System] Your previous approach had low confidence. A speculative search found a better approach:\n\n${speculationOutcome.winnerOutput}\n\nPlease continue using this approach.`
-        );
-
-        // Update state: reset stale iterations since we have a new direction
-        updated.staleIterations = 0;
-        updated.slot = speculationOutcome.recommendedSlot ?? updated.slot;
-
-        events.push(
-          deps.makeEvent<ConfidenceEvent>({
-            type: "confidence",
-            score: speculationOutcome.winnerScore,
-            action: "continue",
-            iteration: step,
-            factors: [
-              {
-                name: "speculation_recovery",
-                value: speculationOutcome.winnerScore,
-              },
-              {
-                name: "approaches_tried",
-                value: speculationOutcome.approachesAttempted,
-              },
-            ],
-          })
-        );
-
-        // Continue the iteration loop instead of aborting
-        return {
-          action: "continue",
-          events,
-          state: updated,
-          spanStatus: {
-            code: SpanStatusCode.OK,
-            message: "Recovered via speculative execution",
-          },
-        };
-      }
-    }
-
-    // Speculation not enabled or failed — proceed with original escalation
     events.push(
       deps.makeEvent<ErrorEvent>({
         type: "error",
@@ -2111,9 +1659,40 @@ async function processToolCallsAndConfidence(
     agent,
     deps.logger
   );
+  const recoveryTriggered =
+    wdResult.recoveryAttempts > updated.recoveryAttempts;
   updated.recoveryAttempts = wdResult.recoveryAttempts;
   if (wdResult.newSlot) {
     updated.slot = wdResult.newSlot;
+  }
+
+  // Save checkpoint on recovery so we can resume from this state
+  if (recoveryTriggered || wdResult.abort) {
+    try {
+      const persistence = new CheckpointPersistence(ctx.orgId);
+      await persistence.save(
+        ctx.sessionId,
+        ctx.sessionId,
+        "recovery",
+        CheckpointPersistence.createState({
+          phase: "recovery",
+          agentState: {
+            slot: updated.slot,
+            recoveryAttempts: updated.recoveryAttempts,
+          },
+          modifiedFiles: Array.from(filesChanged),
+          tokensUsed: {
+            input: updated.totalInputTokens,
+            output: updated.totalOutputTokens,
+          },
+          creditsConsumed: updated.totalCreditsConsumed,
+          completedSteps: [],
+        }),
+        step
+      );
+    } catch {
+      deps.logger.warn("Failed to save recovery checkpoint");
+    }
   }
 
   if (wdResult.abort) {
@@ -2307,7 +1886,6 @@ async function runIterationBody(
   ctx: ExecutionContext,
   filesChanged: Set<string>,
   iterDeps: {
-    checkpointManager: CheckpointManager;
     confidenceScorer: ConfidenceScorer;
     secretsScanner: SecretsScanner;
     blueprintEnforcer: BlueprintEnforcer;
@@ -2384,78 +1962,8 @@ async function runIterationBody(
   };
 }
 
-/**
- * Resolve the appropriate execution strategy based on feature flags.
- * When PROMETHEUS_USE_AI_SDK=true, delegates to AI SDK 6 streaming;
- * otherwise uses the default model router HTTP path.
- */
-function finalizeExecution(
-  ctx: ExecutionContext,
-  iterState: IterationState,
-  initialSlot: string,
-  filesChanged: Set<string>,
-  selfReview: SelfReview,
-  modelEscalator: ModelEscalator,
-  checkpointManager: CheckpointManager,
-  healthWatchdog: HealthWatchdog,
-  logger: ReturnType<typeof createLogger>
-): void {
-  healthWatchdog.stopMonitoring(ctx.sessionId);
-  checkpointManager.cancelSessionCheckpoints(ctx.sessionId);
-
-  // Generate post-task reflection
-  const reflection = selfReview.generateReflection(
-    ctx.taskDescription,
-    iterState.lastOutput,
-    Array.from(filesChanged)
-  );
-  logger.info(
-    {
-      strengths: reflection.strengths.length,
-      improvements: reflection.improvements.length,
-      decisions: reflection.decisions.length,
-    },
-    "Post-task reflection generated"
-  );
-
-  // Record outcome for model escalation learning
-  const finalSlot = iterState.slot;
-  if (finalSlot !== initialSlot) {
-    modelEscalator.recordOutcome(
-      ctx.agentRole,
-      initialSlot as ModelSlot,
-      finalSlot as ModelSlot,
-      iterState.lastConfidence?.score ?? 0.5,
-      true
-    );
-  }
-}
-
-function resolveExecutionStrategy(
-  ctx: ExecutionContext
-): AsyncGenerator<ExecutionEvent, void, undefined> {
-  if (USE_AI_SDK_STREAMING) {
-    return ExecutionEngine.streamWithAISDK(ctx);
-  }
-  return ExecutionEngine._executeViaModelRouter(ctx);
-}
-
 export const ExecutionEngine = {
-  /**
-   * Primary entry point: routes to AI SDK streaming or HTTP model router
-   * depending on the PROMETHEUS_USE_AI_SDK feature flag.
-   */
   async *execute(
-    ctx: ExecutionContext
-  ): AsyncGenerator<ExecutionEvent, void, undefined> {
-    yield* resolveExecutionStrategy(ctx);
-  },
-
-  /**
-   * Default execution path: streams via the model router HTTP endpoint.
-   */
-  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: streaming execution requires handling many response states
-  async *_executeViaModelRouter(
     ctx: ExecutionContext
   ): AsyncGenerator<ExecutionEvent, void, undefined> {
     const logger = createLogger(`engine:${ctx.sessionId}`);
@@ -2485,8 +1993,6 @@ export const ExecutionEngine = {
     const { agent, allowedTools, toolDefs } = setup;
 
     const confidenceScorer = new ConfidenceScorer();
-    const modelEscalator = new ModelEscalator();
-    const checkpointManager = new CheckpointManager();
     const blueprintEnforcer = new BlueprintEnforcer();
     const secretsScanner = new SecretsScanner();
     const selfReview = new SelfReview();
@@ -2515,13 +2021,9 @@ export const ExecutionEngine = {
       lastOutput: "",
       lastConfidence: null,
       recoveryAttempts: 0,
-      iterationsCompleted: 0,
-      completedNaturally: false,
     };
 
-    const initialSlot = resolveInitialSlot(ctx);
     const iterDeps = {
-      checkpointManager,
       confidenceScorer,
       secretsScanner,
       blueprintEnforcer,
@@ -2594,7 +2096,6 @@ export const ExecutionEngine = {
         iterDeps
       );
       iterState = iterOutcome.state;
-      iterState.iterationsCompleted = i + 1;
       for (const evt of iterOutcome.events) {
         yield evt;
       }
@@ -2604,51 +2105,23 @@ export const ExecutionEngine = {
         return;
       }
       if (iterOutcome.action === "break") {
-        iterState.completedNaturally = true;
         break;
       }
     }
 
-    finalizeExecution(
-      ctx,
-      iterState,
-      initialSlot,
-      filesChanged,
-      selfReview,
-      modelEscalator,
-      checkpointManager,
-      healthWatchdog,
-      logger
-    );
-
-    // If the loop ended because max iterations were exhausted (not because
-    // the LLM stopped on its own), mark the task as failed.
-    const maxIterationsExhausted = !iterState.completedNaturally;
-
-    if (maxIterationsExhausted) {
-      logger.warn(
-        {
-          maxIterations,
-          iterationsCompleted: iterState.iterationsCompleted,
-          toolCalls: iterState.totalToolCalls,
-        },
-        "Max iterations reached without task completion"
-      );
-    }
+    healthWatchdog.stopMonitoring(ctx.sessionId);
 
     yield makeEvent<CompleteEvent>({
       type: "complete",
-      success: !maxIterationsExhausted,
-      output: maxIterationsExhausted
-        ? `Task did not complete within ${maxIterations} iterations. Last output: ${iterState.lastOutput || "(none)"}`
-        : iterState.lastOutput,
+      success: true,
+      output: iterState.lastOutput,
       filesChanged: Array.from(filesChanged),
       tokensUsed: {
         input: iterState.totalInputTokens,
         output: iterState.totalOutputTokens,
       },
       toolCalls: iterState.totalToolCalls,
-      steps: iterState.iterationsCompleted,
+      steps: ctx.options.maxIterations,
       creditsConsumed: iterState.totalCreditsConsumed,
     });
   },
@@ -2965,8 +2438,8 @@ export const ExecutionEngine = {
         "AI SDK 6 execution failed, falling back to SSE streaming"
       );
 
-      // Fall back to the HTTP model router path
-      yield* ExecutionEngine._executeViaModelRouter(ctx);
+      // Fall back to the standard execute() path
+      yield* ExecutionEngine.execute(ctx);
     }
   },
 };
