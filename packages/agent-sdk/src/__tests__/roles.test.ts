@@ -2,8 +2,8 @@ import { describe, expect, it } from "vitest";
 import { AGENT_ROLES, createAgent, getAgentConfig } from "../roles";
 
 describe("AGENT_ROLES", () => {
-  it("should have 12 specialist roles", () => {
-    expect(Object.keys(AGENT_ROLES)).toHaveLength(12);
+  it("should have 13 specialist roles", () => {
+    expect(Object.keys(AGENT_ROLES)).toHaveLength(13);
   });
 
   it("should have all required roles", () => {

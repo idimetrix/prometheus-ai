@@ -33,7 +33,17 @@ import {
   TabsList,
   TabsTrigger,
 } from "@prometheus/ui";
-import { Copy, Key, Link2, Plus, Trash2 } from "lucide-react";
+import {
+  Copy,
+  Key,
+  Keyboard,
+  Link2,
+  Monitor,
+  Plus,
+  Sparkles,
+  Trash2,
+  Wrench,
+} from "lucide-react";
 import { useEffect, useState } from "react";
 import { useForm } from "react-hook-form";
 import { toast } from "sonner";
@@ -276,6 +286,18 @@ export default function SettingsPage() {
           </TabsTrigger>
           <TabsTrigger className="flex-1" value="models">
             Models
+          </TabsTrigger>
+          <TabsTrigger className="flex-1" value="editor">
+            Editor
+          </TabsTrigger>
+          <TabsTrigger className="flex-1" value="ai">
+            AI
+          </TabsTrigger>
+          <TabsTrigger className="flex-1" value="workspace">
+            Workspace
+          </TabsTrigger>
+          <TabsTrigger className="flex-1" value="keybindings">
+            Keys
           </TabsTrigger>
         </TabsList>
 
@@ -641,6 +663,356 @@ export default function SettingsPage() {
                   ))}
                 </div>
               )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        {/* Editor */}
+        <TabsContent className="space-y-6" value="editor">
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2 text-sm">
+                <Monitor className="h-4 w-4" />
+                Editor Preferences
+              </CardTitle>
+              <CardDescription>
+                Customize the code editor appearance and behavior.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="grid gap-4 md:grid-cols-2">
+                <div className="space-y-2">
+                  <Label htmlFor="font-size">Font Size</Label>
+                  <Input
+                    defaultValue="14"
+                    id="font-size"
+                    max={24}
+                    min={10}
+                    type="number"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="tab-size">Tab Size</Label>
+                  <Input
+                    defaultValue="2"
+                    id="tab-size"
+                    max={8}
+                    min={1}
+                    type="number"
+                  />
+                </div>
+              </div>
+
+              <Separator />
+
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <div className="text-foreground text-sm">Word Wrap</div>
+                    <div className="text-muted-foreground text-xs">
+                      Wrap long lines in the editor
+                    </div>
+                  </div>
+                  <Switch defaultChecked />
+                </div>
+                <div className="flex items-center justify-between">
+                  <div>
+                    <div className="text-foreground text-sm">Minimap</div>
+                    <div className="text-muted-foreground text-xs">
+                      Show code minimap on the right side
+                    </div>
+                  </div>
+                  <Switch defaultChecked />
+                </div>
+                <div className="flex items-center justify-between">
+                  <div>
+                    <div className="text-foreground text-sm">Line Numbers</div>
+                    <div className="text-muted-foreground text-xs">
+                      Display line numbers in the gutter
+                    </div>
+                  </div>
+                  <Switch defaultChecked />
+                </div>
+                <div className="flex items-center justify-between">
+                  <div>
+                    <div className="text-foreground text-sm">
+                      Bracket Matching
+                    </div>
+                    <div className="text-muted-foreground text-xs">
+                      Highlight matching brackets
+                    </div>
+                  </div>
+                  <Switch defaultChecked />
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        {/* AI */}
+        <TabsContent className="space-y-6" value="ai">
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2 text-sm">
+                <Sparkles className="h-4 w-4" />
+                AI Configuration
+              </CardTitle>
+              <CardDescription>
+                Configure default AI behavior for all sessions.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="grid gap-4 md:grid-cols-2">
+                <div className="space-y-2">
+                  <Label htmlFor="default-model">Default Model</Label>
+                  <select
+                    className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                    defaultValue="claude-sonnet-4-20250514"
+                    id="default-model"
+                  >
+                    <option value="claude-sonnet-4-20250514">
+                      Claude Sonnet 4
+                    </option>
+                    <option value="claude-3.5-haiku">Claude 3.5 Haiku</option>
+                    <option value="gpt-4o">GPT-4o</option>
+                    <option value="gpt-4o-mini">GPT-4o Mini</option>
+                    <option value="gemini-2.0-flash">Gemini 2.0 Flash</option>
+                  </select>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="temperature">Temperature</Label>
+                  <Input
+                    defaultValue="0.7"
+                    id="temperature"
+                    max="2"
+                    min="0"
+                    step="0.1"
+                    type="number"
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="max-tokens">Max Output Tokens</Label>
+                <Input
+                  defaultValue="4096"
+                  id="max-tokens"
+                  max={128_000}
+                  min={256}
+                  step={256}
+                  type="number"
+                />
+                <p className="text-muted-foreground text-xs">
+                  Maximum number of tokens in AI responses. Higher values allow
+                  longer responses.
+                </p>
+              </div>
+
+              <Separator />
+
+              <div className="space-y-2">
+                <Label htmlFor="custom-system-prompt">
+                  Global System Prompt
+                </Label>
+                <textarea
+                  className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+                  defaultValue=""
+                  id="custom-system-prompt"
+                  placeholder="Optional: Add custom instructions that apply to all projects..."
+                  rows={4}
+                />
+                <p className="text-muted-foreground text-xs">
+                  This system prompt is prepended to every AI conversation
+                  across all projects. Use project-level custom instructions for
+                  project-specific rules.
+                </p>
+              </div>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        {/* Workspace */}
+        <TabsContent className="space-y-6" value="workspace">
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2 text-sm">
+                <Wrench className="h-4 w-4" />
+                Workspace Preferences
+              </CardTitle>
+              <CardDescription>
+                Configure workspace layout and behavior.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="grid gap-4 md:grid-cols-2">
+                <div className="space-y-2">
+                  <Label htmlFor="layout-pref">Default Layout</Label>
+                  <select
+                    className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                    defaultValue="ide"
+                    id="layout-pref"
+                  >
+                    <option value="ide">IDE (Editor + Terminal)</option>
+                    <option value="chat">Chat Focused</option>
+                    <option value="split">Split View</option>
+                    <option value="minimal">Minimal</option>
+                  </select>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="auto-save">Auto-save Interval</Label>
+                  <select
+                    className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                    defaultValue="1000"
+                    id="auto-save"
+                  >
+                    <option value="off">Off</option>
+                    <option value="1000">1 second</option>
+                    <option value="5000">5 seconds</option>
+                    <option value="10000">10 seconds</option>
+                    <option value="30000">30 seconds</option>
+                  </select>
+                </div>
+              </div>
+
+              <Separator />
+
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <div className="text-foreground text-sm">
+                      Sidebar Position
+                    </div>
+                    <div className="text-muted-foreground text-xs">
+                      Show the sidebar on the left or right side
+                    </div>
+                  </div>
+                  <select
+                    className="rounded-md border border-input bg-background px-3 py-1.5 text-sm"
+                    defaultValue="left"
+                  >
+                    <option value="left">Left</option>
+                    <option value="right">Right</option>
+                  </select>
+                </div>
+                <div className="flex items-center justify-between">
+                  <div>
+                    <div className="text-foreground text-sm">
+                      Terminal Position
+                    </div>
+                    <div className="text-muted-foreground text-xs">
+                      Show the terminal panel at the bottom or right
+                    </div>
+                  </div>
+                  <select
+                    className="rounded-md border border-input bg-background px-3 py-1.5 text-sm"
+                    defaultValue="bottom"
+                  >
+                    <option value="bottom">Bottom</option>
+                    <option value="right">Right</option>
+                  </select>
+                </div>
+                <div className="flex items-center justify-between">
+                  <div>
+                    <div className="text-foreground text-sm">
+                      Restore Last Session
+                    </div>
+                    <div className="text-muted-foreground text-xs">
+                      Reopen files and panels from the previous session
+                    </div>
+                  </div>
+                  <Switch defaultChecked />
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        {/* Keybindings */}
+        <TabsContent className="space-y-6" value="keybindings">
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2 text-sm">
+                <Keyboard className="h-4 w-4" />
+                Keyboard Shortcuts
+              </CardTitle>
+              <CardDescription>
+                View and customize keyboard shortcuts.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="divide-y divide-border">
+                {(
+                  [
+                    {
+                      action: "Command Palette",
+                      shortcut: "Cmd+K",
+                      description: "Open the command palette",
+                    },
+                    {
+                      action: "Go to File",
+                      shortcut: "Cmd+P",
+                      description: "Quick open file picker",
+                    },
+                    {
+                      action: "Search Files",
+                      shortcut: "Cmd+Shift+F",
+                      description: "Search across all files",
+                    },
+                    {
+                      action: "Toggle Terminal",
+                      shortcut: "Cmd+`",
+                      description: "Show or hide the terminal",
+                    },
+                    {
+                      action: "Toggle Sidebar",
+                      shortcut: "Cmd+B",
+                      description: "Show or hide the sidebar",
+                    },
+                    {
+                      action: "Save File",
+                      shortcut: "Cmd+S",
+                      description: "Save the current file",
+                    },
+                    {
+                      action: "Close Tab",
+                      shortcut: "Cmd+W",
+                      description: "Close the current editor tab",
+                    },
+                    {
+                      action: "New Session",
+                      shortcut: "Cmd+N",
+                      description: "Start a new agent session",
+                    },
+                    {
+                      action: "Toggle Theme",
+                      shortcut: "Cmd+Shift+T",
+                      description: "Switch between light and dark mode",
+                    },
+                  ] as const
+                ).map((binding) => (
+                  <div
+                    className="flex items-center justify-between py-3"
+                    key={binding.action}
+                  >
+                    <div>
+                      <div className="font-medium text-foreground text-sm">
+                        {binding.action}
+                      </div>
+                      <div className="text-muted-foreground text-xs">
+                        {binding.description}
+                      </div>
+                    </div>
+                    <kbd className="rounded border border-border bg-muted px-2 py-1 font-mono text-muted-foreground text-xs">
+                      {binding.shortcut}
+                    </kbd>
+                  </div>
+                ))}
+              </div>
+              <Separator className="my-4" />
+              <p className="text-muted-foreground text-xs">
+                Custom keybinding configuration coming soon. Currently showing
+                default shortcuts.
+              </p>
             </CardContent>
           </Card>
         </TabsContent>

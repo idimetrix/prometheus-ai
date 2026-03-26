@@ -13,7 +13,10 @@ import { chatRouter } from "./chat";
 import { codeAnalysisRouter } from "./code-analysis";
 import { collaborationRouter } from "./collaboration";
 import { costPredictionRouter } from "./cost-prediction";
+import { customAgentsRouter } from "./custom-agents";
 import { deploymentsRouter } from "./deployments";
+import { environmentsRouter } from "./environments";
+import { exportsRouter } from "./exports";
 import { filesRouter } from "./files";
 import { fleetRouter } from "./fleet";
 import { gdprRouter } from "./gdpr";
@@ -29,8 +32,12 @@ import { pluginsRouter } from "./plugins";
 import { pmRouter } from "./pm";
 import { projectsRouter } from "./projects";
 import { queueRouter } from "./queue";
+import { releasesRouter } from "./releases";
+import { secretsRouter } from "./secrets";
 import { sessionsRouter } from "./sessions";
 import { settingsRouter } from "./settings";
+import { snippetsRouter } from "./snippets";
+import { sshKeysRouter } from "./ssh-keys";
 import { tasksRouter } from "./tasks";
 import { teamRouter } from "./team";
 import { uploadsRouter } from "./uploads";
@@ -45,6 +52,7 @@ export const appRouter = router({
   tasks: tasksRouter,
   projects: projectsRouter,
   queue: queueRouter,
+  secrets: secretsRouter,
   billing: billingRouter,
   stats: analyticsRouter,
   teamAnalytics: analyticsEnhancedRouter,
@@ -64,7 +72,10 @@ export const appRouter = router({
   webhooks: webhooksOutboundRouter,
   branding: brandingRouter,
   costPrediction: costPredictionRouter,
+  customAgents: customAgentsRouter,
   deployments: deploymentsRouter,
+  environments: environmentsRouter,
+  exports: exportsRouter,
   marketplace: marketplaceRouter,
   playbooks: playbooksRouter,
   issueSync: issueSyncRouter,
@@ -74,9 +85,12 @@ export const appRouter = router({
   generate: generateRouter,
   notifications: notificationsRouter,
   permissions: permissionsRouter,
+  snippets: snippetsRouter,
   team: teamRouter,
   uploads: uploadsRouter,
   workspaces: workspacesRouter,
+  releases: releasesRouter,
+  sshKeys: sshKeysRouter,
 });
 
 export type AppRouter = typeof appRouter;

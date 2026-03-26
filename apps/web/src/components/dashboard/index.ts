@@ -1,4 +1,9 @@
 export type {
+  ActivityEvent,
+  ActivityEventType,
+} from "./activity-feed";
+export { ActivityFeed } from "./activity-feed";
+export type {
   AgentActivityDashboardProps,
   AgentSession,
   AgentStatus,
@@ -9,6 +14,16 @@ export {
   type QualityDataPoint,
   type QualitySummary,
 } from "./code-quality-tab";
+export type {
+  ActionItem as HealthActionItem,
+  CodebaseHealthProps,
+  HealthMetric,
+  IndustryBenchmark,
+  ModuleHealth,
+  TimeRange,
+  TrendDirection,
+} from "./codebase-health";
+export { CodebaseHealthDashboard } from "./codebase-health";
 export type {
   CostAnalyticsDashboardProps,
   CostEntry,
@@ -30,7 +45,11 @@ export type {
   NodeStatus,
 } from "./fleet-monitor";
 export { FleetMonitor } from "./fleet-monitor";
-export { KanbanBoard, type KanbanTask } from "./kanban-board";
+export {
+  ConnectedKanbanBoard,
+  KanbanBoard,
+  type KanbanTask,
+} from "./kanban-board";
 export { MetricCard } from "./metric-card";
 export type {
   HealthStatus,

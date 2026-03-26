@@ -19,10 +19,13 @@ export {
   formatKeyboardShortcut,
   useKeyboardShortcuts,
 } from "./use-keyboard-shortcuts";
+export type { MentionSearchResult } from "./use-mention-resolver";
+export { useMentionResolver } from "./use-mention-resolver";
 export type { OptimisticMessage } from "./use-optimistic-message";
 export { useOptimisticMessage } from "./use-optimistic-message";
 export type { PresenceStatus, PresenceUser } from "./use-presence";
 export { usePresence } from "./use-presence";
+export { useSessionReconnect } from "./use-session-reconnect";
 export { useSessionSocket } from "./use-session-socket";
 export { useSessionStream } from "./use-session-stream";
 export type { ShortcutAction } from "./use-shortcuts";

@@ -24,6 +24,12 @@ export type {
   ChangeImpactResult,
 } from "./impact-analyzer";
 export { ChangeImpactAnalyzer } from "./impact-analyzer";
+export type {
+  FileRelationships,
+  GraphBuildResult,
+  GraphQueryResult,
+} from "./knowledge-graph-manager";
+export { KnowledgeGraphManager } from "./knowledge-graph-manager";
 export type { TraversalResult } from "./memgraph-client";
 export { MemgraphClient } from "./memgraph-client";
 export type { ChangedFile, EvolutionStats } from "./memory-evolution";

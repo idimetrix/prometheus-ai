@@ -10,8 +10,14 @@
     "cancel": "Cancelar",
     "save": "Guardar",
     "delete": "Eliminar",
+    "edit": "Editar",
+    "submit": "Enviar",
     "loading": "Cargando...",
     "error": "Algo salió mal",
+    "success": "Éxito",
+    "pending": "Pendiente",
+    "running": "En ejecución",
+    "completed": "Completado",
     "retry": "Reintentar",
     "search": "Buscar...",
     "noResults": "No se encontraron resultados"
@@ -20,6 +26,45 @@
     "signIn": "Iniciar Sesión",
     "signUp": "Registrarse",
     "signOut": "Cerrar Sesión"
+  },
+  "nav": {
+    "dashboard": "Panel",
+    "projects": "Proyectos",
+    "sessions": "Sesiones",
+    "settings": "Configuración"
+  },
+  "actions": {
+    "create": "Crear",
+    "delete": "Eliminar",
+    "edit": "Editar",
+    "save": "Guardar",
+    "cancel": "Cancelar",
+    "submit": "Enviar"
+  },
+  "status": {
+    "loading": "Cargando...",
+    "error": "Error",
+    "success": "Éxito",
+    "pending": "Pendiente",
+    "running": "En ejecución",
+    "completed": "Completado"
+  },
+  "session": {
+    "chat": "Chat",
+    "terminal": "Terminal",
+    "preview": "Vista previa",
+    "files": "Archivos",
+    "agent": "Agente"
+  },
+  "errors": {
+    "generic": "Ocurrió un error inesperado",
+    "notFound": "Página no encontrada",
+    "unauthorized": "Acceso no autorizado",
+    "forbidden": "Acceso prohibido",
+    "networkError": "Error de conexión de red",
+    "timeout": "La solicitud ha expirado",
+    "validation": "Datos del formulario inválidos",
+    "serverError": "Error interno del servidor"
   },
   "agents": {
     "title": "Agentes IA",

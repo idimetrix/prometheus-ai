@@ -333,6 +333,7 @@ export function EditorPanel({
         {/* Tab bar */}
         <EditorTabs
           activeTab={activeFilePath}
+          groupId="main"
           onCloseTab={(path) => onCloseFile?.(path)}
           onSelectTab={(path) => onSelectFile?.(path)}
           tabs={openFiles}

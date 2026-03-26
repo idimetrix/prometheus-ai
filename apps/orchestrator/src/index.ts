@@ -466,6 +466,9 @@ serve({ fetch: app.fetch, port }, () => {
 });
 
 export { AgentLoop } from "./agent-loop";
+export { BugPredictor } from "./analysis/bug-predictor";
+// MOON-014: API version management
+export { ApiVersionManager } from "./api-management/version-manager";
 export {
   BlueprintEnforcer as OrchestratorBlueprintEnforcer,
   type BlueprintViolation as OrcBlueprintViolation,
@@ -477,6 +480,8 @@ export { FuzzTesting } from "./ci-loop/fuzz-testing";
 export { LivingRequirementsTracker } from "./ci-loop/living-requirements";
 export { PropertyTesting } from "./ci-loop/property-testing";
 export { SystemicAnalyzer } from "./ci-loop/systemic-analyzer";
+// MOON-003: Cross-repo refactoring
+export { CrossRepoRefactor } from "./composition/cross-repo-refactor";
 // Phase 9 exports
 export {
   type ConfidenceResult,
@@ -531,6 +536,18 @@ export { IntegrationPhase } from "./phases/integration";
 export { PhaseGate } from "./phases/phase-gate";
 export type { SprintPlan } from "./phases/planning";
 export { PlanningPhase } from "./phases/planning";
+export { DependencyMigrationPipeline } from "./pipelines/dependency-migration";
+// MOON-008: Framework migration
+export { FrameworkMigrationPipeline } from "./pipelines/framework-migration";
+export { IncidentResponsePipeline } from "./pipelines/incident-response";
+// MOON-009: Performance optimization
+export { PerformanceOptimizationPipeline } from "./pipelines/performance-optimizer";
+// P3 Moonshot: Autonomous operations
+export { ProjectGenesisPipeline } from "./pipelines/project-genesis";
+export { SecurityPatchingPipeline } from "./pipelines/security-patcher";
+// MOON-010: Self-healing deployment
+export { SelfHealingDeployment } from "./pipelines/self-healing-deploy";
+export { SmartCodeReviewer } from "./pipelines/smart-reviewer";
 export type { PlanNode, SchedulableTask } from "./planning/dag-decomposer";
 // Planning: Sprint decomposition and DAG
 export { DAGDecomposer } from "./planning/dag-decomposer";
@@ -539,8 +556,12 @@ export { SeniorPlanner } from "./planning/senior-planner";
 export { SessionManager } from "./session-manager";
 export { TakeoverManager } from "./takeover";
 export { TaskRouter } from "./task-router";
+// MOON-002: Self-improving agents
+export { SelfImprovingAgent } from "./training/self-improvement";
 // Self-play training
 export { SelfPlayTrainer } from "./training/self-play-trainer";
+// MOON-048: Self-play training loop
+export { SelfPlayTrainingLoop } from "./training/self-play-training-loop";
 export { SharedLearningStore } from "./training/transfer-learning";
 export { DeployVerifier } from "./verification/deploy-verifier";
 // Verification: visual regression & deploy

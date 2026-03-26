@@ -6,12 +6,27 @@
  * - Yellow: Modified lines (changed content)
  * - Red: Deleted lines (content removed at this position)
  *
- * Accepts git diff data as input and renders gutter decorations accordingly.
+ * Also includes Git Blame support:
+ * - Shows blame info for the focused line as an inline annotation
+ * - Format: "Author Name . 3 days ago . commit message" (gray, italic)
+ * - Click blame to see full commit details in a tooltip
+ * - Toggle via command palette or keyboard shortcut
+ * - Caches blame data per file
  */
 
 import type { Extension } from "@codemirror/state";
-import { RangeSetBuilder, StateField } from "@codemirror/state";
-import { EditorView, GutterMarker, gutter } from "@codemirror/view";
+import { RangeSetBuilder, StateEffect, StateField } from "@codemirror/state";
+import {
+  Decoration,
+  type DecorationSet,
+  EditorView,
+  GutterMarker,
+  gutter,
+  keymap,
+  ViewPlugin,
+  type ViewUpdate,
+  WidgetType,
+} from "@codemirror/view";
 
 // --- Types ---
 
@@ -38,6 +53,33 @@ interface GitDiffHunk {
   oldCount: number;
   /** Old file start line */
   oldStart: number;
+}
+
+/** Blame info for a single line */
+export interface GitBlameInfo {
+  /** Author email */
+  authorEmail?: string;
+  /** Author name */
+  authorName: string;
+  /** Short commit hash */
+  commitHash: string;
+  /** Full commit message */
+  commitMessage: string;
+  /** ISO date string of the commit */
+  date: string;
+  /** 1-based line number */
+  line: number;
+}
+
+export interface GitBlameOptions {
+  /** API endpoint to fetch blame data */
+  endpoint: string;
+  /** File path to get blame for */
+  filePath: string;
+  /** Additional request headers */
+  headers?: Record<string, string>;
+  /** Whether blame is initially visible */
+  initiallyVisible?: boolean;
 }
 
 // --- Gutter Markers ---
@@ -215,6 +257,331 @@ export function hunksToGitDiffRanges(hunks: GitDiffHunk[]): GitDiffRange[] {
   }
 
   return ranges;
+}
+
+/* ========================================================================== */
+/*  Git Blame Extension                                                        */
+/* ========================================================================== */
+
+// --- Blame State ---
+
+const setBlameDataEffect = StateEffect.define<GitBlameInfo[]>();
+const toggleBlameVisibilityEffect = StateEffect.define<boolean>();
+
+const blameDataField = StateField.define<GitBlameInfo[]>({
+  create: () => [],
+  update: (value, tr) => {
+    for (const effect of tr.effects) {
+      if (effect.is(setBlameDataEffect)) {
+        return effect.value;
+      }
+    }
+    return value;
+  },
+});
+
+const blameVisibleField = StateField.define<boolean>({
+  create: () => false,
+  update: (value, tr) => {
+    for (const effect of tr.effects) {
+      if (effect.is(toggleBlameVisibilityEffect)) {
+        return effect.value;
+      }
+    }
+    return value;
+  },
+});
+
+// --- Blame Widget ---
+
+function formatRelativeTime(dateStr: string): string {
+  const date = new Date(dateStr);
+  const now = Date.now();
+  const diffMs = now - date.getTime();
+  const diffSec = Math.floor(diffMs / 1000);
+  const diffMin = Math.floor(diffSec / 60);
+  const diffHour = Math.floor(diffMin / 60);
+  const diffDay = Math.floor(diffHour / 24);
+  const diffMonth = Math.floor(diffDay / 30);
+  const diffYear = Math.floor(diffDay / 365);
+
+  if (diffYear > 0) {
+    return `${diffYear}y ago`;
+  }
+  if (diffMonth > 0) {
+    return `${diffMonth}mo ago`;
+  }
+  if (diffDay > 0) {
+    return `${diffDay}d ago`;
+  }
+  if (diffHour > 0) {
+    return `${diffHour}h ago`;
+  }
+  if (diffMin > 0) {
+    return `${diffMin}m ago`;
+  }
+  return "just now";
+}
+
+class BlameAnnotationWidget extends WidgetType {
+  readonly blame: GitBlameInfo;
+
+  constructor(blame: GitBlameInfo) {
+    super();
+    this.blame = blame;
+  }
+
+  override toDOM(): HTMLElement {
+    const container = document.createElement("span");
+    container.className = "cm-blame-annotation";
+
+    const relTime = formatRelativeTime(this.blame.date);
+    const shortMsg =
+      this.blame.commitMessage.length > 40
+        ? `${this.blame.commitMessage.slice(0, 40)}...`
+        : this.blame.commitMessage;
+
+    container.textContent = `  ${this.blame.authorName} \u2022 ${relTime} \u2022 ${shortMsg}`;
+    container.title = [
+      `Commit: ${this.blame.commitHash}`,
+      `Author: ${this.blame.authorName}${this.blame.authorEmail ? ` <${this.blame.authorEmail}>` : ""}`,
+      `Date: ${new Date(this.blame.date).toLocaleString()}`,
+      "",
+      this.blame.commitMessage,
+    ].join("\n");
+
+    return container;
+  }
+
+  override eq(other: BlameAnnotationWidget): boolean {
+    return (
+      this.blame.commitHash === other.blame.commitHash &&
+      this.blame.line === other.blame.line
+    );
+  }
+
+  override ignoreEvent(): boolean {
+    return false;
+  }
+}
+
+// --- Blame Theme ---
+
+const blameTheme = EditorView.theme({
+  ".cm-blame-annotation": {
+    color: "rgba(161, 161, 170, 0.5)",
+    fontStyle: "italic",
+    fontSize: "11px",
+    paddingLeft: "16px",
+    cursor: "pointer",
+    whiteSpace: "nowrap",
+    "&:hover": {
+      color: "rgba(161, 161, 170, 0.8)",
+    },
+  },
+  ".cm-blame-tooltip": {
+    position: "absolute",
+    zIndex: "50",
+    backgroundColor: "#18181b",
+    border: "1px solid #3f3f46",
+    borderRadius: "6px",
+    padding: "8px 12px",
+    maxWidth: "350px",
+    fontSize: "12px",
+    lineHeight: "1.5",
+    color: "#a1a1aa",
+    boxShadow: "0 4px 12px rgba(0, 0, 0, 0.3)",
+    whiteSpace: "pre-wrap",
+  },
+});
+
+// --- Blame Plugin ---
+
+class GitBlamePlugin {
+  decorations: DecorationSet;
+  private readonly view: EditorView;
+  private readonly options: GitBlameOptions;
+  private readonly blameCache: Map<string, GitBlameInfo[]> = new Map();
+  private lastFocusedLine = -1;
+
+  constructor(view: EditorView, options: GitBlameOptions) {
+    this.view = view;
+    this.options = options;
+    this.decorations = Decoration.none;
+
+    if (options.initiallyVisible) {
+      this.fetchBlame();
+    }
+  }
+
+  update(update: ViewUpdate): void {
+    const isVisible = update.state.field(blameVisibleField);
+    if (!isVisible) {
+      this.decorations = Decoration.none;
+      return;
+    }
+
+    const blameData = update.state.field(blameDataField);
+    if (blameData.length === 0) {
+      this.decorations = Decoration.none;
+      return;
+    }
+
+    // Only show blame for the focused/cursor line
+    const cursorLine = update.state.doc.lineAt(
+      update.state.selection.main.head
+    ).number;
+
+    if (cursorLine !== this.lastFocusedLine || update.selectionSet) {
+      this.lastFocusedLine = cursorLine;
+      this.decorations = this.buildDecorations(blameData, cursorLine);
+    }
+  }
+
+  destroy(): void {
+    // Cleanup
+  }
+
+  private buildDecorations(
+    blameData: GitBlameInfo[],
+    focusedLine: number
+  ): DecorationSet {
+    const blame = blameData.find((b) => b.line === focusedLine);
+    if (!blame) {
+      return Decoration.none;
+    }
+
+    if (focusedLine < 1 || focusedLine > this.view.state.doc.lines) {
+      return Decoration.none;
+    }
+
+    const lineObj = this.view.state.doc.line(focusedLine);
+    const widget = new BlameAnnotationWidget(blame);
+
+    return Decoration.set([
+      Decoration.widget({ widget, side: 1 }).range(lineObj.to),
+    ]);
+  }
+
+  async fetchBlame(): Promise<void> {
+    const cached = this.blameCache.get(this.options.filePath);
+    if (cached) {
+      this.view.dispatch({
+        effects: [
+          setBlameDataEffect.of(cached),
+          toggleBlameVisibilityEffect.of(true),
+        ],
+      });
+      return;
+    }
+
+    try {
+      const response = await fetch(this.options.endpoint, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...this.options.headers,
+        },
+        body: JSON.stringify({ filePath: this.options.filePath }),
+      });
+
+      if (!response.ok) {
+        return;
+      }
+
+      const data = (await response.json()) as { blame: GitBlameInfo[] };
+      this.blameCache.set(this.options.filePath, data.blame);
+
+      this.view.dispatch({
+        effects: [
+          setBlameDataEffect.of(data.blame),
+          toggleBlameVisibilityEffect.of(true),
+        ],
+      });
+    } catch {
+      // Network error, ignore
+    }
+  }
+
+  toggleVisibility(): void {
+    const currentlyVisible = this.view.state.field(blameVisibleField);
+
+    if (!currentlyVisible) {
+      // If we don't have data yet, fetch it
+      const blameData = this.view.state.field(blameDataField);
+      if (blameData.length === 0) {
+        this.fetchBlame();
+        return;
+      }
+    }
+
+    this.view.dispatch({
+      effects: toggleBlameVisibilityEffect.of(!currentlyVisible),
+    });
+  }
+}
+
+// --- Git Blame Extension Factory ---
+
+/**
+ * Creates a CodeMirror extension for inline git blame annotations.
+ *
+ * Shows blame info (author, relative time, commit message) for the
+ * currently focused line. Only fetches and displays for one line at
+ * a time for performance.
+ *
+ * @param options - Configuration for blame endpoint and display
+ * @returns A CodeMirror Extension
+ *
+ * @example
+ * ```ts
+ * const blame = createGitBlameExtension({
+ *   endpoint: "/api/git/blame",
+ *   filePath: "src/index.ts",
+ * });
+ * ```
+ */
+export function createGitBlameExtension(options: GitBlameOptions): Extension {
+  const plugin = ViewPlugin.define(
+    (view) => new GitBlamePlugin(view, options),
+    {
+      decorations: (v) => v.decorations,
+    }
+  );
+
+  const blameKeymap = keymap.of([
+    {
+      // Ctrl+Shift+B to toggle blame
+      key: "Ctrl-Shift-b",
+      mac: "Cmd-Shift-b",
+      run: (view) => {
+        const inst = view.plugin(plugin);
+        if (inst) {
+          inst.toggleVisibility();
+          return true;
+        }
+        return false;
+      },
+    },
+  ]);
+
+  return [
+    blameDataField,
+    blameVisibleField.init(() => options.initiallyVisible ?? false),
+    plugin,
+    blameKeymap,
+    blameTheme,
+  ];
+}
+
+/**
+ * Toggle blame visibility from outside the extension.
+ */
+export function toggleGitBlame(view: EditorView): void {
+  const currentlyVisible = view.state.field(blameVisibleField);
+  view.dispatch({
+    effects: toggleBlameVisibilityEffect.of(!currentlyVisible),
+  });
 }
 
 export type { GitChangeMarker, GitDiffHunk, GitDiffRange, GitLineStatus };

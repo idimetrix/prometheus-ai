@@ -1,7 +1,15 @@
 "use client";
 
 import { cn } from "@prometheus/ui";
-import { Bot, File, FolderOpen, Globe, Link, Search } from "lucide-react";
+import {
+  Bot,
+  Code2,
+  File,
+  FolderOpen,
+  Globe,
+  Link,
+  Search,
+} from "lucide-react";
 import {
   type KeyboardEvent,
   useCallback,
@@ -13,7 +21,13 @@ import {
 
 // ── Types ───────────────────────────────────────────────────────
 
-export type MentionType = "file" | "folder" | "docs" | "web" | "agent";
+export type MentionType =
+  | "file"
+  | "folder"
+  | "symbol"
+  | "docs"
+  | "web"
+  | "agent";
 
 export interface Mention {
   display: string;
@@ -46,28 +60,35 @@ const MENTION_CATEGORIES: MentionCategory[] = [
   {
     type: "file",
     prefix: "file:",
-    description: "Include file contents in context",
+    description: "Search project files by path",
     placeholder: "path/to/file.ts",
     icon: <File className="h-3.5 w-3.5" />,
   },
   {
     type: "folder",
     prefix: "folder:",
-    description: "Include file listing of a folder",
+    description: "Search project folders",
     placeholder: "src/components/",
     icon: <FolderOpen className="h-3.5 w-3.5" />,
   },
   {
+    type: "symbol",
+    prefix: "symbol:",
+    description: "Search code symbols (functions, classes, types)",
+    placeholder: "handleSubmit",
+    icon: <Code2 className="h-3.5 w-3.5" />,
+  },
+  {
     type: "docs",
     prefix: "docs:",
-    description: "Fetch and include documentation from URL",
-    placeholder: "https://react.dev/hooks",
+    description: "Search project documentation and README files",
+    placeholder: "README.md",
     icon: <Link className="h-3.5 w-3.5" />,
   },
   {
     type: "web",
     prefix: "web:",
-    description: "Search the web and include results",
+    description: "Search the web for context",
     placeholder: "react useEffect cleanup",
     icon: <Globe className="h-3.5 w-3.5" />,
   },
@@ -145,7 +166,7 @@ function fuzzyScore(text: string, query: string): number {
 
 // ── Parse mentions from text ────────────────────────────────────
 
-const MENTION_REGEX = /@(file|folder|docs|web|agent):(\S+)/g;
+const MENTION_REGEX = /@(file|folder|symbol|docs|web|agent):(\S+)/g;
 
 export function parseMentions(text: string): Mention[] {
   const mentions: Mention[] = [];
@@ -218,6 +239,7 @@ function MentionPill({
   const colorMap: Record<MentionType, string> = {
     file: "bg-blue-500/10 border-blue-500/20 text-blue-300",
     folder: "bg-amber-500/10 border-amber-500/20 text-amber-300",
+    symbol: "bg-purple-500/10 border-purple-500/20 text-purple-300",
     docs: "bg-cyan-500/10 border-cyan-500/20 text-cyan-300",
     web: "bg-emerald-500/10 border-emerald-500/20 text-emerald-300",
     agent: "bg-violet-500/10 border-violet-500/20 text-violet-300",
@@ -226,6 +248,7 @@ function MentionPill({
   const iconMap: Record<MentionType, React.ReactNode> = {
     file: <File className="h-3 w-3" />,
     folder: <FolderOpen className="h-3 w-3" />,
+    symbol: <Code2 className="h-3 w-3" />,
     docs: <Link className="h-3 w-3" />,
     web: <Globe className="h-3 w-3" />,
     agent: <Bot className="h-3 w-3" />,
@@ -267,7 +290,7 @@ export function MentionInput({
   const [mentions, setMentions] = useState<Mention[]>([]);
   const [showDropdown, setShowDropdown] = useState(false);
   const [dropdownMode, setDropdownMode] = useState<
-    "categories" | "file" | "folder" | "agent" | "docs" | "web"
+    "categories" | "file" | "folder" | "symbol" | "agent" | "docs" | "web"
   >("categories");
   const [query, setQuery] = useState("");
   const [selectedIndex, setSelectedIndex] = useState(0);
@@ -323,6 +346,32 @@ export function MentionInput({
         value: f.path,
         type: dropdownMode as MentionType,
       }));
+    }
+
+    if (dropdownMode === "symbol") {
+      // Symbol search results come from external search - show query hint
+      if (!query) {
+        return [
+          {
+            icon: <Code2 className="h-3.5 w-3.5 text-purple-400" />,
+            label: "Type to search symbols...",
+            sublabel: "functions, classes, types",
+            value: "",
+            type: "symbol" as MentionType,
+          },
+        ];
+      }
+      // If fileResults has items that look like symbols, show them
+      // Otherwise show the query as a direct value
+      return [
+        {
+          icon: <Code2 className="h-3.5 w-3.5 text-purple-400" />,
+          label: query,
+          sublabel: "press Enter to search",
+          value: query,
+          type: "symbol" as MentionType,
+        },
+      ];
     }
 
     if (dropdownMode === "agent") {
@@ -687,6 +736,7 @@ export function ResolvedMentionBlock({
   const iconMap: Record<MentionType, React.ReactNode> = {
     file: <File className="h-3.5 w-3.5 text-blue-400" />,
     folder: <FolderOpen className="h-3.5 w-3.5 text-amber-400" />,
+    symbol: <Code2 className="h-3.5 w-3.5 text-purple-400" />,
     docs: <Link className="h-3.5 w-3.5 text-cyan-400" />,
     web: <Globe className="h-3.5 w-3.5 text-emerald-400" />,
     agent: <Bot className="h-3.5 w-3.5 text-violet-400" />,
@@ -695,6 +745,7 @@ export function ResolvedMentionBlock({
   const bgMap: Record<MentionType, string> = {
     file: "border-blue-500/20 bg-blue-500/5",
     folder: "border-amber-500/20 bg-amber-500/5",
+    symbol: "border-purple-500/20 bg-purple-500/5",
     docs: "border-cyan-500/20 bg-cyan-500/5",
     web: "border-emerald-500/20 bg-emerald-500/5",
     agent: "border-violet-500/20 bg-violet-500/5",

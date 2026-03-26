@@ -4,14 +4,52 @@ import { Badge, Card, CardContent } from "@prometheus/ui";
 import { useCallback, useMemo, useState } from "react";
 
 // ---------------------------------------------------------------------------
-// Types
+// Types (MOON-052: Agent Reasoning Transparency)
 // ---------------------------------------------------------------------------
 
 type ReasoningPhase = "observe" | "analyze" | "plan" | "act";
 
+/** Alternative considered at a decision point */
+export interface DecisionAlternative {
+  /** Why this alternative was not chosen */
+  discardReason: string;
+  /** Name of the alternative approach */
+  name: string;
+}
+
+/** A decision point where the agent chose between alternatives */
+export interface DecisionPoint {
+  /** Other options that were considered */
+  alternatives: DecisionAlternative[];
+  /** What the agent decided to do */
+  chosen: string;
+  /** Confidence in this decision (0-1) */
+  confidence: number;
+  /** Unique identifier */
+  id: string;
+  /** Why the agent made this decision */
+  reasoning: string;
+}
+
+/** Tool call with justification for transparency */
+export interface ToolCallJustification {
+  /** Arguments summary */
+  argsSummary?: string;
+  /** Why the agent chose this tool over others */
+  justification: string;
+  /** The tool that was called */
+  toolName: string;
+}
+
 export interface ReasoningStep {
+  /** Alternatives considered at this step */
+  alternatives?: DecisionAlternative[];
+  /** Confidence level for this step (0-1) */
+  confidence?: number;
   /** Content / description of this reasoning step */
   content: string;
+  /** Decision point details if this is a decision step */
+  decisionPoint?: DecisionPoint;
   /** Duration in milliseconds */
   durationMs?: number;
   /** Unique identifier */
@@ -22,11 +60,15 @@ export interface ReasoningStep {
   timestamp: string;
   /** Token count for this step */
   tokenCount?: number;
+  /** Tool call justification if this step involved a tool */
+  toolCall?: ToolCallJustification;
 }
 
 interface ReasoningPanelProps {
   /** Whether the agent is still actively reasoning */
   isStreaming?: boolean;
+  /** Callback when the user clicks "Why?" on a step */
+  onExplainStep?: (stepId: string) => void;
   /** Ordered list of reasoning steps */
   steps: ReasoningStep[];
 }
@@ -97,7 +139,95 @@ function formatTokens(count: number): string {
 // Sub-components
 // ---------------------------------------------------------------------------
 
-function StepEntry({ step, index }: { index: number; step: ReasoningStep }) {
+function ConfidenceBar({ value }: { value: number }) {
+  const pct = Math.round(value * 100);
+  function getConfidenceColor(v: number) {
+    if (v >= 0.8) {
+      return "bg-green-500";
+    }
+    if (v >= 0.5) {
+      return "bg-yellow-500";
+    }
+    return "bg-red-500";
+  }
+  const color = getConfidenceColor(value);
+
+  return (
+    <div className="flex items-center gap-1.5" title={`Confidence: ${pct}%`}>
+      <div className="h-1.5 w-12 overflow-hidden rounded-full bg-zinc-800">
+        <div
+          className={`h-full rounded-full ${color}`}
+          style={{ width: `${pct}%` }}
+        />
+      </div>
+      <span className="font-mono text-[9px] text-zinc-500">{pct}%</span>
+    </div>
+  );
+}
+
+function DecisionPointDetail({ dp }: { dp: DecisionPoint }) {
+  return (
+    <div className="mt-2 rounded-md border border-violet-500/20 bg-violet-500/5 p-2">
+      <div className="mb-1 flex items-center gap-2">
+        <span className="font-semibold text-[10px] text-violet-400">
+          DECISION POINT
+        </span>
+        <ConfidenceBar value={dp.confidence} />
+      </div>
+      <p className="text-[11px] text-zinc-300">Chose: {dp.chosen}</p>
+      <p className="mt-1 text-[10px] text-zinc-500">{dp.reasoning}</p>
+      {dp.alternatives.length > 0 && (
+        <div className="mt-2 space-y-1">
+          <span className="text-[9px] text-zinc-600">
+            Alternatives considered:
+          </span>
+          {dp.alternatives.map((alt) => (
+            <div
+              className="flex items-start gap-1.5 text-[10px]"
+              key={alt.name}
+            >
+              <span className="mt-0.5 inline-block h-1.5 w-1.5 shrink-0 rounded-full bg-zinc-600" />
+              <span className="text-zinc-500">
+                <span className="text-zinc-400">{alt.name}</span>
+                {" — "}
+                {alt.discardReason}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ToolCallDetail({ tc }: { tc: ToolCallJustification }) {
+  return (
+    <div className="mt-2 rounded-md border border-cyan-500/20 bg-cyan-500/5 p-2">
+      <div className="mb-1 flex items-center gap-2">
+        <span className="font-semibold text-[10px] text-cyan-400">
+          TOOL CALL
+        </span>
+        <span className="rounded bg-zinc-800/80 px-1.5 py-0.5 font-mono text-[9px] text-zinc-400">
+          {tc.toolName}
+        </span>
+      </div>
+      {tc.argsSummary && (
+        <p className="font-mono text-[10px] text-zinc-500">{tc.argsSummary}</p>
+      )}
+      <p className="mt-1 text-[10px] text-zinc-400">{tc.justification}</p>
+    </div>
+  );
+}
+
+function StepEntry({
+  step,
+  index,
+  onExplain,
+}: {
+  index: number;
+  onExplain?: (stepId: string) => void;
+  step: ReasoningStep;
+}) {
   const [isOpen, setIsOpen] = useState(false);
   const config = PHASE_CONFIG[step.phase];
   const preview =
@@ -106,6 +236,14 @@ function StepEntry({ step, index }: { index: number; step: ReasoningStep }) {
   const toggle = useCallback(() => {
     setIsOpen((p) => !p);
   }, []);
+
+  const handleExplain = useCallback(
+    (e: React.MouseEvent) => {
+      e.stopPropagation();
+      onExplain?.(step.id);
+    },
+    [onExplain, step.id]
+  );
 
   return (
     <div className={`rounded-lg border ${config.border} ${config.bg}`}>
@@ -137,6 +275,25 @@ function StepEntry({ step, index }: { index: number; step: ReasoningStep }) {
         >
           {config.label}
         </span>
+
+        {/* Confidence indicator (inline) */}
+        {step.confidence !== undefined && (
+          <ConfidenceBar value={step.confidence} />
+        )}
+
+        {/* Decision point indicator */}
+        {step.decisionPoint && (
+          <span className="rounded-full bg-violet-500/20 px-1.5 py-0.5 text-[9px] text-violet-400">
+            Decision
+          </span>
+        )}
+
+        {/* Tool call indicator */}
+        {step.toolCall && (
+          <span className="rounded-full bg-cyan-500/20 px-1.5 py-0.5 text-[9px] text-cyan-400">
+            {step.toolCall.toolName}
+          </span>
+        )}
 
         {/* Preview (collapsed only) */}
         {!isOpen && (
@@ -178,10 +335,56 @@ function StepEntry({ step, index }: { index: number; step: ReasoningStep }) {
             {step.tokenCount !== undefined && (
               <span>Tokens: {step.tokenCount.toLocaleString()}</span>
             )}
+            {step.confidence !== undefined && (
+              <span>Confidence: {Math.round(step.confidence * 100)}%</span>
+            )}
           </div>
           <p className="whitespace-pre-wrap text-xs text-zinc-300 leading-relaxed">
             {step.content}
           </p>
+
+          {/* Decision point details */}
+          {step.decisionPoint && (
+            <DecisionPointDetail dp={step.decisionPoint} />
+          )}
+
+          {/* Tool call justification */}
+          {step.toolCall && <ToolCallDetail tc={step.toolCall} />}
+
+          {/* Alternatives considered (if not from a decision point) */}
+          {step.alternatives &&
+            step.alternatives.length > 0 &&
+            !step.decisionPoint && (
+              <div className="mt-2 space-y-1">
+                <span className="text-[9px] text-zinc-600">
+                  Alternatives considered:
+                </span>
+                {step.alternatives.map((alt) => (
+                  <div
+                    className="flex items-start gap-1.5 text-[10px]"
+                    key={alt.name}
+                  >
+                    <span className="mt-0.5 inline-block h-1.5 w-1.5 shrink-0 rounded-full bg-zinc-600" />
+                    <span className="text-zinc-500">
+                      <span className="text-zinc-400">{alt.name}</span>
+                      {" — "}
+                      {alt.discardReason}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+
+          {/* "Why did you do this?" button */}
+          {onExplain && (
+            <button
+              className="mt-2 rounded border border-zinc-700 px-2 py-1 text-[10px] text-zinc-500 transition-colors hover:border-zinc-600 hover:text-zinc-300"
+              onClick={handleExplain}
+              type="button"
+            >
+              Why did you do this?
+            </button>
+          )}
         </div>
       )}
     </div>
@@ -212,6 +415,7 @@ function StreamingIndicator() {
 export function ReasoningPanel({
   steps,
   isStreaming = false,
+  onExplainStep,
 }: ReasoningPanelProps) {
   const [filterPhase, setFilterPhase] = useState<ReasoningPhase | "">("");
 
@@ -327,7 +531,12 @@ export function ReasoningPanel({
         ) : (
           <div className="space-y-1.5">
             {filteredSteps.map((step, idx) => (
-              <StepEntry index={idx} key={step.id} step={step} />
+              <StepEntry
+                index={idx}
+                key={step.id}
+                onExplain={onExplainStep}
+                step={step}
+              />
             ))}
           </div>
         )}

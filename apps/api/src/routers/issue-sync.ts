@@ -14,6 +14,9 @@ import {
   getSyncStatusSchema,
   listSyncedIssuesSchema,
   listSyncedPRsSchema,
+  pushCommentSchema,
+  pushPRLinkSchema,
+  pushStatusUpdateSchema,
   syncIssuesSchema,
   syncPRsSchema,
   unlinkIssueSchema,
@@ -23,6 +26,9 @@ import { and, count, desc, eq, lt } from "drizzle-orm";
 import {
   fetchProviderIssues,
   fetchProviderPRs,
+  pushProviderComment,
+  pushProviderPRLink,
+  pushProviderStatusUpdate,
 } from "../lib/issue-sync-providers";
 import { protectedProcedure, router } from "../trpc";
 
@@ -431,6 +437,176 @@ export const issueSyncRouter = router({
       logger.info({ issueId: input.issueId }, "Issue unlinked from agent");
 
       return { success: true };
+    }),
+
+  // ---------------------------------------------------------------------------
+  // Push status update to external issue provider (DEV-008)
+  // ---------------------------------------------------------------------------
+  pushStatusUpdate: protectedProcedure
+    .input(pushStatusUpdateSchema)
+    .mutation(async ({ input, ctx }) => {
+      const issue = await ctx.db.query.syncedIssues.findFirst({
+        where: eq(syncedIssues.id, input.issueId),
+      });
+
+      if (!issue || issue.orgId !== ctx.orgId) {
+        throw new TRPCError({
+          code: "NOT_FOUND",
+          message: "Issue not found",
+        });
+      }
+
+      const project = await verifyProjectAccess(
+        ctx.db,
+        issue.projectId,
+        ctx.orgId
+      );
+
+      const result = await pushProviderStatusUpdate(
+        issue.provider,
+        project.repoUrl ?? "",
+        ctx.db,
+        ctx.orgId,
+        issue.externalId,
+        input.status
+      );
+
+      if (result.success) {
+        await ctx.db
+          .update(syncedIssues)
+          .set({
+            externalStatus: input.status,
+            lastSyncedAt: new Date(),
+          })
+          .where(eq(syncedIssues.id, input.issueId));
+
+        logger.info(
+          {
+            issueId: input.issueId,
+            provider: issue.provider,
+            status: input.status,
+          },
+          "Status update pushed to provider"
+        );
+      } else {
+        logger.error(
+          {
+            issueId: input.issueId,
+            provider: issue.provider,
+            error: result.error,
+          },
+          "Failed to push status update"
+        );
+      }
+
+      return result;
+    }),
+
+  // ---------------------------------------------------------------------------
+  // Push comment to external issue (DEV-008)
+  // ---------------------------------------------------------------------------
+  pushComment: protectedProcedure
+    .input(pushCommentSchema)
+    .mutation(async ({ input, ctx }) => {
+      const issue = await ctx.db.query.syncedIssues.findFirst({
+        where: eq(syncedIssues.id, input.issueId),
+      });
+
+      if (!issue || issue.orgId !== ctx.orgId) {
+        throw new TRPCError({
+          code: "NOT_FOUND",
+          message: "Issue not found",
+        });
+      }
+
+      const project = await verifyProjectAccess(
+        ctx.db,
+        issue.projectId,
+        ctx.orgId
+      );
+
+      const result = await pushProviderComment(
+        issue.provider,
+        project.repoUrl ?? "",
+        ctx.db,
+        ctx.orgId,
+        issue.externalId,
+        input.comment
+      );
+
+      if (result.success) {
+        logger.info(
+          { issueId: input.issueId, provider: issue.provider },
+          "Comment pushed to provider"
+        );
+      } else {
+        logger.error(
+          {
+            issueId: input.issueId,
+            provider: issue.provider,
+            error: result.error,
+          },
+          "Failed to push comment"
+        );
+      }
+
+      return result;
+    }),
+
+  // ---------------------------------------------------------------------------
+  // Push PR link to external issue (DEV-008)
+  // ---------------------------------------------------------------------------
+  pushPRLink: protectedProcedure
+    .input(pushPRLinkSchema)
+    .mutation(async ({ input, ctx }) => {
+      const issue = await ctx.db.query.syncedIssues.findFirst({
+        where: eq(syncedIssues.id, input.issueId),
+      });
+
+      if (!issue || issue.orgId !== ctx.orgId) {
+        throw new TRPCError({
+          code: "NOT_FOUND",
+          message: "Issue not found",
+        });
+      }
+
+      const project = await verifyProjectAccess(
+        ctx.db,
+        issue.projectId,
+        ctx.orgId
+      );
+
+      const result = await pushProviderPRLink(
+        issue.provider,
+        project.repoUrl ?? "",
+        ctx.db,
+        ctx.orgId,
+        issue.externalId,
+        input.prUrl,
+        input.prTitle
+      );
+
+      if (result.success) {
+        logger.info(
+          {
+            issueId: input.issueId,
+            provider: issue.provider,
+            prUrl: input.prUrl,
+          },
+          "PR link pushed to provider"
+        );
+      } else {
+        logger.error(
+          {
+            issueId: input.issueId,
+            provider: issue.provider,
+            error: result.error,
+          },
+          "Failed to push PR link"
+        );
+      }
+
+      return result;
     }),
 
   // ---------------------------------------------------------------------------

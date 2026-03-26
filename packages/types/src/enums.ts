@@ -12,6 +12,7 @@ export const AgentRole = {
   SECURITY_AUDITOR: "security_auditor",
   DEPLOY_ENGINEER: "deploy_engineer",
   DOCUMENTATION_SPECIALIST: "documentation_specialist",
+  PERFORMANCE_OPTIMIZER: "performance_optimizer",
 } as const;
 export type AgentRole = (typeof AgentRole)[keyof typeof AgentRole];
 

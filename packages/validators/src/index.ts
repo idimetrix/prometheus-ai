@@ -13,6 +13,7 @@ export * from "./project-repos";
 export * from "./prometheus-config";
 export * from "./rules";
 export * from "./search";
+export * from "./secrets";
 export * from "./session";
 export * from "./settings";
 export * from "./task";

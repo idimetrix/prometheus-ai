@@ -11,6 +11,7 @@ import { DocumentationSpecialistAgent } from "./documentation-specialist";
 import { FrontendCoderAgent } from "./frontend-coder";
 import { IntegrationCoderAgent } from "./integration-coder";
 import { OrchestratorAgent } from "./orchestrator";
+import { PerformanceOptimizerAgent } from "./performance-optimizer";
 import { PlannerAgent } from "./planner";
 import { SecurityAuditorAgent } from "./security-auditor";
 import { TestEngineerAgent } from "./test-engineer";
@@ -227,6 +228,22 @@ export const AGENT_ROLES: Record<string, AgentRoleConfig> = {
       "terminal_exec",
     ],
     create: () => new DocumentationSpecialistAgent(),
+  },
+  performance_optimizer: {
+    role: "performance_optimizer",
+    displayName: "Performance Optimizer",
+    description: "Analyzes and optimizes application performance",
+    preferredModel: "ollama/deepseek-r1:32b",
+    tools: [
+      "terminal_exec",
+      "file_read",
+      "file_write",
+      "file_edit",
+      "search_content",
+      "search_files",
+      "browser_open",
+    ],
+    create: () => new PerformanceOptimizerAgent(),
   },
 };
 

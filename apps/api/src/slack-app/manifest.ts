@@ -111,7 +111,12 @@ export function generateSlackManifest(apiBaseUrl: string): SlackManifest {
     settings: {
       event_subscriptions: {
         request_url: `${apiBaseUrl}/webhooks/slack/events`,
-        bot_events: ["app_mention", "message.im"],
+        bot_events: [
+          "app_mention",
+          "message.im",
+          "file_shared",
+          "message.channels",
+        ],
       },
       interactivity: {
         is_enabled: true,

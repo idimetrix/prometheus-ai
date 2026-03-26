@@ -3,10 +3,13 @@
 import {
   Copy,
   Download,
+  ImagePlus,
   Loader2,
   RotateCcw,
   Send,
   Sparkles,
+  Upload,
+  X,
 } from "lucide-react";
 import dynamic from "next/dynamic";
 import { useCallback, useRef, useState } from "react";
@@ -57,15 +60,145 @@ export default function GeneratePage() {
   const [previewTheme, setPreviewTheme] = useState<"light" | "dark">("dark");
   const [durationMs, setDurationMs] = useState<number | null>(null);
   const [showCode, setShowCode] = useState(false);
+  const [uploadedImage, setUploadedImage] = useState<string | null>(null);
+  const [uploadedImageName, setUploadedImageName] = useState<string | null>(
+    null
+  );
+  const [isDragging, setIsDragging] = useState(false);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const generateMutation = trpc.generate.ui.useMutation();
   const refineMutation = trpc.generate.refine.useMutation();
+  const generateFromImageMutation = trpc.generate.fromImage.useMutation();
 
   const scrollToBottom = useCallback(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, []);
+
+  const handleImageFile = useCallback((file: File) => {
+    if (!file.type.startsWith("image/")) {
+      toast.error("Please upload an image file (PNG, JPG, etc.)");
+      return;
+    }
+    if (file.size > 10 * 1024 * 1024) {
+      toast.error("Image must be under 10MB");
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const result = e.target?.result;
+      if (typeof result === "string") {
+        setUploadedImage(result);
+        setUploadedImageName(file.name);
+      }
+    };
+    reader.readAsDataURL(file);
+  }, []);
+
+  const handleDragOver = useCallback(
+    (e: React.DragEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (!isDragging) {
+        setIsDragging(true);
+      }
+    },
+    [isDragging]
+  );
+
+  const handleDragLeave = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
+  }, []);
+
+  const handleDrop = useCallback(
+    (e: React.DragEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      setIsDragging(false);
+      const file = e.dataTransfer.files[0];
+      if (file) {
+        handleImageFile(file);
+      }
+    },
+    [handleImageFile]
+  );
+
+  const handleFileSelect = useCallback(
+    (e: React.ChangeEvent<HTMLInputElement>) => {
+      const file = e.target.files?.[0];
+      if (file) {
+        handleImageFile(file);
+      }
+      // Reset so the same file can be re-selected
+      e.target.value = "";
+    },
+    [handleImageFile]
+  );
+
+  const clearUploadedImage = useCallback(() => {
+    setUploadedImage(null);
+    setUploadedImageName(null);
+  }, []);
+
+  const handleGenerateFromImage = useCallback(async () => {
+    if (!uploadedImage || isGenerating) {
+      return;
+    }
+
+    setIsGenerating(true);
+    const userMsg: ChatMessage = {
+      id: crypto.randomUUID(),
+      role: "user",
+      content: `Generate component from uploaded image: ${uploadedImageName ?? "image"}`,
+    };
+    setMessages((prev) => [...prev, userMsg]);
+
+    try {
+      const result = await generateFromImageMutation.mutateAsync({
+        imageBase64: uploadedImage,
+        prompt: input.trim() || "Convert this design into a component",
+        style,
+        framework,
+      });
+
+      setCode(result.code);
+      setDurationMs(result.durationMs);
+
+      const assistantMsg: ChatMessage = {
+        id: crypto.randomUUID(),
+        role: "assistant",
+        content: `Generated from image in ${(result.durationMs / 1000).toFixed(1)}s. Component ready.`,
+      };
+      setMessages((prev) => [...prev, assistantMsg]);
+      scrollToBottom();
+    } catch (err) {
+      logger.error("Image-to-code generation failed:", err);
+      toast.error("Failed to generate from image. Please try again.");
+
+      const errorMsg: ChatMessage = {
+        id: crypto.randomUUID(),
+        role: "assistant",
+        content: "Image generation failed. Please try again.",
+      };
+      setMessages((prev) => [...prev, errorMsg]);
+    } finally {
+      setIsGenerating(false);
+      inputRef.current?.focus();
+    }
+  }, [
+    uploadedImage,
+    uploadedImageName,
+    isGenerating,
+    input,
+    style,
+    framework,
+    generateFromImageMutation,
+    scrollToBottom,
+  ]);
 
   const handleGenerate = useCallback(
     async (prompt?: string) => {
@@ -173,6 +306,8 @@ export default function GeneratePage() {
     setMessages([]);
     setDurationMs(null);
     setShowCode(false);
+    setUploadedImage(null);
+    setUploadedImageName(null);
   }
 
   return (
@@ -217,6 +352,80 @@ export default function GeneratePage() {
               <option value="nextjs">Next.js</option>
             </select>
           </div>
+        </div>
+
+        {/* Image Upload Zone */}
+        <div
+          className={`border-b px-4 py-3 ${isDragging ? "bg-primary/10" : ""}`}
+          onDragLeave={handleDragLeave}
+          onDragOver={handleDragOver}
+          onDrop={handleDrop}
+        >
+          <input
+            accept="image/*"
+            className="hidden"
+            onChange={handleFileSelect}
+            ref={fileInputRef}
+            type="file"
+          />
+
+          {uploadedImage ? (
+            <div className="flex items-start gap-3">
+              <div className="relative">
+                {/* biome-ignore lint/performance/noImgElement: preview thumbnail for base64 data URL */}
+                {/* biome-ignore lint/correctness/useImageSize: thumbnail dimensions set via CSS */}
+                <img
+                  alt="Uploaded design"
+                  className="h-16 w-24 rounded-md border border-zinc-700 object-cover"
+                  src={uploadedImage}
+                />
+                <button
+                  aria-label="Remove uploaded image"
+                  className="absolute -top-1.5 -right-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-zinc-700 text-zinc-300 transition-colors hover:bg-red-500 hover:text-white"
+                  onClick={clearUploadedImage}
+                  type="button"
+                >
+                  <X className="h-3 w-3" />
+                </button>
+              </div>
+              <div className="flex flex-1 flex-col gap-1.5">
+                <span className="max-w-[180px] truncate text-foreground text-xs">
+                  {uploadedImageName}
+                </span>
+                <button
+                  className="flex w-fit items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-primary-foreground text-xs transition-colors hover:bg-primary/90 disabled:opacity-50"
+                  disabled={isGenerating}
+                  onClick={handleGenerateFromImage}
+                  type="button"
+                >
+                  <Sparkles className="h-3 w-3" />
+                  Generate from image
+                </button>
+              </div>
+            </div>
+          ) : (
+            <button
+              className={`flex w-full items-center justify-center gap-2 rounded-lg border-2 border-dashed px-4 py-3 text-muted-foreground text-xs transition-colors ${
+                isDragging
+                  ? "border-primary text-primary"
+                  : "border-zinc-700 hover:border-zinc-500 hover:text-foreground"
+              }`}
+              onClick={() => fileInputRef.current?.click()}
+              type="button"
+            >
+              {isDragging ? (
+                <>
+                  <Upload className="h-4 w-4" />
+                  Drop image here
+                </>
+              ) : (
+                <>
+                  <ImagePlus className="h-4 w-4" />
+                  Upload screenshot or mockup
+                </>
+              )}
+            </button>
+          )}
         </div>
 
         {/* Messages */}

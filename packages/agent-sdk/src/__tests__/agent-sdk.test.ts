@@ -36,8 +36,8 @@ describe("AGENT_ROLES", () => {
     "documentation_specialist",
   ];
 
-  it("defines all 12 agent roles", () => {
-    expect(Object.keys(AGENT_ROLES)).toHaveLength(12);
+  it("defines all 13 agent roles", () => {
+    expect(Object.keys(AGENT_ROLES)).toHaveLength(13);
   });
 
   it("contains all expected roles", () => {

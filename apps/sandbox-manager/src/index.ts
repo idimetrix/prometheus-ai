@@ -25,6 +25,8 @@ import { SandboxPool } from "./pool";
 import { PoolManager } from "./pool-manager";
 import { DevProvider } from "./providers/dev";
 import { DockerProvider } from "./providers/docker";
+import { PersistentSandboxProvider } from "./providers/persistent";
+import { createPersistentRoutes } from "./routes/persistent";
 import { createPreviewProxyRoute } from "./routes/preview-proxy";
 import { screenshotRoute } from "./routes/screenshot";
 import {
@@ -743,6 +745,13 @@ app.get("/sandbox/:id", (c) => {
   });
 });
 
+// ---- Persistent Sandbox Routes ----
+const persistentProvider = new PersistentSandboxProvider(
+  process.env.SANDBOX_IMAGE ?? "node:20-slim"
+);
+const persistentRoutes = createPersistentRoutes(persistentProvider);
+app.route("/", persistentRoutes);
+
 // ---- Screenshots (Playwright) ----
 app.route("/", screenshotRoute);
 
@@ -781,6 +790,9 @@ async function start() {
       "Warm pool manager initialization failed (will create sandboxes on demand)"
     );
   });
+
+  // Start the persistent sandbox idle monitor
+  persistentProvider.startIdleMonitor();
 
   logger.info(
     {
@@ -827,7 +839,11 @@ async function start() {
   // Register custom cleanup with the centralized shutdown handler
   registerShutdownHandler("sandbox-manager", async () => {
     logger.info("Shutting down...");
-    await Promise.allSettled([sandboxPool.shutdown(), poolManager.shutdown()]);
+    await Promise.allSettled([
+      sandboxPool.shutdown(),
+      poolManager.shutdown(),
+      persistentProvider.shutdown(),
+    ]);
   });
 }
 

@@ -6,10 +6,18 @@ import { trpc } from "@/lib/trpc";
 import { useSessionStore } from "@/stores/session.store";
 
 interface PlanModeProps {
+  /** Callback when user toggles plan mode on/off */
+  onTogglePlanMode?: (enabled: boolean) => void;
+  /** Whether plan mode is enabled (agent pauses for approval) */
+  planModeEnabled?: boolean;
   sessionId: string;
 }
 
-export function PlanMode({ sessionId }: PlanModeProps) {
+export function PlanMode({
+  sessionId,
+  planModeEnabled = true,
+  onTogglePlanMode,
+}: PlanModeProps) {
   const { planSteps, reasoning } = useSessionStore();
   const [editingStepId, setEditingStepId] = useState<string | null>(null);
   const [editText, setEditText] = useState("");
@@ -19,11 +27,35 @@ export function PlanMode({ sessionId }: PlanModeProps) {
   const [isApproving, setIsApproving] = useState(false);
   const [isRejecting, setIsRejecting] = useState(false);
   const [feedback, setFeedback] = useState("");
+  const [checkedSteps, setCheckedSteps] = useState<Set<string>>(new Set());
+
+  function toggleStepChecked(stepId: string) {
+    setCheckedSteps((prev) => {
+      const next = new Set(prev);
+      if (next.has(stepId)) {
+        next.delete(stepId);
+      } else {
+        next.add(stepId);
+      }
+      return next;
+    });
+  }
 
   async function handleApprove() {
     setIsApproving(true);
     try {
-      await sendMessage.mutateAsync({ sessionId, content: "[APPROVE_PLAN]" });
+      if (checkedSteps.size > 0) {
+        const selectedIds = Array.from(checkedSteps).join(",");
+        await sendMessage.mutateAsync({
+          sessionId,
+          content: `[APPROVE_STEPS:${selectedIds}]`,
+        });
+      } else {
+        await sendMessage.mutateAsync({
+          sessionId,
+          content: "[APPROVE_PLAN]",
+        });
+      }
     } catch (err) {
       logger.error("Failed to approve plan:", err);
     } finally {
@@ -69,10 +101,25 @@ export function PlanMode({ sessionId }: PlanModeProps) {
       ? Math.round((completedCount / planSteps.length) * 100)
       : 0;
 
+  const isPendingStep = (status: string) =>
+    status !== "done" &&
+    status !== "completed" &&
+    status !== "running" &&
+    status !== "in_progress";
+
+  const approveLabel =
+    checkedSteps.size > 0
+      ? `Approve ${checkedSteps.size} Step${checkedSteps.size > 1 ? "s" : ""}`
+      : "Approve & Execute";
+
   return (
-    <div className="flex h-full gap-4">
+    <div
+      className={`flex h-full gap-4 ${planModeEnabled ? "rounded-xl ring-2 ring-indigo-500/30 ring-offset-2 ring-offset-zinc-950" : ""}`}
+    >
       {/* Plan steps (main area) */}
-      <div className="flex flex-1 flex-col rounded-xl border border-zinc-800 bg-zinc-900/50">
+      <div
+        className={`flex flex-1 flex-col rounded-xl border bg-zinc-900/50 ${planModeEnabled ? "border-indigo-500/40" : "border-zinc-800"}`}
+      >
         <div className="flex items-center justify-between border-zinc-800 border-b px-4 py-3">
           <div className="flex items-center gap-2">
             <svg
@@ -92,6 +139,31 @@ export function PlanMode({ sessionId }: PlanModeProps) {
             <span className="font-medium text-sm text-zinc-200">
               Execution Plan
             </span>
+
+            {/* Plan Mode Toggle */}
+            <button
+              className={`ml-2 flex items-center gap-1.5 rounded-full px-2.5 py-0.5 font-medium text-[10px] transition-colors ${
+                planModeEnabled
+                  ? "bg-indigo-500/20 text-indigo-300"
+                  : "bg-zinc-800 text-zinc-500 hover:bg-zinc-700"
+              }`}
+              onClick={() => onTogglePlanMode?.(!planModeEnabled)}
+              title={
+                planModeEnabled
+                  ? "Plan Mode ON: Agent pauses for approval"
+                  : "Plan Mode OFF: Agent executes automatically"
+              }
+              type="button"
+            >
+              <div
+                className={`h-2.5 w-5 rounded-full transition-colors ${planModeEnabled ? "bg-indigo-500" : "bg-zinc-600"}`}
+              >
+                <div
+                  className={`h-2.5 w-2.5 rounded-full bg-white transition-transform ${planModeEnabled ? "translate-x-2.5" : "translate-x-0"}`}
+                />
+              </div>
+              Plan Mode
+            </button>
           </div>
           <div className="flex items-center gap-3">
             <span className="text-xs text-zinc-500">
@@ -112,6 +184,30 @@ export function PlanMode({ sessionId }: PlanModeProps) {
             )}
           </div>
         </div>
+
+        {/* Plan mode banner */}
+        {planModeEnabled && planSteps.length > 0 && completedCount === 0 && (
+          <div className="flex items-center gap-2 border-indigo-500/20 border-b bg-indigo-500/5 px-4 py-2">
+            <svg
+              aria-hidden="true"
+              className="h-4 w-4 text-indigo-400"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth={1.5}
+              viewBox="0 0 24 24"
+            >
+              <path
+                d="M12 9v3.75m9-.75a9 9 0 1 1-18 0 9 9 0 0 1 18 0Zm-9 3.75h.008v.008H12v-.008Z"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </svg>
+            <span className="text-indigo-300 text-xs">
+              Agent is paused. Review the plan below, check steps to include,
+              then click Approve &amp; Execute to proceed.
+            </span>
+          </div>
+        )}
 
         <div className="flex-1 overflow-auto p-4">
           {planSteps.length === 0 ? (
@@ -142,6 +238,16 @@ export function PlanMode({ sessionId }: PlanModeProps) {
                 >
                   <div className="flex items-start justify-between gap-3">
                     <div className="flex items-start gap-3">
+                      {/* Checkbox for step selection in plan mode */}
+                      {planModeEnabled && isPendingStep(step.status) && (
+                        <input
+                          aria-label={`Select step: ${step.title}`}
+                          checked={checkedSteps.has(step.id)}
+                          className="mt-1.5 h-4 w-4 shrink-0 rounded border-zinc-600 bg-zinc-800 accent-indigo-500"
+                          onChange={() => toggleStepChecked(step.id)}
+                          type="checkbox"
+                        />
+                      )}
                       <div
                         className={`mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full font-medium text-xs ${
                           (
@@ -195,21 +301,18 @@ export function PlanMode({ sessionId }: PlanModeProps) {
                     </div>
 
                     {/* Edit button */}
-                    {step.status !== "done" &&
-                      step.status !== "completed" &&
-                      step.status !== "running" &&
-                      step.status !== "in_progress" && (
-                        <button
-                          className="shrink-0 rounded-lg border border-zinc-700 px-2 py-1 text-[10px] text-zinc-400 transition-colors hover:bg-zinc-800 hover:text-zinc-300"
-                          onClick={() => {
-                            setEditingStepId(step.id);
-                            setEditText(step.title);
-                          }}
-                          type="button"
-                        >
-                          Modify
-                        </button>
-                      )}
+                    {isPendingStep(step.status) && (
+                      <button
+                        className="shrink-0 rounded-lg border border-zinc-700 px-2 py-1 text-[10px] text-zinc-400 transition-colors hover:bg-zinc-800 hover:text-zinc-300"
+                        onClick={() => {
+                          setEditingStepId(step.id);
+                          setEditText(step.title);
+                        }}
+                        type="button"
+                      >
+                        Modify
+                      </button>
+                    )}
                   </div>
 
                   {/* Inline edit */}
@@ -278,7 +381,7 @@ export function PlanMode({ sessionId }: PlanModeProps) {
                     strokeLinejoin="round"
                   />
                 </svg>
-                Approve
+                {approveLabel}
               </button>
               <button
                 className="flex items-center gap-1.5 rounded-lg border border-red-800/50 bg-red-950/50 px-4 py-2 font-medium text-red-400 text-xs transition-colors hover:bg-red-900/50 disabled:opacity-50"

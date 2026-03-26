@@ -358,6 +358,9 @@ export function ChatInputEnhanced({
   const [slashQuery, setSlashQuery] = useState("");
   const [popupSelectedIndex, setPopupSelectedIndex] = useState(0);
   const [showModeSelector, setShowModeSelector] = useState(false);
+  const [pastedImages, setPastedImages] = useState<
+    Array<{ file: File; id: string; previewUrl: string }>
+  >([]);
 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const {
@@ -593,6 +596,47 @@ export function ChatInputEnhanced({
     [addAttachment]
   );
 
+  // Handle paste events to detect images from clipboard
+  const handlePaste = useCallback(
+    (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+      const items = e.clipboardData.items;
+      const imageFiles: File[] = [];
+
+      for (const item of Array.from(items)) {
+        if (item.type.startsWith("image/")) {
+          const file = item.getAsFile();
+          if (file) {
+            imageFiles.push(file);
+          }
+        }
+      }
+
+      if (imageFiles.length === 0) {
+        return;
+      }
+
+      e.preventDefault();
+
+      for (const file of imageFiles) {
+        const previewUrl = URL.createObjectURL(file);
+        const id = `paste_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+        setPastedImages((prev) => [...prev, { id, file, previewUrl }]);
+        addAttachment(file);
+      }
+    },
+    [addAttachment]
+  );
+
+  const removePastedImage = useCallback((id: string) => {
+    setPastedImages((prev) => {
+      const img = prev.find((i) => i.id === id);
+      if (img) {
+        URL.revokeObjectURL(img.previewUrl);
+      }
+      return prev.filter((i) => i.id !== id);
+    });
+  }, []);
+
   const tokenEstimate = estimateTokens(input);
   const currentMode =
     MODE_OPTIONS.find((m) => m.value === mode) ?? DEFAULT_MODE;
@@ -663,6 +707,40 @@ export function ChatInputEnhanced({
           </div>
         )}
 
+        {/* Pasted image previews */}
+        {pastedImages.length > 0 && (
+          <div className="mb-2 flex flex-wrap gap-2">
+            {pastedImages.map((img) => (
+              <div
+                className="group relative inline-flex items-center gap-2 rounded-lg border border-zinc-700 bg-zinc-900 p-1.5"
+                key={img.id}
+              >
+                <div
+                  aria-label={img.file.name}
+                  className="h-12 w-12 shrink-0 rounded bg-center bg-cover"
+                  role="img"
+                  style={{ backgroundImage: `url(${img.previewUrl})` }}
+                />
+                <div className="min-w-0 pr-4">
+                  <div className="max-w-[100px] truncate text-[10px] text-zinc-300">
+                    {img.file.name || "Pasted image"}
+                  </div>
+                  <div className="text-[9px] text-zinc-600">
+                    {formatFileSize(img.file.size)}
+                  </div>
+                </div>
+                <button
+                  className="absolute -top-1.5 -right-1.5 rounded-full border border-zinc-700 bg-zinc-800 p-0.5 opacity-0 transition-opacity group-hover:opacity-100"
+                  onClick={() => removePastedImage(img.id)}
+                  type="button"
+                >
+                  <X className="h-3 w-3 text-zinc-400" />
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+
         {/* Input area */}
         <div className="flex gap-2">
           <div className="relative min-w-0 flex-1">
@@ -674,6 +752,7 @@ export function ChatInputEnhanced({
               disabled={disabled}
               onChange={(e) => handleInputChange(e.target.value)}
               onKeyDown={handleKeyDown}
+              onPaste={handlePaste}
               placeholder={placeholder}
               ref={textareaRef}
               rows={1}

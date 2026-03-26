@@ -13,6 +13,12 @@ export { BranchExecutor } from "./branch-executor";
 export type { SpeculationMetricsSummary } from "./metrics";
 export { SpeculationMetrics } from "./metrics";
 export type {
+  Approach,
+  MultiApproachOptions,
+  SpeculativeExecutionResult,
+} from "./multi-approach-executor";
+export { MultiApproachExecutor } from "./multi-approach-executor";
+export type {
   BranchResult,
   SpeculationBranch,
 } from "./multi-branch";

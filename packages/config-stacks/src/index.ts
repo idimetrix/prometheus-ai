@@ -27,3 +27,8 @@ export {
   matchScaffoldTemplate,
   type ScaffoldBlueprint,
 } from "./templates/index";
+export type {
+  WorkspaceDetectionResult,
+  WorkspaceType,
+} from "./workspace-detector";
+export { detectWorkspace } from "./workspace-detector";

@@ -16,8 +16,10 @@ import {
   Filter,
   GripVertical,
   MinusCircle,
+  Plus,
 } from "lucide-react";
 import { useCallback, useMemo, useState } from "react";
+import { trpc } from "@/lib/trpc";
 
 /* -------------------------------------------------------------------------- */
 /*  Types                                                                      */
@@ -410,6 +412,177 @@ export function KanbanBoard({
           </span>
         ))}
       </div>
+    </div>
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Status mapping helpers                                                     */
+/* -------------------------------------------------------------------------- */
+
+/** Normalize createdAt to an ISO string. */
+function normalizeCreatedAt(createdAt: string | Date | unknown): string {
+  if (typeof createdAt === "string") {
+    return createdAt;
+  }
+  if (createdAt instanceof Date) {
+    return createdAt.toISOString();
+  }
+  return new Date().toISOString();
+}
+
+/** Map backend task status to kanban column */
+function mapStatusToColumn(status: string): KanbanTask["status"] {
+  switch (status) {
+    case "pending":
+    case "queued":
+      return "backlog";
+    case "running":
+      return "in_progress";
+    case "completed":
+      return "done";
+    case "failed":
+    case "cancelled":
+      return "done";
+    default:
+      return "backlog";
+  }
+}
+
+/** Map kanban column back to backend task status */
+function mapColumnToStatus(column: string): string {
+  switch (column) {
+    case "backlog":
+      return "pending";
+    case "in_progress":
+      return "running";
+    case "in_review":
+      return "running";
+    case "done":
+      return "completed";
+    default:
+      return "pending";
+  }
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Connected Kanban Board (wired to tRPC)                                     */
+/* -------------------------------------------------------------------------- */
+
+interface ConnectedKanbanBoardProps {
+  onNewTask?: () => void;
+  onTaskClick?: (task: KanbanTask) => void;
+  projectId?: string;
+}
+
+export function ConnectedKanbanBoard({
+  projectId,
+  onTaskClick,
+  onNewTask,
+}: ConnectedKanbanBoardProps) {
+  const [selectedProject, setSelectedProject] = useState(projectId ?? "");
+
+  // Fetch projects for filter dropdown
+  const projectsQuery = trpc.projects.list.useQuery(
+    {},
+    {
+      staleTime: 60_000,
+    }
+  );
+
+  // Fetch tasks from backend
+  const tasksQuery = trpc.tasks.list.useQuery(
+    { projectId: selectedProject || undefined, limit: 200 },
+    { refetchInterval: 5000 }
+  );
+
+  // Map backend tasks to KanbanTask format
+  const kanbanTasks: KanbanTask[] = useMemo(() => {
+    if (!tasksQuery.data?.tasks) {
+      return [];
+    }
+
+    return tasksQuery.data.tasks.map((t) => ({
+      id: t.id,
+      title: t.title ?? "Untitled task",
+      status: mapStatusToColumn(t.status),
+      priority: "medium" as const,
+      agentRole: t.agentRole ?? undefined,
+      createdAt: normalizeCreatedAt(t.createdAt),
+    }));
+  }, [tasksQuery.data]);
+
+  // Handle drag-and-drop status change
+  const handleTaskMove = useCallback((taskId: string, newColumn: string) => {
+    const newStatus = mapColumnToStatus(newColumn);
+    // Fire-and-forget status update - refetchInterval will correct
+    fetch(`/api/v1/tasks/${taskId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status: newStatus }),
+    }).catch((_err) => {
+      // Silently handle - refetch will correct
+    });
+  }, []);
+
+  const projects = projectsQuery.data?.projects ?? [];
+
+  return (
+    <div className="flex flex-col gap-4">
+      {/* Toolbar */}
+      <div className="flex items-center justify-between">
+        {/* Project filter */}
+        <div className="flex items-center gap-2">
+          <Filter className="h-3.5 w-3.5 text-zinc-500" />
+          <select
+            className="rounded-md border border-zinc-800 bg-zinc-900 px-2 py-1 text-xs text-zinc-300 outline-none focus:border-zinc-700"
+            onChange={(e) => setSelectedProject(e.target.value)}
+            value={selectedProject}
+          >
+            <option value="">All Projects</option>
+            {projects.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.name}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        {/* New task button */}
+        {onNewTask && (
+          <button
+            className="flex items-center gap-1 rounded-md border border-zinc-700 bg-zinc-800 px-2.5 py-1 text-xs text-zinc-300 transition-colors hover:border-violet-500/50 hover:text-violet-300"
+            onClick={onNewTask}
+            type="button"
+          >
+            <Plus className="h-3 w-3" />
+            New Task
+          </button>
+        )}
+      </div>
+
+      {/* Loading state */}
+      {tasksQuery.isLoading && (
+        <div className="flex h-40 items-center justify-center text-xs text-zinc-600">
+          Loading tasks...
+        </div>
+      )}
+
+      {/* Error state */}
+      {tasksQuery.isError && (
+        <div className="flex h-40 items-center justify-center text-red-400 text-xs">
+          Failed to load tasks. Please try again.
+        </div>
+      )}
+
+      {/* Board */}
+      {tasksQuery.data && (
+        <KanbanBoard
+          onTaskClick={onTaskClick}
+          onTaskMove={handleTaskMove}
+          tasks={kanbanTasks}
+        />
+      )}
     </div>
   );
 }

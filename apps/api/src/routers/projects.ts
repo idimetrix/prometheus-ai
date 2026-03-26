@@ -52,8 +52,128 @@ import { protectedProcedure, router } from "../trpc";
 
 const logger = createLogger("projects-router");
 
+const ARCHIVE_EXTENSION_RE = /\.(zip|tar\.gz|tgz)$/i;
+
 const PROJECT_BRAIN_URL =
   process.env.PROJECT_BRAIN_URL ?? "http://localhost:4003";
+
+const SANDBOX_MANAGER_URL =
+  process.env.SANDBOX_MANAGER_URL ?? "http://localhost:4006";
+
+/* -------------------------------------------------------------------------- */
+/*  Sandbox helpers                                                            */
+/* -------------------------------------------------------------------------- */
+
+async function createSandbox(
+  projectId: string,
+  orgId: string
+): Promise<string> {
+  const res = await fetch(`${SANDBOX_MANAGER_URL}/api/sandboxes`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ projectId, orgId }),
+  });
+  if (!res.ok) {
+    throw new TRPCError({
+      code: "INTERNAL_SERVER_ERROR",
+      message: "Failed to create sandbox",
+    });
+  }
+  const data = (await res.json()) as { id: string };
+  return data.id;
+}
+
+async function sandboxWriteFile(
+  sandboxId: string,
+  filePath: string,
+  content: string
+): Promise<void> {
+  const res = await fetch(
+    `${SANDBOX_MANAGER_URL}/api/sandboxes/${sandboxId}/files/write`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ path: filePath, content }),
+    }
+  );
+  if (!res.ok) {
+    logger.warn(
+      { sandboxId, filePath, status: res.status },
+      "Failed to write file to sandbox"
+    );
+  }
+}
+
+async function sandboxExec(
+  sandboxId: string,
+  command: string
+): Promise<{ exitCode: number; stdout: string; stderr: string }> {
+  const res = await fetch(
+    `${SANDBOX_MANAGER_URL}/api/sandboxes/${sandboxId}/exec`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ command }),
+    }
+  );
+  if (!res.ok) {
+    return { exitCode: 1, stdout: "", stderr: "Sandbox exec failed" };
+  }
+  return (await res.json()) as {
+    exitCode: number;
+    stdout: string;
+    stderr: string;
+  };
+}
+
+/** Detect tech stack from file list and install appropriate dependencies. */
+async function detectAndInstallDeps(
+  sandboxId: string,
+  files: Array<{ path: string }>
+): Promise<string | null> {
+  const filePaths = files.map((f) => f.path);
+  const hasPackageJson = filePaths.some((p) => p === "package.json");
+  const hasCargoToml = filePaths.some((p) => p === "Cargo.toml");
+  const hasGoMod = filePaths.some((p) => p === "go.mod");
+  const hasPyproject = filePaths.some((p) => p === "pyproject.toml");
+  const hasRequirements = filePaths.some((p) => p === "requirements.txt");
+  const hasGemfile = filePaths.some((p) => p === "Gemfile");
+
+  let techStack: string | null = null;
+  let installCmd: string | null = null;
+
+  if (hasPackageJson) {
+    techStack = "node";
+    installCmd = "npm install";
+  } else if (hasCargoToml) {
+    techStack = "rust";
+    installCmd = "cargo fetch";
+  } else if (hasGoMod) {
+    techStack = "go";
+    installCmd = "go mod download";
+  } else if (hasPyproject) {
+    techStack = "python";
+    installCmd = "pip install -e .";
+  } else if (hasRequirements) {
+    techStack = "python";
+    installCmd = "pip install -r requirements.txt";
+  } else if (hasGemfile) {
+    techStack = "ruby";
+    installCmd = "bundle install";
+  }
+
+  if (installCmd) {
+    const result = await sandboxExec(sandboxId, installCmd);
+    if (result.exitCode !== 0) {
+      logger.warn(
+        { sandboxId, installCmd, stderr: result.stderr },
+        "Dependency install had non-zero exit"
+      );
+    }
+  }
+
+  return techStack;
+}
 
 async function verifyProjectAccess(
   db: Database,
@@ -193,6 +313,65 @@ export const projectsRouter = router({
         role: "owner",
       });
 
+      /* ------------------------------------------------------------------ */
+      /*  End-to-end scaffold: sandbox -> files -> git init -> deps          */
+      /* ------------------------------------------------------------------ */
+
+      let sandboxId: string | null = null;
+      let detectedStack: string | null = null;
+
+      if (scaffoldedFiles && scaffoldedFiles.length > 0) {
+        try {
+          // 1. Create sandbox
+          sandboxId = await createSandbox(id, ctx.orgId);
+
+          // 2. Write scaffold files to sandbox filesystem
+          for (const file of scaffoldedFiles) {
+            await sandboxWriteFile(sandboxId, file.path, file.content);
+          }
+
+          // 3. Git init in the sandbox
+          await sandboxExec(sandboxId, "git init");
+
+          // 4. If repoUrl is provided, set it as remote origin
+          if (input.repoUrl) {
+            await sandboxExec(
+              sandboxId,
+              `git remote add origin ${input.repoUrl}`
+            );
+          }
+
+          // 5. Initial commit
+          await sandboxExec(sandboxId, "git add .");
+          await sandboxExec(
+            sandboxId,
+            'git commit -m "Initial scaffold from Prometheus"'
+          );
+
+          // 6. Detect tech stack and install dependencies
+          detectedStack = await detectAndInstallDeps(
+            sandboxId,
+            scaffoldedFiles
+          );
+
+          logger.info(
+            {
+              projectId: id,
+              sandboxId,
+              detectedStack,
+              fileCount: scaffoldedFiles.length,
+            },
+            "Scaffold sandbox ready"
+          );
+        } catch (error) {
+          logger.error(
+            { error, projectId: id },
+            "Sandbox setup failed during scaffold"
+          );
+          // Continue even if sandbox setup fails — project is still created
+        }
+      }
+
       logger.info(
         {
           projectId: id,
@@ -200,6 +379,7 @@ export const projectsRouter = router({
           template: input.template,
           scaffoldMode,
           fileCount: scaffoldedFiles?.length ?? 0,
+          sandboxId,
         },
         "Project scaffolded"
       );
@@ -208,6 +388,8 @@ export const projectsRouter = router({
         project: project as NonNullable<typeof project>,
         scaffoldMode,
         scaffoldedFiles,
+        sandboxId,
+        detectedStack,
       };
     }),
 
@@ -1249,4 +1431,152 @@ export const projectsRouter = router({
         return updated as NonNullable<typeof updated>;
       }),
   }),
+
+  /* ---------------------------------------------------------------------- */
+  /*  Import from archive (zip/tarball)                                      */
+  /* ---------------------------------------------------------------------- */
+
+  importFromArchive: protectedProcedure
+    .input(
+      z.object({
+        /** Base64-encoded archive data */
+        archiveBase64: z.string().min(1),
+        /** Original filename to determine archive type */
+        filename: z.string().min(1),
+        /** Optional project name override */
+        name: z.string().min(1).max(100).optional(),
+      })
+    )
+    .mutation(async ({ input, ctx }) => {
+      const isZip =
+        input.filename.endsWith(".zip") || input.filename.endsWith(".ZIP");
+      const isTarGz =
+        input.filename.endsWith(".tar.gz") || input.filename.endsWith(".tgz");
+
+      if (!(isZip || isTarGz)) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message:
+            "Unsupported archive format. Please upload a .zip or .tar.gz file.",
+        });
+      }
+
+      const projectId = generateId("proj");
+      const projectName =
+        input.name ?? input.filename.replace(ARCHIVE_EXTENSION_RE, "");
+
+      // Create project record
+      const [project] = await ctx.db
+        .insert(projects)
+        .values({
+          id: projectId,
+          name: projectName,
+          orgId: ctx.orgId,
+          status: "setup",
+        })
+        .returning();
+
+      // Create sandbox
+      let sandboxId: string | null = null;
+      try {
+        sandboxId = await createSandbox(projectId, ctx.orgId);
+      } catch (error) {
+        logger.warn(
+          { error, projectId },
+          "Failed to create sandbox for archive import"
+        );
+      }
+
+      if (sandboxId) {
+        // Write archive to sandbox and extract
+        const archiveFilename = isZip ? "archive.zip" : "archive.tar.gz";
+        const archiveContent = Buffer.from(
+          input.archiveBase64,
+          "base64"
+        ).toString("base64");
+
+        await sandboxWriteFile(
+          sandboxId,
+          `/tmp/${archiveFilename}`,
+          archiveContent
+        );
+
+        // Extract archive
+        const extractCmd = isZip
+          ? `cd /workspace && unzip -o /tmp/${archiveFilename}`
+          : `cd /workspace && tar xzf /tmp/${archiveFilename}`;
+
+        const extractResult = await sandboxExec(sandboxId, extractCmd);
+        if (extractResult.exitCode !== 0) {
+          logger.warn(
+            {
+              sandboxId,
+              stderr: extractResult.stderr,
+            },
+            "Archive extraction had non-zero exit"
+          );
+        }
+
+        // Initialize git
+        await sandboxExec(sandboxId, "cd /workspace && git init");
+        await sandboxExec(
+          sandboxId,
+          'cd /workspace && git add -A && git commit -m "Initial import from archive"'
+        );
+
+        // Detect tech stack
+        const lsResult = await sandboxExec(
+          sandboxId,
+          "find /workspace -maxdepth 3 -type f -name '*.json' -o -name '*.toml' -o -name '*.yaml' -o -name '*.yml' -o -name 'Gemfile' -o -name 'go.mod' | head -50"
+        );
+
+        const detectedFiles = lsResult.stdout
+          .split("\n")
+          .filter(Boolean)
+          .map((p) => ({
+            path: p.replace("/workspace/", ""),
+          }));
+
+        const techStack = await detectAndInstallDeps(sandboxId, detectedFiles);
+
+        if (techStack) {
+          logger.info(
+            { projectId, techStack },
+            "Detected tech stack from archive"
+          );
+        }
+
+        // Trigger indexing
+        try {
+          await indexingQueue.add("index-project", {
+            projectId,
+            orgId: ctx.orgId,
+            filePaths: [],
+            fullReindex: true,
+            triggeredBy: "manual" as const,
+          });
+        } catch (error) {
+          logger.warn(
+            { error, projectId },
+            "Failed to queue indexing for imported project"
+          );
+        }
+      }
+
+      logger.info(
+        {
+          projectId,
+          name: projectName,
+          format: isZip ? "zip" : "tar.gz",
+          orgId: ctx.orgId,
+        },
+        "Project imported from archive"
+      );
+
+      return {
+        id: project?.id ?? projectId,
+        name: projectName,
+        sandboxId,
+      };
+    }),
 });

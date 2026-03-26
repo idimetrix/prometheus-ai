@@ -572,6 +572,382 @@ function fetchLinearPRs(_ctx: ProviderContext): Promise<ExternalPR[]> {
 }
 
 // ---------------------------------------------------------------------------
+// Write operations: Push status, comments, and PR links back to providers
+// ---------------------------------------------------------------------------
+
+export interface PushResult {
+  error?: string;
+  success: boolean;
+}
+
+// --- GitHub write operations ---
+
+async function pushGitHubStatusUpdate(
+  ctx: ProviderContext,
+  issueNumber: string,
+  status: string
+): Promise<PushResult> {
+  const parsed = parseGitHubOwnerRepo(ctx.repoUrl);
+  if (!parsed) {
+    return { success: false, error: "Cannot parse GitHub repo URL" };
+  }
+
+  const token = await getProviderToken(ctx.db, ctx.orgId, "github");
+  if (!token) {
+    return { success: false, error: "No GitHub token found" };
+  }
+
+  try {
+    // GitHub issues have "open" or "closed" states
+    const state = status === "closed" || status === "done" ? "closed" : "open";
+    const url = `https://api.github.com/repos/${parsed.owner}/${parsed.repo}/issues/${issueNumber}`;
+    const response = await fetch(url, {
+      method: "PATCH",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: "application/vnd.github+json",
+        "Content-Type": "application/json",
+        "X-GitHub-Api-Version": "2022-11-28",
+        "User-Agent": "Prometheus-Issue-Sync/1.0",
+      },
+      body: JSON.stringify({ state }),
+      signal: AbortSignal.timeout(15_000),
+    });
+
+    if (!response.ok) {
+      return {
+        success: false,
+        error: `GitHub API returned ${response.status}`,
+      };
+    }
+
+    return { success: true };
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    return { success: false, error: msg };
+  }
+}
+
+async function pushGitHubComment(
+  ctx: ProviderContext,
+  issueNumber: string,
+  comment: string
+): Promise<PushResult> {
+  const parsed = parseGitHubOwnerRepo(ctx.repoUrl);
+  if (!parsed) {
+    return { success: false, error: "Cannot parse GitHub repo URL" };
+  }
+
+  const token = await getProviderToken(ctx.db, ctx.orgId, "github");
+  if (!token) {
+    return { success: false, error: "No GitHub token found" };
+  }
+
+  try {
+    const url = `https://api.github.com/repos/${parsed.owner}/${parsed.repo}/issues/${issueNumber}/comments`;
+    const response = await fetch(url, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: "application/vnd.github+json",
+        "Content-Type": "application/json",
+        "X-GitHub-Api-Version": "2022-11-28",
+        "User-Agent": "Prometheus-Issue-Sync/1.0",
+      },
+      body: JSON.stringify({ body: comment }),
+      signal: AbortSignal.timeout(15_000),
+    });
+
+    if (!response.ok) {
+      return {
+        success: false,
+        error: `GitHub API returned ${response.status}`,
+      };
+    }
+
+    return { success: true };
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    return { success: false, error: msg };
+  }
+}
+
+// --- GitLab write operations ---
+
+async function pushGitLabStatusUpdate(
+  ctx: ProviderContext,
+  issueIid: string,
+  status: string
+): Promise<PushResult> {
+  const projectPath = parseGitLabProjectPath(ctx.repoUrl);
+  if (!projectPath) {
+    return { success: false, error: "Cannot parse GitLab project URL" };
+  }
+
+  const token = await getProviderToken(ctx.db, ctx.orgId, "gitlab");
+  if (!token) {
+    return { success: false, error: "No GitLab token found" };
+  }
+
+  try {
+    const encodedPath = encodeURIComponent(projectPath);
+    const stateEvent =
+      status === "closed" || status === "done" ? "close" : "reopen";
+    const url = `https://gitlab.com/api/v4/projects/${encodedPath}/issues/${issueIid}`;
+    const response = await fetch(url, {
+      method: "PUT",
+      headers: {
+        "PRIVATE-TOKEN": token,
+        "Content-Type": "application/json",
+        "User-Agent": "Prometheus-Issue-Sync/1.0",
+      },
+      body: JSON.stringify({ state_event: stateEvent }),
+      signal: AbortSignal.timeout(15_000),
+    });
+
+    if (!response.ok) {
+      return {
+        success: false,
+        error: `GitLab API returned ${response.status}`,
+      };
+    }
+
+    return { success: true };
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    return { success: false, error: msg };
+  }
+}
+
+async function pushGitLabComment(
+  ctx: ProviderContext,
+  issueIid: string,
+  comment: string
+): Promise<PushResult> {
+  const projectPath = parseGitLabProjectPath(ctx.repoUrl);
+  if (!projectPath) {
+    return { success: false, error: "Cannot parse GitLab project URL" };
+  }
+
+  const token = await getProviderToken(ctx.db, ctx.orgId, "gitlab");
+  if (!token) {
+    return { success: false, error: "No GitLab token found" };
+  }
+
+  try {
+    const encodedPath = encodeURIComponent(projectPath);
+    const url = `https://gitlab.com/api/v4/projects/${encodedPath}/issues/${issueIid}/notes`;
+    const response = await fetch(url, {
+      method: "POST",
+      headers: {
+        "PRIVATE-TOKEN": token,
+        "Content-Type": "application/json",
+        "User-Agent": "Prometheus-Issue-Sync/1.0",
+      },
+      body: JSON.stringify({ body: comment }),
+      signal: AbortSignal.timeout(15_000),
+    });
+
+    if (!response.ok) {
+      return {
+        success: false,
+        error: `GitLab API returned ${response.status}`,
+      };
+    }
+
+    return { success: true };
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    return { success: false, error: msg };
+  }
+}
+
+// --- Bitbucket write operations ---
+
+const BITBUCKET_REPO_RE = /bitbucket\.org[/:]([^/]+)\/([^/.]+)/;
+
+function parseBitbucketOwnerRepo(
+  repoUrl: string
+): { owner: string; repo: string } | null {
+  const match = BITBUCKET_REPO_RE.exec(repoUrl);
+  const owner = match?.[1];
+  const repo = match?.[2];
+  if (!(owner && repo)) {
+    return null;
+  }
+  return { owner, repo };
+}
+
+async function pushBitbucketComment(
+  ctx: ProviderContext,
+  issueId: string,
+  comment: string
+): Promise<PushResult> {
+  const parsed = parseBitbucketOwnerRepo(ctx.repoUrl);
+  if (!parsed) {
+    return { success: false, error: "Cannot parse Bitbucket repo URL" };
+  }
+
+  const token = await getProviderToken(ctx.db, ctx.orgId, "bitbucket");
+  if (!token) {
+    return { success: false, error: "No Bitbucket token found" };
+  }
+
+  try {
+    const url = `https://api.bitbucket.org/2.0/repositories/${parsed.owner}/${parsed.repo}/issues/${issueId}/comments`;
+    const response = await fetch(url, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+        "User-Agent": "Prometheus-Issue-Sync/1.0",
+      },
+      body: JSON.stringify({ content: { raw: comment } }),
+      signal: AbortSignal.timeout(15_000),
+    });
+
+    if (!response.ok) {
+      return {
+        success: false,
+        error: `Bitbucket API returned ${response.status}`,
+      };
+    }
+
+    return { success: true };
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    return { success: false, error: msg };
+  }
+}
+
+async function pushBitbucketStatusUpdate(
+  ctx: ProviderContext,
+  issueId: string,
+  status: string
+): Promise<PushResult> {
+  const parsed = parseBitbucketOwnerRepo(ctx.repoUrl);
+  if (!parsed) {
+    return { success: false, error: "Cannot parse Bitbucket repo URL" };
+  }
+
+  const token = await getProviderToken(ctx.db, ctx.orgId, "bitbucket");
+  if (!token) {
+    return { success: false, error: "No Bitbucket token found" };
+  }
+
+  try {
+    const bbStatus =
+      status === "closed" || status === "done" ? "resolved" : "open";
+    const url = `https://api.bitbucket.org/2.0/repositories/${parsed.owner}/${parsed.repo}/issues/${issueId}`;
+    const response = await fetch(url, {
+      method: "PUT",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+        "User-Agent": "Prometheus-Issue-Sync/1.0",
+      },
+      body: JSON.stringify({ state: bbStatus }),
+      signal: AbortSignal.timeout(15_000),
+    });
+
+    if (!response.ok) {
+      return {
+        success: false,
+        error: `Bitbucket API returned ${response.status}`,
+      };
+    }
+
+    return { success: true };
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    return { success: false, error: msg };
+  }
+}
+
+// --- Write operation dispatchers ---
+
+type WriteHandler = (
+  ctx: ProviderContext,
+  externalId: string,
+  payload: string
+) => Promise<PushResult>;
+
+const statusUpdateProviders: Record<string, WriteHandler> = {
+  github: pushGitHubStatusUpdate,
+  gitlab: pushGitLabStatusUpdate,
+  bitbucket: pushBitbucketStatusUpdate,
+};
+
+const commentProviders: Record<string, WriteHandler> = {
+  github: pushGitHubComment,
+  gitlab: pushGitLabComment,
+  bitbucket: pushBitbucketComment,
+};
+
+export async function pushProviderStatusUpdate(
+  provider: string,
+  repoUrl: string,
+  db: Database,
+  orgId: string,
+  externalId: string,
+  status: string
+): Promise<PushResult> {
+  const handler = statusUpdateProviders[provider];
+  if (!handler) {
+    logger.warn({ provider }, "Provider does not support status updates");
+    return { success: false, error: `Unsupported provider: ${provider}` };
+  }
+
+  logger.info(
+    { provider, externalId, status },
+    "Pushing status update to provider"
+  );
+  return await handler({ db, orgId, repoUrl }, externalId, status);
+}
+
+export async function pushProviderComment(
+  provider: string,
+  repoUrl: string,
+  db: Database,
+  orgId: string,
+  externalId: string,
+  comment: string
+): Promise<PushResult> {
+  const handler = commentProviders[provider];
+  if (!handler) {
+    logger.warn({ provider }, "Provider does not support comments");
+    return { success: false, error: `Unsupported provider: ${provider}` };
+  }
+
+  logger.info({ provider, externalId }, "Pushing comment to provider");
+  return await handler({ db, orgId, repoUrl }, externalId, comment);
+}
+
+export async function pushProviderPRLink(
+  provider: string,
+  repoUrl: string,
+  db: Database,
+  orgId: string,
+  externalId: string,
+  prUrl: string,
+  prTitle?: string
+): Promise<PushResult> {
+  // PR links are posted as a comment with a formatted link
+  const comment = prTitle
+    ? `Prometheus created PR [${prTitle}](${prUrl}) for this issue.`
+    : `Prometheus created a PR for this issue: ${prUrl}`;
+
+  return await pushProviderComment(
+    provider,
+    repoUrl,
+    db,
+    orgId,
+    externalId,
+    comment
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Dispatcher
 // ---------------------------------------------------------------------------
 

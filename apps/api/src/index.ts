@@ -28,6 +28,8 @@ import {
 } from "./middleware";
 import { generateOpenAPISpec } from "./openapi";
 import { appRouter } from "./routers";
+import { fastPathsApp } from "./routes/fast-paths";
+import { ideApp } from "./routes/ide";
 import { sseApp } from "./routes/sse";
 import { alertsWebhookApp } from "./routes/webhooks/alerts";
 import { clerkWebhookApp } from "./routes/webhooks/clerk";
@@ -181,6 +183,16 @@ app.get("/docs", (c) => {
 });
 
 // ---------------------------------------------------------------------------
+// Fast-path endpoints — bypass orchestrator for simple queries
+// ---------------------------------------------------------------------------
+app.route("/api/fast", fastPathsApp);
+
+// ---------------------------------------------------------------------------
+// IDE endpoints — inline completions, edits, explanations
+// ---------------------------------------------------------------------------
+app.route("/api", ideApp);
+
+// ---------------------------------------------------------------------------
 // SSE endpoint
 // ---------------------------------------------------------------------------
 app.route("/api/sse", sseApp);
@@ -196,6 +208,13 @@ app.route("/webhooks/slack", slackWebhookApp);
 app.route("/webhooks/slack/commands", slackCommandsApp);
 app.route("/webhooks/inbound", inboundWebhookApp);
 app.route("/webhooks/github-app", githubAppWebhookApp);
+
+// ---------------------------------------------------------------------------
+// GitHub App marketplace listing (public, no auth required)
+// ---------------------------------------------------------------------------
+import { githubAppListing } from "./routes/github-app-listing";
+
+app.route("/api/github-app", githubAppListing);
 
 // ---------------------------------------------------------------------------
 // Internal: model usage logging (called by model-router, fire-and-forget)

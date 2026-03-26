@@ -134,12 +134,34 @@ export const scaffoldProjectSchema = z
     template: z.string().optional(),
     /** Natural language prompt (alternative to template) */
     prompt: z.string().max(5000).optional(),
+    /** Optional git remote URL to set as origin */
+    repoUrl: z.string().url().optional(),
   })
   .refine((data) => data.template ?? data.prompt, {
     message: "Either 'template' or 'prompt' must be provided",
   });
 
 export type ScaffoldProjectInput = z.infer<typeof scaffoldProjectSchema>;
+
+// ---------- Import from Git URL (no OAuth) ----------
+export const gitUrlPattern =
+  /^(https?:\/\/[^\s]+\.git|https?:\/\/[^\s]+|git@[^\s]+:[^\s]+\.git)$/;
+
+export const importFromGitUrlSchema = z.object({
+  repoUrl: z
+    .string()
+    .min(1, "Repository URL is required")
+    .regex(
+      gitUrlPattern,
+      "Must be a valid HTTPS or SSH git URL (e.g. https://github.com/org/repo.git or git@github.com:org/repo.git)"
+    ),
+  branch: z.string().min(1).max(200).default("main"),
+  name: z.string().min(1).max(100).optional(),
+  personalAccessToken: z.string().max(500).optional(),
+  techStackPreset: z.string().optional(),
+});
+
+export type ImportFromGitUrlInput = z.infer<typeof importFromGitUrlSchema>;
 
 // ---------- Types ----------
 export type ShareProjectInput = z.infer<typeof shareProjectSchema>;

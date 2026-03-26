@@ -15,6 +15,10 @@ import {
 } from "./engine";
 import { ExecutionTracker } from "./feedback/execution-tracker";
 import { LearningExtractor } from "./feedback/learning-extractor";
+import {
+  ServiceHealthMonitor,
+  withGracefulDegradation,
+} from "./resilience/service-health";
 
 export type AgentLoopStatus = "idle" | "running" | "paused" | "stopped";
 
@@ -46,6 +50,7 @@ const ROLE_SLOT_MAP: Record<string, string> = {
   security_auditor: "think",
   deploy_engineer: "default",
   documentation_specialist: "longContext",
+  performance_optimizer: "think",
 };
 
 /**
@@ -66,6 +71,7 @@ export class AgentLoop {
   private readonly sessionMemory: SessionMemory;
   private readonly learningExtractor: LearningExtractor;
   private readonly executionTracker: ExecutionTracker;
+  private readonly healthMonitor: ServiceHealthMonitor;
   private totalCreditsConsumed = 0;
   private lastConfidence: ConfidenceResult | null = null;
   private activeAgent: BaseAgent | null = null;
@@ -96,6 +102,7 @@ export class AgentLoop {
     this.sessionMemory = new SessionMemory();
     this.executionTracker = new ExecutionTracker();
     this.learningExtractor = new LearningExtractor();
+    this.healthMonitor = new ServiceHealthMonitor();
   }
 
   getLastConfidence(): ConfidenceResult | null {
@@ -135,35 +142,33 @@ export class AgentLoop {
       projectSummary: null,
     };
 
-    try {
-      const response = await projectBrainClient.post<{
-        global?: string;
-        session?: string;
-        taskSpecific?: string;
-      }>("/context/assemble", {
-        projectId: this.projectId,
-        sessionId: this.sessionId,
-        taskDescription: "",
-        agentRole: "orchestrator",
-        maxTokens: 14_000,
-      });
-      this.logger.info("Loaded Project Brain context");
+    return await withGracefulDegradation(
+      this.healthMonitor,
+      "project-brain",
+      async () => {
+        const response = await projectBrainClient.post<{
+          global?: string;
+          session?: string;
+          taskSpecific?: string;
+        }>("/context/assemble", {
+          projectId: this.projectId,
+          sessionId: this.sessionId,
+          taskDescription: "",
+          agentRole: "orchestrator",
+          maxTokens: 14_000,
+        });
+        this.logger.info("Loaded Project Brain context");
 
-      // Map assembled context to our expected structure
-      return {
-        blueprintContent: response.data.global ?? null,
-        projectSummary: response.data.taskSpecific ?? null,
-        recentCIResults: null,
-        sprintState: response.data.session ?? null,
-      };
-    } catch (error) {
-      const msg = error instanceof Error ? error.message : String(error);
-      this.logger.warn(
-        { error: msg },
-        "Project Brain unavailable, continuing without context"
-      );
-      return defaultCtx;
-    }
+        return {
+          blueprintContent: response.data.global ?? null,
+          projectSummary: response.data.taskSpecific ?? null,
+          recentCIResults: null,
+          sprintState: response.data.session ?? null,
+        };
+      },
+      defaultCtx,
+      "loadProjectBrainContext"
+    );
   }
 
   /**

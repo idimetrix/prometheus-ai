@@ -1,26 +1,50 @@
 {
   "name": "prometheus-vscode",
   "displayName": "Prometheus AI",
-  "description": "AI-powered engineering assistant for VS Code",
-  "version": "0.0.1",
+  "description": "AI-powered engineering assistant with 12 specialist agents. Automate code reviews, refactoring, testing, and deployments directly from VS Code.",
+  "version": "0.1.0",
   "publisher": "prometheus",
   "license": "MIT",
+  "icon": "resources/icon.png",
+  "galleryBanner": {
+    "color": "#1e1e2e",
+    "theme": "dark"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/prometheus-platform/prometheus"
+  },
+  "homepage": "https://prometheus.dev",
+  "bugs": {
+    "url": "https://github.com/prometheus-platform/prometheus/issues"
+  },
   "engines": {
     "vscode": "^1.95.0"
   },
   "categories": [
     "AI",
     "Programming Languages",
-    "Other"
+    "Machine Learning",
+    "Testing",
+    "Linters"
   ],
   "keywords": [
     "ai",
     "agent",
     "engineering",
-    "prometheus"
+    "prometheus",
+    "code-review",
+    "refactoring",
+    "testing",
+    "deployment",
+    "copilot",
+    "assistant"
   ],
   "activationEvents": [
-    "onStartupFinished"
+    "onStartupFinished",
+    "onCommand:prometheus.startSession",
+    "onCommand:prometheus.openChat",
+    "onView:prometheus.chatPanel"
   ],
   "main": "./dist/extension.js",
   "contributes": {

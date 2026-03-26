@@ -1,0 +1,87 @@
+{
+  "common": {
+    "dashboard": "Dashboard",
+    "projects": "Projekte",
+    "sessions": "Sitzungen",
+    "settings": "Einstellungen",
+    "analytics": "Analysen",
+    "fleet": "Flottenmanager",
+    "create": "Projekt erstellen",
+    "cancel": "Abbrechen",
+    "save": "Speichern",
+    "delete": "Löschen",
+    "edit": "Bearbeiten",
+    "submit": "Absenden",
+    "loading": "Wird geladen...",
+    "error": "Ein Fehler ist aufgetreten",
+    "success": "Erfolgreich",
+    "pending": "Ausstehend",
+    "running": "Wird ausgeführt",
+    "completed": "Abgeschlossen",
+    "retry": "Erneut versuchen",
+    "search": "Suchen...",
+    "noResults": "Keine Ergebnisse gefunden"
+  },
+  "auth": {
+    "signIn": "Anmelden",
+    "signUp": "Registrieren",
+    "signOut": "Abmelden"
+  },
+  "nav": {
+    "dashboard": "Dashboard",
+    "projects": "Projekte",
+    "sessions": "Sitzungen",
+    "settings": "Einstellungen"
+  },
+  "actions": {
+    "create": "Erstellen",
+    "delete": "Löschen",
+    "edit": "Bearbeiten",
+    "save": "Speichern",
+    "cancel": "Abbrechen",
+    "submit": "Absenden"
+  },
+  "status": {
+    "loading": "Wird geladen...",
+    "error": "Fehler",
+    "success": "Erfolgreich",
+    "pending": "Ausstehend",
+    "running": "Wird ausgeführt",
+    "completed": "Abgeschlossen"
+  },
+  "session": {
+    "chat": "Chat",
+    "terminal": "Terminal",
+    "preview": "Vorschau",
+    "files": "Dateien",
+    "agent": "Agent"
+  },
+  "errors": {
+    "generic": "Ein unerwarteter Fehler ist aufgetreten",
+    "notFound": "Seite nicht gefunden",
+    "unauthorized": "Nicht autorisiert",
+    "forbidden": "Zugriff verweigert",
+    "networkError": "Netzwerkverbindungsfehler",
+    "timeout": "Zeitüberschreitung der Anfrage",
+    "validation": "Ungültige Formulardaten",
+    "serverError": "Interner Serverfehler"
+  },
+  "agents": {
+    "title": "KI-Agenten",
+    "orchestrator": "Orchestrierer",
+    "discovery": "Erkundung",
+    "architect": "Architekt",
+    "planner": "Planer",
+    "frontendCoder": "Frontend-Entwickler",
+    "backendCoder": "Backend-Entwickler",
+    "testEngineer": "Testingenieur",
+    "securityAuditor": "Sicherheitsprüfer",
+    "deployEngineer": "Deployment-Ingenieur"
+  },
+  "billing": {
+    "credits": "Guthaben",
+    "balance": "Kontostand",
+    "usage": "Nutzung",
+    "upgrade": "Plan upgraden"
+  }
+}

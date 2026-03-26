@@ -13,10 +13,14 @@ import { sessions } from "../sessions/sessions";
 import { tasks } from "../tasks/tasks";
 import { users } from "../users/users";
 import { agentPermissions } from "./agent-permissions";
+import { environments } from "./environments";
 import { projectHooks } from "./project-hooks";
 import { projectRepositories } from "./project-repositories";
 import { projectRules } from "./project-rules";
+import { projectSecrets } from "./project-secrets";
 import { projectMembers, projectSettings, projects } from "./projects";
+import { releases } from "./releases";
+import { sshKeys } from "./ssh-keys";
 
 export const projectMembersRelations = relations(projectMembers, ({ one }) => ({
   project: one(projects, {
@@ -65,6 +69,36 @@ export const projectsRelations = relations(projects, ({ one, many }) => ({
   hooks: many(projectHooks),
   repositories: many(projectRepositories),
   agentPermissions: many(agentPermissions),
+  secrets: many(projectSecrets),
+  environments: many(environments),
+  releases: many(releases),
+  sshKeys: many(sshKeys),
+}));
+
+export const sshKeysRelations = relations(sshKeys, ({ one }) => ({
+  project: one(projects, {
+    fields: [sshKeys.projectId],
+    references: [projects.id],
+  }),
+  organization: one(organizations, {
+    fields: [sshKeys.orgId],
+    references: [organizations.id],
+  }),
+}));
+
+export const releasesRelations = relations(releases, ({ one }) => ({
+  project: one(projects, {
+    fields: [releases.projectId],
+    references: [projects.id],
+  }),
+  organization: one(organizations, {
+    fields: [releases.orgId],
+    references: [organizations.id],
+  }),
+  creator: one(users, {
+    fields: [releases.createdBy],
+    references: [users.id],
+  }),
 }));
 
 export const projectRepositoriesRelations = relations(
@@ -120,3 +154,29 @@ export const agentPermissionsRelations = relations(
     }),
   })
 );
+
+export const environmentsRelations = relations(environments, ({ one }) => ({
+  project: one(projects, {
+    fields: [environments.projectId],
+    references: [projects.id],
+  }),
+  organization: one(organizations, {
+    fields: [environments.orgId],
+    references: [organizations.id],
+  }),
+}));
+
+export const projectSecretsRelations = relations(projectSecrets, ({ one }) => ({
+  project: one(projects, {
+    fields: [projectSecrets.projectId],
+    references: [projects.id],
+  }),
+  organization: one(organizations, {
+    fields: [projectSecrets.orgId],
+    references: [organizations.id],
+  }),
+  creator: one(users, {
+    fields: [projectSecrets.createdBy],
+    references: [users.id],
+  }),
+}));

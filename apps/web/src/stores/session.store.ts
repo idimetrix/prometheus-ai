@@ -95,6 +95,12 @@ export interface CreditEntry {
   timestamp: number;
 }
 
+export type ConnectionState = "disconnected" | "reconnecting" | "connected";
+
+/** Key used to persist the active session ID in localStorage */
+const SESSION_STORAGE_KEY = "prometheus:activeSessionId";
+const SESSION_TIMESTAMP_KEY = "prometheus:lastEventTimestamp";
+
 interface SessionState {
   activeFilePath: string | null;
   activeSessionId: string | null;
@@ -106,20 +112,26 @@ interface SessionState {
   addTerminalLine: (line: { content: string; timestamp?: string }) => void;
   addTerminalOutput: (content: string) => void;
   agents: ActiveAgent[];
+  clearPersistedSession: () => void;
   clearSession: () => void;
   closeFile: (path: string) => void;
   confidenceScore: number;
+  connectionState: ConnectionState;
   creditHistory: CreditEntry[];
   events: SessionEvent[];
   fileTree: FileEntry[];
+  getPersistedSessionId: () => string | null;
+  getPersistedTimestamp: () => string | null;
   isConnected: boolean;
   mode: SessionMode;
   openFile: (path: string) => void;
   openFiles: string[];
   pendingCheckpoints: PendingCheckpoint[];
+  persistSession: (sessionId: string, lastEventTimestamp?: string) => void;
   planSteps: PlanStep[];
   queuePosition: number;
   reasoning: string[];
+  reconnectReplayCount: number;
   removeAgent: (agentId: string) => void;
   removePendingCheckpoint: (checkpointId: string) => void;
   setActiveFile: (path: string) => void;
@@ -128,10 +140,12 @@ interface SessionState {
   setAgents: (agents: ActiveAgent[]) => void;
   setConfidenceScore: (score: number) => void;
   setConnected: (connected: boolean) => void;
+  setConnectionState: (state: ConnectionState) => void;
   setFileTree: (files: FileEntry[]) => void;
   setMode: (mode: SessionMode) => void;
   setPlanSteps: (steps: PlanStep[]) => void;
   setQueuePosition: (position: number) => void;
+  setReconnectReplayCount: (count: number) => void;
   setStatus: (status: string | null) => void;
   setTaskProgress: (progress: TaskProgress) => void;
   status: string | null;
@@ -156,6 +170,8 @@ export const useSessionStore = create<SessionState>((set) => ({
   fileTree: [],
   events: [],
   isConnected: false,
+  connectionState: "disconnected" as ConnectionState,
+  reconnectReplayCount: 0,
   queuePosition: 0,
   reasoning: [],
   agents: [],
@@ -185,6 +201,55 @@ export const useSessionStore = create<SessionState>((set) => ({
         (c) => c.checkpointId !== checkpointId
       ),
     })),
+
+  setConnectionState: (state) => set({ connectionState: state }),
+  setReconnectReplayCount: (count) => set({ reconnectReplayCount: count }),
+
+  persistSession: (sessionId, lastEventTimestamp) => {
+    try {
+      if (typeof window !== "undefined") {
+        localStorage.setItem(SESSION_STORAGE_KEY, sessionId);
+        if (lastEventTimestamp) {
+          localStorage.setItem(SESSION_TIMESTAMP_KEY, lastEventTimestamp);
+        }
+      }
+    } catch {
+      // localStorage unavailable (e.g. incognito quota exceeded)
+    }
+  },
+
+  getPersistedSessionId: () => {
+    try {
+      if (typeof window !== "undefined") {
+        return localStorage.getItem(SESSION_STORAGE_KEY);
+      }
+    } catch {
+      // localStorage unavailable
+    }
+    return null;
+  },
+
+  getPersistedTimestamp: () => {
+    try {
+      if (typeof window !== "undefined") {
+        return localStorage.getItem(SESSION_TIMESTAMP_KEY);
+      }
+    } catch {
+      // localStorage unavailable
+    }
+    return null;
+  },
+
+  clearPersistedSession: () => {
+    try {
+      if (typeof window !== "undefined") {
+        localStorage.removeItem(SESSION_STORAGE_KEY);
+        localStorage.removeItem(SESSION_TIMESTAMP_KEY);
+      }
+    } catch {
+      // localStorage unavailable
+    }
+  },
 
   setActiveSession: (id) => set({ activeSessionId: id }),
   setStatus: (status) => set({ status }),
@@ -316,7 +381,15 @@ export const useSessionStore = create<SessionState>((set) => ({
       };
     }),
 
-  clearSession: () =>
+  clearSession: () => {
+    try {
+      if (typeof window !== "undefined") {
+        localStorage.removeItem(SESSION_STORAGE_KEY);
+        localStorage.removeItem(SESSION_TIMESTAMP_KEY);
+      }
+    } catch {
+      // localStorage unavailable
+    }
     set({
       activeSessionId: null,
       status: null,
@@ -326,6 +399,8 @@ export const useSessionStore = create<SessionState>((set) => ({
       fileTree: [],
       events: [],
       isConnected: false,
+      connectionState: "disconnected" as ConnectionState,
+      reconnectReplayCount: 0,
       queuePosition: 0,
       reasoning: [],
       agents: [],
@@ -335,5 +410,6 @@ export const useSessionStore = create<SessionState>((set) => ({
       taskProgress: null,
       confidenceScore: 0,
       pendingCheckpoints: [],
-    }),
+    });
+  },
 }));

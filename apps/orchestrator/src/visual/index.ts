@@ -1,3 +1,4 @@
+export { PeriodicScreenshotCapture } from "./periodic-screenshot";
 export {
   type DiffConfig,
   type DiffResult,

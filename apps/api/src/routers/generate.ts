@@ -138,6 +138,102 @@ export const generateRouter = router({
     }),
 
   /**
+   * Image-to-code generation. Takes a base64 image (screenshot/mockup)
+   * and generates a matching component.
+   */
+  fromImage: protectedProcedure
+    .input(
+      z.object({
+        imageBase64: z.string().min(1),
+        prompt: z
+          .string()
+          .min(1)
+          .max(2000)
+          .optional()
+          .default("Convert this design into a component"),
+        style: z
+          .enum(["shadcn", "tailwind", "plain"])
+          .optional()
+          .default("shadcn"),
+        framework: z.enum(["react", "nextjs"]).optional().default("react"),
+      })
+    )
+    .mutation(async ({ input }) => {
+      const startTime = performance.now();
+      logger.info(
+        { style: input.style, framework: input.framework },
+        "Starting image-to-code generation"
+      );
+
+      const systemPrompt = `${UI_GENERATION_SYSTEM_PROMPT}\n\nYou are given an image of a UI design. Convert it into a production-ready component that visually matches the design as closely as possible.`;
+
+      const userPrompt = buildUIGenerationPrompt(
+        input.prompt,
+        input.style,
+        input.framework
+      );
+
+      const response = await fetch(`${MODEL_ROUTER_URL}/v1/chat/completions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: "vision",
+          messages: [
+            { role: "system", content: systemPrompt },
+            {
+              role: "user",
+              content: [
+                { type: "text", text: userPrompt },
+                {
+                  type: "image_url",
+                  image_url: { url: input.imageBase64 },
+                },
+              ],
+            },
+          ],
+          max_tokens: 4096,
+          temperature: 0.3,
+          stream: false,
+        }),
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text().catch(() => "Unknown error");
+        logger.error(
+          { status: response.status, error: errorText },
+          "Image-to-code model request failed"
+        );
+        throw new TRPCError({
+          code: "INTERNAL_SERVER_ERROR",
+          message: "Failed to generate component from image",
+        });
+      }
+
+      const data = (await response.json()) as {
+        choices?: Array<{ message?: { content?: string } }>;
+      };
+      const content = data.choices?.[0]?.message?.content;
+
+      if (!content) {
+        throw new TRPCError({
+          code: "INTERNAL_SERVER_ERROR",
+          message: "Empty response from vision model",
+        });
+      }
+
+      const code = stripCodeFences(content);
+      const duration = Math.round(performance.now() - startTime);
+      logger.info({ duration }, "Image-to-code generation complete");
+
+      return {
+        code,
+        durationMs: duration,
+        style: input.style,
+        framework: input.framework,
+      };
+    }),
+
+  /**
    * Iterative refinement. Modifies existing code based on an instruction
    * without regenerating from scratch.
    */

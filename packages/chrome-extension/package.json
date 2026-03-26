@@ -1,0 +1,15 @@
+{
+  "name": "@prometheus/chrome-extension",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Chrome extension for creating Prometheus tasks from any webpage",
+  "type": "module",
+  "scripts": {
+    "build": "echo 'Chrome extension - no build step required'",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@prometheus/config-typescript": "workspace:*",
+    "typescript": "^6.0.2"
+  }
+}

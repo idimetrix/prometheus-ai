@@ -43,6 +43,64 @@ interface V1Env {
 
 const sessionsV1 = new Hono<V1Env>();
 
+// GET /api/v1/sessions - List sessions
+sessionsV1.get("/", async (c) => {
+  const orgId = c.get("orgId");
+  const db = c.get("db");
+
+  const projectId = c.req.query("projectId");
+  const status = c.req.query("status");
+  const limit = Math.min(Number(c.req.query("limit") ?? "50"), 100);
+  const offset = Number(c.req.query("offset") ?? "0");
+
+  // Get org project IDs for RLS
+  const orgProjects = await db.query.projects.findMany({
+    where: eq(projects.orgId, orgId),
+    columns: { id: true },
+  });
+  const projectIds = orgProjects.map((p) => p.id);
+
+  if (projectIds.length === 0) {
+    return c.json({ sessions: [], hasMore: false, total: 0 });
+  }
+
+  const conditions = [inArray(sessions.projectId, projectIds)];
+  if (projectId) {
+    conditions.push(eq(sessions.projectId, projectId));
+  }
+  if (status) {
+    conditions.push(
+      eq(
+        sessions.status,
+        status as "active" | "paused" | "completed" | "cancelled" | "failed"
+      )
+    );
+  }
+
+  const results = await db.query.sessions.findMany({
+    where: and(...conditions),
+    orderBy: [desc(sessions.startedAt)],
+    limit: limit + 1,
+    offset,
+  });
+
+  const hasMore = results.length > limit;
+  const items = hasMore ? results.slice(0, limit) : results;
+
+  return c.json({
+    sessions: items.map((s) => ({
+      id: s.id,
+      projectId: s.projectId,
+      mode: s.mode,
+      status: s.status,
+      startedAt: s.startedAt?.toISOString(),
+      endedAt: s.endedAt?.toISOString(),
+    })),
+    hasMore,
+    total: items.length,
+  });
+});
+
 // POST /api/v1/sessions - Create a session
 sessionsV1.post("/", async (c) => {
   const auth = c.get("apiKeyAuth");
@@ -560,6 +618,64 @@ sessionsV1.post("/:id/cancel", async (c) => {
 
   logger.info({ sessionId }, "Session cancelled via REST API v1");
   return c.json({ id: sessionId, status: "cancelled" });
+});
+
+// DELETE /api/v1/sessions/:id - End/delete a session
+sessionsV1.delete("/:id", async (c) => {
+  const orgId = c.get("orgId");
+  const db = c.get("db");
+  const sessionId = c.req.param("id");
+
+  const orgProjects = await db.query.projects.findMany({
+    where: eq(projects.orgId, orgId),
+    columns: { id: true },
+  });
+  const projectIds = orgProjects.map((p) => p.id);
+
+  const session = await db.query.sessions.findFirst({
+    where: and(
+      eq(sessions.id, sessionId),
+      inArray(sessions.projectId, projectIds)
+    ),
+  });
+
+  if (!session) {
+    return c.json({ error: "Not Found", message: "Session not found" }, 404);
+  }
+
+  const terminalStatuses = ["completed", "cancelled", "failed"];
+  if (!terminalStatuses.includes(session.status)) {
+    // Cancel active/paused sessions first
+    await db
+      .update(sessions)
+      .set({ status: "cancelled", endedAt: new Date() })
+      .where(eq(sessions.id, sessionId));
+
+    try {
+      await fetch(`${ORCHESTRATOR_URL}/sessions/${sessionId}/cancel`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...getInternalAuthHeaders(),
+        },
+      });
+    } catch (err) {
+      logger.warn(
+        { sessionId, error: String(err) },
+        "Failed to signal orchestrator cancel on delete"
+      );
+    }
+  }
+
+  await db.insert(sessionEvents).values({
+    id: generateId("evt"),
+    sessionId,
+    type: "checkpoint",
+    data: { action: "deleted", source: "rest_api_v1" },
+  });
+
+  logger.info({ sessionId }, "Session deleted via REST API v1");
+  return c.json({ id: sessionId, status: "deleted" });
 });
 
 export { sessionsV1 };

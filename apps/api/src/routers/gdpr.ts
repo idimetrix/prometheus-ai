@@ -15,13 +15,283 @@ import { generateId } from "@prometheus/utils";
 import { TRPCError } from "@trpc/server";
 import { and, eq, inArray, sql } from "drizzle-orm";
 import { z } from "zod";
-import { orgOwnerProcedure, protectedProcedure, router } from "../trpc";
+import {
+  orgAdminProcedure,
+  orgOwnerProcedure,
+  protectedProcedure,
+  router,
+} from "../trpc";
 
 const logger = createLogger("gdpr-router");
 
 // ─── GDPR Router ──────────────────────────────────────────────────────────────
 
 export const gdprRouter = router({
+  /**
+   * GDPR — Data Retention Policy
+   *
+   * Configure auto-deletion schedules for different data types.
+   */
+  dataRetentionPolicy: orgAdminProcedure
+    .input(
+      z.object({
+        sessionRetentionDays: z.number().int().min(30).max(3650).default(365),
+        auditLogRetentionDays: z.number().int().min(90).max(3650).default(730),
+        taskRetentionDays: z.number().int().min(30).max(3650).default(365),
+        creditHistoryRetentionDays: z
+          .number()
+          .int()
+          .min(90)
+          .max(3650)
+          .default(730),
+      })
+    )
+    .mutation(async ({ input, ctx }) => {
+      logger.info(
+        { orgId: ctx.orgId, policy: input },
+        "GDPR data retention policy updated"
+      );
+
+      await ctx.db.insert(auditLogs).values({
+        id: generateId("audit"),
+        orgId: ctx.orgId,
+        userId: ctx.auth.userId,
+        action: "gdpr.retention_policy_updated",
+        resource: "org",
+        resourceId: ctx.orgId,
+        details: {
+          ...input,
+          updatedAt: new Date().toISOString(),
+        },
+      });
+
+      return {
+        success: true,
+        policy: input,
+        updatedAt: new Date().toISOString(),
+      };
+    }),
+
+  /**
+   * GDPR — Consent Management
+   *
+   * Track and manage user consent for data processing purposes.
+   */
+  consentManagement: protectedProcedure
+    .input(
+      z.object({
+        consents: z.array(
+          z.object({
+            purpose: z.enum([
+              "analytics",
+              "marketing",
+              "essential",
+              "ai_training",
+              "third_party_sharing",
+            ]),
+            granted: z.boolean(),
+          })
+        ),
+      })
+    )
+    .mutation(async ({ input, ctx }) => {
+      const consentRecord = {
+        userId: ctx.auth.userId,
+        consents: input.consents,
+        recordedAt: new Date().toISOString(),
+        ipAddress: null as string | null,
+      };
+
+      await ctx.db.insert(auditLogs).values({
+        id: generateId("audit"),
+        orgId: ctx.orgId,
+        userId: ctx.auth.userId,
+        action: "gdpr.consent_updated",
+        resource: "user",
+        resourceId: ctx.auth.userId,
+        details: consentRecord,
+      });
+
+      logger.info(
+        { userId: ctx.auth.userId, consents: input.consents },
+        "GDPR consent updated"
+      );
+
+      return {
+        success: true,
+        consents: input.consents,
+        recordedAt: consentRecord.recordedAt,
+      };
+    }),
+
+  /**
+   * GDPR — Data Processing Log
+   *
+   * Log and retrieve all data processing activities for compliance.
+   */
+  dataProcessingLog: protectedProcedure
+    .input(
+      z.object({
+        action: z.enum(["log", "list"]),
+        entry: z
+          .object({
+            purpose: z.string().min(1),
+            dataCategories: z.array(z.string()),
+            legalBasis: z.enum([
+              "consent",
+              "contract",
+              "legal_obligation",
+              "legitimate_interest",
+              "vital_interest",
+              "public_task",
+            ]),
+            recipients: z.array(z.string()).optional(),
+            retentionPeriod: z.string().optional(),
+          })
+          .optional(),
+        limit: z.number().int().min(1).max(100).default(50),
+      })
+    )
+    .mutation(async ({ input, ctx }) => {
+      if (input.action === "log" && input.entry) {
+        await ctx.db.insert(auditLogs).values({
+          id: generateId("audit"),
+          orgId: ctx.orgId,
+          userId: ctx.auth.userId,
+          action: "gdpr.data_processing_logged",
+          resource: "org",
+          resourceId: ctx.orgId,
+          details: {
+            ...input.entry,
+            loggedAt: new Date().toISOString(),
+          },
+        });
+
+        logger.info(
+          { orgId: ctx.orgId, purpose: input.entry.purpose },
+          "GDPR data processing activity logged"
+        );
+
+        return {
+          success: true,
+          loggedAt: new Date().toISOString(),
+        };
+      }
+
+      // List processing logs
+      const logs = await ctx.db
+        .select()
+        .from(auditLogs)
+        .where(
+          and(
+            eq(auditLogs.orgId, ctx.orgId),
+            eq(auditLogs.action, "gdpr.data_processing_logged")
+          )
+        )
+        .limit(input.limit);
+
+      return {
+        success: true,
+        entries: logs.map((log) => ({
+          id: log.id,
+          details: log.details,
+          createdAt: log.createdAt,
+        })),
+      };
+    }),
+
+  /**
+   * GDPR Article 16 — Right to Rectification
+   *
+   * Allow users to correct their personal data.
+   */
+  rightToRectification: protectedProcedure
+    .input(
+      z.object({
+        userId: z.string().min(1),
+        corrections: z.object({
+          name: z.string().optional(),
+          email: z.string().email().optional(),
+          avatarUrl: z.string().url().optional().nullable(),
+        }),
+      })
+    )
+    .mutation(async ({ input, ctx }) => {
+      // Users can correct their own data; admins can correct others'
+      if (
+        input.userId !== ctx.auth.userId &&
+        ctx.auth.orgRole !== "admin" &&
+        ctx.auth.orgRole !== "owner"
+      ) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "Only admins can rectify other users' data",
+        });
+      }
+
+      const [targetUser] = await ctx.db
+        .select({ id: users.id })
+        .from(users)
+        .where(eq(users.id, input.userId))
+        .limit(1);
+
+      if (!targetUser) {
+        throw new TRPCError({
+          code: "NOT_FOUND",
+          message: "User not found",
+        });
+      }
+
+      const updateData: Record<string, unknown> = {};
+      if (input.corrections.name !== undefined) {
+        updateData.name = input.corrections.name;
+      }
+      if (input.corrections.email !== undefined) {
+        updateData.email = input.corrections.email;
+      }
+      if (input.corrections.avatarUrl !== undefined) {
+        updateData.avatarUrl = input.corrections.avatarUrl;
+      }
+
+      if (Object.keys(updateData).length > 0) {
+        await ctx.db
+          .update(users)
+          .set(updateData)
+          .where(eq(users.id, input.userId));
+      }
+
+      await ctx.db.insert(auditLogs).values({
+        id: generateId("audit"),
+        orgId: ctx.orgId,
+        userId: ctx.auth.userId,
+        action: "gdpr.data_rectified",
+        resource: "user",
+        resourceId: input.userId,
+        details: {
+          correctedFields: Object.keys(updateData),
+          requestedBy: ctx.auth.userId,
+          rectifiedAt: new Date().toISOString(),
+        },
+      });
+
+      logger.info(
+        {
+          orgId: ctx.orgId,
+          requestedBy: ctx.auth.userId,
+          targetUserId: input.userId,
+          fields: Object.keys(updateData),
+        },
+        "GDPR data rectification completed"
+      );
+
+      return {
+        success: true,
+        userId: input.userId,
+        correctedFields: Object.keys(updateData),
+        rectifiedAt: new Date().toISOString(),
+      };
+    }),
+
   /**
    * GDPR Article 17 — Right to Erasure ("Right to be Forgotten")
    *

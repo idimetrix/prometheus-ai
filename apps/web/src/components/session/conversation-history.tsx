@@ -41,11 +41,34 @@ export interface ToolCallMsg extends BaseMessage {
 
 export type ConversationMessage = UserMsg | AgentMsg | ToolCallMsg;
 
+export interface ConversationBranch {
+  /** Creation timestamp */
+  createdAt: string;
+  /** Message ID this branch forks from */
+  forkFromMessageId: string;
+  /** Branch ID */
+  id: string;
+  /** Human-readable label */
+  label: string;
+  /** Messages in this branch (after the fork point) */
+  messages: ConversationMessage[];
+}
+
 interface ConversationHistoryProps {
+  /** Available branches */
+  branches?: ConversationBranch[];
+  /** Currently active branch ID (null = main thread) */
+  currentBranchId?: string | null;
   /** Whether the agent is actively streaming a response */
   isStreaming?: boolean;
   /** The conversation messages to display */
   messages: ConversationMessage[];
+  /** Callback when user wants to branch from a message */
+  onBranchCreate?: (fromMessageId: string, label: string) => void;
+  /** Callback to delete a branch */
+  onBranchDelete?: (branchId: string) => void;
+  /** Callback to switch to a branch */
+  onBranchSwitch?: (branchId: string | null) => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -285,12 +308,152 @@ function StreamingIndicator() {
 }
 
 // ---------------------------------------------------------------------------
+// Branching sub-components
+// ---------------------------------------------------------------------------
+
+function BranchButton({
+  messageId,
+  onBranch,
+}: {
+  messageId: string;
+  onBranch: (messageId: string, label: string) => void;
+}) {
+  const [showInput, setShowInput] = useState(false);
+  const [label, setLabel] = useState("");
+
+  const handleCreate = useCallback(() => {
+    const branchLabel = label.trim() || `Branch from ${messageId.slice(0, 8)}`;
+    onBranch(messageId, branchLabel);
+    setLabel("");
+    setShowInput(false);
+  }, [messageId, label, onBranch]);
+
+  if (showInput) {
+    return (
+      <div className="mt-1 flex items-center gap-1">
+        <input
+          autoFocus
+          className="h-5 w-32 rounded border border-zinc-700 bg-zinc-900 px-1.5 text-[9px] text-zinc-300 outline-none focus:border-violet-500"
+          onChange={(e) => setLabel(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              handleCreate();
+            }
+            if (e.key === "Escape") {
+              setShowInput(false);
+            }
+          }}
+          placeholder="Branch name..."
+          value={label}
+        />
+        <button
+          className="rounded px-1 py-0.5 text-[9px] text-violet-400 hover:bg-violet-500/10"
+          onClick={handleCreate}
+          type="button"
+        >
+          Create
+        </button>
+        <button
+          className="rounded px-1 py-0.5 text-[9px] text-zinc-500 hover:bg-zinc-800"
+          onClick={() => setShowInput(false)}
+          type="button"
+        >
+          Cancel
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <button
+      className="mt-0.5 rounded px-1 py-0.5 text-[9px] text-zinc-600 opacity-0 transition-opacity hover:bg-zinc-800 hover:text-zinc-400 group-hover:opacity-100"
+      onClick={() => setShowInput(true)}
+      type="button"
+    >
+      Branch from here
+    </button>
+  );
+}
+
+function BranchIndicator({ branchCount }: { branchCount: number }) {
+  if (branchCount === 0) {
+    return null;
+  }
+  return (
+    <span className="ml-1 rounded bg-violet-500/15 px-1.5 py-0.5 text-[9px] text-violet-400">
+      {branchCount} branch{branchCount > 1 ? "es" : ""}
+    </span>
+  );
+}
+
+function BranchNav({
+  branches,
+  currentBranchId,
+  onSwitch,
+  onDelete,
+}: {
+  branches: ConversationBranch[];
+  currentBranchId: string | null;
+  onDelete?: (branchId: string) => void;
+  onSwitch: (branchId: string | null) => void;
+}) {
+  if (branches.length === 0) {
+    return null;
+  }
+
+  return (
+    <div className="flex items-center gap-1 overflow-x-auto border-zinc-800 border-b px-3 py-1.5">
+      <button
+        className={`shrink-0 rounded px-2 py-0.5 text-[10px] transition-colors ${
+          currentBranchId === null
+            ? "bg-violet-500/20 text-violet-400"
+            : "text-zinc-500 hover:text-zinc-300"
+        }`}
+        onClick={() => onSwitch(null)}
+        type="button"
+      >
+        Main
+      </button>
+      {branches.map((branch) => (
+        <div className="flex items-center gap-0.5" key={branch.id}>
+          <button
+            className={`shrink-0 rounded px-2 py-0.5 text-[10px] transition-colors ${
+              currentBranchId === branch.id
+                ? "bg-violet-500/20 text-violet-400"
+                : "text-zinc-500 hover:text-zinc-300"
+            }`}
+            onClick={() => onSwitch(branch.id)}
+            type="button"
+          >
+            {branch.label}
+          </button>
+          {onDelete && (
+            <button
+              className="rounded px-0.5 text-[9px] text-zinc-600 hover:text-red-400"
+              onClick={() => onDelete(branch.id)}
+              type="button"
+            >
+              x
+            </button>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Main component
 // ---------------------------------------------------------------------------
 
 export function ConversationHistory({
   messages,
   isStreaming = false,
+  branches = [],
+  currentBranchId = null,
+  onBranchCreate,
+  onBranchSwitch,
+  onBranchDelete,
 }: ConversationHistoryProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const [autoScroll, setAutoScroll] = useState(true);
@@ -310,17 +473,55 @@ export function ConversationHistory({
     setAutoScroll(isAtBottom);
   }, []);
 
+  // Compute branch fork points for indicators
+  const branchCountByMessage = new Map<string, number>();
+  for (const branch of branches) {
+    const count = branchCountByMessage.get(branch.forkFromMessageId) ?? 0;
+    branchCountByMessage.set(branch.forkFromMessageId, count + 1);
+  }
+
+  // If viewing a branch, show main messages up to fork point + branch messages
+  const activeBranch = currentBranchId
+    ? branches.find((b) => b.id === currentBranchId)
+    : null;
+
+  const displayMessages = activeBranch
+    ? (() => {
+        const forkIdx = messages.findIndex(
+          (m) => m.id === activeBranch.forkFromMessageId
+        );
+        const mainPortion =
+          forkIdx >= 0 ? messages.slice(0, forkIdx + 1) : messages;
+        return [...mainPortion, ...activeBranch.messages];
+      })()
+    : messages;
+
+  const forkPointId = activeBranch?.forkFromMessageId;
+
   const renderMessage = (msg: ConversationMessage) => {
-    switch (msg.type) {
-      case "user":
-        return <UserBubble key={msg.id} message={msg} />;
-      case "agent":
-        return <AgentBubble key={msg.id} message={msg} />;
-      case "tool_call":
-        return <ToolCallBubble key={msg.id} message={msg} />;
-      default:
-        return null;
-    }
+    const branchCount = branchCountByMessage.get(msg.id) ?? 0;
+    const isForkPoint = msg.id === forkPointId;
+
+    return (
+      <div className="group relative" key={msg.id}>
+        {isForkPoint && (
+          <div className="mb-1 flex items-center gap-1">
+            <span className="h-px flex-1 bg-violet-500/20" />
+            <span className="text-[9px] text-violet-400">fork point</span>
+            <span className="h-px flex-1 bg-violet-500/20" />
+          </div>
+        )}
+        {msg.type === "user" && <UserBubble message={msg} />}
+        {msg.type === "agent" && <AgentBubble message={msg} />}
+        {msg.type === "tool_call" && <ToolCallBubble message={msg} />}
+        <div className="flex items-center gap-1">
+          <BranchIndicator branchCount={branchCount} />
+          {onBranchCreate && (
+            <BranchButton messageId={msg.id} onBranch={onBranchCreate} />
+          )}
+        </div>
+      </div>
+    );
   };
 
   return (
@@ -345,8 +546,16 @@ export function ConversationHistory({
           Conversation History
         </span>
         <Badge className="bg-zinc-800 text-zinc-500" variant="secondary">
-          {messages.length}
+          {displayMessages.length}
         </Badge>
+        {branches.length > 0 && (
+          <Badge
+            className="bg-violet-500/15 text-violet-400"
+            variant="secondary"
+          >
+            {branches.length} branch{branches.length > 1 ? "es" : ""}
+          </Badge>
+        )}
 
         {!autoScroll && (
           <Button
@@ -365,15 +574,27 @@ export function ConversationHistory({
         )}
       </div>
 
+      {/* Branch navigation */}
+      {branches.length > 0 && onBranchSwitch && (
+        <BranchNav
+          branches={branches}
+          currentBranchId={currentBranchId ?? null}
+          onDelete={onBranchDelete}
+          onSwitch={onBranchSwitch}
+        />
+      )}
+
       {/* Messages */}
       <ScrollArea className="flex-1">
         <div className="p-3" onScroll={handleScroll} ref={scrollRef}>
-          {messages.length === 0 ? (
+          {displayMessages.length === 0 ? (
             <div className="flex h-48 items-center justify-center text-xs text-zinc-600">
               No messages yet
             </div>
           ) : (
-            <div className="space-y-3">{messages.map(renderMessage)}</div>
+            <div className="space-y-3">
+              {displayMessages.map(renderMessage)}
+            </div>
           )}
         </div>
       </ScrollArea>

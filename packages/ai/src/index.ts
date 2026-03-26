@@ -38,6 +38,11 @@ export {
   PROVIDER_ENDPOINTS,
   PROVIDER_ENV_KEYS,
 } from "./models";
+// ---------------------------------------------------------------------------
+// Output Parser
+// ---------------------------------------------------------------------------
+export type { ParsedCodeBlock, ParsedToolCall } from "./output-parser";
+export { StructuredOutputParser } from "./output-parser";
 export type {
   ChatMessage,
   CompletionOptions,

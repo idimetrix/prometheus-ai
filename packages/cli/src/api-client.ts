@@ -229,6 +229,272 @@ export class APIClient {
     return data.result.data.json;
   }
 
+  async triggerDeployment(params: {
+    projectId: string;
+    environment: string;
+    provider: string;
+  }): Promise<{ deploymentId: string }> {
+    const response = await fetch(
+      `${this.baseUrl}/api/trpc/deployments.trigger`,
+      {
+        method: "POST",
+        headers: this.headers,
+        body: JSON.stringify({ json: params }),
+      }
+    );
+    if (!response.ok) {
+      throw new Error(
+        `Failed to trigger deployment: ${response.status} ${await response.text()}`
+      );
+    }
+    const data = (await response.json()) as {
+      result: { data: { json: { deploymentId: string } } };
+    };
+    return data.result.data.json;
+  }
+
+  async getDeploymentStatus(deploymentId: string): Promise<{
+    deploymentId: string;
+    status: "queued" | "building" | "deploying" | "live" | "failed";
+    url?: string;
+    error?: string;
+  }> {
+    const response = await fetch(
+      `${this.baseUrl}/api/trpc/deployments.getStatus?input=${encodeURIComponent(JSON.stringify({ json: { deploymentId } }))}`,
+      { headers: this.headers }
+    );
+    if (!response.ok) {
+      throw new Error(`Failed to get deployment status: ${response.status}`);
+    }
+    const data = (await response.json()) as {
+      result: {
+        data: {
+          json: {
+            deploymentId: string;
+            status: "queued" | "building" | "deploying" | "live" | "failed";
+            url?: string;
+            error?: string;
+          };
+        };
+      };
+    };
+    return data.result.data.json;
+  }
+
+  async listEnvVars(projectId: string): Promise<
+    Array<{
+      key: string;
+      value: string;
+      environment: string;
+      updatedAt: string;
+    }>
+  > {
+    const response = await fetch(
+      `${this.baseUrl}/api/trpc/settings.listSecrets?input=${encodeURIComponent(JSON.stringify({ json: { projectId } }))}`,
+      { headers: this.headers }
+    );
+    if (!response.ok) {
+      throw new Error(`Failed to list env vars: ${response.status}`);
+    }
+    const data = (await response.json()) as {
+      result: {
+        data: {
+          json: {
+            secrets: Array<{
+              key: string;
+              value: string;
+              environment: string;
+              updatedAt: string;
+            }>;
+          };
+        };
+      };
+    };
+    return data.result.data.json.secrets;
+  }
+
+  async setEnvVar(
+    projectId: string,
+    key: string,
+    value: string,
+    environment: string
+  ): Promise<void> {
+    const response = await fetch(
+      `${this.baseUrl}/api/trpc/settings.setSecret`,
+      {
+        method: "POST",
+        headers: this.headers,
+        body: JSON.stringify({
+          json: { projectId, key, value, environment },
+        }),
+      }
+    );
+    if (!response.ok) {
+      throw new Error(
+        `Failed to set env var: ${response.status} ${await response.text()}`
+      );
+    }
+  }
+
+  async deleteEnvVar(projectId: string, key: string): Promise<void> {
+    const response = await fetch(
+      `${this.baseUrl}/api/trpc/settings.deleteSecret`,
+      {
+        method: "POST",
+        headers: this.headers,
+        body: JSON.stringify({ json: { projectId, key } }),
+      }
+    );
+    if (!response.ok) {
+      throw new Error(`Failed to delete env var: ${response.status}`);
+    }
+  }
+
+  async getLogs(params: {
+    sessionId?: string;
+    projectId?: string;
+    limit: number;
+  }): Promise<
+    Array<{
+      level: "debug" | "info" | "warn" | "error";
+      message: string;
+      timestamp: string;
+    }>
+  > {
+    const response = await fetch(
+      `${this.baseUrl}/api/trpc/sessions.logs?input=${encodeURIComponent(JSON.stringify({ json: params }))}`,
+      { headers: this.headers }
+    );
+    if (!response.ok) {
+      throw new Error(`Failed to fetch logs: ${response.status}`);
+    }
+    const data = (await response.json()) as {
+      result: {
+        data: {
+          json: {
+            logs: Array<{
+              level: "debug" | "info" | "warn" | "error";
+              message: string;
+              timestamp: string;
+            }>;
+          };
+        };
+      };
+    };
+    return data.result.data.json.logs;
+  }
+
+  async createPullRequest(params: {
+    projectId: string;
+    title: string;
+    headBranch: string;
+    baseBranch: string;
+    draft: boolean;
+  }): Promise<{ number: number; url: string }> {
+    const response = await fetch(
+      `${this.baseUrl}/api/trpc/integrations.createPullRequest`,
+      {
+        method: "POST",
+        headers: this.headers,
+        body: JSON.stringify({ json: params }),
+      }
+    );
+    if (!response.ok) {
+      throw new Error(
+        `Failed to create PR: ${response.status} ${await response.text()}`
+      );
+    }
+    const data = (await response.json()) as {
+      result: { data: { json: { number: number; url: string } } };
+    };
+    return data.result.data.json;
+  }
+
+  async listPullRequests(projectId: string): Promise<
+    Array<{
+      number: number;
+      title: string;
+      status: string;
+      author: string;
+      headBranch: string;
+      baseBranch: string;
+      draft: boolean;
+      url: string;
+    }>
+  > {
+    const response = await fetch(
+      `${this.baseUrl}/api/trpc/integrations.listPullRequests?input=${encodeURIComponent(JSON.stringify({ json: { projectId } }))}`,
+      { headers: this.headers }
+    );
+    if (!response.ok) {
+      throw new Error(`Failed to list PRs: ${response.status}`);
+    }
+    const data = (await response.json()) as {
+      result: {
+        data: {
+          json: {
+            pullRequests: Array<{
+              number: number;
+              title: string;
+              status: string;
+              author: string;
+              headBranch: string;
+              baseBranch: string;
+              draft: boolean;
+              url: string;
+            }>;
+          };
+        };
+      };
+    };
+    return data.result.data.json.pullRequests;
+  }
+
+  async getPullRequestStatus(
+    projectId: string,
+    prNumber: number
+  ): Promise<{
+    number: number;
+    title: string;
+    status: string;
+    author: string;
+    headBranch: string;
+    baseBranch: string;
+    url: string;
+    checks: Array<{
+      name: string;
+      status: "success" | "failure" | "pending" | "running";
+    }>;
+  }> {
+    const response = await fetch(
+      `${this.baseUrl}/api/trpc/integrations.getPullRequestStatus?input=${encodeURIComponent(JSON.stringify({ json: { projectId, prNumber } }))}`,
+      { headers: this.headers }
+    );
+    if (!response.ok) {
+      throw new Error(`Failed to get PR status: ${response.status}`);
+    }
+    const data = (await response.json()) as {
+      result: {
+        data: {
+          json: {
+            number: number;
+            title: string;
+            status: string;
+            author: string;
+            headBranch: string;
+            baseBranch: string;
+            url: string;
+            checks: Array<{
+              name: string;
+              status: "success" | "failure" | "pending" | "running";
+            }>;
+          };
+        };
+      };
+    };
+    return data.result.data.json;
+  }
+
   async sendMessage(params: {
     sessionId: string;
     content: string;

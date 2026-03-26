@@ -1,0 +1,87 @@
+{
+  "common": {
+    "dashboard": "Tableau de bord",
+    "projects": "Projets",
+    "sessions": "Sessions",
+    "settings": "Paramètres",
+    "analytics": "Analytique",
+    "fleet": "Gestionnaire de flotte",
+    "create": "Créer un projet",
+    "cancel": "Annuler",
+    "save": "Enregistrer",
+    "delete": "Supprimer",
+    "edit": "Modifier",
+    "submit": "Soumettre",
+    "loading": "Chargement...",
+    "error": "Une erreur est survenue",
+    "success": "Succès",
+    "pending": "En attente",
+    "running": "En cours",
+    "completed": "Terminé",
+    "retry": "Réessayer",
+    "search": "Rechercher...",
+    "noResults": "Aucun résultat trouvé"
+  },
+  "auth": {
+    "signIn": "Se connecter",
+    "signUp": "S'inscrire",
+    "signOut": "Se déconnecter"
+  },
+  "nav": {
+    "dashboard": "Tableau de bord",
+    "projects": "Projets",
+    "sessions": "Sessions",
+    "settings": "Paramètres"
+  },
+  "actions": {
+    "create": "Créer",
+    "delete": "Supprimer",
+    "edit": "Modifier",
+    "save": "Enregistrer",
+    "cancel": "Annuler",
+    "submit": "Soumettre"
+  },
+  "status": {
+    "loading": "Chargement...",
+    "error": "Erreur",
+    "success": "Succès",
+    "pending": "En attente",
+    "running": "En cours",
+    "completed": "Terminé"
+  },
+  "session": {
+    "chat": "Discussion",
+    "terminal": "Terminal",
+    "preview": "Aperçu",
+    "files": "Fichiers",
+    "agent": "Agent"
+  },
+  "errors": {
+    "generic": "Une erreur inattendue est survenue",
+    "notFound": "Page introuvable",
+    "unauthorized": "Accès non autorisé",
+    "forbidden": "Accès interdit",
+    "networkError": "Erreur de connexion réseau",
+    "timeout": "La requête a expiré",
+    "validation": "Données de formulaire invalides",
+    "serverError": "Erreur interne du serveur"
+  },
+  "agents": {
+    "title": "Agents IA",
+    "orchestrator": "Orchestrateur",
+    "discovery": "Découverte",
+    "architect": "Architecte",
+    "planner": "Planificateur",
+    "frontendCoder": "Développeur Frontend",
+    "backendCoder": "Développeur Backend",
+    "testEngineer": "Ingénieur de tests",
+    "securityAuditor": "Auditeur de sécurité",
+    "deployEngineer": "Ingénieur de déploiement"
+  },
+  "billing": {
+    "credits": "Crédits",
+    "balance": "Solde",
+    "usage": "Utilisation",
+    "upgrade": "Améliorer le plan"
+  }
+}

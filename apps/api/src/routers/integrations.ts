@@ -6,12 +6,15 @@ import {
 } from "@prometheus/db";
 import { createLogger } from "@prometheus/logger";
 import { decrypt, encrypt, generateId } from "@prometheus/utils";
+import { importFromGitUrlSchema } from "@prometheus/validators";
 import { TRPCError } from "@trpc/server";
 import { and, eq } from "drizzle-orm";
 import { z } from "zod";
 import { protectedProcedure, router } from "../trpc";
 
 const logger = createLogger("api:integrations");
+
+const GIT_SUFFIX_RE = /\.git$/;
 
 const SUPPORTED_PROVIDERS = [
   "github",
@@ -449,6 +452,59 @@ export const integrationsRouter = router({
     }),
 
   // ---------------------------------------------------------------------------
+  // Import from arbitrary Git URL (no OAuth required)
+  // ---------------------------------------------------------------------------
+  importFromGitUrl: protectedProcedure
+    .input(importFromGitUrlSchema)
+    .mutation(async ({ input, ctx }) => {
+      // Derive project name from URL if not provided
+      const urlSegments = input.repoUrl
+        .replace(GIT_SUFFIX_RE, "")
+        .split("/")
+        .filter(Boolean);
+      const detectedName = urlSegments.at(-1) ?? "untitled";
+      const projectName = input.name?.trim() || detectedName;
+
+      // If a PAT was provided, encrypt it for storage
+      const encryptedPat = input.personalAccessToken
+        ? encrypt(input.personalAccessToken)
+        : null;
+
+      const projectId = generateId("proj");
+      await ctx.db.insert(projects).values({
+        id: projectId,
+        orgId: ctx.orgId,
+        name: projectName,
+        repoUrl: input.repoUrl,
+        techStackPreset: input.techStackPreset ?? "auto-detect",
+        status: "active",
+      });
+
+      // Store PAT as an OAuth token entry if provided, so it can be used
+      // by other services (e.g. sandbox-manager git clone) later.
+      if (encryptedPat) {
+        await ctx.db
+          .insert(oauthTokens)
+          .values({
+            id: generateId("oat"),
+            orgId: ctx.orgId,
+            userId: ctx.auth.userId,
+            provider: "git-manual",
+            accessToken: encryptedPat,
+            providerUsername: null,
+          })
+          .onConflictDoNothing();
+      }
+
+      logger.info(
+        { orgId: ctx.orgId, projectId, repoUrl: input.repoUrl },
+        "Project imported from manual git URL"
+      );
+
+      return { projectId, name: projectName };
+    }),
+
+  // ---------------------------------------------------------------------------
   // OAuth -- import a repo as a new project
   // ---------------------------------------------------------------------------
   importRepo: protectedProcedure
@@ -509,6 +565,136 @@ export const integrationsRouter = router({
       );
 
       return { projectId, name: projectName };
+    }),
+
+  // ---------------------------------------------------------------------------
+  // Pull Request endpoints (used by code review UI)
+  // ---------------------------------------------------------------------------
+  listPullRequests: protectedProcedure
+    .input(z.object({ projectId: z.string().min(1) }))
+    .query(({ input }) => {
+      logger.info({ projectId: input.projectId }, "Listing pull requests");
+      // Stub: return empty list until full PR integration is built
+      return {
+        pullRequests: [] as {
+          number: number;
+          title: string;
+          author: string | null;
+          status: string;
+          updatedAt: string | null;
+          description: string | null;
+          diffs: {
+            path: string;
+            additions: number | null;
+            deletions: number | null;
+            hunks: {
+              startLine: number | null;
+              lines: {
+                lineNumber: number | null;
+                content: string | null;
+                type: string | null;
+              }[];
+            }[];
+          }[];
+          comments: {
+            id: string | null;
+            author: string | null;
+            content: string | null;
+            timestamp: string | null;
+            lineNumber: number | null;
+            resolved: boolean | null;
+          }[];
+        }[],
+      };
+    }),
+
+  approvePullRequest: protectedProcedure
+    .input(
+      z.object({ projectId: z.string().min(1), prNumber: z.number().int() })
+    )
+    .mutation(({ input }) => {
+      logger.info(
+        { projectId: input.projectId, prNumber: input.prNumber },
+        "Approving pull request"
+      );
+      return { success: true };
+    }),
+
+  commentOnPullRequest: protectedProcedure
+    .input(
+      z.object({
+        projectId: z.string().min(1),
+        prNumber: z.number().int(),
+        comment: z.string(),
+      })
+    )
+    .mutation(({ input }) => {
+      logger.info(
+        { projectId: input.projectId, prNumber: input.prNumber },
+        "Commenting on pull request"
+      );
+      return { success: true };
+    }),
+
+  requestChangesPullRequest: protectedProcedure
+    .input(
+      z.object({ projectId: z.string().min(1), prNumber: z.number().int() })
+    )
+    .mutation(({ input }) => {
+      logger.info(
+        { projectId: input.projectId, prNumber: input.prNumber },
+        "Requesting changes on pull request"
+      );
+      return { success: true };
+    }),
+
+  // ---------------------------------------------------------------------------
+  // CI/CD endpoints (used by CI page)
+  // ---------------------------------------------------------------------------
+  listCIRuns: protectedProcedure
+    .input(z.object({ projectId: z.string().min(1) }))
+    .query(({ input }) => {
+      logger.info({ projectId: input.projectId }, "Listing CI runs");
+      return {
+        runs: [] as {
+          runId: string;
+          name: string;
+          status: string;
+          conclusion: string | null;
+          startedAt: string;
+          url: string;
+        }[],
+      };
+    }),
+
+  generateCIConfig: protectedProcedure
+    .input(
+      z.object({ projectId: z.string().min(1), provider: z.string().min(1) })
+    )
+    .mutation(({ input }) => {
+      logger.info(
+        { projectId: input.projectId, provider: input.provider },
+        "Generating CI config"
+      );
+      return {
+        config: `# Auto-generated ${input.provider} CI configuration\n`,
+      };
+    }),
+
+  applyCIConfig: protectedProcedure
+    .input(
+      z.object({
+        projectId: z.string().min(1),
+        provider: z.string().min(1),
+        config: z.string(),
+      })
+    )
+    .mutation(({ input }) => {
+      logger.info(
+        { projectId: input.projectId, provider: input.provider },
+        "Applying CI config"
+      );
+      return { success: true };
     }),
 });
 

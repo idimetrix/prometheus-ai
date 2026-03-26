@@ -5,8 +5,15 @@
  * timeline prediction, and priority suggestions based on
  * task and session data.
  */
-import { agents, tasks } from "@prometheus/db";
-import { and, desc, eq, gte, sql } from "drizzle-orm";
+import {
+  agents,
+  codeReviews,
+  creditBalances,
+  deployments,
+  projects,
+  tasks,
+} from "@prometheus/db";
+import { and, desc, eq, gte, lt, sql } from "drizzle-orm";
 import { z } from "zod";
 import { protectedProcedure, router } from "../trpc";
 
@@ -343,6 +350,239 @@ export const pmRouter = router({
         projectId: input.projectId,
         suggestions,
         count: suggestions.length,
+      };
+    }),
+
+  // ---------------------------------------------------------------------------
+  // Comprehensive blocker detection: stalled tasks, failed deployments,
+  // unreviewed PRs, and resource constraints
+  // ---------------------------------------------------------------------------
+  detectBlockersComprehensive: protectedProcedure
+    .input(
+      z
+        .object({
+          projectId: z.string().optional(),
+          stallThresholdMinutes: z.number().min(1).default(120),
+          prReviewThresholdHours: z.number().min(1).default(24),
+        })
+        .default({
+          stallThresholdMinutes: 120,
+          prReviewThresholdHours: 24,
+        })
+    )
+    .query(async ({ ctx, input }) => {
+      const blockerCategories: Array<{
+        category: string;
+        severity: "high" | "medium" | "low";
+        items: Array<{
+          id: string;
+          description: string;
+          metadata: Record<string, unknown>;
+        }>;
+      }> = [];
+
+      const dayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
+
+      // 1. Stalled tasks
+      const stallThreshold = new Date(
+        Date.now() - input.stallThresholdMinutes * 60 * 1000
+      );
+      const stalledConditions = [
+        eq(tasks.orgId, ctx.orgId),
+        eq(tasks.status, "running"),
+        sql`${tasks.startedAt} < ${stallThreshold}`,
+      ];
+      if (input.projectId) {
+        stalledConditions.push(eq(tasks.projectId, input.projectId));
+      }
+
+      const stalledTasks = await ctx.db
+        .select({
+          id: tasks.id,
+          title: tasks.title,
+          agentRole: tasks.agentRole,
+          startedAt: tasks.startedAt,
+        })
+        .from(tasks)
+        .where(and(...stalledConditions))
+        .limit(50);
+
+      if (stalledTasks.length > 0) {
+        blockerCategories.push({
+          category: "stalled_tasks",
+          severity: "high",
+          items: stalledTasks.map((t) => ({
+            id: t.id,
+            description: `Task "${t.title}" stalled for ${
+              t.startedAt
+                ? Math.round((Date.now() - t.startedAt.getTime()) / 60_000)
+                : 0
+            } minutes`,
+            metadata: {
+              agentRole: t.agentRole,
+              startedAt: t.startedAt?.toISOString(),
+            },
+          })),
+        });
+      }
+
+      // 2. Failed deployments in the last 24h
+      const failedDeployConditions = [
+        eq(deployments.orgId, ctx.orgId),
+        eq(deployments.status, "failed"),
+        gte(deployments.createdAt, dayAgo),
+      ];
+      if (input.projectId) {
+        failedDeployConditions.push(eq(deployments.projectId, input.projectId));
+      }
+
+      const failedDeploys = await ctx.db
+        .select({
+          id: deployments.id,
+          projectId: deployments.projectId,
+          provider: deployments.provider,
+          errorMessage: deployments.errorMessage,
+          createdAt: deployments.createdAt,
+        })
+        .from(deployments)
+        .where(and(...failedDeployConditions))
+        .limit(20);
+
+      if (failedDeploys.length > 0) {
+        blockerCategories.push({
+          category: "failed_deployments",
+          severity: "high",
+          items: failedDeploys.map((d) => ({
+            id: d.id,
+            description: `Deployment ${d.id} failed on ${d.provider}${
+              d.errorMessage ? `: ${d.errorMessage}` : ""
+            }`,
+            metadata: {
+              projectId: d.projectId,
+              provider: d.provider,
+              createdAt: d.createdAt.toISOString(),
+            },
+          })),
+        });
+      }
+
+      // 3. Unreviewed PRs (pending code reviews older than threshold)
+      const prThreshold = new Date(
+        Date.now() - input.prReviewThresholdHours * 60 * 60 * 1000
+      );
+      const unreviewedConditions = [
+        eq(projects.orgId, ctx.orgId),
+        eq(codeReviews.status, "pending"),
+        lt(codeReviews.createdAt, prThreshold),
+      ];
+      if (input.projectId) {
+        unreviewedConditions.push(eq(codeReviews.projectId, input.projectId));
+      }
+
+      const unreviewedPRs = await ctx.db
+        .select({
+          id: codeReviews.id,
+          sessionId: codeReviews.sessionId,
+          createdAt: codeReviews.createdAt,
+        })
+        .from(codeReviews)
+        .innerJoin(projects, eq(codeReviews.projectId, projects.id))
+        .where(and(...unreviewedConditions))
+        .limit(20);
+
+      if (unreviewedPRs.length > 0) {
+        blockerCategories.push({
+          category: "unreviewed_prs",
+          severity: "medium",
+          items: unreviewedPRs.map((pr) => ({
+            id: pr.id,
+            description: `Code review ${pr.id} pending for ${Math.round(
+              (Date.now() - pr.createdAt.getTime()) / (60 * 60 * 1000)
+            )} hours`,
+            metadata: {
+              sessionId: pr.sessionId,
+              createdAt: pr.createdAt.toISOString(),
+            },
+          })),
+        });
+      }
+
+      // 4. Resource constraints (low credit balance)
+      const [balance] = await ctx.db
+        .select({ balance: creditBalances.balance })
+        .from(creditBalances)
+        .where(eq(creditBalances.orgId, ctx.orgId))
+        .limit(1);
+
+      const currentBalance = Number(balance?.balance ?? 0);
+      if (currentBalance <= 0) {
+        blockerCategories.push({
+          category: "resource_constraints",
+          severity: "high",
+          items: [
+            {
+              id: "credits-depleted",
+              description: "Credit balance is depleted. Tasks cannot proceed.",
+              metadata: { balance: currentBalance },
+            },
+          ],
+        });
+      } else if (currentBalance < 100) {
+        blockerCategories.push({
+          category: "resource_constraints",
+          severity: "medium",
+          items: [
+            {
+              id: "credits-low",
+              description: `Credit balance is low (${currentBalance} remaining)`,
+              metadata: { balance: currentBalance },
+            },
+          ],
+        });
+      }
+
+      // 5. Recently failed tasks
+      const failedTaskConditions = [
+        eq(tasks.orgId, ctx.orgId),
+        eq(tasks.status, "failed"),
+        gte(tasks.createdAt, dayAgo),
+      ];
+      if (input.projectId) {
+        failedTaskConditions.push(eq(tasks.projectId, input.projectId));
+      }
+
+      const failedTasks = await ctx.db
+        .select({
+          id: tasks.id,
+          title: tasks.title,
+          agentRole: tasks.agentRole,
+        })
+        .from(tasks)
+        .where(and(...failedTaskConditions))
+        .limit(20);
+
+      if (failedTasks.length > 0) {
+        blockerCategories.push({
+          category: "failed_tasks",
+          severity: "medium",
+          items: failedTasks.map((t) => ({
+            id: t.id,
+            description: `Task "${t.title}" failed`,
+            metadata: { agentRole: t.agentRole },
+          })),
+        });
+      }
+
+      const totalBlockers = blockerCategories.reduce(
+        (sum, cat) => sum + cat.items.length,
+        0
+      );
+
+      return {
+        blockers: blockerCategories,
+        totalCount: totalBlockers,
+        hasHighSeverity: blockerCategories.some((c) => c.severity === "high"),
+        analyzedAt: new Date().toISOString(),
       };
     }),
 });

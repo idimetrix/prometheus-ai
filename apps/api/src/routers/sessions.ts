@@ -1244,4 +1244,160 @@ export const sessionsRouter = router({
       );
       return { success: true };
     }),
+
+  // ─── Shared Sessions ────────────────────────────────────────────────
+
+  /** Generate a share token/link for a session. */
+  shareSession: protectedProcedure
+    .input(z.object({ sessionId: z.string() }))
+    .mutation(async ({ input, ctx }) => {
+      await verifySessionAccess(ctx.db, input.sessionId, ctx.orgId);
+      const token = generateId("share");
+      // In production, persist the token in a share_tokens table.
+      // For now return the generated link info.
+      logger.info(
+        { sessionId: input.sessionId, token },
+        "Session share link generated"
+      );
+      return { token, sessionId: input.sessionId };
+    }),
+
+  /** Join a session via share token. */
+  joinSession: protectedProcedure
+    .input(z.object({ token: z.string(), sessionId: z.string() }))
+    .mutation(async ({ input, ctx }) => {
+      // Verify the session exists (token validation would happen in production)
+      const session = await ctx.db.query.sessions.findFirst({
+        where: eq(sessions.id, input.sessionId),
+        with: { project: { columns: { id: true, orgId: true } } },
+      });
+
+      if (!session) {
+        throw new TRPCError({
+          code: "NOT_FOUND",
+          message: "Session not found or invalid share token",
+        });
+      }
+
+      await ctx.db.insert(sessionEvents).values({
+        id: generateId("evt"),
+        sessionId: input.sessionId,
+        type: "checkpoint",
+        data: {
+          action: "participant_joined",
+          userId: ctx.auth.userId,
+          token: input.token,
+        },
+      });
+
+      logger.info(
+        { sessionId: input.sessionId, userId: ctx.auth.userId },
+        "User joined shared session"
+      );
+
+      return { success: true, sessionId: input.sessionId };
+    }),
+
+  /** Leave a shared session. */
+  leaveSession: protectedProcedure
+    .input(z.object({ sessionId: z.string() }))
+    .mutation(async ({ input, ctx }) => {
+      await ctx.db.insert(sessionEvents).values({
+        id: generateId("evt"),
+        sessionId: input.sessionId,
+        type: "checkpoint",
+        data: { action: "participant_left", userId: ctx.auth.userId },
+      });
+
+      logger.info(
+        { sessionId: input.sessionId, userId: ctx.auth.userId },
+        "User left shared session"
+      );
+
+      return { success: true };
+    }),
+
+  /** List current participants in a shared session. */
+  listParticipants: protectedProcedure
+    .input(z.object({ sessionId: z.string() }))
+    .query(async ({ input, ctx }) => {
+      await verifySessionAccess(ctx.db, input.sessionId, ctx.orgId);
+
+      // In production, query a session_participants table.
+      // For now return events-based participant list.
+      const events = await ctx.db.query.sessionEvents.findMany({
+        where: and(
+          eq(sessionEvents.sessionId, input.sessionId),
+          eq(sessionEvents.type, "checkpoint")
+        ),
+        orderBy: desc(sessionEvents.timestamp),
+      });
+
+      // Build participant set from join/leave events
+      const participantMap = new Map<
+        string,
+        { userId: string; role: string }
+      >();
+      for (const event of events) {
+        const data = event.data as Record<string, unknown> | null;
+        if (!data) {
+          continue;
+        }
+        const userId = data.userId as string | undefined;
+        if (!userId) {
+          continue;
+        }
+
+        if (
+          data.action === "participant_joined" &&
+          !participantMap.has(userId)
+        ) {
+          participantMap.set(userId, {
+            userId,
+            role: (data.role as string) ?? "viewer",
+          });
+        }
+        if (data.action === "participant_left") {
+          participantMap.delete(userId);
+        }
+      }
+
+      return { participants: Array.from(participantMap.values()) };
+    }),
+
+  /** Set a participant's role in a shared session (owner only). */
+  setParticipantRole: protectedProcedure
+    .input(
+      z.object({
+        sessionId: z.string(),
+        userId: z.string(),
+        role: z.enum(["editor", "viewer"]),
+      })
+    )
+    .mutation(async ({ input, ctx }) => {
+      await verifySessionAccess(ctx.db, input.sessionId, ctx.orgId);
+
+      await ctx.db.insert(sessionEvents).values({
+        id: generateId("evt"),
+        sessionId: input.sessionId,
+        type: "checkpoint",
+        data: {
+          action: "role_changed",
+          targetUserId: input.userId,
+          role: input.role,
+          changedBy: ctx.auth.userId,
+        },
+      });
+
+      logger.info(
+        {
+          sessionId: input.sessionId,
+          targetUserId: input.userId,
+          role: input.role,
+        },
+        "Participant role changed"
+      );
+
+      return { success: true };
+    }),
 });

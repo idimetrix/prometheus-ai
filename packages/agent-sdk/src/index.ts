@@ -97,6 +97,19 @@ export {
   gitStatusSchema,
   gitTools,
 } from "./tools/git";
+// MOON-015: Multi-language support
+export type {
+  LanguageConfig,
+  SupportedLanguage,
+} from "./tools/language-support";
+export {
+  detectLanguage,
+  getBuildCommand,
+  getLanguageConfig,
+  getLintCommand,
+  getTestCommand,
+  LANGUAGE_CONFIGS,
+} from "./tools/language-support";
 // Tool registry
 export { globalRegistry, TOOL_REGISTRY, ToolRegistry } from "./tools/registry";
 // Sandbox execution

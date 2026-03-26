@@ -28,6 +28,9 @@ import { and, eq } from "drizzle-orm";
 import { Hono } from "hono";
 
 const logger = createLogger("api:webhooks:slack");
+
+const TEXT_FILE_RE =
+  /\.(ts|tsx|js|jsx|py|rb|go|rs|java|yaml|yml|json|md|txt|sh|css|html|sql)$/;
 const slackWebhookApp = new Hono();
 
 const SLACK_SIGNING_SECRET = process.env.SLACK_SIGNING_SECRET ?? "";
@@ -80,6 +83,12 @@ interface SlackEventPayload {
     bot_id?: string;
     channel: string;
     channel_type?: string;
+    files?: Array<{
+      id: string;
+      mimetype?: string;
+      name: string;
+      url_private?: string;
+    }>;
     subtype?: string;
     text?: string;
     thread_ts?: string;
@@ -100,6 +109,12 @@ interface SlackInteractionPayload {
   callback_id?: string;
   channel?: { id: string };
   message?: {
+    files?: Array<{
+      id: string;
+      mimetype?: string;
+      name: string;
+      url_private?: string;
+    }>;
     text?: string;
     ts: string;
   };
@@ -276,6 +291,68 @@ async function postSlackResponse(
   }
 }
 
+/** Fetch file content from Slack's private URL using the bot token. */
+async function fetchSlackFileContent(
+  fileUrl: string,
+  token: string
+): Promise<string | null> {
+  try {
+    const resp = await fetch(fileUrl, {
+      headers: { Authorization: `Bearer ${token}` },
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (!resp.ok) {
+      logger.warn(
+        { fileUrl, status: resp.status },
+        "Failed to fetch Slack file"
+      );
+      return null;
+    }
+    const text = await resp.text();
+    // Limit file content to 4000 chars to avoid oversized task descriptions
+    return text.slice(0, 4000);
+  } catch (error) {
+    logger.warn({ error: String(error) }, "Error fetching Slack file");
+    return null;
+  }
+}
+
+/** Format file attachments as code snippets for task descriptions. */
+async function formatFileAttachments(
+  files: Array<{
+    id: string;
+    mimetype?: string;
+    name: string;
+    url_private?: string;
+  }>,
+  token: string
+): Promise<string> {
+  const snippets: string[] = [];
+  for (const file of files.slice(0, 5)) {
+    if (!file.url_private) {
+      continue;
+    }
+    const isText =
+      file.mimetype?.startsWith("text/") ||
+      file.mimetype === "application/json" ||
+      TEXT_FILE_RE.test(file.name);
+
+    if (isText) {
+      const content = await fetchSlackFileContent(file.url_private, token);
+      if (content) {
+        snippets.push(
+          `\n--- File: ${file.name} ---\n\`\`\`\n${content}\n\`\`\``
+        );
+      }
+    } else {
+      snippets.push(
+        `\n[Attachment: ${file.name} (${file.mimetype ?? "unknown type"})]`
+      );
+    }
+  }
+  return snippets.join("\n");
+}
+
 /** Build a session URL for the frontend. */
 function buildSessionUrl(sessionId: string): string {
   return `${FRONTEND_URL}/dashboard/sessions/${sessionId}`;
@@ -395,9 +472,20 @@ slackWebhookApp.post("/", async (c) => {
 
       switch (event.type) {
         case "app_mention": {
-          const description = parseTaskFromMention(event.text ?? "");
-          if (!description) {
+          let description = parseTaskFromMention(event.text ?? "");
+          if (!(description || event.files?.length)) {
             break;
+          }
+
+          // Append file attachments as code snippets
+          if (event.files?.length) {
+            const fileContent = await formatFileAttachments(
+              event.files,
+              org.botToken
+            );
+            description = description
+              ? `${description}\n${fileContent}`
+              : `File attachment task${fileContent}`;
           }
 
           const { taskId, sessionId } = await createTaskFromSlack({
@@ -417,14 +505,37 @@ slackWebhookApp.post("/", async (c) => {
             token: org.botToken,
             channel: event.channel,
             thread_ts: event.thread_ts ?? event.ts,
-            text: `Working on it: ${description}`,
+            text: `Working on it: ${description.slice(0, 200)}`,
             blocks: [
               {
                 type: "section",
                 text: {
                   type: "mrkdwn",
-                  text: `:rocket: *Working on it:* ${description}`,
+                  text: `:rocket: *Working on it:* ${description.slice(0, 200)}`,
                 },
+              },
+              {
+                type: "actions",
+                block_id: `task_actions_${taskId}`,
+                elements: [
+                  {
+                    type: "button",
+                    text: { type: "plain_text", text: "Cancel", emoji: true },
+                    style: "danger",
+                    action_id: "cancel_task",
+                    value: sessionId,
+                  },
+                  {
+                    type: "button",
+                    text: {
+                      type: "plain_text",
+                      text: "View Progress",
+                      emoji: true,
+                    },
+                    action_id: "view_session",
+                    url: sessionUrl,
+                  },
+                ],
               },
               {
                 type: "context",
@@ -444,9 +555,20 @@ slackWebhookApp.post("/", async (c) => {
           if (event.channel_type && event.channel_type !== "im") {
             break;
           }
-          const description = event.text ?? "";
-          if (!description) {
+          let description = event.text ?? "";
+          if (!(description || event.files?.length)) {
             break;
+          }
+
+          // Append file attachments as code snippets for DMs
+          if (event.files?.length) {
+            const fileContent = await formatFileAttachments(
+              event.files,
+              org.botToken
+            );
+            description = description
+              ? `${description}\n${fileContent}`
+              : `File attachment task${fileContent}`;
           }
 
           const { taskId, sessionId } = await createTaskFromSlack({
@@ -466,14 +588,37 @@ slackWebhookApp.post("/", async (c) => {
             token: org.botToken,
             channel: event.channel,
             thread_ts: event.ts,
-            text: `Working on it: ${description}`,
+            text: `Working on it: ${description.slice(0, 200)}`,
             blocks: [
               {
                 type: "section",
                 text: {
                   type: "mrkdwn",
-                  text: `:rocket: *Working on it:* ${description}`,
+                  text: `:rocket: *Working on it:* ${description.slice(0, 200)}`,
                 },
+              },
+              {
+                type: "actions",
+                block_id: `task_actions_${taskId}`,
+                elements: [
+                  {
+                    type: "button",
+                    text: { type: "plain_text", text: "Cancel", emoji: true },
+                    style: "danger",
+                    action_id: "cancel_task",
+                    value: sessionId,
+                  },
+                  {
+                    type: "button",
+                    text: {
+                      type: "plain_text",
+                      text: "View Progress",
+                      emoji: true,
+                    },
+                    action_id: "view_session",
+                    url: sessionUrl,
+                  },
+                ],
               },
               {
                 type: "context",
@@ -550,6 +695,151 @@ slackWebhookApp.post("/events", async (c) => {
   return c.json({ ok: true });
 });
 
+/** Build Slack notification blocks for a newly created task. */
+function buildTaskNotificationBlocks(
+  taskId: string,
+  sessionId: string,
+  description: string
+): Record<string, unknown>[] {
+  const sessionUrl = buildSessionUrl(sessionId);
+  return [
+    {
+      type: "section",
+      text: {
+        type: "mrkdwn",
+        text: `:rocket: *Working on it:* ${description.slice(0, 200)}`,
+      },
+    },
+    {
+      type: "actions",
+      block_id: `task_actions_${taskId}`,
+      elements: [
+        {
+          type: "button",
+          text: { type: "plain_text", text: "Cancel", emoji: true },
+          style: "danger",
+          action_id: "cancel_task",
+          value: sessionId,
+        },
+        {
+          type: "button",
+          text: {
+            type: "plain_text",
+            text: "View Progress",
+            emoji: true,
+          },
+          action_id: "view_session",
+          url: sessionUrl,
+        },
+      ],
+    },
+    {
+      type: "context",
+      elements: [
+        {
+          type: "mrkdwn",
+          text: `Task \`${taskId}\` | <${sessionUrl}|Track progress>`,
+        },
+      ],
+    },
+  ];
+}
+
+/** Resolve file attachments and build a final description string. */
+async function resolveDescription(
+  baseDescription: string,
+  files: NonNullable<SlackEventPayload["event"]>["files"],
+  botToken: string
+): Promise<string> {
+  if (!files?.length) {
+    return baseDescription;
+  }
+  const fileContent = await formatFileAttachments(files, botToken);
+  return baseDescription
+    ? `${baseDescription}\n${fileContent}`
+    : `File attachment task${fileContent}`;
+}
+
+/** Handle an app_mention Slack event. */
+async function handleAppMention(
+  event: NonNullable<SlackEventPayload["event"]>,
+  org: OrgInfo,
+  projectId: string
+): Promise<void> {
+  const rawDescription = parseTaskFromMention(event.text ?? "");
+  if (!(rawDescription || event.files?.length)) {
+    return;
+  }
+
+  const description = await resolveDescription(
+    rawDescription,
+    event.files,
+    org.botToken
+  );
+
+  const { taskId, sessionId } = await createTaskFromSlack({
+    channel: event.channel,
+    threadTs: event.thread_ts ?? event.ts,
+    title: `Slack mention: ${description.slice(0, 80)}`,
+    description,
+    orgId: org.id,
+    planTier: org.planTier,
+    projectId,
+    slackUserId: event.user,
+    userId: org.userId,
+  });
+
+  await postSlackMessage({
+    token: org.botToken,
+    channel: event.channel,
+    thread_ts: event.thread_ts ?? event.ts,
+    text: `Working on it: ${description.slice(0, 200)}`,
+    blocks: buildTaskNotificationBlocks(taskId, sessionId, description),
+  });
+}
+
+/** Handle a direct message Slack event. */
+async function handleDirectMessage(
+  event: NonNullable<SlackEventPayload["event"]>,
+  org: OrgInfo,
+  projectId: string
+): Promise<void> {
+  if (event.channel_type && event.channel_type !== "im") {
+    return;
+  }
+
+  const rawDescription = event.text ?? "";
+  if (!(rawDescription || event.files?.length)) {
+    return;
+  }
+
+  const description = await resolveDescription(
+    rawDescription,
+    event.files,
+    org.botToken
+  );
+
+  const { taskId, sessionId } = await createTaskFromSlack({
+    channel: event.channel,
+    threadTs: event.ts,
+    title: `Slack DM: ${description.slice(0, 80)}`,
+    description,
+    orgId: org.id,
+    planTier: org.planTier,
+    projectId,
+    slackUserId: event.user,
+    userId: org.userId,
+  });
+
+  await postSlackMessage({
+    token: org.botToken,
+    channel: event.channel,
+    thread_ts: event.ts,
+    text: `Working on it: ${description.slice(0, 200)}`,
+    blocks: buildTaskNotificationBlocks(taskId, sessionId, description),
+  });
+}
+
 /** Process a Slack event asynchronously to avoid timeout. */
 async function processEventAsync(
   event: NonNullable<SlackEventPayload["event"]>,
@@ -569,96 +859,11 @@ async function processEventAsync(
 
   switch (event.type) {
     case "app_mention": {
-      const description = parseTaskFromMention(event.text ?? "");
-      if (!description) {
-        return;
-      }
-
-      const { taskId, sessionId } = await createTaskFromSlack({
-        channel: event.channel,
-        threadTs: event.thread_ts ?? event.ts,
-        title: `Slack mention: ${description.slice(0, 80)}`,
-        description,
-        orgId: org.id,
-        planTier: org.planTier,
-        projectId: project.id,
-        slackUserId: event.user,
-        userId: org.userId,
-      });
-
-      const sessionUrl = buildSessionUrl(sessionId);
-      await postSlackMessage({
-        token: org.botToken,
-        channel: event.channel,
-        thread_ts: event.thread_ts ?? event.ts,
-        text: `Working on it: ${description}`,
-        blocks: [
-          {
-            type: "section",
-            text: {
-              type: "mrkdwn",
-              text: `:rocket: *Working on it:* ${description}`,
-            },
-          },
-          {
-            type: "context",
-            elements: [
-              {
-                type: "mrkdwn",
-                text: `Task \`${taskId}\` | <${sessionUrl}|Track progress>`,
-              },
-            ],
-          },
-        ],
-      });
+      await handleAppMention(event, org, project.id);
       break;
     }
     case "message": {
-      if (event.channel_type && event.channel_type !== "im") {
-        return;
-      }
-      const description = event.text ?? "";
-      if (!description) {
-        return;
-      }
-
-      const { taskId, sessionId } = await createTaskFromSlack({
-        channel: event.channel,
-        threadTs: event.ts,
-        title: `Slack DM: ${description.slice(0, 80)}`,
-        description,
-        orgId: org.id,
-        planTier: org.planTier,
-        projectId: project.id,
-        slackUserId: event.user,
-        userId: org.userId,
-      });
-
-      const sessionUrl = buildSessionUrl(sessionId);
-      await postSlackMessage({
-        token: org.botToken,
-        channel: event.channel,
-        thread_ts: event.ts,
-        text: `Working on it: ${description}`,
-        blocks: [
-          {
-            type: "section",
-            text: {
-              type: "mrkdwn",
-              text: `:rocket: *Working on it:* ${description}`,
-            },
-          },
-          {
-            type: "context",
-            elements: [
-              {
-                type: "mrkdwn",
-                text: `Task \`${taskId}\` | <${sessionUrl}|Track progress>`,
-              },
-            ],
-          },
-        ],
-      });
+      await handleDirectMessage(event, org, project.id);
       break;
     }
     default:
@@ -736,6 +941,25 @@ slackWebhookApp.post("/interactions", async (c) => {
                 if (payload.response_url) {
                   await postSlackResponse(payload.response_url, {
                     text: `:x: Action rejected by <@${payload.user.id}>`,
+                    replace_original: false,
+                  });
+                }
+                break;
+              }
+              case "cancel_task": {
+                await db
+                  .update(sessions)
+                  .set({ status: "cancelled", endedAt: new Date() })
+                  .where(eq(sessions.id, sessionId));
+
+                logger.info(
+                  { sessionId, user: payload.user.name },
+                  "Task cancelled via Slack button"
+                );
+
+                if (payload.response_url) {
+                  await postSlackResponse(payload.response_url, {
+                    text: `:octagonal_sign: Task cancelled by <@${payload.user.id}>`,
                     replace_original: false,
                   });
                 }

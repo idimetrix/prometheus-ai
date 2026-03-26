@@ -123,6 +123,22 @@ export const gitCreatePrSchema = z
     body: z.string().describe("PR description (markdown)"),
     base: z.string().optional().describe("Base branch (default: main)"),
     draft: z.boolean().optional().describe("Create as draft PR"),
+    autoDescription: z
+      .boolean()
+      .optional()
+      .describe(
+        "Auto-generate a rich PR description from the diff. When true, the body is used as a summary and enriched with file changes, testing notes, and related issues."
+      ),
+    relatedIssues: z
+      .array(z.string())
+      .optional()
+      .describe(
+        'Issue references to include in the PR description (e.g. ["#42", "PROJ-123"])'
+      ),
+    testingNotes: z
+      .string()
+      .optional()
+      .describe("Testing instructions to include in the PR description"),
   })
   .strict();
 
@@ -509,7 +525,7 @@ export const gitTools: AgentToolDefinition[] = [
   {
     name: "git_create_pr",
     description:
-      "Create a pull request on the remote repository using the GitHub CLI. Requires GH_TOKEN to be set in the sandbox environment.",
+      "Create a pull request on the remote repository using the GitHub CLI. Supports auto-generating rich PR descriptions from the diff. Requires GH_TOKEN to be set in the sandbox environment.",
     inputSchema: {
       type: "object",
       properties: {
@@ -517,20 +533,124 @@ export const gitTools: AgentToolDefinition[] = [
         body: { type: "string", description: "PR description (markdown)" },
         base: { type: "string", description: "Base branch (default: main)" },
         draft: { type: "boolean", description: "Create as draft PR" },
+        autoDescription: {
+          type: "boolean",
+          description:
+            "Auto-generate a rich PR description from the diff with file changes, testing notes, and related issues",
+        },
+        relatedIssues: {
+          type: "array",
+          items: { type: "string" },
+          description: "Issue references to include in the PR description",
+        },
+        testingNotes: {
+          type: "string",
+          description: "Testing instructions to include in the PR description",
+        },
       },
       required: ["title", "body"],
     },
     zodSchema: gitCreatePrSchema,
     permissionLevel: "admin",
     creditCost: 3,
+    // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: PR creation with auto-description requires multiple steps
     execute: async (input, ctx) => {
       const parsed = gitCreatePrSchema.parse(input);
-      const title = parsed.title.replace(/'/g, "'\\''");
-      const body = parsed.body.replace(/'/g, "'\\''");
       const base = parsed.base || "main";
+
+      let prBody = parsed.body;
+
+      // Auto-generate rich PR description from diff if requested
+      if (parsed.autoDescription) {
+        // Get diff stat for file change summary
+        const diffStatResult = await execInSandbox(
+          inRepo(`git diff --stat ${base}...HEAD`),
+          ctx,
+          30_000
+        );
+        const diffStat =
+          diffStatResult.success && diffStatResult.output
+            ? diffStatResult.output
+            : "";
+
+        // Get short diff summary
+        const diffSummaryResult = await execInSandbox(
+          inRepo(`git diff --shortstat ${base}...HEAD`),
+          ctx,
+          15_000
+        );
+        const diffSummary =
+          diffSummaryResult.success && diffSummaryResult.output
+            ? diffSummaryResult.output.trim()
+            : "";
+
+        // Get commit log for context
+        const logResult = await execInSandbox(
+          inRepo(`git log --oneline ${base}...HEAD`),
+          ctx,
+          15_000
+        );
+        const commits =
+          logResult.success && logResult.output ? logResult.output.trim() : "";
+
+        // Build structured PR description
+        const sections: string[] = [];
+        sections.push("## Summary");
+        sections.push("");
+        sections.push(parsed.body);
+        sections.push("");
+
+        if (diffStat) {
+          sections.push("## Changes");
+          sections.push("");
+          sections.push(`\`\`\`\n${diffStat.trim()}\n\`\`\``);
+          if (diffSummary) {
+            sections.push("");
+            sections.push(`**${diffSummary}**`);
+          }
+          sections.push("");
+        }
+
+        if (commits) {
+          sections.push("## Commits");
+          sections.push("");
+          for (const commit of commits.split("\n").slice(0, 20)) {
+            sections.push(`- ${commit}`);
+          }
+          sections.push("");
+        }
+
+        sections.push("## Testing");
+        sections.push("");
+        if (parsed.testingNotes) {
+          sections.push(parsed.testingNotes);
+        } else {
+          sections.push("- [ ] Unit tests pass");
+          sections.push("- [ ] Manual verification completed");
+          sections.push("- [ ] No regressions observed");
+        }
+        sections.push("");
+
+        if (parsed.relatedIssues && parsed.relatedIssues.length > 0) {
+          sections.push("## Related Issues");
+          sections.push("");
+          for (const issue of parsed.relatedIssues) {
+            sections.push(`- ${issue}`);
+          }
+          sections.push("");
+        }
+
+        sections.push("---");
+        sections.push("_Generated by Prometheus AI Agent_");
+
+        prBody = sections.join("\n");
+      }
+
+      const title = parsed.title.replace(/'/g, "'\\''");
+      const safeBody = prBody.replace(/'/g, "'\\''");
       const draftFlag = parsed.draft ? " --draft" : "";
 
-      const command = `gh pr create --title '${title}' --body '${body}' --base '${base}'${draftFlag}`;
+      const command = `gh pr create --title '${title}' --body '${safeBody}' --base '${base}'${draftFlag}`;
       return await execInSandbox(inRepo(command), ctx, 60_000);
     },
   },

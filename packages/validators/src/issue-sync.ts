@@ -69,6 +69,25 @@ export const getSyncStatusSchema = z.object({
   projectId: z.string().min(1),
 });
 
+// ---------- Push Status Update ----------
+export const pushStatusUpdateSchema = z.object({
+  issueId: z.string().min(1),
+  status: z.string().min(1),
+});
+
+// ---------- Push Comment ----------
+export const pushCommentSchema = z.object({
+  issueId: z.string().min(1),
+  comment: z.string().min(1).max(10_000),
+});
+
+// ---------- Push PR Link ----------
+export const pushPRLinkSchema = z.object({
+  issueId: z.string().min(1),
+  prUrl: z.string().url(),
+  prTitle: z.string().optional(),
+});
+
 // ---------- Types ----------
 export type ListSyncedIssuesInput = z.infer<typeof listSyncedIssuesSchema>;
 export type ListSyncedPRsInput = z.infer<typeof listSyncedPRsSchema>;
@@ -77,3 +96,6 @@ export type SyncPRsInput = z.infer<typeof syncPRsSchema>;
 export type AssignToAgentInput = z.infer<typeof assignToAgentSchema>;
 export type UnlinkIssueInput = z.infer<typeof unlinkIssueSchema>;
 export type GetSyncStatusInput = z.infer<typeof getSyncStatusSchema>;
+export type PushStatusUpdateInput = z.infer<typeof pushStatusUpdateSchema>;
+export type PushCommentInput = z.infer<typeof pushCommentSchema>;
+export type PushPRLinkInput = z.infer<typeof pushPRLinkSchema>;

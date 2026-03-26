@@ -2,6 +2,7 @@ import { agentMetaTools } from "./agent-tools";
 import { astGrepTools } from "./ast-grep";
 import { browserTools } from "./browser";
 import { browserAutomationTools } from "./browser-automation";
+import { dependencyUpdaterTools } from "./dependency-updater";
 import { docSearchTools } from "./doc-search";
 import { envSetupTools } from "./env-setup";
 import { fileTools } from "./file";
@@ -42,6 +43,7 @@ registerTools(envSetupTools);
 registerTools(webSearchTools);
 registerTools(webFetchTools);
 registerTools(docSearchTools);
+registerTools(dependencyUpdaterTools);
 
 /**
  * ToolRegistry class for programmatic tool management.

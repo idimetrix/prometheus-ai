@@ -10,8 +10,14 @@
     "cancel": "Cancel",
     "save": "Save",
     "delete": "Delete",
+    "edit": "Edit",
+    "submit": "Submit",
     "loading": "Loading...",
     "error": "Something went wrong",
+    "success": "Success",
+    "pending": "Pending",
+    "running": "Running",
+    "completed": "Completed",
     "retry": "Retry",
     "search": "Search...",
     "noResults": "No results found"
@@ -20,6 +26,45 @@
     "signIn": "Sign In",
     "signUp": "Sign Up",
     "signOut": "Sign Out"
+  },
+  "nav": {
+    "dashboard": "Dashboard",
+    "projects": "Projects",
+    "sessions": "Sessions",
+    "settings": "Settings"
+  },
+  "actions": {
+    "create": "Create",
+    "delete": "Delete",
+    "edit": "Edit",
+    "save": "Save",
+    "cancel": "Cancel",
+    "submit": "Submit"
+  },
+  "status": {
+    "loading": "Loading...",
+    "error": "Error",
+    "success": "Success",
+    "pending": "Pending",
+    "running": "Running",
+    "completed": "Completed"
+  },
+  "session": {
+    "chat": "Chat",
+    "terminal": "Terminal",
+    "preview": "Preview",
+    "files": "Files",
+    "agent": "Agent"
+  },
+  "errors": {
+    "generic": "An unexpected error occurred",
+    "notFound": "Page not found",
+    "unauthorized": "Unauthorized access",
+    "forbidden": "Access forbidden",
+    "networkError": "Network connection error",
+    "timeout": "Request timed out",
+    "validation": "Invalid form data",
+    "serverError": "Internal server error"
   },
   "agents": {
     "title": "AI Agents",

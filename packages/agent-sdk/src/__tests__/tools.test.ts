@@ -60,7 +60,7 @@ describe("TOOL_REGISTRY", () => {
   });
 
   it("should have correct total tools", () => {
-    // Original 45 + web_search + web_fetch + doc_search + git_add + git_log + git_merge + multi_file_edit + browser_visual_diff = 53
-    expect(Object.keys(TOOL_REGISTRY)).toHaveLength(53);
+    // Original 45 + web_search + web_fetch + doc_search + git_add + git_log + git_merge + multi_file_edit + browser_visual_diff + 3 more = 56
+    expect(Object.keys(TOOL_REGISTRY)).toHaveLength(56);
   });
 });

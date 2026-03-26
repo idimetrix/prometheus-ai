@@ -10,6 +10,7 @@ import {
 import {
   agentAggressivenessEnum,
   blueprintEnforcementEnum,
+  branchStrategyEnum,
   deployTargetEnum,
   projectRoleEnum,
   projectStatusEnum,
@@ -67,6 +68,20 @@ export const projectSettings = pgTable("project_settings", {
     .default("standard"),
   deployTarget: deployTargetEnum("deploy_target").notNull().default("manual"),
   modelCostBudget: real("model_cost_budget"),
+  /** Branch strategy for the project */
+  branchStrategy: branchStrategyEnum("branch_strategy")
+    .notNull()
+    .default("feature-branch"),
+  /** Pattern for branch naming, e.g. 'feat/{issue}-{description}' */
+  branchNamingPattern: text("branch_naming_pattern").default(
+    "feat/{issue}-{description}"
+  ),
+  /** Protected branch patterns (stored as JSON text array) */
+  protectedBranches: text("protected_branches").default('["main","master"]'),
+  /** Whether PRs require review before merge */
+  requireReviewBeforeMerge: boolean("require_review_before_merge")
+    .notNull()
+    .default(true),
 });
 
 export const projectMembers = pgTable(

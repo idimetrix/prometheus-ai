@@ -6,9 +6,12 @@ import {
   Bar,
   BarChart,
   CartesianGrid,
+  Cell,
   Legend,
   Line,
   LineChart,
+  Pie,
+  PieChart,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -35,12 +38,16 @@ export interface AgentStat {
 }
 
 export interface TrendPoint {
+  /** Cost in USD for that day */
+  costUsd?: number;
   /** Date label */
   date: string;
   /** Average success rate across all agents */
   successRate: number;
   /** Tasks completed that day */
   tasksCompleted: number;
+  /** Token usage for that day */
+  tokensUsed?: number;
 }
 
 type ViewMode = "chart" | "table";
@@ -61,8 +68,12 @@ interface DateRangeOption {
 }
 
 interface AgentPerformanceProps {
+  /** Roles to compare side-by-side (exactly 2 for comparison mode) */
+  compareRoles?: [string, string];
   /** Available date range presets */
   dateRanges?: DateRangeOption[];
+  /** Callback when comparison roles change */
+  onCompareChange?: (roles: [string, string] | null) => void;
   /** Callback when date range changes */
   onDateRangeChange?: (range: string) => void;
   /** Callback when role filter changes */
@@ -106,6 +117,8 @@ const _BAR_COLORS = [
   "#a855f7",
   "#ec4899",
 ];
+
+const PIE_COLORS = ["#22c55e", "#ef4444"];
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -188,6 +201,8 @@ export function AgentPerformance({
   dateRanges = DEFAULT_DATE_RANGES,
   onDateRangeChange,
   onRoleFilter,
+  compareRoles,
+  onCompareChange,
 }: AgentPerformanceProps) {
   const [viewMode, setViewMode] = useState<ViewMode>("chart");
   const [selectedRange, setSelectedRange] = useState(
@@ -196,6 +211,8 @@ export function AgentPerformance({
   const [sortField, setSortField] = useState<SortField>("tasksCompleted");
   const [sortDirection, setSortDirection] = useState<SortDirection>("desc");
   const [roleFilter, setRoleFilter] = useState("");
+  const [compareA, setCompareA] = useState(compareRoles?.[0] ?? "");
+  const [compareB, setCompareB] = useState(compareRoles?.[1] ?? "");
 
   const handleRangeChange = useCallback(
     (range: string) => {
@@ -258,6 +275,38 @@ export function AgentPerformance({
       })),
     [filteredStats]
   );
+
+  const pieData = useMemo(() => {
+    const totalTasks = filteredStats.reduce(
+      (sum, s) => sum + s.tasksCompleted,
+      0
+    );
+    const avgSuccess =
+      totalTasks > 0
+        ? filteredStats.reduce(
+            (sum, s) => sum + s.successRate * s.tasksCompleted,
+            0
+          ) / totalTasks
+        : 0;
+    const successCount = Math.round((avgSuccess / 100) * totalTasks);
+    const failCount = totalTasks - successCount;
+    return [
+      { name: "Success", value: successCount },
+      { name: "Failure", value: failCount },
+    ];
+  }, [filteredStats]);
+
+  const comparisonData = useMemo(() => {
+    if (!(compareA && compareB)) {
+      return null;
+    }
+    const a = stats.find((s) => s.role === compareA);
+    const b = stats.find((s) => s.role === compareB);
+    if (!(a && b)) {
+      return null;
+    }
+    return { a, b };
+  }, [stats, compareA, compareB]);
 
   if (stats.length === 0) {
     return (
@@ -440,6 +489,219 @@ export function AgentPerformance({
                 </div>
               </div>
             )}
+
+            {/* Token usage over time */}
+            {trend.length > 0 &&
+              trend.some((t) => t.tokensUsed !== undefined) && (
+                <div>
+                  <h4 className="mb-2 font-medium text-[10px] text-zinc-500 uppercase tracking-wider">
+                    Token Usage Over Time
+                  </h4>
+                  <div className="h-48 w-full">
+                    <ResponsiveContainer height="100%" width="100%">
+                      <LineChart data={trend}>
+                        <CartesianGrid stroke="#27272a" strokeDasharray="3 3" />
+                        <XAxis
+                          dataKey="date"
+                          fontSize={10}
+                          stroke="#52525b"
+                          tick={{ fill: "#71717a" }}
+                        />
+                        <YAxis
+                          fontSize={10}
+                          stroke="#52525b"
+                          tick={{ fill: "#71717a" }}
+                        />
+                        <Tooltip
+                          contentStyle={{
+                            backgroundColor: "#18181b",
+                            border: "1px solid #27272a",
+                            borderRadius: "8px",
+                            fontSize: "11px",
+                          }}
+                        />
+                        <Line
+                          dataKey="tokensUsed"
+                          dot={false}
+                          name="Tokens Used"
+                          stroke="#f59e0b"
+                          strokeWidth={2}
+                          type="monotone"
+                        />
+                      </LineChart>
+                    </ResponsiveContainer>
+                  </div>
+                </div>
+              )}
+
+            {/* Cost per task trend */}
+            {trend.length > 0 && trend.some((t) => t.costUsd !== undefined) && (
+              <div>
+                <h4 className="mb-2 font-medium text-[10px] text-zinc-500 uppercase tracking-wider">
+                  Cost Per Task Trend
+                </h4>
+                <div className="h-48 w-full">
+                  <ResponsiveContainer height="100%" width="100%">
+                    <LineChart data={trend}>
+                      <CartesianGrid stroke="#27272a" strokeDasharray="3 3" />
+                      <XAxis
+                        dataKey="date"
+                        fontSize={10}
+                        stroke="#52525b"
+                        tick={{ fill: "#71717a" }}
+                      />
+                      <YAxis
+                        fontSize={10}
+                        stroke="#52525b"
+                        tick={{ fill: "#71717a" }}
+                      />
+                      <Tooltip
+                        contentStyle={{
+                          backgroundColor: "#18181b",
+                          border: "1px solid #27272a",
+                          borderRadius: "8px",
+                          fontSize: "11px",
+                        }}
+                      />
+                      <Line
+                        dataKey="costUsd"
+                        dot={false}
+                        name="Cost (USD)"
+                        stroke="#f43f5e"
+                        strokeWidth={2}
+                        type="monotone"
+                      />
+                    </LineChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
+            )}
+
+            {/* Success/Failure ratio pie chart */}
+            <div className="flex gap-6">
+              <div className="flex-1">
+                <h4 className="mb-2 font-medium text-[10px] text-zinc-500 uppercase tracking-wider">
+                  Success / Failure Ratio
+                </h4>
+                <div className="h-48 w-full">
+                  <ResponsiveContainer height="100%" width="100%">
+                    <PieChart>
+                      <Pie
+                        cx="50%"
+                        cy="50%"
+                        data={pieData}
+                        dataKey="value"
+                        innerRadius={40}
+                        nameKey="name"
+                        outerRadius={70}
+                      >
+                        {pieData.map((_entry, index) => (
+                          <Cell
+                            fill={PIE_COLORS[index % PIE_COLORS.length]}
+                            key={`cell-${String(index)}`}
+                          />
+                        ))}
+                      </Pie>
+                      <Tooltip
+                        contentStyle={{
+                          backgroundColor: "#18181b",
+                          border: "1px solid #27272a",
+                          borderRadius: "8px",
+                          fontSize: "11px",
+                        }}
+                      />
+                      <Legend
+                        wrapperStyle={{ fontSize: "10px", color: "#71717a" }}
+                      />
+                    </PieChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
+
+              {/* Comparison mode */}
+              <div className="flex-1">
+                <h4 className="mb-2 font-medium text-[10px] text-zinc-500 uppercase tracking-wider">
+                  Compare Agents
+                </h4>
+                <div className="mb-2 flex gap-2">
+                  <select
+                    className="flex-1 rounded border border-zinc-700 bg-zinc-900 px-2 py-1 text-xs text-zinc-300 outline-none focus:border-violet-500"
+                    onChange={(e) => {
+                      setCompareA(e.target.value);
+                      if (e.target.value && compareB) {
+                        onCompareChange?.([e.target.value, compareB]);
+                      }
+                    }}
+                    value={compareA}
+                  >
+                    <option value="">Agent A</option>
+                    {availableRoles.map((role) => (
+                      <option key={role} value={role}>
+                        {role}
+                      </option>
+                    ))}
+                  </select>
+                  <span className="self-center text-[10px] text-zinc-600">
+                    vs
+                  </span>
+                  <select
+                    className="flex-1 rounded border border-zinc-700 bg-zinc-900 px-2 py-1 text-xs text-zinc-300 outline-none focus:border-violet-500"
+                    onChange={(e) => {
+                      setCompareB(e.target.value);
+                      if (compareA && e.target.value) {
+                        onCompareChange?.([compareA, e.target.value]);
+                      }
+                    }}
+                    value={compareB}
+                  >
+                    <option value="">Agent B</option>
+                    {availableRoles.map((role) => (
+                      <option key={role} value={role}>
+                        {role}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                {comparisonData ? (
+                  <div className="space-y-1 text-xs">
+                    {(
+                      [
+                        ["Tasks", "tasksCompleted", ""],
+                        ["Success", "successRate", "%"],
+                        ["Avg Time", "avgTimeSec", "s"],
+                        ["Tokens", "tokensUsed", ""],
+                        ["Cost", "costUsd", " USD"],
+                      ] as const
+                    ).map(([label, key, unit]) => (
+                      <div
+                        className="flex items-center justify-between rounded bg-zinc-900/50 px-2 py-1"
+                        key={key}
+                      >
+                        <span className="text-zinc-500">{label}</span>
+                        <div className="flex gap-4">
+                          <span className="font-mono text-violet-400">
+                            {typeof comparisonData.a[key] === "number"
+                              ? (comparisonData.a[key] as number).toFixed(1)
+                              : comparisonData.a[key]}
+                            {unit}
+                          </span>
+                          <span className="font-mono text-cyan-400">
+                            {typeof comparisonData.b[key] === "number"
+                              ? (comparisonData.b[key] as number).toFixed(1)
+                              : comparisonData.b[key]}
+                            {unit}
+                          </span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="flex h-24 items-center justify-center text-[10px] text-zinc-600">
+                    Select two agents to compare
+                  </div>
+                )}
+              </div>
+            </div>
           </div>
         ) : (
           /* Table view */
