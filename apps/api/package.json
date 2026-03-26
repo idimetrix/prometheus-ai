@@ -17,7 +17,7 @@
     "@hono/node-server": "^1.19.11",
     "@hono/trpc-server": "^0.4.2",
     "hono": "^4.12.9",
-    "@trpc/server": "^11.15.0",
+    "@trpc/server": "^11.15.1",
     "superjson": "^2.2.6",
     "zod": "^4.3.6",
     "@prometheus/config-stacks": "workspace:*",
