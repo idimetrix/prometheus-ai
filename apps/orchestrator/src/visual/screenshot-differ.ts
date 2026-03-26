@@ -5,6 +5,7 @@
  * Uses simple pixel-level comparison with configurable threshold.
  */
 
+import { getInternalAuthHeaders } from "@prometheus/auth";
 import { createLogger } from "@prometheus/logger";
 
 const logger = createLogger("orchestrator:screenshot-differ");
@@ -50,7 +51,10 @@ export class ScreenshotDiffer {
     try {
       const response = await fetch(`${sandboxUrl}/screenshots/diff`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...getInternalAuthHeaders(),
+        },
         body: JSON.stringify({
           baseline: baselineUrl,
           current: currentUrl,

@@ -5,6 +5,7 @@
  * smoke testing, canary rollout, promotion, and rollback -- all via MCP adapters.
  */
 
+import { getInternalAuthHeaders } from "@prometheus/auth";
 import { createLogger } from "@prometheus/logger";
 import { generateId } from "@prometheus/utils";
 
@@ -179,7 +180,10 @@ export class DeployPipeline {
       `${this.mcpGatewayUrl}/api/adapters/github/pr`,
       {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...getInternalAuthHeaders(),
+        },
         body: JSON.stringify({ projectId, branch, title, body }),
         signal: AbortSignal.timeout(STEP_TIMEOUT_MS),
       }
@@ -213,7 +217,10 @@ export class DeployPipeline {
       `${this.mcpGatewayUrl}/api/adapters/vercel/deploy`,
       {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...getInternalAuthHeaders(),
+        },
         body: JSON.stringify({ projectId, branch, type: "preview" }),
         signal: AbortSignal.timeout(STEP_TIMEOUT_MS),
       }
@@ -250,7 +257,10 @@ export class DeployPipeline {
       `${this.orchestratorUrl}/api/sandbox/smoke-test`,
       {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...getInternalAuthHeaders(),
+        },
         body: JSON.stringify({ projectId, targetUrl: previewUrl }),
         signal: AbortSignal.timeout(SMOKE_TEST_TIMEOUT_MS),
       }
@@ -294,7 +304,10 @@ export class DeployPipeline {
         `${this.mcpGatewayUrl}/api/adapters/slack/notify`,
         {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: {
+            "Content-Type": "application/json",
+            ...getInternalAuthHeaders(),
+          },
           body: JSON.stringify({ projectId, message }),
           signal: AbortSignal.timeout(15_000),
         }
@@ -329,7 +342,10 @@ export class DeployPipeline {
         `${this.mcpGatewayUrl}/api/adapters/vercel/rollback`,
         {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: {
+            "Content-Type": "application/json",
+            ...getInternalAuthHeaders(),
+          },
           body: JSON.stringify({ projectId, deploymentId }),
           signal: AbortSignal.timeout(STEP_TIMEOUT_MS),
         }
@@ -404,7 +420,10 @@ export class DeployPipeline {
           `${this.mcpGatewayUrl}/api/adapters/vercel/canary`,
           {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
+            headers: {
+              "Content-Type": "application/json",
+              ...getInternalAuthHeaders(),
+            },
             body: JSON.stringify({
               projectId: plan.projectId,
               branch: plan.branch,
@@ -424,7 +443,10 @@ export class DeployPipeline {
           `${this.mcpGatewayUrl}/api/adapters/vercel/promote`,
           {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
+            headers: {
+              "Content-Type": "application/json",
+              ...getInternalAuthHeaders(),
+            },
             body: JSON.stringify({
               projectId: plan.projectId,
               branch: plan.branch,

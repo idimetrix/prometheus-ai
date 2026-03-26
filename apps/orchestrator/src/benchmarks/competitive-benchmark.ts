@@ -5,6 +5,7 @@
  * through Prometheus and compares against competitor baselines.
  */
 
+import { getInternalAuthHeaders } from "@prometheus/auth";
 import { createLogger } from "@prometheus/logger";
 
 const logger = createLogger("orchestrator:competitive-benchmark");
@@ -137,7 +138,10 @@ export class CompetitiveBenchmark {
     try {
       const response = await fetch(`${this.orchestratorUrl}/benchmark`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...getInternalAuthHeaders(),
+        },
         body: JSON.stringify({
           taskId: task.id,
           description: task.description,

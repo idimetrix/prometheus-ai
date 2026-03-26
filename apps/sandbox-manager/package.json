@@ -19,11 +19,13 @@
     "@prometheus/telemetry": "workspace:*",
     "@prometheus/types": "workspace:*",
     "@prometheus/queue": "workspace:*",
-    "@prometheus/utils": "workspace:*"
+    "@prometheus/utils": "workspace:*",
+    "ws": "^8.20.0"
   },
   "devDependencies": {
     "@prometheus/config-typescript": "workspace:*",
     "@types/dockerode": "^4.0.1",
+    "@types/ws": "^8.18.1",
     "tsx": "^4.21.0",
     "tsup": "^8.5.1",
     "typescript": "^6.0.2"

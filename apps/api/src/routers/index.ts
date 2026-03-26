@@ -12,11 +12,15 @@ import { codeAnalysisRouter } from "./code-analysis";
 import { costAnalyticsRouter } from "./cost-analytics";
 import { costPredictionRouter } from "./cost-prediction";
 import { deploymentsRouter } from "./deployments";
+import { filesRouter } from "./files";
 import { fleetRouter } from "./fleet";
 import { gdprRouter } from "./gdpr";
 import { healthRouter } from "./health";
 import { integrationsRouter } from "./integrations";
+import { issueSyncRouter } from "./issue-sync";
+import { marketplaceRouter } from "./marketplace";
 import { notificationsRouter } from "./notifications";
+import { permissionsRouter } from "./permissions";
 import { pluginsRouter } from "./plugins";
 import { pmRouter } from "./pm";
 import { projectsRouter } from "./projects";
@@ -24,6 +28,8 @@ import { queueRouter } from "./queue";
 import { sessionsRouter } from "./sessions";
 import { settingsRouter } from "./settings";
 import { tasksRouter } from "./tasks";
+import { teamRouter } from "./team";
+import { uploadsRouter } from "./uploads";
 import { userRouter } from "./user";
 import { webhooksOutboundRouter } from "./webhooks-outbound";
 import { workspacesRouter } from "./workspaces";
@@ -42,6 +48,7 @@ export const appRouter = router({
   fleet: fleetRouter,
   user: userRouter,
   integrations: integrationsRouter,
+  issueSync: issueSyncRouter,
   notifications: notificationsRouter,
   apiKeys: apiKeysRouter,
   plugins: pluginsRouter,
@@ -56,7 +63,12 @@ export const appRouter = router({
   costPrediction: costPredictionRouter,
   costAnalytics: costAnalyticsRouter,
   deployments: deploymentsRouter,
+  files: filesRouter,
   workspaces: workspacesRouter,
+  uploads: uploadsRouter,
+  marketplace: marketplaceRouter,
+  permissions: permissionsRouter,
+  team: teamRouter,
 });
 
 export type AppRouter = typeof appRouter;

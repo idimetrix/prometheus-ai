@@ -9,12 +9,14 @@
  * tool dependency classification for parallel execution, and context window
  * management via progressive summarization.
  */
+
 import {
   AGENT_ROLES,
   type AgentContext,
   TOOL_REGISTRY,
   type ToolCall,
 } from "@prometheus/agent-sdk";
+import { getInternalAuthHeaders } from "@prometheus/auth";
 import { createLogger } from "@prometheus/logger";
 import { SpanStatusCode, startSpan } from "@prometheus/telemetry";
 import type { AgentRole } from "@prometheus/types";
@@ -1121,7 +1123,10 @@ async function callModelRouter(
       `${process.env.MODEL_ROUTER_URL ?? "http://localhost:4004"}/route`,
       {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...getInternalAuthHeaders(),
+        },
         body: JSON.stringify({
           slot,
           messages,

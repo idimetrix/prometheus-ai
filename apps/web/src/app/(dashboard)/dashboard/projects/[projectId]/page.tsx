@@ -3,6 +3,7 @@
 import type { Route } from "next";
 import Link from "next/link";
 import { use } from "react";
+import { RulesEditor } from "@/components/project/rules-editor";
 import { trpc } from "@/lib/trpc";
 
 const STATUS_COLORS: Record<string, string> = {
@@ -102,6 +103,9 @@ export default function ProjectDetailPage({
           </div>
         </div>
       )}
+
+      {/* Rules */}
+      <RulesEditor projectId={projectId} />
 
       {/* Sessions */}
       <div>

@@ -5,6 +5,7 @@
  * "What calls Z?" by searching and assembling relevant context.
  */
 
+import { getInternalAuthHeaders } from "@prometheus/auth";
 import { createLogger } from "@prometheus/logger";
 
 const logger = createLogger("project-brain:codebase-qa");
@@ -101,7 +102,10 @@ export class CodebaseQA {
     try {
       const response = await fetch(`${this.projectBrainUrl}/search/semantic`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...getInternalAuthHeaders(),
+        },
         body: JSON.stringify({
           projectId,
           query: question,
@@ -135,7 +139,10 @@ export class CodebaseQA {
       try {
         const response = await fetch(`${this.projectBrainUrl}/symbols/search`, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: {
+            "Content-Type": "application/json",
+            ...getInternalAuthHeaders(),
+          },
           body: JSON.stringify({
             projectId,
             query: searchTerms[0],

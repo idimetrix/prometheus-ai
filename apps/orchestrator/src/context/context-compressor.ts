@@ -6,6 +6,7 @@
  * preserving key information while reducing token count.
  */
 
+import { getInternalAuthHeaders } from "@prometheus/auth";
 import { createLogger } from "@prometheus/logger";
 
 const FILE_CHANGE_PATTERN =
@@ -271,7 +272,10 @@ export class ContextCompressor {
         `${process.env.MODEL_ROUTER_URL ?? "http://localhost:4004"}/route`,
         {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: {
+            "Content-Type": "application/json",
+            ...getInternalAuthHeaders(),
+          },
           body: JSON.stringify({
             slot: this.summarySlot,
             messages: [

@@ -4,6 +4,7 @@
  * Wraps model-router HTTP calls with a circuit breaker from @prometheus/utils.
  * On circuit open: returns cached response if available, or escalates to fallback model.
  */
+import { getInternalAuthHeaders } from "@prometheus/auth";
 import { createLogger } from "@prometheus/logger";
 import { CircuitBreaker } from "@prometheus/utils";
 
@@ -93,7 +94,10 @@ export class ModelRouterClient {
       return await this.breaker.execute(async () => {
         const response = await fetch(`${this.baseUrl}/route`, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: {
+            "Content-Type": "application/json",
+            ...getInternalAuthHeaders(),
+          },
           body: JSON.stringify({
             slot: request.slot,
             messages: request.messages,

@@ -1,3 +1,4 @@
+import { getInternalAuthHeaders } from "@prometheus/auth";
 import { createLogger } from "@prometheus/logger";
 
 const logger = createLogger("orchestrator:visual-regression");
@@ -198,7 +199,10 @@ export class VisualRegressionTester {
     try {
       const res = await fetch(`${sandboxManagerUrl}/screenshot`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...getInternalAuthHeaders(),
+        },
         body: JSON.stringify({
           url: request.url,
           viewport: request.viewport,

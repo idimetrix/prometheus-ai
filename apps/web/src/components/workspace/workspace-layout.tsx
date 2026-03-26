@@ -1,17 +1,9 @@
 "use client";
 
-import { AnimatePresence, motion } from "framer-motion";
-import {
-  type ReactNode,
-  useCallback,
-  useEffect,
-  useRef,
-  useState,
-} from "react";
-import { useUIStore } from "@/stores/ui.store";
-
-/** Breakpoint for responsive collapse (px) */
-const RESPONSIVE_BREAKPOINT = 768;
+import { type ReactNode, useCallback, useEffect, useState } from "react";
+import { Group, Panel, Separator } from "react-resizable-panels";
+import { LAYOUT_PRESETS, type LayoutPreset } from "./layout-presets";
+import { LayoutSwitcher } from "./layout-switcher";
 
 interface WorkspaceLayoutProps {
   agentPanel?: ReactNode;
@@ -20,22 +12,22 @@ interface WorkspaceLayoutProps {
   terminal?: ReactNode;
 }
 
-interface ResizeHandleProps {
-  direction: "col" | "row";
-  gridArea: string;
-  onMouseDown: (e: React.MouseEvent) => void;
-}
-
-function ResizeHandle({ direction, gridArea, onMouseDown }: ResizeHandleProps) {
-  const isRow = direction === "row";
+function ResizeHandle({ direction }: { direction: "horizontal" | "vertical" }) {
+  const isVertical = direction === "vertical";
   return (
-    <button
-      aria-label={`Resize ${gridArea.replace("-resize", "")} panel`}
-      className={`${isRow ? "h-1" : "w-1"} flex cursor-${isRow ? "row" : "col"}-resize items-center justify-center border-0 bg-transparent p-0 hover:bg-violet-500/30`}
-      onMouseDown={onMouseDown}
-      style={{ gridArea }}
-      type="button"
-    />
+    <Separator
+      className={`group relative flex items-center justify-center ${
+        isVertical ? "h-1 cursor-row-resize" : "w-1 cursor-col-resize"
+      }`}
+    >
+      <div
+        className={`rounded-full bg-zinc-700 transition-all group-hover:bg-violet-500 group-data-[resize-handle-active]:bg-violet-500 ${
+          isVertical
+            ? "h-0.5 w-8 group-hover:h-1 group-data-[resize-handle-active]:h-1"
+            : "h-8 w-0.5 group-hover:w-1 group-data-[resize-handle-active]:w-1"
+        }`}
+      />
+    </Separator>
   );
 }
 
@@ -84,265 +76,78 @@ function PanelHeader({ title, collapsed, onToggle }: PanelHeaderProps) {
   );
 }
 
-const panelAnimation = {
-  initial: { opacity: 0 },
-  animate: { opacity: 1 },
-  exit: { opacity: 0 },
-  transition: { duration: 0.15, ease: "easeInOut" as const },
-};
-
-const MIN_FILE_TREE = 260;
-const MIN_AGENT_PANEL = 360;
-const MIN_TERMINAL = 240;
-
 export function WorkspaceLayout({
   fileTree,
   center,
   agentPanel,
   terminal,
 }: WorkspaceLayoutProps) {
-  const panelSizes = useUIStore((s) => s.panelSizes);
-  const setPanelSize = useUIStore((s) => s.setPanelSize);
-  const sidebarCollapsed = useUIStore((s) => s.sidebarCollapsed);
-  const toggleSidebar = useUIStore((s) => s.toggleSidebar);
-
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [terminalCollapsed, setTerminalCollapsed] = useState(false);
   const [agentPanelCollapsed, setAgentPanelCollapsed] = useState(false);
+  const [_activePreset, setActivePreset] = useState<LayoutPreset>(
+    LAYOUT_PRESETS[0] as LayoutPreset
+  );
   const [isSmallScreen, setIsSmallScreen] = useState(false);
   const [mobileActiveTab, setMobileActiveTab] = useState<
     "editor" | "files" | "agent" | "terminal"
   >("editor");
 
-  // Responsive: collapse panels on small screens
   useEffect(() => {
     const checkSize = () => {
-      const small = window.innerWidth < RESPONSIVE_BREAKPOINT;
+      const small = window.innerWidth < 768;
       setIsSmallScreen(small);
       if (small) {
         setAgentPanelCollapsed(true);
         setTerminalCollapsed(true);
       }
     };
-
     checkSize();
     window.addEventListener("resize", checkSize);
     return () => window.removeEventListener("resize", checkSize);
-  }, []);
-
-  const containerRef = useRef<HTMLDivElement>(null);
-  const draggingRef = useRef<{
-    panel: "fileTree" | "agentPanel" | "terminal";
-    startPos: number;
-    startSize: number;
-  } | null>(null);
-
-  const toggleTerminal = useCallback(() => {
-    setTerminalCollapsed((prev) => !prev);
-  }, []);
-
-  const toggleAgentPanel = useCallback(() => {
-    setAgentPanelCollapsed((prev) => !prev);
   }, []);
 
   // Keyboard shortcuts
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       const isMod = e.metaKey || e.ctrlKey;
-
       if (isMod && e.key === "b") {
         e.preventDefault();
-        toggleSidebar();
+        setSidebarCollapsed((prev) => !prev);
       } else if (isMod && e.key === "j") {
         e.preventDefault();
-        toggleTerminal();
+        setTerminalCollapsed((prev) => !prev);
       } else if (isMod && e.shiftKey && (e.key === "A" || e.key === "a")) {
         e.preventDefault();
-        toggleAgentPanel();
+        setAgentPanelCollapsed((prev) => !prev);
       }
     };
-
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [toggleSidebar, toggleTerminal, toggleAgentPanel]);
+  }, []);
 
-  // Resize handling
-  const handleMouseDown = useCallback(
-    (panel: "fileTree" | "agentPanel" | "terminal", e: React.MouseEvent) => {
-      e.preventDefault();
-      const isHorizontal = panel === "terminal";
-      const startPos = isHorizontal ? e.clientY : e.clientX;
-      let startSize = panelSizes.terminal;
-      if (panel === "fileTree") {
-        startSize = panelSizes.fileTree;
-      } else if (panel === "agentPanel") {
-        startSize = panelSizes.codePanel ?? MIN_AGENT_PANEL;
-      }
+  const handleLayoutChange = useCallback((preset: LayoutPreset) => {
+    setActivePreset(preset);
+  }, []);
 
-      draggingRef.current = { panel, startPos, startSize };
-
-      const handleMouseMove = (moveEvent: MouseEvent) => {
-        if (!draggingRef.current) {
-          return;
-        }
-        const {
-          panel: dragPanel,
-          startPos: dragStart,
-          startSize: dragSize,
-        } = draggingRef.current;
-
-        if (dragPanel === "fileTree") {
-          const delta = moveEvent.clientX - dragStart;
-          const newSize = Math.max(MIN_FILE_TREE, dragSize + delta);
-          setPanelSize("fileTree", newSize);
-        } else if (dragPanel === "agentPanel") {
-          const delta = dragStart - moveEvent.clientX;
-          const newSize = Math.max(MIN_AGENT_PANEL, dragSize + delta);
-          setPanelSize("codePanel", newSize);
-        } else if (dragPanel === "terminal") {
-          const delta = dragStart - moveEvent.clientY;
-          const newSize = Math.max(MIN_TERMINAL, dragSize + delta);
-          setPanelSize("terminal", newSize);
-        }
-      };
-
-      const handleMouseUp = () => {
-        draggingRef.current = null;
-        document.removeEventListener("mousemove", handleMouseMove);
-        document.removeEventListener("mouseup", handleMouseUp);
-        document.body.style.cursor = "";
-        document.body.style.userSelect = "";
-      };
-
-      document.body.style.cursor = isHorizontal ? "row-resize" : "col-resize";
-      document.body.style.userSelect = "none";
-      document.addEventListener("mousemove", handleMouseMove);
-      document.addEventListener("mouseup", handleMouseUp);
-    },
-    [panelSizes, setPanelSize]
-  );
-
-  const fileTreeWidth = sidebarCollapsed ? 0 : panelSizes.fileTree;
-  const agentPanelWidth = agentPanelCollapsed
-    ? 0
-    : (panelSizes.codePanel ?? MIN_AGENT_PANEL);
-  const terminalHeight = terminalCollapsed ? 0 : panelSizes.terminal;
-
-  const gridTemplate = `${fileTreeWidth > 0 ? `${fileTreeWidth}px auto` : "0px auto"} 1fr ${agentPanelWidth > 0 ? `auto ${agentPanelWidth}px` : "auto 0px"}`;
-  const gridTemplateRows =
-    terminalHeight > 0 ? `1fr auto ${terminalHeight}px` : "1fr auto 0px";
-
-  return (
-    <div
-      className="relative h-full w-full overflow-hidden bg-zinc-950"
-      ref={containerRef}
-      style={{
-        display: "grid",
-        gridTemplateColumns: gridTemplate,
-        gridTemplateRows,
-        gridTemplateAreas: `
-          "filetree filetree-resize center agentpanel-resize agentpanel"
-          "terminal-resize terminal-resize terminal-resize terminal-resize terminal-resize"
-          "terminal terminal terminal terminal terminal"
-        `,
-      }}
-    >
-      {/* File Tree */}
-      <AnimatePresence>
-        {!sidebarCollapsed && fileTree && (
-          <motion.div
-            className="flex flex-col overflow-hidden border-zinc-800 border-r"
-            style={{ gridArea: "filetree" }}
-            {...panelAnimation}
-          >
-            <PanelHeader
-              collapsed={sidebarCollapsed}
-              onToggle={toggleSidebar}
-              title="Files"
-            />
-            <div className="flex-1 overflow-hidden">{fileTree}</div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-      {/* File Tree Resize Handle */}
-      {!sidebarCollapsed && (
-        <ResizeHandle
-          direction="col"
-          gridArea="filetree-resize"
-          onMouseDown={(e) => handleMouseDown("fileTree", e)}
-        />
-      )}
-
-      {/* Center Content (Code Editor) */}
-      <div
-        className="flex min-w-0 flex-col overflow-hidden"
-        style={{ gridArea: "center" }}
-      >
-        <PanelHeader
-          collapsed={false}
-          onToggle={toggleTerminal}
-          title="Editor"
-        />
-        <div className="flex-1 overflow-hidden">{center}</div>
-      </div>
-
-      {/* Agent Panel Resize Handle */}
-      {!agentPanelCollapsed && (
-        <ResizeHandle
-          direction="col"
-          gridArea="agentpanel-resize"
-          onMouseDown={(e) => handleMouseDown("agentPanel", e)}
-        />
-      )}
-
-      {/* Agent Activity Panel */}
-      <AnimatePresence>
-        {!agentPanelCollapsed && agentPanel && (
-          <motion.div
-            className="flex flex-col overflow-hidden border-zinc-800 border-l"
-            style={{ gridArea: "agentpanel" }}
-            {...panelAnimation}
-          >
-            <PanelHeader
-              collapsed={agentPanelCollapsed}
-              onToggle={toggleAgentPanel}
-              title="Agent"
-            />
-            <div className="flex-1 overflow-hidden">{agentPanel}</div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-      {/* Terminal Resize Handle */}
-      {!terminalCollapsed && (
-        <ResizeHandle
-          direction="row"
-          gridArea="terminal-resize"
-          onMouseDown={(e) => handleMouseDown("terminal", e)}
-        />
-      )}
-
-      {/* Terminal */}
-      <AnimatePresence>
-        {!terminalCollapsed && terminal && (
-          <motion.div
-            className="flex flex-col overflow-hidden border-zinc-800 border-t"
-            style={{ gridArea: "terminal" }}
-            {...panelAnimation}
-          >
-            <PanelHeader
-              collapsed={terminalCollapsed}
-              onToggle={toggleTerminal}
-              title="Terminal"
-            />
-            <div className="flex-1 overflow-hidden">{terminal}</div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-      {/* Mobile Tab Bar (visible below 768px) */}
-      {isSmallScreen && (
-        <div className="fixed right-0 bottom-0 left-0 z-20 flex border-zinc-700 border-t bg-zinc-900">
+  if (isSmallScreen) {
+    return (
+      <div className="flex h-full w-full flex-col overflow-hidden bg-zinc-950">
+        <div className="flex-1 overflow-hidden">
+          {mobileActiveTab === "files" && fileTree && (
+            <div className="h-full overflow-auto">{fileTree}</div>
+          )}
+          {mobileActiveTab === "editor" && (
+            <div className="h-full overflow-hidden">{center}</div>
+          )}
+          {mobileActiveTab === "agent" && agentPanel && (
+            <div className="h-full overflow-auto">{agentPanel}</div>
+          )}
+          {mobileActiveTab === "terminal" && terminal && (
+            <div className="h-full overflow-auto">{terminal}</div>
+          )}
+        </div>
+        <div className="flex border-zinc-700 border-t bg-zinc-900">
           {(
             [
               { key: "files", label: "Files" },
@@ -359,35 +164,109 @@ export function WorkspaceLayout({
                   : "text-zinc-500",
               ].join(" ")}
               key={tab.key}
-              onClick={() => {
-                setMobileActiveTab(tab.key);
-                if (tab.key === "files" && sidebarCollapsed) {
-                  toggleSidebar();
-                }
-                if (tab.key !== "files" && !sidebarCollapsed) {
-                  toggleSidebar();
-                }
-                setAgentPanelCollapsed(tab.key !== "agent");
-                setTerminalCollapsed(tab.key !== "terminal");
-              }}
+              onClick={() => setMobileActiveTab(tab.key)}
               type="button"
             >
               {tab.label}
             </button>
           ))}
         </div>
-      )}
+      </div>
+    );
+  }
 
-      {/* Panel Toggle Bar (hidden on mobile) */}
-      <div
-        className={[
-          "pointer-events-none fixed right-4 bottom-4 z-10 flex gap-2",
-          isSmallScreen ? "hidden" : "",
-        ].join(" ")}
-      >
+  return (
+    <div className="relative flex h-full w-full flex-col overflow-hidden bg-zinc-950">
+      {/* Layout switcher bar */}
+      <div className="flex items-center justify-end border-zinc-800 border-b px-2 py-1">
+        <LayoutSwitcher onLayoutChange={handleLayoutChange} />
+      </div>
+
+      {/* Main resizable layout */}
+      <Group className="flex-1" id="workspace-main" orientation="vertical">
+        {/* Top: horizontal panels */}
+        <Panel
+          defaultSize={terminalCollapsed ? 100 : 70}
+          id="top-area"
+          minSize={30}
+        >
+          <Group id="workspace-horizontal" orientation="horizontal">
+            {/* File Tree / Left panel */}
+            {!sidebarCollapsed && fileTree && (
+              <>
+                <Panel collapsible defaultSize={20} id="file-tree" minSize={10}>
+                  <div className="flex h-full flex-col overflow-hidden border-zinc-800 border-r">
+                    <PanelHeader
+                      collapsed={sidebarCollapsed}
+                      onToggle={() => setSidebarCollapsed(true)}
+                      title="Files"
+                    />
+                    <div className="flex-1 overflow-hidden">{fileTree}</div>
+                  </div>
+                </Panel>
+                <ResizeHandle direction="horizontal" />
+              </>
+            )}
+
+            {/* Center panel */}
+            <Panel defaultSize={50} id="center" minSize={25}>
+              <div className="flex h-full min-w-0 flex-col overflow-hidden">
+                <PanelHeader
+                  collapsed={false}
+                  onToggle={() => setSidebarCollapsed((p) => !p)}
+                  title="Editor"
+                />
+                <div className="flex-1 overflow-hidden">{center}</div>
+              </div>
+            </Panel>
+
+            {/* Agent / Right panel */}
+            {!agentPanelCollapsed && agentPanel && (
+              <>
+                <ResizeHandle direction="horizontal" />
+                <Panel
+                  collapsible
+                  defaultSize={30}
+                  id="agent-panel"
+                  minSize={15}
+                >
+                  <div className="flex h-full flex-col overflow-hidden border-zinc-800 border-l">
+                    <PanelHeader
+                      collapsed={agentPanelCollapsed}
+                      onToggle={() => setAgentPanelCollapsed(true)}
+                      title="Agent"
+                    />
+                    <div className="flex-1 overflow-hidden">{agentPanel}</div>
+                  </div>
+                </Panel>
+              </>
+            )}
+          </Group>
+        </Panel>
+
+        {/* Terminal / Bottom panel */}
+        {!terminalCollapsed && terminal && (
+          <>
+            <ResizeHandle direction="vertical" />
+            <Panel collapsible defaultSize={30} id="terminal" minSize={10}>
+              <div className="flex h-full flex-col overflow-hidden border-zinc-800 border-t">
+                <PanelHeader
+                  collapsed={terminalCollapsed}
+                  onToggle={() => setTerminalCollapsed(true)}
+                  title="Terminal"
+                />
+                <div className="flex-1 overflow-hidden">{terminal}</div>
+              </div>
+            </Panel>
+          </>
+        )}
+      </Group>
+
+      {/* Panel Toggle Bar */}
+      <div className="pointer-events-none fixed right-4 bottom-4 z-10 flex gap-2">
         <button
           className="pointer-events-auto rounded-md border border-zinc-700 bg-zinc-800/80 px-2 py-1 text-xs text-zinc-400 backdrop-blur-sm hover:text-white"
-          onClick={toggleSidebar}
+          onClick={() => setSidebarCollapsed((p) => !p)}
           title="Toggle sidebar (Cmd+B)"
           type="button"
         >
@@ -395,7 +274,7 @@ export function WorkspaceLayout({
         </button>
         <button
           className="pointer-events-auto rounded-md border border-zinc-700 bg-zinc-800/80 px-2 py-1 text-xs text-zinc-400 backdrop-blur-sm hover:text-white"
-          onClick={toggleTerminal}
+          onClick={() => setTerminalCollapsed((p) => !p)}
           title="Toggle terminal (Cmd+J)"
           type="button"
         >
@@ -403,7 +282,7 @@ export function WorkspaceLayout({
         </button>
         <button
           className="pointer-events-auto rounded-md border border-zinc-700 bg-zinc-800/80 px-2 py-1 text-xs text-zinc-400 backdrop-blur-sm hover:text-white"
-          onClick={toggleAgentPanel}
+          onClick={() => setAgentPanelCollapsed((p) => !p)}
           title="Toggle agent panel (Cmd+Shift+A)"
           type="button"
         >

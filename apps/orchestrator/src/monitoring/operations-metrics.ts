@@ -5,6 +5,7 @@
  * and exports them in Grafana-compatible format.
  */
 
+import { getInternalAuthHeaders } from "@prometheus/auth";
 import { createLogger } from "@prometheus/logger";
 
 const logger = createLogger("orchestrator:operations-metrics");
@@ -113,7 +114,10 @@ export class OperationsMetrics {
   async getQueueDepths(): Promise<QueueDepth[]> {
     try {
       const response = await fetch(`${SERVICE_URLS.api}/health/queues`, {
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...getInternalAuthHeaders(),
+        },
         signal: AbortSignal.timeout(5000),
       });
 
@@ -135,7 +139,10 @@ export class OperationsMetrics {
       const response = await fetch(
         `${SERVICE_URLS["sandbox-manager"]}/health/pool`,
         {
-          headers: { "Content-Type": "application/json" },
+          headers: {
+            "Content-Type": "application/json",
+            ...getInternalAuthHeaders(),
+          },
           signal: AbortSignal.timeout(5000),
         }
       );
@@ -158,7 +165,10 @@ export class OperationsMetrics {
       const response = await fetch(
         `${SERVICE_URLS["model-router"]}/health/latencies`,
         {
-          headers: { "Content-Type": "application/json" },
+          headers: {
+            "Content-Type": "application/json",
+            ...getInternalAuthHeaders(),
+          },
           signal: AbortSignal.timeout(5000),
         }
       );

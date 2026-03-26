@@ -11,6 +11,7 @@ import { projects } from "../projects/projects";
 import { subscriptions } from "../subscriptions/subscriptions";
 import { usageRollups } from "../usage-rollups/usage-rollups";
 import { organizations, orgMembers } from "./organizations";
+import { teamAgentQuotas } from "./team-agent-quotas";
 
 export const organizationsRelations = relations(
   organizations,
@@ -29,6 +30,7 @@ export const organizationsRelations = relations(
     modelConfigs: many(modelConfigs),
     modelUsage: many(modelUsage),
     usageRollups: many(usageRollups),
+    teamAgentQuotas: many(teamAgentQuotas),
   })
 );
 
@@ -38,3 +40,13 @@ export const orgMembersRelations = relations(orgMembers, ({ one }) => ({
     references: [organizations.id],
   }),
 }));
+
+export const teamAgentQuotasRelations = relations(
+  teamAgentQuotas,
+  ({ one }) => ({
+    organization: one(organizations, {
+      fields: [teamAgentQuotas.orgId],
+      references: [organizations.id],
+    }),
+  })
+);

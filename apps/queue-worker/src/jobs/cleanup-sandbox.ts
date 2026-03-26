@@ -1,3 +1,4 @@
+import { getInternalAuthHeaders } from "@prometheus/auth";
 import { createLogger } from "@prometheus/logger";
 import type { CleanupSandboxData } from "@prometheus/queue";
 import { EventPublisher } from "@prometheus/queue";
@@ -31,7 +32,10 @@ export async function processCleanupSandbox(
       `${SANDBOX_MANAGER_URL}/sandbox/${sandboxId}/cleanup`,
       {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...getInternalAuthHeaders(),
+        },
         body: JSON.stringify({
           reason,
           preserveArtifacts,

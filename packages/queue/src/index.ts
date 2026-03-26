@@ -30,7 +30,10 @@ export {
   previewDeploymentQueue,
   type QueueName,
   reconciliationQueue,
+  sessionContinuationQueue,
+  setupProjectEnvironmentQueue,
   usageRollupQueue,
+  webhookDeliveryQueue,
 } from "./queues";
 export { OrgRateLimiter, type RateLimitResult } from "./rate-limiter";
 export {
@@ -42,6 +45,7 @@ export {
   type AgentTaskData,
   type BillingEventData,
   type CleanupSandboxData,
+  type ContinueSessionData,
   type CreditGrantData,
   DEFAULT_DLQ_CONFIG,
   type DeadLetterQueueConfig,
@@ -61,5 +65,7 @@ export {
   RetryPolicies,
   type RetryPolicy,
   type SendNotificationData,
+  type SetupProjectEnvironmentData,
   type UsageRollupData,
+  type WebhookDeliveryData,
 } from "./types";

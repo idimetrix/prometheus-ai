@@ -9,6 +9,15 @@ const SANDBOX_MANAGER_URL =
 const ORCHESTRATOR_URL =
   process.env.ORCHESTRATOR_URL ?? "http://localhost:4002";
 
+/**
+ * Build default headers that include the internal service secret when set.
+ * This ensures all service-to-service calls are authenticated.
+ */
+function internalHeaders(): Record<string, string> {
+  const secret = process.env.INTERNAL_SERVICE_SECRET;
+  return secret ? { "x-internal-secret": secret } : {};
+}
+
 /** Pre-configured HttpClient for model-router with long timeout for LLM inference */
 export const modelRouterClient = new HttpClient({
   baseUrl: MODEL_ROUTER_URL,
@@ -17,6 +26,7 @@ export const modelRouterClient = new HttpClient({
   retryBaseDelay: 2000,
   circuitBreakerThreshold: 5,
   circuitBreakerResetMs: 30_000,
+  defaultHeaders: internalHeaders(),
 });
 
 /** Pre-configured HttpClient for project-brain with moderate timeout */
@@ -27,6 +37,7 @@ export const projectBrainClient = new HttpClient({
   retryBaseDelay: 1000,
   circuitBreakerThreshold: 5,
   circuitBreakerResetMs: 30_000,
+  defaultHeaders: internalHeaders(),
 });
 
 /** Pre-configured HttpClient for sandbox-manager */
@@ -37,6 +48,7 @@ export const sandboxManagerClient = new HttpClient({
   retryBaseDelay: 1000,
   circuitBreakerThreshold: 5,
   circuitBreakerResetMs: 30_000,
+  defaultHeaders: internalHeaders(),
 });
 
 /** Pre-configured HttpClient for orchestrator (long timeout for task processing) */
@@ -47,4 +59,5 @@ export const orchestratorClient = new HttpClient({
   retryBaseDelay: 5000,
   circuitBreakerThreshold: 3,
   circuitBreakerResetMs: 60_000,
+  defaultHeaders: internalHeaders(),
 });

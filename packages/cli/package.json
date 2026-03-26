@@ -7,7 +7,7 @@
     "prometheus": "./dist/index.js"
   },
   "scripts": {
-    "build": "tsup src/index.ts --format esm",
+    "build": "tsup src/index.ts src/action.ts --format esm",
     "dev": "tsx src/index.ts",
     "typecheck": "tsc --noEmit"
   },

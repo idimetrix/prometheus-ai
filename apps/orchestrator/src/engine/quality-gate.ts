@@ -5,6 +5,7 @@
  * Criteria: correctness, completeness, convention compliance, security, performance.
  * Returns: score (0-1), issues[], verdict (pass/revise/reject).
  */
+import { getInternalAuthHeaders } from "@prometheus/auth";
 import { createLogger } from "@prometheus/logger";
 import {
   DEFAULT_THRESHOLDS,
@@ -125,7 +126,10 @@ Respond with ONLY valid JSON, no markdown.`;
     try {
       const response = await fetch(`${MODEL_ROUTER_URL}/route`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...getInternalAuthHeaders(),
+        },
         body: JSON.stringify({
           slot: "review",
           messages: [

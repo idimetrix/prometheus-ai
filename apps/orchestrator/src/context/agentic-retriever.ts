@@ -8,6 +8,7 @@
  * 3. Repeats until confident before coding
  */
 
+import { getInternalAuthHeaders } from "@prometheus/auth";
 import { createLogger } from "@prometheus/logger";
 
 const logger = createLogger("orchestrator:agentic-retriever");
@@ -56,7 +57,10 @@ export class AgenticRetriever {
       try {
         const response = await fetch(`${this.projectBrainUrl}/search`, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: {
+            "Content-Type": "application/json",
+            ...getInternalAuthHeaders(),
+          },
           body: JSON.stringify({
             projectId,
             query,

@@ -1,3 +1,4 @@
+import { getInternalAuthHeaders } from "@prometheus/auth";
 import { createLogger } from "@prometheus/logger";
 import type { ConflictReport, FileConflict } from "./conflict-detector";
 
@@ -350,7 +351,10 @@ export class MergeCoordinator {
         `${this.sandboxBaseUrl}/sandbox/${sandboxId}/exec`,
         {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: {
+            "Content-Type": "application/json",
+            ...getInternalAuthHeaders(),
+          },
           body: JSON.stringify({
             command: `cd ${worktreePath} && git diff --name-only HEAD~1 2>/dev/null || git diff --name-only --cached`,
             timeout: 10_000,
@@ -390,7 +394,10 @@ export class MergeCoordinator {
     try {
       const res = await fetch(`${this.sandboxBaseUrl}/sandbox/merge`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...getInternalAuthHeaders(),
+        },
         body: JSON.stringify({
           filePath,
           worktreeA: worktreePaths[0],
@@ -423,7 +430,10 @@ export class MergeCoordinator {
         `${this.sandboxBaseUrl}/sandbox/merge/llm-assist`,
         {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: {
+            "Content-Type": "application/json",
+            ...getInternalAuthHeaders(),
+          },
           body: JSON.stringify({
             filePath,
             worktrees: worktreePaths,
@@ -463,7 +473,10 @@ export class MergeCoordinator {
         `${this.sandboxBaseUrl}/sandbox/${sandboxId}/git`,
         {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: {
+            "Content-Type": "application/json",
+            ...getInternalAuthHeaders(),
+          },
           body: JSON.stringify({
             operation: "commit",
             message: `feat: unified merge from ${worktrees.length} worker worktrees\n\nResolved ${resolvedFiles.length} files from parallel agent work.`,
@@ -536,7 +549,10 @@ export class MergeCoordinator {
     try {
       const res = await fetch(`${this.sandboxBaseUrl}/sandbox/merge`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...getInternalAuthHeaders(),
+        },
         body: JSON.stringify({
           filePath: conflict.filePath,
           worktreeA,

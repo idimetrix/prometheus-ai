@@ -1,14 +1,19 @@
 import { createLogger } from "@prometheus/logger";
 import { EventPublisher, QueueEvents } from "@prometheus/queue";
 import type { AgentLoop } from "../agent-loop";
+import type { CIFailureData, ParsedCILog } from "./ci-log-fetcher";
 import {
   FAILURE_PRIORITY,
   type FailureAnalysis,
   FailureAnalyzer,
+  type FailureType,
 } from "./failure-analyzer";
 import { FiveWhyDebugger } from "./five-why-debugger";
 
 const logger = createLogger("orchestrator:ci-loop");
+
+/** Maximum times the same failure can appear before escalation */
+const STUCK_THRESHOLD = 3;
 
 const VITEST_SUMMARY_RE =
   /Tests?\s+(\d+)\s+passed\s*\|\s*(\d+)\s+failed\s*\|\s*(\d+)\s+total/i;
@@ -209,6 +214,109 @@ Run the command and return the complete output.`,
   }
 
   /**
+   * Run the CI auto-fix loop from pre-parsed CI failure data.
+   * This is the entry point for webhook-triggered CI fixes.
+   *
+   * For test failures: reads the failing test, understands the assertion, fixes source
+   * For build errors: reads error output, fixes compilation issues
+   * For lint errors: runs linter fix command
+   * For type errors: fixes TypeScript type issues
+   * After fix: commits and pushes to the PR branch
+   */
+  async runFromParsedFailures(
+    agentLoop: AgentLoop,
+    parsedLog: ParsedCILog,
+    options: {
+      branch: string;
+      maxIterations?: number;
+      prNumber: number;
+    }
+  ): Promise<CILoopResult> {
+    const maxIter = options.maxIterations ?? this.maxIterations;
+    let iterations = 0;
+    let autoResolved = 0;
+    const failureHistory = new Map<string, number>();
+    const stuckFailures = new Set<string>();
+
+    logger.info(
+      {
+        checkName: parsedLog.checkName,
+        failureCount: parsedLog.failures.length,
+        categories: parsedLog.failures.map((f) => f.category),
+        branch: options.branch,
+        prNumber: options.prNumber,
+      },
+      "Starting CI auto-fix from parsed failures"
+    );
+
+    // Convert parsed CI failures to FailureAnalysis format
+    let currentFailures = this.convertCIFailures(parsedLog.failures);
+
+    while (iterations < maxIter && currentFailures.length > 0) {
+      iterations++;
+
+      const fixable = this.filterStuckFailures(
+        currentFailures,
+        failureHistory,
+        stuckFailures
+      );
+
+      if (fixable.length === 0) {
+        logger.warn(
+          { stuckCount: stuckFailures.size },
+          "All CI failures are stuck, stopping auto-fix loop"
+        );
+        break;
+      }
+
+      // Apply fixes and commit
+      autoResolved += await this.applyAndCommitFixes(
+        agentLoop,
+        fixable,
+        iterations,
+        options.branch
+      );
+
+      // Re-run tests to verify fixes
+      const testResult = await agentLoop.executeTask(
+        "Run the test suite with: pnpm test && pnpm typecheck && pnpm check\nCapture ALL output.",
+        "ci_loop"
+      );
+
+      // Re-analyze
+      const newFailures = this.analyzer.analyze(testResult.output);
+      if (newFailures.length === 0) {
+        logger.info({ iterations, autoResolved }, "All CI failures resolved!");
+        return {
+          passed: true,
+          iterations,
+          maxIterations: maxIter,
+          passRate: 100,
+          totalTests: 0,
+          failedTests: 0,
+          autoResolved,
+          remainingFailures: [],
+          stuckFailures: [],
+        };
+      }
+
+      currentFailures = newFailures;
+    }
+
+    return {
+      passed: false,
+      iterations,
+      maxIterations: maxIter,
+      passRate: 0,
+      totalTests: currentFailures.length,
+      failedTests: currentFailures.length,
+      autoResolved,
+      remainingFailures: currentFailures,
+      stuckFailures: Array.from(stuckFailures),
+    };
+  }
+
+  /**
    * Dispatch fix agents grouped by role. Returns the count of resolved failures.
    */
   private async dispatchFixes(
@@ -336,6 +444,80 @@ Run the command and return the complete output.`,
   }
 
   /**
+   * Filter out stuck failures from a list, tracking history and escalating.
+   */
+  private filterStuckFailures(
+    failures: FailureAnalysis[],
+    failureHistory: Map<string, number>,
+    stuckFailures: Set<string>
+  ): FailureAnalysis[] {
+    const fixable: FailureAnalysis[] = [];
+    for (const failure of failures) {
+      const count = (failureHistory.get(failure.testName) ?? 0) + 1;
+      failureHistory.set(failure.testName, count);
+
+      if (count >= STUCK_THRESHOLD) {
+        if (!stuckFailures.has(failure.testName)) {
+          stuckFailures.add(failure.testName);
+          logger.warn(
+            { testName: failure.testName, attempts: count },
+            "Stuck CI failure detected, escalating to user"
+          );
+        }
+        continue;
+      }
+      fixable.push(failure);
+    }
+    return fixable;
+  }
+
+  /**
+   * Apply CI fixes for each failure, then commit and push.
+   */
+  private async applyAndCommitFixes(
+    agentLoop: AgentLoop,
+    fixable: FailureAnalysis[],
+    iteration: number,
+    branch: string
+  ): Promise<number> {
+    let resolved = 0;
+
+    for (const failure of fixable) {
+      const fixPrompt = this.buildCIFixPrompt(failure, branch);
+      logger.info(
+        {
+          iteration,
+          failureType: failure.failureType,
+          testName: failure.testName,
+        },
+        "Applying CI fix"
+      );
+
+      const fixResult = await agentLoop.executeTask(
+        fixPrompt,
+        failure.fixAgentRole
+      );
+      if (fixResult.success) {
+        resolved++;
+      }
+    }
+
+    // Commit and push after fixes
+    const commitResult = await agentLoop.executeTask(
+      `Commit all changes with a descriptive message about the CI fixes applied, then push to the branch "${branch}".
+Do NOT amend existing commits. Create a new commit.
+Use conventional commit format: "fix: <description of what was fixed>"`,
+      "ci_loop"
+    );
+
+    if (!commitResult.success) {
+      logger.warn({ iteration }, "Failed to commit and push CI fixes");
+    }
+
+    return resolved;
+  }
+
+  /**
    * Build a combined fix prompt for multiple failures assigned to
    * the same agent role. This is more efficient than one call per failure.
    */
@@ -365,6 +547,81 @@ Instructions:
 6. If a type error, fix the types to match the implementation intent
 7. If an import error, fix the import path or install the missing package
 8. After making changes, verify each fix is correct before moving on`;
+  }
+
+  /**
+   * Build a fix prompt for a CI failure.
+   */
+  private buildCIFixPrompt(failure: FailureAnalysis, branch: string): string {
+    return `Fix the following CI failure on branch "${branch}":
+
+### Failure: ${failure.testName}
+- Type: ${failure.failureType}
+- Root Cause: ${failure.rootCause}
+- Suggested Fix: ${failure.suggestedFix}
+
+Instructions:
+1. Read the affected files to understand the current code
+2. Identify the root cause
+3. Apply the minimal fix needed
+4. For type errors: fix the types to match the implementation intent
+5. For lint errors: run "pnpm unsafe" to auto-fix
+6. For build errors: fix compilation issues
+7. For test failures: fix the implementation (not the test expectations, unless the test is wrong)
+8. Verify each fix is correct`;
+  }
+
+  /**
+   * Convert CI failure data (from webhook/log parser) to FailureAnalysis format.
+   */
+  private convertCIFailures(failures: CIFailureData[]): FailureAnalysis[] {
+    const categoryToType: Record<string, FailureType> = {
+      test_failure: "logic",
+      build_error: "syntax",
+      lint_error: "syntax",
+      type_error: "type",
+      other: "runtime",
+    };
+
+    const categoryToRole: Record<string, string> = {
+      test_failure: "test_engineer",
+      build_error: "backend_coder",
+      lint_error: "backend_coder",
+      type_error: "backend_coder",
+      other: "backend_coder",
+    };
+
+    return failures.map((f, i) => ({
+      testName: `ci:${f.category}:${i}`,
+      failureType: categoryToType[f.category] ?? ("runtime" as FailureType),
+      rootCause: f.details.join("\n").slice(0, 500),
+      affectedFiles: [],
+      suggestedFix: this.suggestCIFix(f),
+      fixAgentRole: categoryToRole[f.category] ?? "backend_coder",
+      confidence: 0.7,
+      severity:
+        f.category === "type_error" || f.category === "build_error"
+          ? ("high" as const)
+          : ("medium" as const),
+    }));
+  }
+
+  /**
+   * Suggest a fix based on CI failure category.
+   */
+  private suggestCIFix(failure: CIFailureData): string {
+    switch (failure.category) {
+      case "test_failure":
+        return `Fix the failing test(s). Read the test file, understand the expected behavior, and fix the source code to match. Details: ${failure.details[0] ?? "unknown"}`;
+      case "build_error":
+        return `Fix the build error. Check for missing imports, syntax errors, or module resolution issues. Details: ${failure.details[0] ?? "unknown"}`;
+      case "lint_error":
+        return 'Run "pnpm unsafe" to auto-fix lint errors. If that does not resolve all issues, manually fix the remaining violations.';
+      case "type_error":
+        return `Fix the TypeScript type error(s). Update type annotations, add missing properties, or fix type mismatches. Details: ${failure.details[0] ?? "unknown"}`;
+      default:
+        return `Investigate and fix the CI failure. Details: ${failure.details[0] ?? "unknown"}`;
+    }
   }
 
   /**

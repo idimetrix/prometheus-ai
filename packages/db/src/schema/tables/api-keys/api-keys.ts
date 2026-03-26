@@ -1,4 +1,11 @@
-import { index, jsonb, pgTable, text, timestamp } from "drizzle-orm/pg-core";
+import {
+  index,
+  integer,
+  jsonb,
+  pgTable,
+  text,
+  timestamp,
+} from "drizzle-orm/pg-core";
 import { organizations } from "../organizations/organizations";
 import { users } from "../users/users";
 
@@ -34,8 +41,10 @@ export const apiKeys = pgTable(
     keyHash: text("key_hash").notNull().unique(),
     name: text("name").notNull(),
     scopes: jsonb("scopes").$type<ApiKeyScope[]>().default([]),
+    projectIds: jsonb("project_ids").$type<string[]>(),
     lastUsed: timestamp("last_used", { withTimezone: true }),
     expiresAt: timestamp("expires_at", { withTimezone: true }),
+    requestCount: integer("request_count").notNull().default(0),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),

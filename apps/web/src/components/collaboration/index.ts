@@ -12,11 +12,14 @@ export type {
   ConflictResolverProps,
 } from "./conflict-resolver";
 export { ConflictResolver } from "./conflict-resolver";
+export { ControlPanel } from "./control-panel";
+export { PresenceBar } from "./presence-bar";
 export type {
   PresenceIndicatorsProps,
   PresenceUser,
 } from "./presence-indicators";
 export { PresenceIndicators } from "./presence-indicators";
+export { SessionChat } from "./session-chat";
 export type {
   HandoffStatus,
   HandoffUser,

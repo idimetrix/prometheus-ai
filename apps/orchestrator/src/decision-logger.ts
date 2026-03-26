@@ -1,3 +1,4 @@
+import { getInternalAuthHeaders } from "@prometheus/auth";
 import { createLogger } from "@prometheus/logger";
 import { generateId } from "@prometheus/utils";
 
@@ -88,7 +89,10 @@ export class DecisionLogger {
   ): Promise<void> {
     await fetch(`${API_URL}/internal/decision-log`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        ...getInternalAuthHeaders(),
+      },
       body: JSON.stringify({
         id,
         ...entry,
@@ -102,7 +106,10 @@ export class DecisionLogger {
       `${PROJECT_BRAIN_URL}/api/projects/${entry.projectId}/memories`,
       {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...getInternalAuthHeaders(),
+        },
         body: JSON.stringify({
           memoryType: "episodic",
           content: `Decision by ${entry.agentRole}: ${entry.decision}${entry.reasoning ? `\nReasoning: ${entry.reasoning}` : ""}${entry.outcome ? `\nOutcome: ${entry.outcome}` : ""}`,

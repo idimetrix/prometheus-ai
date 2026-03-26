@@ -14,6 +14,7 @@ import { ChatPanelProvider } from "./panels/chat-panel";
 import { PrometheusClient } from "./prometheus-client";
 import { AgentProvider } from "./providers/agent-provider";
 import { PrometheusCodeActionProvider } from "./providers/code-action-provider";
+import { PrometheusInlineCompletionProvider } from "./providers/inline-completion";
 import { SessionProvider } from "./providers/session-provider";
 import { StatusBarManager } from "./status-bar";
 import { EnhancedStatusBarManager } from "./ui/status-bar";
@@ -26,18 +27,29 @@ let statusBar: StatusBarManager | undefined;
 let enhancedStatusBar: EnhancedStatusBarManager | undefined;
 let sessionProvider: SessionProvider | undefined;
 let agentProvider: AgentProvider | undefined;
+let inlineProvider: PrometheusInlineCompletionProvider | undefined;
 
 export function activate(context: ExtensionContext): void {
   const config = workspace.getConfiguration("prometheus");
   const apiUrl = config.get<string>("apiUrl", "http://localhost:4000");
   const socketUrl = config.get<string>("socketUrl", "ws://localhost:4001");
-  const apiToken = config.get<string>("apiToken", "");
+  const apiKey = config.get<string>("apiKey", "");
 
-  apiClient = new ApiClient(apiUrl, apiToken);
-  prometheusClient = new PrometheusClient(apiUrl, socketUrl, apiToken);
+  // Fall back to legacy apiToken if apiKey is not set
+  const token = apiKey || config.get<string>("apiToken", "");
+
+  apiClient = new ApiClient(apiUrl, token, context.secrets);
+  prometheusClient = new PrometheusClient(apiUrl, socketUrl, token);
+
+  // Load API key from secret storage if available
+  apiClient.reloadConfig();
+
   statusBar = new StatusBarManager();
   statusBar.show();
+  statusBar.startPolling(apiClient);
+
   enhancedStatusBar = new EnhancedStatusBarManager();
+  enhancedStatusBar.startPolling(apiClient);
 
   // Register tree data providers for sidebar views
   sessionProvider = new SessionProvider(prometheusClient);
@@ -83,7 +95,145 @@ export function activate(context: ExtensionContext): void {
     )
   );
 
-  // Register commands
+  // Register inline completion provider
+  inlineProvider = new PrometheusInlineCompletionProvider(apiClient);
+  context.subscriptions.push(
+    languages.registerInlineCompletionItemProvider(
+      { scheme: "file" },
+      inlineProvider
+    )
+  );
+
+  // -----------------------------------------------------------------------
+  // Code action commands
+  // -----------------------------------------------------------------------
+
+  const registerCodeActionCommand = (
+    commandId: string,
+    actionKind: string
+  ): void => {
+    context.subscriptions.push(
+      commands.registerCommand(
+        commandId,
+        async (args?: {
+          kind: string;
+          filePath: string;
+          languageId: string;
+          selectedText: string;
+          startLine: number;
+          endLine: number;
+        }) => {
+          if (!apiClient) {
+            return;
+          }
+
+          let selectedText: string;
+          let filePath: string;
+          let languageId: string;
+          let startLine: number;
+          let endLine: number;
+
+          if (args) {
+            selectedText = args.selectedText;
+            filePath = args.filePath;
+            languageId = args.languageId;
+            startLine = args.startLine;
+            endLine = args.endLine;
+          } else {
+            // Fallback: use active editor selection
+            const editor = window.activeTextEditor;
+            if (!editor || editor.selection.isEmpty) {
+              window.showWarningMessage(
+                "Please select code to use this action."
+              );
+              return;
+            }
+            selectedText = editor.document.getText(editor.selection);
+            filePath = editor.document.uri.fsPath;
+            languageId = editor.document.languageId;
+            startLine = editor.selection.start.line;
+            endLine = editor.selection.end.line;
+          }
+
+          try {
+            statusBar?.setStatus("busy");
+            enhancedStatusBar?.setStatus("busy");
+            const prompt = `${actionKind} the following ${languageId} code from ${filePath} (lines ${startLine}-${endLine}):\n\n${selectedText}`;
+
+            // Open chat panel and stream the response
+            if (!chatPanel) {
+              chatPanel = new ChatPanel(
+                context.extensionUri,
+                apiClient,
+                socketUrl
+              );
+            }
+            chatPanel.reveal();
+
+            const result = await apiClient.assignTask(prompt);
+            window.showInformationMessage(
+              `Action "${actionKind}" started: ${result.taskId}`
+            );
+            statusBar?.setStatus("active");
+            enhancedStatusBar?.setStatus("active");
+          } catch (error) {
+            statusBar?.setStatus("error");
+            enhancedStatusBar?.setStatus("error");
+            const message =
+              error instanceof Error ? error.message : "Unknown error";
+            window.showErrorMessage(`Code action failed: ${message}`);
+          }
+        }
+      )
+    );
+  };
+
+  registerCodeActionCommand("prometheus.explainCode", "Explain");
+  registerCodeActionCommand("prometheus.refactorCode", "Refactor");
+  registerCodeActionCommand("prometheus.addTests", "Write tests for");
+  registerCodeActionCommand("prometheus.fixCode", "Fix bugs in");
+  registerCodeActionCommand("prometheus.optimizeCode", "Optimize");
+
+  // Legacy code action command (backwards compatibility)
+  context.subscriptions.push(
+    commands.registerCommand(
+      "prometheus.codeAction",
+      async (args: {
+        kind: string;
+        filePath: string;
+        languageId: string;
+        selectedText: string;
+        startLine: number;
+        endLine: number;
+      }) => {
+        if (!apiClient) {
+          return;
+        }
+        try {
+          statusBar?.setStatus("busy");
+          enhancedStatusBar?.setStatus("busy");
+          const prompt = `${args.kind} the following ${args.languageId} code from ${args.filePath} (lines ${args.startLine}-${args.endLine}):\n\n${args.selectedText}`;
+          const result = await apiClient.assignTask(prompt);
+          window.showInformationMessage(
+            `Action "${args.kind}" started: ${result.taskId}`
+          );
+          statusBar?.setStatus("active");
+          enhancedStatusBar?.setStatus("active");
+        } catch (error) {
+          statusBar?.setStatus("error");
+          enhancedStatusBar?.setStatus("error");
+          const message =
+            error instanceof Error ? error.message : "Unknown error";
+          window.showErrorMessage(`Code action failed: ${message}`);
+        }
+      }
+    )
+  );
+
+  // -----------------------------------------------------------------------
+  // Session commands
+  // -----------------------------------------------------------------------
+
   context.subscriptions.push(
     commands.registerCommand("prometheus.startSession", async () => {
       if (!apiClient) {
@@ -121,7 +271,7 @@ export function activate(context: ExtensionContext): void {
     })
   );
 
-  // Ask question command — opens enhanced chat panel
+  // Ask question command -- opens enhanced chat panel
   context.subscriptions.push(
     commands.registerCommand("prometheus.askQuestion", () => {
       if (!apiClient) {
@@ -175,42 +325,6 @@ export function activate(context: ExtensionContext): void {
         window.showErrorMessage(`Review failed: ${message}`);
       }
     })
-  );
-
-  // Code action handler
-  context.subscriptions.push(
-    commands.registerCommand(
-      "prometheus.codeAction",
-      async (args: {
-        kind: string;
-        filePath: string;
-        languageId: string;
-        selectedText: string;
-        startLine: number;
-        endLine: number;
-      }) => {
-        if (!apiClient) {
-          return;
-        }
-        try {
-          statusBar?.setStatus("busy");
-          enhancedStatusBar?.setStatus("busy");
-          const prompt = `${args.kind} the following ${args.languageId} code from ${args.filePath} (lines ${args.startLine}-${args.endLine}):\n\n${args.selectedText}`;
-          const result = await apiClient.assignTask(prompt);
-          window.showInformationMessage(
-            `Action "${args.kind}" started: ${result.taskId}`
-          );
-          statusBar?.setStatus("active");
-          enhancedStatusBar?.setStatus("active");
-        } catch (error) {
-          statusBar?.setStatus("error");
-          enhancedStatusBar?.setStatus("error");
-          const message =
-            error instanceof Error ? error.message : "Unknown error";
-          window.showErrorMessage(`Code action failed: ${message}`);
-        }
-      }
-    )
   );
 
   // Auto-PR command
@@ -458,14 +572,15 @@ export function activate(context: ExtensionContext): void {
           "socketUrl",
           "ws://localhost:4001"
         );
-        const newToken = updatedConfig.get<string>("apiToken", "");
-        apiClient = new ApiClient(newApiUrl, newToken);
+        const newApiKey = updatedConfig.get<string>("apiKey", "");
+        const newToken = newApiKey || updatedConfig.get<string>("apiToken", "");
+        apiClient?.updateConfig(newApiUrl, newToken);
         prometheusClient?.updateCredentials(newApiUrl, newSocketUrl, newToken);
       }
     })
   );
 
-  // Add status bar to disposables
+  // Add disposables
   if (statusBar) {
     context.subscriptions.push({ dispose: () => statusBar?.dispose() });
   }
@@ -473,6 +588,9 @@ export function activate(context: ExtensionContext): void {
     context.subscriptions.push({
       dispose: () => enhancedStatusBar?.dispose(),
     });
+  }
+  if (inlineProvider) {
+    context.subscriptions.push({ dispose: () => inlineProvider?.dispose() });
   }
 }
 
@@ -489,6 +607,8 @@ export function deactivate(): void {
   sessionProvider = undefined;
   agentProvider?.dispose();
   agentProvider = undefined;
+  inlineProvider?.dispose();
+  inlineProvider = undefined;
   prometheusClient?.dispose();
   prometheusClient = undefined;
   apiClient = undefined;

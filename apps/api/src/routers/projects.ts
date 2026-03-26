@@ -1,8 +1,11 @@
+import { getInternalAuthHeaders } from "@prometheus/auth";
 import type { Database } from "@prometheus/db";
 import {
   blueprints,
   blueprintVersions,
   projectMembers,
+  projectRepositories,
+  projectRules,
   projectSettings,
   projects,
   sessions,
@@ -14,14 +17,25 @@ import { indexingQueue } from "@prometheus/queue";
 import { generateId } from "@prometheus/utils";
 import {
   addProjectMemberSchema,
+  addProjectRepoSchema,
   archiveProjectSchema,
   createProjectSchema,
+  createRuleSchema,
+  deleteRuleSchema,
   getProjectSchema,
+  importRulesFromFileSchema,
+  listProjectReposSchema,
   listProjectsSchema,
+  listRulesSchema,
+  reindexProjectRepoSchema,
   removeProjectMemberSchema,
+  removeProjectRepoSchema,
+  rulesFileSchema,
+  setDefaultRepoSchema,
   updateProjectMemberSchema,
   updateProjectSchema,
   updateProjectSettingsSchema,
+  updateRuleSchema,
 } from "@prometheus/validators";
 import { TRPCError } from "@trpc/server";
 import { and, count, desc, eq, lt, sql } from "drizzle-orm";
@@ -33,10 +47,6 @@ const logger = createLogger("projects-router");
 const PROJECT_BRAIN_URL =
   process.env.PROJECT_BRAIN_URL ?? "http://localhost:4003";
 
-/**
- * Verify that a project belongs to the caller's org.
- * Returns the project row or throws TRPC NOT_FOUND.
- */
 async function verifyProjectAccess(
   db: Database,
   projectId: string,
@@ -45,18 +55,12 @@ async function verifyProjectAccess(
   const project = await db.query.projects.findFirst({
     where: and(eq(projects.id, projectId), eq(projects.orgId, orgId)),
   });
-
   if (!project) {
     throw new TRPCError({ code: "NOT_FOUND", message: "Project not found" });
   }
-
   return project;
 }
 
-/**
- * Verify the caller has a specific minimum role on the project.
- * Roles ordered: owner > contributor > viewer.
- */
 async function verifyProjectRole(
   db: Database,
   projectId: string,
@@ -69,14 +73,12 @@ async function verifyProjectRole(
       eq(projectMembers.userId, userId)
     ),
   });
-
   if (!member) {
     throw new TRPCError({
       code: "FORBIDDEN",
       message: "You are not a member of this project",
     });
   }
-
   const roleRank: Record<string, number> = {
     viewer: 0,
     contributor: 1,
@@ -88,12 +90,10 @@ async function verifyProjectRole(
       message: `This action requires at least '${minimumRole}' role`,
     });
   }
-
   return member;
 }
 
 export const projectsRouter = router({
-  // ─── Create Project ───────────────────────────────────────────────────
   create: protectedProcedure
     .input(createProjectSchema)
     .mutation(async ({ input, ctx }) => {
@@ -110,21 +110,13 @@ export const projectsRouter = router({
           status: "setup",
         })
         .returning();
-
-      // Create default settings
-      await ctx.db.insert(projectSettings).values({
-        projectId: id,
-      });
-
-      // Add creator as owner
+      await ctx.db.insert(projectSettings).values({ projectId: id });
       await ctx.db.insert(projectMembers).values({
         id: generateId("pm"),
         projectId: id,
         userId: ctx.auth.userId,
         role: "owner",
       });
-
-      // If a repo URL was provided, enqueue an indexing job
       if (input.repoUrl) {
         await indexingQueue.add(
           "index-project",
@@ -142,12 +134,10 @@ export const projectsRouter = router({
           "Repo clone/index job enqueued"
         );
       }
-
       logger.info({ projectId: id, orgId: ctx.orgId }, "Project created");
       return project as NonNullable<typeof project>;
     }),
 
-  // ─── Get Project ──────────────────────────────────────────────────────
   get: protectedProcedure
     .input(getProjectSchema)
     .query(async ({ input, ctx }) => {
@@ -159,33 +149,25 @@ export const projectsRouter = router({
         with: {
           settings: true,
           members: true,
-          blueprints: {
-            where: eq(blueprints.isActive, true),
-            limit: 1,
-          },
+          blueprints: { where: eq(blueprints.isActive, true), limit: 1 },
         },
       });
-
       if (!project) {
         throw new TRPCError({
           code: "NOT_FOUND",
           message: "Project not found",
         });
       }
-
       return project;
     }),
 
-  // ─── List Projects (paginated) ────────────────────────────────────────
   list: protectedProcedure
     .input(listProjectsSchema)
     .query(async ({ input, ctx }) => {
       const conditions = [eq(projects.orgId, ctx.orgId)];
-
       if (input.status) {
         conditions.push(eq(projects.status, input.status));
       }
-
       if (input.cursor) {
         const cursorProject = await ctx.db.query.projects.findFirst({
           where: eq(projects.id, input.cursor),
@@ -195,30 +177,20 @@ export const projectsRouter = router({
           conditions.push(lt(projects.createdAt, cursorProject.createdAt));
         }
       }
-
       const results = await ctx.db.query.projects.findMany({
         where: and(...conditions),
         orderBy: [desc(projects.createdAt)],
         limit: input.limit + 1,
         with: { settings: true },
       });
-
       const hasMore = results.length > input.limit;
       const items = hasMore ? results.slice(0, input.limit) : results;
-
-      return {
-        projects: items,
-        nextCursor: hasMore ? items.at(-1)?.id : null,
-      };
+      return { projects: items, nextCursor: hasMore ? items.at(-1)?.id : null };
     }),
 
-  // ─── Update Project ───────────────────────────────────────────────────
   update: protectedProcedure
     .input(
-      z.object({
-        projectId: z.string().min(1),
-        data: updateProjectSchema,
-      })
+      z.object({ projectId: z.string().min(1), data: updateProjectSchema })
     )
     .mutation(async ({ input, ctx }) => {
       await verifyProjectAccess(ctx.db, input.projectId, ctx.orgId);
@@ -228,7 +200,6 @@ export const projectsRouter = router({
         ctx.auth.userId,
         "contributor"
       );
-
       const [updated] = await ctx.db
         .update(projects)
         .set({ ...input.data, updatedAt: new Date() })
@@ -236,19 +207,16 @@ export const projectsRouter = router({
           and(eq(projects.id, input.projectId), eq(projects.orgId, ctx.orgId))
         )
         .returning();
-
       if (!updated) {
         throw new TRPCError({
           code: "NOT_FOUND",
           message: "Project not found",
         });
       }
-
       logger.info({ projectId: input.projectId }, "Project updated");
       return updated;
     }),
 
-  // ─── Archive (Soft Delete) ────────────────────────────────────────────
   delete: protectedProcedure
     .input(archiveProjectSchema)
     .mutation(async ({ input, ctx }) => {
@@ -259,7 +227,6 @@ export const projectsRouter = router({
         ctx.auth.userId,
         "owner"
       );
-
       const [updated] = await ctx.db
         .update(projects)
         .set({ status: "archived", updatedAt: new Date() })
@@ -267,19 +234,16 @@ export const projectsRouter = router({
           and(eq(projects.id, input.projectId), eq(projects.orgId, ctx.orgId))
         )
         .returning();
-
       if (!updated) {
         throw new TRPCError({
           code: "NOT_FOUND",
           message: "Project not found",
         });
       }
-
       logger.info({ projectId: input.projectId }, "Project archived");
       return { success: true };
     }),
 
-  // ─── Update Project Settings ──────────────────────────────────────────
   updateSettings: protectedProcedure
     .input(
       z.object({
@@ -295,12 +259,9 @@ export const projectsRouter = router({
         ctx.auth.userId,
         "contributor"
       );
-
-      // Upsert settings
       const existing = await ctx.db.query.projectSettings.findFirst({
         where: eq(projectSettings.projectId, input.projectId),
       });
-
       if (existing) {
         const [updated] = await ctx.db
           .update(projectSettings)
@@ -309,20 +270,14 @@ export const projectsRouter = router({
           .returning();
         return updated as NonNullable<typeof updated>;
       }
-
       const [created] = await ctx.db
         .insert(projectSettings)
-        .values({
-          projectId: input.projectId,
-          ...input.settings,
-        })
+        .values({ projectId: input.projectId, ...input.settings })
         .returning();
-
       logger.info({ projectId: input.projectId }, "Project settings updated");
       return created as NonNullable<typeof created>;
     }),
 
-  // ─── Add Team Member ──────────────────────────────────────────────────
   addMember: protectedProcedure
     .input(addProjectMemberSchema)
     .mutation(async ({ input, ctx }) => {
@@ -333,8 +288,6 @@ export const projectsRouter = router({
         ctx.auth.userId,
         "owner"
       );
-
-      // Check if member already exists
       const existing = await ctx.db.query.projectMembers.findFirst({
         where: and(
           eq(projectMembers.projectId, input.projectId),
@@ -347,7 +300,6 @@ export const projectsRouter = router({
           message: "User is already a member of this project",
         });
       }
-
       const [member] = await ctx.db
         .insert(projectMembers)
         .values({
@@ -357,7 +309,6 @@ export const projectsRouter = router({
           role: input.role ?? "contributor",
         })
         .returning();
-
       logger.info(
         {
           projectId: input.projectId,
@@ -366,11 +317,9 @@ export const projectsRouter = router({
         },
         "Project member added"
       );
-
       return member as NonNullable<typeof member>;
     }),
 
-  // ─── Update Team Member Role ──────────────────────────────────────────
   updateMember: protectedProcedure
     .input(updateProjectMemberSchema)
     .mutation(async ({ input, ctx }) => {
@@ -381,8 +330,6 @@ export const projectsRouter = router({
         ctx.auth.userId,
         "owner"
       );
-
-      // Prevent demoting yourself if you're the only owner
       if (input.userId === ctx.auth.userId && input.role !== "owner") {
         const owners = await ctx.db.query.projectMembers.findMany({
           where: and(
@@ -397,7 +344,6 @@ export const projectsRouter = router({
           });
         }
       }
-
       const [updated] = await ctx.db
         .update(projectMembers)
         .set({ role: input.role })
@@ -408,14 +354,12 @@ export const projectsRouter = router({
           )
         )
         .returning();
-
       if (!updated) {
         throw new TRPCError({
           code: "NOT_FOUND",
           message: "Project member not found",
         });
       }
-
       logger.info(
         {
           projectId: input.projectId,
@@ -424,11 +368,9 @@ export const projectsRouter = router({
         },
         "Project member role updated"
       );
-
       return updated;
     }),
 
-  // ─── Remove Team Member ───────────────────────────────────────────────
   removeMember: protectedProcedure
     .input(removeProjectMemberSchema)
     .mutation(async ({ input, ctx }) => {
@@ -439,8 +381,6 @@ export const projectsRouter = router({
         ctx.auth.userId,
         "owner"
       );
-
-      // Prevent removing yourself if you're the only owner
       if (input.userId === ctx.auth.userId) {
         const owners = await ctx.db.query.projectMembers.findMany({
           where: and(
@@ -455,7 +395,6 @@ export const projectsRouter = router({
           });
         }
       }
-
       const deleted = await ctx.db
         .delete(projectMembers)
         .where(
@@ -465,31 +404,23 @@ export const projectsRouter = router({
           )
         )
         .returning();
-
       if (deleted.length === 0) {
         throw new TRPCError({
           code: "NOT_FOUND",
           message: "Project member not found",
         });
       }
-
       logger.info(
-        {
-          projectId: input.projectId,
-          removedUserId: input.userId,
-        },
+        { projectId: input.projectId, removedUserId: input.userId },
         "Project member removed"
       );
-
       return { success: true };
     }),
 
-  // ─── Get Current Blueprint ────────────────────────────────────────────
   getBlueprint: protectedProcedure
     .input(getProjectSchema)
     .query(async ({ input, ctx }) => {
       await verifyProjectAccess(ctx.db, input.projectId, ctx.orgId);
-
       const blueprint = await ctx.db.query.blueprints.findFirst({
         where: and(
           eq(blueprints.projectId, input.projectId),
@@ -499,11 +430,9 @@ export const projectsRouter = router({
           versions: { orderBy: [desc(blueprintVersions.createdAt)], limit: 5 },
         },
       });
-
       return blueprint ?? null;
     }),
 
-  // ─── List Blueprint Versions ──────────────────────────────────────────
   listBlueprintVersions: protectedProcedure
     .input(
       z.object({
@@ -514,35 +443,29 @@ export const projectsRouter = router({
     )
     .query(async ({ input, ctx }) => {
       await verifyProjectAccess(ctx.db, input.projectId, ctx.orgId);
-
       const conditions = [eq(blueprints.projectId, input.projectId)];
-
       if (input.cursor) {
-        const cursorBlueprint = await ctx.db.query.blueprints.findFirst({
+        const cb = await ctx.db.query.blueprints.findFirst({
           where: eq(blueprints.id, input.cursor),
           columns: { createdAt: true },
         });
-        if (cursorBlueprint) {
-          conditions.push(lt(blueprints.createdAt, cursorBlueprint.createdAt));
+        if (cb) {
+          conditions.push(lt(blueprints.createdAt, cb.createdAt));
         }
       }
-
       const results = await ctx.db.query.blueprints.findMany({
         where: and(...conditions),
         orderBy: [desc(blueprints.createdAt)],
         limit: input.limit + 1,
       });
-
       const hasMore = results.length > input.limit;
       const items = hasMore ? results.slice(0, input.limit) : results;
-
       return {
         blueprints: items,
         nextCursor: hasMore ? items.at(-1)?.id : null,
       };
     }),
 
-  // ─── Trigger File Index ───────────────────────────────────────────────
   triggerFileIndex: protectedProcedure
     .input(
       z.object({
@@ -563,7 +486,6 @@ export const projectsRouter = router({
         ctx.auth.userId,
         "contributor"
       );
-
       await indexingQueue.add(
         "index-project",
         {
@@ -573,41 +495,27 @@ export const projectsRouter = router({
           fullReindex: input.fullReindex,
           triggeredBy: "manual",
         },
-        {
-          jobId: `index-${input.projectId}-${Date.now()}`,
-        }
+        { jobId: `index-${input.projectId}-${Date.now()}` }
       );
-
       logger.info(
-        {
-          projectId: input.projectId,
-          fullReindex: input.fullReindex,
-        },
+        { projectId: input.projectId, fullReindex: input.fullReindex },
         "File index triggered"
       );
-
       return { success: true, message: "File indexing job queued" };
     }),
 
-  // ─── Project Stats ────────────────────────────────────────────────────
   stats: protectedProcedure
     .input(getProjectSchema)
     .query(async ({ input, ctx }) => {
       await verifyProjectAccess(ctx.db, input.projectId, ctx.orgId);
-
-      // Count sessions
       const [sessionCount] = await ctx.db
         .select({ count: count() })
         .from(sessions)
         .where(eq(sessions.projectId, input.projectId));
-
-      // Count tasks
       const [taskCount] = await ctx.db
         .select({ count: count() })
         .from(tasks)
         .where(eq(tasks.projectId, input.projectId));
-
-      // Count active sessions
       const [activeSessionCount] = await ctx.db
         .select({ count: count() })
         .from(sessions)
@@ -617,29 +525,22 @@ export const projectsRouter = router({
             eq(sessions.status, "active")
           )
         );
-
-      // Count running tasks
       const [runningTaskCount] = await ctx.db
         .select({ count: count() })
         .from(tasks)
         .where(
           and(eq(tasks.projectId, input.projectId), eq(tasks.status, "running"))
         );
-
-      // Sum credits consumed for tasks in this project
       const [creditsResult] = await ctx.db
         .select({
           creditsUsed: sql<number>`COALESCE(SUM(${tasks.creditsConsumed}), 0)`,
         })
         .from(tasks)
         .where(eq(tasks.projectId, input.projectId));
-
-      // Count members
       const [memberCount] = await ctx.db
         .select({ count: count() })
         .from(projectMembers)
         .where(eq(projectMembers.projectId, input.projectId));
-
       return {
         totalSessions: Number(sessionCount?.count ?? 0),
         activeSessions: Number(activeSessionCount?.count ?? 0),
@@ -650,19 +551,13 @@ export const projectsRouter = router({
       };
     }),
 
-  // ─── List Tech Stack Presets ──────────────────────────────────────────
   listTechStackPresets: protectedProcedure.query(async ({ ctx }) => {
-    const presets = await ctx.db.query.techStackPresets.findMany();
-    return { presets };
+    return { presets: await ctx.db.query.techStackPresets.findMany() };
   }),
 
-  // ─── Select Tech Stack Preset ─────────────────────────────────────────
   selectTechStackPreset: protectedProcedure
     .input(
-      z.object({
-        projectId: z.string().min(1),
-        presetSlug: z.string().min(1),
-      })
+      z.object({ projectId: z.string().min(1), presetSlug: z.string().min(1) })
     )
     .mutation(async ({ input, ctx }) => {
       await verifyProjectAccess(ctx.db, input.projectId, ctx.orgId);
@@ -672,8 +567,6 @@ export const projectsRouter = router({
         ctx.auth.userId,
         "contributor"
       );
-
-      // Verify the preset exists
       const preset = await ctx.db.query.techStackPresets.findFirst({
         where: eq(techStackPresets.slug, input.presetSlug),
       });
@@ -683,30 +576,20 @@ export const projectsRouter = router({
           message: "Tech stack preset not found",
         });
       }
-
       const [updated] = await ctx.db
         .update(projects)
-        .set({
-          techStackPreset: input.presetSlug,
-          updatedAt: new Date(),
-        })
+        .set({ techStackPreset: input.presetSlug, updatedAt: new Date() })
         .where(
           and(eq(projects.id, input.projectId), eq(projects.orgId, ctx.orgId))
         )
         .returning();
-
       logger.info(
-        {
-          projectId: input.projectId,
-          preset: input.presetSlug,
-        },
+        { projectId: input.projectId, preset: input.presetSlug },
         "Tech stack preset selected"
       );
-
       return { project: updated as NonNullable<typeof updated>, preset };
     }),
 
-  // ─── Search Project Files ──────────────────────────────────────────────
   search: protectedProcedure
     .input(
       z.object({
@@ -718,10 +601,12 @@ export const projectsRouter = router({
     )
     .query(async ({ input, ctx }) => {
       await verifyProjectAccess(ctx.db, input.projectId, ctx.orgId);
-
       const res = await fetch(`${PROJECT_BRAIN_URL}/search`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...getInternalAuthHeaders(),
+        },
         body: JSON.stringify({
           projectId: input.projectId,
           orgId: ctx.orgId,
@@ -730,7 +615,6 @@ export const projectsRouter = router({
           limit: input.limit,
         }),
       });
-
       if (!res.ok) {
         logger.error(
           { projectId: input.projectId, status: res.status },
@@ -741,7 +625,6 @@ export const projectsRouter = router({
           message: "Failed to search project files",
         });
       }
-
       const data = (await res.json()) as {
         results: Array<{
           filePath: string;
@@ -751,7 +634,6 @@ export const projectsRouter = router({
           lineEnd: number;
         }>;
       };
-
       logger.info(
         {
           projectId: input.projectId,
@@ -762,4 +644,382 @@ export const projectsRouter = router({
       );
       return { results: data.results };
     }),
+
+  rules: router({
+    list: protectedProcedure
+      .input(listRulesSchema)
+      .query(async ({ input, ctx }) => {
+        await verifyProjectAccess(ctx.db, input.projectId, ctx.orgId);
+        const conditions = [
+          eq(projectRules.projectId, input.projectId),
+          eq(projectRules.orgId, ctx.orgId),
+        ];
+        if (input.type) {
+          conditions.push(eq(projectRules.type, input.type));
+        }
+        const rules = await ctx.db.query.projectRules.findMany({
+          where: and(...conditions),
+          orderBy: [desc(projectRules.createdAt)],
+        });
+        return { rules };
+      }),
+
+    create: protectedProcedure
+      .input(createRuleSchema)
+      .mutation(async ({ input, ctx }) => {
+        await verifyProjectAccess(ctx.db, input.projectId, ctx.orgId);
+        await verifyProjectRole(
+          ctx.db,
+          input.projectId,
+          ctx.auth.userId,
+          "contributor"
+        );
+        const id = generateId("rule");
+        const [rule] = await ctx.db
+          .insert(projectRules)
+          .values({
+            id,
+            projectId: input.projectId,
+            orgId: ctx.orgId,
+            type: input.type,
+            rule: input.rule,
+            source: input.source ?? "manual",
+            enabled: input.enabled ?? true,
+          })
+          .returning();
+        logger.info(
+          { ruleId: id, projectId: input.projectId },
+          "Project rule created"
+        );
+        return rule as NonNullable<typeof rule>;
+      }),
+
+    update: protectedProcedure
+      .input(updateRuleSchema)
+      .mutation(async ({ input, ctx }) => {
+        const existing = await ctx.db.query.projectRules.findFirst({
+          where: and(
+            eq(projectRules.id, input.ruleId),
+            eq(projectRules.orgId, ctx.orgId)
+          ),
+        });
+        if (!existing) {
+          throw new TRPCError({ code: "NOT_FOUND", message: "Rule not found" });
+        }
+        await verifyProjectRole(
+          ctx.db,
+          existing.projectId,
+          ctx.auth.userId,
+          "contributor"
+        );
+        const updateData: Record<string, unknown> = { updatedAt: new Date() };
+        if (input.type !== undefined) {
+          updateData.type = input.type;
+        }
+        if (input.rule !== undefined) {
+          updateData.rule = input.rule;
+        }
+        if (input.enabled !== undefined) {
+          updateData.enabled = input.enabled;
+        }
+        const [updated] = await ctx.db
+          .update(projectRules)
+          .set(updateData)
+          .where(
+            and(
+              eq(projectRules.id, input.ruleId),
+              eq(projectRules.orgId, ctx.orgId)
+            )
+          )
+          .returning();
+        if (!updated) {
+          throw new TRPCError({ code: "NOT_FOUND", message: "Rule not found" });
+        }
+        logger.info({ ruleId: input.ruleId }, "Project rule updated");
+        return updated;
+      }),
+
+    delete: protectedProcedure
+      .input(deleteRuleSchema)
+      .mutation(async ({ input, ctx }) => {
+        const existing = await ctx.db.query.projectRules.findFirst({
+          where: and(
+            eq(projectRules.id, input.ruleId),
+            eq(projectRules.orgId, ctx.orgId)
+          ),
+        });
+        if (!existing) {
+          throw new TRPCError({ code: "NOT_FOUND", message: "Rule not found" });
+        }
+        await verifyProjectRole(
+          ctx.db,
+          existing.projectId,
+          ctx.auth.userId,
+          "contributor"
+        );
+        await ctx.db
+          .delete(projectRules)
+          .where(
+            and(
+              eq(projectRules.id, input.ruleId),
+              eq(projectRules.orgId, ctx.orgId)
+            )
+          );
+        logger.info({ ruleId: input.ruleId }, "Project rule deleted");
+        return { success: true };
+      }),
+
+    importFromFile: protectedProcedure
+      .input(importRulesFromFileSchema)
+      .mutation(async ({ input, ctx }) => {
+        await verifyProjectAccess(ctx.db, input.projectId, ctx.orgId);
+        await verifyProjectRole(
+          ctx.db,
+          input.projectId,
+          ctx.auth.userId,
+          "contributor"
+        );
+        let parsed: {
+          rules: Array<{ type: string; rule: string; enabled: boolean }>;
+        };
+        try {
+          parsed = rulesFileSchema.parse(JSON.parse(input.content));
+        } catch {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message:
+              "Invalid rules file format. Expected JSON with { rules: [{ type, rule, enabled }] }",
+          });
+        }
+        const created: (typeof projectRules.$inferSelect)[] = [];
+        for (const entry of parsed.rules) {
+          const id = generateId("rule");
+          const [rule] = await ctx.db
+            .insert(projectRules)
+            .values({
+              id,
+              projectId: input.projectId,
+              orgId: ctx.orgId,
+              type: entry.type as
+                | "code_style"
+                | "architecture"
+                | "testing"
+                | "review"
+                | "prompt"
+                | "security",
+              rule: entry.rule,
+              source: "file",
+              enabled: entry.enabled,
+            })
+            .returning();
+          if (rule) {
+            created.push(rule);
+          }
+        }
+        logger.info(
+          { projectId: input.projectId, importedCount: created.length },
+          "Rules imported from file"
+        );
+        return { rules: created, importedCount: created.length };
+      }),
+  }),
+
+  repos: router({
+    list: protectedProcedure
+      .input(listProjectReposSchema)
+      .query(async ({ input, ctx }) => {
+        await verifyProjectAccess(ctx.db, input.projectId, ctx.orgId);
+        const repos = await ctx.db.query.projectRepositories.findMany({
+          where: and(
+            eq(projectRepositories.projectId, input.projectId),
+            eq(projectRepositories.orgId, ctx.orgId)
+          ),
+          orderBy: [
+            desc(projectRepositories.isPrimary),
+            desc(projectRepositories.createdAt),
+          ],
+        });
+        return { repos };
+      }),
+
+    add: protectedProcedure
+      .input(addProjectRepoSchema)
+      .mutation(async ({ input, ctx }) => {
+        await verifyProjectAccess(ctx.db, input.projectId, ctx.orgId);
+        await verifyProjectRole(
+          ctx.db,
+          input.projectId,
+          ctx.auth.userId,
+          "contributor"
+        );
+
+        const existing = await ctx.db.query.projectRepositories.findMany({
+          where: eq(projectRepositories.projectId, input.projectId),
+        });
+        const isPrimary = existing.length === 0;
+
+        const id = generateId("prepo");
+        const [repo] = await ctx.db
+          .insert(projectRepositories)
+          .values({
+            id,
+            projectId: input.projectId,
+            orgId: ctx.orgId,
+            repoUrl: input.repoUrl,
+            provider: input.provider,
+            defaultBranch: input.defaultBranch,
+            isMonorepo: input.isMonorepo,
+            workspaceType: input.workspaceType ?? null,
+            rootPath: input.rootPath,
+            isPrimary,
+          })
+          .returning();
+
+        await indexingQueue.add(
+          "index-project",
+          {
+            projectId: input.projectId,
+            orgId: ctx.orgId,
+            filePaths: [],
+            fullReindex: true,
+            triggeredBy: "manual",
+          },
+          { jobId: `index-${id}-init` }
+        );
+
+        logger.info(
+          { repoId: id, projectId: input.projectId, repoUrl: input.repoUrl },
+          "Repository added to project"
+        );
+        return repo as NonNullable<typeof repo>;
+      }),
+
+    remove: protectedProcedure
+      .input(removeProjectRepoSchema)
+      .mutation(async ({ input, ctx }) => {
+        await verifyProjectAccess(ctx.db, input.projectId, ctx.orgId);
+        await verifyProjectRole(
+          ctx.db,
+          input.projectId,
+          ctx.auth.userId,
+          "contributor"
+        );
+
+        const deleted = await ctx.db
+          .delete(projectRepositories)
+          .where(
+            and(
+              eq(projectRepositories.id, input.repoId),
+              eq(projectRepositories.projectId, input.projectId),
+              eq(projectRepositories.orgId, ctx.orgId)
+            )
+          )
+          .returning();
+
+        if (deleted.length === 0) {
+          throw new TRPCError({
+            code: "NOT_FOUND",
+            message: "Repository not found",
+          });
+        }
+
+        logger.info(
+          { repoId: input.repoId, projectId: input.projectId },
+          "Repository removed from project"
+        );
+        return { success: true };
+      }),
+
+    reindex: protectedProcedure
+      .input(reindexProjectRepoSchema)
+      .mutation(async ({ input, ctx }) => {
+        await verifyProjectAccess(ctx.db, input.projectId, ctx.orgId);
+        await verifyProjectRole(
+          ctx.db,
+          input.projectId,
+          ctx.auth.userId,
+          "contributor"
+        );
+
+        const repo = await ctx.db.query.projectRepositories.findFirst({
+          where: and(
+            eq(projectRepositories.id, input.repoId),
+            eq(projectRepositories.projectId, input.projectId)
+          ),
+        });
+
+        if (!repo) {
+          throw new TRPCError({
+            code: "NOT_FOUND",
+            message: "Repository not found",
+          });
+        }
+
+        await ctx.db
+          .update(projectRepositories)
+          .set({ indexStatus: "pending", updatedAt: new Date() })
+          .where(eq(projectRepositories.id, input.repoId));
+
+        await indexingQueue.add(
+          "index-project",
+          {
+            projectId: input.projectId,
+            orgId: ctx.orgId,
+            filePaths: [],
+            fullReindex: true,
+            triggeredBy: "manual",
+          },
+          { jobId: `reindex-${input.repoId}-${Date.now()}` }
+        );
+
+        logger.info(
+          { repoId: input.repoId, projectId: input.projectId },
+          "Repository reindex triggered"
+        );
+        return { success: true };
+      }),
+
+    setDefault: protectedProcedure
+      .input(setDefaultRepoSchema)
+      .mutation(async ({ input, ctx }) => {
+        await verifyProjectAccess(ctx.db, input.projectId, ctx.orgId);
+        await verifyProjectRole(
+          ctx.db,
+          input.projectId,
+          ctx.auth.userId,
+          "contributor"
+        );
+
+        const repo = await ctx.db.query.projectRepositories.findFirst({
+          where: and(
+            eq(projectRepositories.id, input.repoId),
+            eq(projectRepositories.projectId, input.projectId)
+          ),
+        });
+
+        if (!repo) {
+          throw new TRPCError({
+            code: "NOT_FOUND",
+            message: "Repository not found",
+          });
+        }
+
+        await ctx.db
+          .update(projectRepositories)
+          .set({ isPrimary: false, updatedAt: new Date() })
+          .where(eq(projectRepositories.projectId, input.projectId));
+
+        const [updated] = await ctx.db
+          .update(projectRepositories)
+          .set({ isPrimary: true, updatedAt: new Date() })
+          .where(eq(projectRepositories.id, input.repoId))
+          .returning();
+
+        logger.info(
+          { repoId: input.repoId, projectId: input.projectId },
+          "Default repository set"
+        );
+        return updated as NonNullable<typeof updated>;
+      }),
+  }),
 });

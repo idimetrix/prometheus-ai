@@ -11,16 +11,37 @@ import {
 type ActionKind = "explain" | "refactor" | "test" | "fix" | "optimize";
 
 interface PrometheusAction {
+  command: string;
   kind: ActionKind;
   title: string;
 }
 
 const ACTIONS: PrometheusAction[] = [
-  { kind: "explain", title: "Prometheus: Explain This Code" },
-  { kind: "refactor", title: "Prometheus: Refactor Selection" },
-  { kind: "test", title: "Prometheus: Write Tests" },
-  { kind: "fix", title: "Prometheus: Fix Bug" },
-  { kind: "optimize", title: "Prometheus: Optimize Performance" },
+  {
+    kind: "explain",
+    title: "Prometheus: Explain this code",
+    command: "prometheus.explainCode",
+  },
+  {
+    kind: "refactor",
+    title: "Prometheus: Refactor this",
+    command: "prometheus.refactorCode",
+  },
+  {
+    kind: "test",
+    title: "Prometheus: Add tests",
+    command: "prometheus.addTests",
+  },
+  {
+    kind: "fix",
+    title: "Prometheus: Fix this",
+    command: "prometheus.fixCode",
+  },
+  {
+    kind: "optimize",
+    title: "Prometheus: Optimize",
+    command: "prometheus.optimizeCode",
+  },
 ];
 
 /**
@@ -49,9 +70,14 @@ export class PrometheusCodeActionProvider implements CodeActionProvider {
     }
 
     return ACTIONS.map((action) => {
-      const codeAction = new CodeAction(action.title, CodeActionKind.Refactor);
+      const codeAction = new CodeAction(
+        action.title,
+        action.kind === "fix"
+          ? CodeActionKind.QuickFix
+          : CodeActionKind.Refactor
+      );
       codeAction.command = {
-        command: "prometheus.codeAction",
+        command: action.command,
         title: action.title,
         arguments: [
           {

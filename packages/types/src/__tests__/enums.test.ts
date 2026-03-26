@@ -78,13 +78,14 @@ describe("PlanTier", () => {
 });
 
 describe("AgentMode", () => {
-  it("has all 5 modes", () => {
-    expect(Object.values(AgentMode)).toHaveLength(5);
+  it("has all 6 modes", () => {
+    expect(Object.values(AgentMode)).toHaveLength(6);
     expect(AgentMode.TASK).toBe("task");
     expect(AgentMode.ASK).toBe("ask");
     expect(AgentMode.PLAN).toBe("plan");
     expect(AgentMode.WATCH).toBe("watch");
     expect(AgentMode.FLEET).toBe("fleet");
+    expect(AgentMode.DESIGN).toBe("design");
   });
 });
 

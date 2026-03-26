@@ -16,6 +16,7 @@ import {
   FolderOpen,
   LayoutDashboard,
   MessageSquare,
+  Package,
   Plus,
   Search,
   Settings,
@@ -64,6 +65,11 @@ const NAV_ITEMS: Array<{
     href: "/dashboard/analytics",
     label: "Analytics",
     icon: <BarChart3 className="h-4 w-4" />,
+  },
+  {
+    href: "/dashboard/marketplace" as Route,
+    label: "Marketplace",
+    icon: <Package className="h-4 w-4" />,
   },
   {
     href: "/dashboard/settings",

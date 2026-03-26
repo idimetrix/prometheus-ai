@@ -1,3 +1,4 @@
+import { getInternalAuthHeaders } from "@prometheus/auth";
 import { createLogger } from "@prometheus/logger";
 import { generateId } from "@prometheus/utils";
 
@@ -137,7 +138,10 @@ export class AuditLogger {
     try {
       const response = await fetch(`${this.apiUrl}/internal/audit-events`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...getInternalAuthHeaders(),
+        },
         body: JSON.stringify({ events }),
         signal: AbortSignal.timeout(10_000),
       });
@@ -176,7 +180,10 @@ export class AuditLogger {
         `${this.apiUrl}/internal/compliance-report?${params.toString()}`,
         {
           method: "GET",
-          headers: { "Content-Type": "application/json" },
+          headers: {
+            "Content-Type": "application/json",
+            ...getInternalAuthHeaders(),
+          },
           signal: AbortSignal.timeout(30_000),
         }
       );

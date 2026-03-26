@@ -6,6 +6,7 @@
  */
 
 import { createHash } from "node:crypto";
+import { getInternalAuthHeaders } from "@prometheus/auth";
 import { createLogger } from "@prometheus/logger";
 import { generateId } from "@prometheus/utils";
 
@@ -195,7 +196,10 @@ export class ContinuousIndexer {
         `${this.projectBrainUrl}/api/symbols/update`,
         {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: {
+            "Content-Type": "application/json",
+            ...getInternalAuthHeaders(),
+          },
           body: JSON.stringify({
             projectId,
             filePath,
@@ -246,7 +250,10 @@ export class ContinuousIndexer {
       try {
         const response = await fetch(`${this.modelRouterUrl}/embeddings`, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: {
+            "Content-Type": "application/json",
+            ...getInternalAuthHeaders(),
+          },
           body: JSON.stringify({
             input: chunk.text,
             metadata: {
@@ -389,7 +396,10 @@ export class ContinuousIndexer {
     try {
       await fetch(`${this.projectBrainUrl}/api/index/remove`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...getInternalAuthHeaders(),
+        },
         body: JSON.stringify({ projectId, filePaths }),
         signal: AbortSignal.timeout(30_000),
       });
@@ -404,7 +414,10 @@ export class ContinuousIndexer {
     try {
       await fetch(`${this.projectBrainUrl}/api/symbols/remove`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...getInternalAuthHeaders(),
+        },
         body: JSON.stringify({ projectId, filePaths }),
         signal: AbortSignal.timeout(30_000),
       });
@@ -419,7 +432,10 @@ export class ContinuousIndexer {
     try {
       await fetch(`${this.projectBrainUrl}/api/embeddings/remove`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...getInternalAuthHeaders(),
+        },
         body: JSON.stringify({ projectId, filePaths }),
         signal: AbortSignal.timeout(30_000),
       });
@@ -542,7 +558,10 @@ export class ContinuousIndexer {
     try {
       await fetch(`${this.projectBrainUrl}/api/embeddings/store`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...getInternalAuthHeaders(),
+        },
         body: JSON.stringify({
           id: generateId(),
           projectId,

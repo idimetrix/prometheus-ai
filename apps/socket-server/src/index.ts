@@ -18,6 +18,7 @@ import { createAdapter } from "@socket.io/redis-adapter";
 // import { createParser } from "@socket.io/msgpack-parser";
 import { Server } from "socket.io";
 import { authMiddleware } from "./auth";
+import { setupCollaborationNamespace } from "./namespaces/collaboration";
 import { setupFleetNamespace } from "./namespaces/fleet";
 import { setupNotificationNamespace } from "./namespaces/notifications";
 import { setupSessionNamespace } from "./namespaces/sessions";
@@ -65,9 +66,24 @@ const httpServer = createServer((req, res) => {
     res.end(JSON.stringify({ status: "ok" }));
     return;
   }
-  if (req.url === "/ready") {
-    res.writeHead(200, { "Content-Type": "application/json" });
-    res.end(JSON.stringify({ status: "ready" }));
+  if (req.url === "/ready" || req.url === "/health/ready") {
+    (async () => {
+      const checks: Record<string, boolean> = {};
+
+      try {
+        await healthRedis.ping();
+        checks.redis = true;
+      } catch {
+        checks.redis = false;
+      }
+
+      const allReady = Object.values(checks).every(Boolean);
+      const statusCode = allReady ? 200 : 503;
+      const status = allReady ? "ready" : "not ready";
+
+      res.writeHead(statusCode, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ status, checks }));
+    })();
     return;
   }
   if (req.url === "/metrics") {
@@ -155,6 +171,10 @@ const notificationsNs = io.of("/notifications");
 notificationsNs.use(authMiddleware);
 setupNotificationNamespace(notificationsNs);
 
+const collaborationNs = io.of("/collaboration");
+collaborationNs.use(authMiddleware);
+setupCollaborationNamespace(collaborationNs);
+
 // Default namespace: connection status and global broadcasts
 io.on("connection", (socket) => {
   const userId = socket.data.userId as string;
@@ -232,7 +252,9 @@ Promise.all([setupRedisAdapter(), setupGlobalSubscriber()]).then(() => {
 
   httpServer.listen(port, () => {
     logger.info(`Socket.io server running on port ${port}`);
-    logger.info("Namespaces: /sessions, /fleet, /notifications");
+    logger.info(
+      "Namespaces: /sessions, /fleet, /notifications, /collaboration"
+    );
     logger.info("Yjs collaboration server mounted on /yjs/:docId");
   });
 });

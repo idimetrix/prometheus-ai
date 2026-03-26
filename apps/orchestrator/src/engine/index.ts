@@ -1,4 +1,18 @@
 export {
+  type CompressionOptions,
+  type CompressionResult,
+  ContextCompressor,
+  type ContextMessage,
+} from "./context-compressor";
+export {
+  classifyError,
+  ErrorCategory,
+  type ErrorClassificationContext,
+  isOOMError,
+  isRateLimitError,
+  isSandboxCrashError,
+} from "./error-taxonomy";
+export {
   createExecutionContext,
   type ExecutionContext,
   type ExecutionOptions,
@@ -19,7 +33,13 @@ export type {
   ToolCallEvent,
   ToolResultEvent,
 } from "./execution-events";
-export type { ProgressEvent, RecoveryAction } from "./health-watchdog";
+export type {
+  ProgressEvent,
+  RecoveryAction,
+  WatchdogEvent,
+  WatchdogEventListener,
+  WatchdogEventType,
+} from "./health-watchdog";
 export { HealthWatchdog } from "./health-watchdog";
 export { HeartbeatMonitor, type StaleCallback } from "./heartbeat";
 export {
@@ -37,6 +57,9 @@ export {
   type PassResult,
 } from "./multi-pass-pipeline";
 export type {
+  ErrorRecoveryContext,
+  RecoveryAction as RecoveryActionResult,
+  RecoveryActionType,
   RecoveryContext,
   RecoveryResult,
   RecoveryStrategyType,

@@ -7,6 +7,7 @@ export const agentModeValues = [
   "plan",
   "watch",
   "fleet",
+  "design",
 ] as const;
 export type AgentMode = (typeof agentModeValues)[number];
 export const agentModeEnum = pgEnum("agent_mode", agentModeValues);

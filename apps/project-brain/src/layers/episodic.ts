@@ -1,3 +1,4 @@
+import { getInternalAuthHeaders } from "@prometheus/auth";
 import { agentMemories, db, episodicMemories } from "@prometheus/db";
 import { createLogger } from "@prometheus/logger";
 import { generateId } from "@prometheus/utils";
@@ -122,7 +123,10 @@ export class EpisodicLayer {
 
     const embResponse = await fetch(`${ollamaUrl}/api/embeddings`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        ...getInternalAuthHeaders(),
+      },
       body: JSON.stringify({ model, prompt: query }),
       signal: AbortSignal.timeout(10_000),
     });

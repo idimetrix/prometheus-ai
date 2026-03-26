@@ -11,6 +11,10 @@ import {
 import { organizations } from "../organizations/organizations";
 import { sessions } from "../sessions/sessions";
 import { tasks } from "../tasks/tasks";
+import { users } from "../users/users";
+import { agentPermissions } from "./agent-permissions";
+import { projectRepositories } from "./project-repositories";
+import { projectRules } from "./project-rules";
 import { projectMembers, projectSettings, projects } from "./projects";
 
 export const projectMembersRelations = relations(projectMembers, ({ one }) => ({
@@ -50,4 +54,50 @@ export const projectsRelations = relations(projects, ({ one, many }) => ({
   proceduralMemories: many(proceduralMemories),
   mcpToolConfigs: many(mcpToolConfigs),
   deployments: many(deployments),
+  rules: many(projectRules),
+  repositories: many(projectRepositories),
+  agentPermissions: many(agentPermissions),
 }));
+
+export const projectRepositoriesRelations = relations(
+  projectRepositories,
+  ({ one }) => ({
+    project: one(projects, {
+      fields: [projectRepositories.projectId],
+      references: [projects.id],
+    }),
+    organization: one(organizations, {
+      fields: [projectRepositories.orgId],
+      references: [organizations.id],
+    }),
+  })
+);
+
+export const projectRulesRelations = relations(projectRules, ({ one }) => ({
+  project: one(projects, {
+    fields: [projectRules.projectId],
+    references: [projects.id],
+  }),
+  organization: one(organizations, {
+    fields: [projectRules.orgId],
+    references: [organizations.id],
+  }),
+}));
+
+export const agentPermissionsRelations = relations(
+  agentPermissions,
+  ({ one }) => ({
+    project: one(projects, {
+      fields: [agentPermissions.projectId],
+      references: [projects.id],
+    }),
+    organization: one(organizations, {
+      fields: [agentPermissions.orgId],
+      references: [organizations.id],
+    }),
+    creator: one(users, {
+      fields: [agentPermissions.createdBy],
+      references: [users.id],
+    }),
+  })
+);

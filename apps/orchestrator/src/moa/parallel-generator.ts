@@ -1,3 +1,4 @@
+import { getInternalAuthHeaders } from "@prometheus/auth";
 import { createLogger } from "@prometheus/logger";
 
 const logger = createLogger("orchestrator:moa");
@@ -50,7 +51,10 @@ export class MixtureOfAgents {
         try {
           const res = await fetch(`${this.modelRouterUrl}/route`, {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
+            headers: {
+              "Content-Type": "application/json",
+              ...getInternalAuthHeaders(),
+            },
             body: JSON.stringify({
               slot: "default",
               model,
@@ -177,7 +181,10 @@ export class MixtureOfAgents {
     try {
       const res = await fetch(`${this.modelRouterUrl}/route`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...getInternalAuthHeaders(),
+        },
         body: JSON.stringify({
           slot: "review",
           messages: [
@@ -260,7 +267,10 @@ Synthesize the best combined solution, taking the strongest elements from each.`
     try {
       const res = await fetch(`${this.modelRouterUrl}/route`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...getInternalAuthHeaders(),
+        },
         body: JSON.stringify({
           slot: "review",
           messages: [{ role: "user", content: synthesisPrompt }],
@@ -297,7 +307,10 @@ Synthesize the best combined solution, taking the strongest elements from each.`
     try {
       const res = await fetch(`${this.modelRouterUrl}/route`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...getInternalAuthHeaders(),
+        },
         body: JSON.stringify({
           slot: "review",
           messages: [

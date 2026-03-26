@@ -51,6 +51,7 @@ export const AgentMode = {
   PLAN: "plan",
   WATCH: "watch",
   FLEET: "fleet",
+  DESIGN: "design",
 } as const;
 export type AgentMode = (typeof AgentMode)[keyof typeof AgentMode];
 

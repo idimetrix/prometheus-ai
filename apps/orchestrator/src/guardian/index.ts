@@ -10,6 +10,12 @@ export {
 export { DependencyScanner } from "./dependency-scanner";
 export { PerformanceChecker } from "./performance-checker";
 export {
+  PermissionChecker,
+  type PermissionCheckResult,
+  type PermissionLevel,
+  type ToolExecutionContext,
+} from "./permission-checker";
+export {
   hasBlockingViolations,
   PROMETHEUS_SECURITY_RULES,
   scanWithPrometheusRules,

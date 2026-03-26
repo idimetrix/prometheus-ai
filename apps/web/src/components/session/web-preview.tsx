@@ -1,6 +1,7 @@
 "use client";
 
-import { useCallback, useRef, useState } from "react";
+import { ExternalLink, RefreshCw } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -14,7 +15,16 @@ interface ViewportDimensions {
   width: number;
 }
 
+export interface ConsoleEntry {
+  id: string;
+  level: "log" | "warn" | "error" | "info";
+  message: string;
+  timestamp: Date;
+}
+
 export interface WebPreviewProps {
+  /** Called when a console message is received from the iframe */
+  onConsoleMessage?: (entry: ConsoleEntry) => void;
   onNavigate?: (url: string) => void;
   sandboxUrl: string;
   viewport?: ViewportPreset;
@@ -30,17 +40,20 @@ const VIEWPORT_PRESETS: Record<ViewportPreset, ViewportDimensions> = {
   mobile: { width: 375, height: 667, label: "Mobile" },
 };
 
+let consoleEntryId = 0;
+
 // ---------------------------------------------------------------------------
 // WebPreview
 // ---------------------------------------------------------------------------
 
 /**
  * Iframe-based preview of a sandbox web server with URL bar,
- * refresh button, viewport selector, and error overlay.
+ * refresh button, viewport selector, open in new tab, and error overlay.
  */
 export function WebPreview({
   sandboxUrl,
   onNavigate,
+  onConsoleMessage,
   viewport: initialViewport = "desktop",
 }: WebPreviewProps) {
   const iframeRef = useRef<HTMLIFrameElement>(null);
@@ -52,6 +65,39 @@ export function WebPreview({
   const [isLoading, setIsLoading] = useState(true);
 
   const dimensions = VIEWPORT_PRESETS[activeViewport];
+
+  // Listen for console messages from the iframe via postMessage
+  useEffect(() => {
+    const handleMessage = (event: MessageEvent) => {
+      if (
+        typeof event.data === "object" &&
+        event.data !== null &&
+        event.data.type === "console" &&
+        typeof event.data.level === "string" &&
+        typeof event.data.message === "string"
+      ) {
+        const level = event.data.level as ConsoleEntry["level"];
+        if (
+          level === "log" ||
+          level === "warn" ||
+          level === "error" ||
+          level === "info"
+        ) {
+          consoleEntryId++;
+          const entry: ConsoleEntry = {
+            id: `console-${consoleEntryId}`,
+            level,
+            message: String(event.data.message),
+            timestamp: new Date(),
+          };
+          onConsoleMessage?.(entry);
+        }
+      }
+    };
+
+    window.addEventListener("message", handleMessage);
+    return () => window.removeEventListener("message", handleMessage);
+  }, [onConsoleMessage]);
 
   const handleNavigate = useCallback(() => {
     setCurrentUrl(urlInput);
@@ -86,6 +132,10 @@ export function WebPreview({
     setIsLoading(false);
   }, []);
 
+  const handleOpenInNewTab = useCallback(() => {
+    window.open(currentUrl, "_blank", "noopener,noreferrer");
+  }, [currentUrl]);
+
   return (
     <div className="flex flex-col rounded-lg border border-zinc-800 bg-zinc-950">
       {/* Toolbar */}
@@ -97,24 +147,7 @@ export function WebPreview({
           onClick={handleRefresh}
           type="button"
         >
-          <svg
-            aria-hidden="true"
-            fill="none"
-            height="16"
-            stroke="currentColor"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            strokeWidth="2"
-            viewBox="0 0 24 24"
-            width="16"
-            xmlns="http://www.w3.org/2000/svg"
-          >
-            <title>Refresh</title>
-            <path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
-            <path d="M3 3v5h5" />
-            <path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16" />
-            <path d="M16 16h5v5" />
-          </svg>
+          <RefreshCw aria-hidden="true" size={16} />
         </button>
 
         {/* URL Bar */}
@@ -160,6 +193,16 @@ export function WebPreview({
             </button>
           ))}
         </div>
+
+        {/* Open in new tab */}
+        <button
+          aria-label="Open preview in new tab"
+          className="rounded p-1.5 text-zinc-400 transition-colors hover:bg-zinc-800 hover:text-zinc-200"
+          onClick={handleOpenInNewTab}
+          type="button"
+        >
+          <ExternalLink aria-hidden="true" size={16} />
+        </button>
       </div>
 
       {/* Preview Area */}
@@ -167,7 +210,12 @@ export function WebPreview({
         {/* Loading indicator */}
         {isLoading && (
           <div className="absolute inset-0 z-10 flex items-center justify-center bg-zinc-900/80">
-            <div className="h-6 w-6 animate-spin rounded-full border-2 border-violet-500 border-t-transparent" />
+            <div className="flex flex-col items-center gap-2">
+              <div className="h-6 w-6 animate-spin rounded-full border-2 border-violet-500 border-t-transparent" />
+              <span className="text-xs text-zinc-400">
+                Waiting for dev server...
+              </span>
+            </div>
           </div>
         )}
 
@@ -194,11 +242,11 @@ export function WebPreview({
               </svg>
             </div>
             <p className="mb-1 font-medium text-sm text-zinc-200">
-              Build Error
+              Dev Server Unavailable
             </p>
             <p className="mb-3 text-xs text-zinc-400">
-              The preview could not be loaded. Check the sandbox for build
-              errors.
+              The preview could not be loaded. Make sure the dev server is
+              running in the sandbox terminal.
             </p>
             <button
               className="rounded bg-violet-600 px-3 py-1.5 text-white text-xs hover:bg-violet-500"

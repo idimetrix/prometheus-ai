@@ -195,6 +195,15 @@ export interface PreviewDeploymentData {
   sessionId?: string;
 }
 
+/** continue-session: Resume a long-running session from a checkpoint */
+export interface ContinueSessionData {
+  checkpointId: string;
+  iterationBudget: number;
+  orgId: string;
+  remainingCredits: number;
+  sessionId: string;
+}
+
 /** credit-reconciliation: Verify credit balance integrity */
 export interface ReconciliationData {
   /** When provided, only reconcile this org */
@@ -203,17 +212,37 @@ export interface ReconciliationData {
   trigger: "scheduled" | "manual";
 }
 
+/** webhook-delivery: Outbound webhook delivery to registered endpoints */
+export interface WebhookDeliveryData {
+  attempt: number;
+  event: string;
+  payload: Record<string, unknown>;
+  subscriptionId: string;
+}
+
+/** setup-project-environment: Auto-detect stack, install deps, verify build */
+export interface SetupProjectEnvironmentData {
+  orgId: string;
+  projectId: string;
+  /** Optional override for the repo clone URL */
+  repoUrl?: string;
+  sandboxId: string;
+}
+
 // ========== Job Name Registry ==========
 export interface JobDataMap {
   "agent-task": AgentTaskData;
   "cleanup-sandbox": CleanupSandboxData;
+  "continue-session": ContinueSessionData;
   "credit-grant": CreditGrantData;
   "credit-reconciliation": ReconciliationData;
   "generate-embeddings": GenerateEmbeddingsData;
   "index-project": IndexProjectData;
   "preview-deployment": PreviewDeploymentData;
   "send-notification": SendNotificationData;
+  "setup-project-environment": SetupProjectEnvironmentData;
   "usage-rollup": UsageRollupData;
+  "webhook-delivery": WebhookDeliveryData;
 }
 
 export type JobName = keyof JobDataMap;

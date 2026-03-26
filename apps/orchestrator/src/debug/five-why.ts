@@ -1,3 +1,4 @@
+import { getInternalAuthHeaders } from "@prometheus/auth";
 import { createLogger } from "@prometheus/logger";
 
 const logger = createLogger("orchestrator:debug");
@@ -27,7 +28,10 @@ export class FiveWhyDebugger {
     try {
       const response = await fetch(`${this.modelRouterUrl}/route`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...getInternalAuthHeaders(),
+        },
         body: JSON.stringify({
           slot: "think",
           messages: [

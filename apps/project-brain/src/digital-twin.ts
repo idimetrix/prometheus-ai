@@ -5,6 +5,7 @@
  * into a unified query interface that agents use for impact analysis,
  * architectural understanding, and change prediction.
  */
+import { getInternalAuthHeaders } from "@prometheus/auth";
 import { createLogger } from "@prometheus/logger";
 
 const logger = createLogger("project-brain:digital-twin");
@@ -215,7 +216,10 @@ export class DigitalTwin {
         `${this.projectBrainUrl}/graph/related-context`,
         {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: {
+            "Content-Type": "application/json",
+            ...getInternalAuthHeaders(),
+          },
           body: JSON.stringify({ projectId, filePath, maxHops: 3 }),
         }
       );
@@ -362,7 +366,10 @@ export class DigitalTwin {
     try {
       const response = await fetch(`${this.projectBrainUrl}/graph/query`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...getInternalAuthHeaders(),
+        },
         body: JSON.stringify({ projectId, query }),
       });
 
@@ -417,7 +424,10 @@ export class DigitalTwin {
     try {
       const response = await fetch(`${this.projectBrainUrl}/search/semantic`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...getInternalAuthHeaders(),
+        },
         body: JSON.stringify({ projectId, query, limit: 10 }),
       });
 

@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import { getInternalAuthHeaders } from "@prometheus/auth";
 import { agentMemories, db } from "@prometheus/db";
 import { createLogger } from "@prometheus/logger";
 import { generateId } from "@prometheus/utils";
@@ -681,7 +682,10 @@ export class ConversationalMemoryLayer {
     try {
       const response = await fetch(`${OLLAMA_URL}/api/embeddings`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...getInternalAuthHeaders(),
+        },
         body: JSON.stringify({ model: EMBEDDING_MODEL, prompt: text }),
         signal: AbortSignal.timeout(30_000),
       });

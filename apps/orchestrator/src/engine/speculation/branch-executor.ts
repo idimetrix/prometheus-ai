@@ -4,6 +4,7 @@
  * Runs 2-3 different strategy approaches in parallel for a given task,
  * scores each branch independently, and selects the best result.
  */
+import { getInternalAuthHeaders } from "@prometheus/auth";
 import { createLogger } from "@prometheus/logger";
 import { generateId } from "@prometheus/utils";
 
@@ -155,7 +156,10 @@ export class BranchExecutor {
     try {
       const res = await fetch(`${this.modelRouterUrl}/route`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...getInternalAuthHeaders(),
+        },
         body: JSON.stringify({
           slot: "default",
           messages: [
@@ -221,7 +225,10 @@ export class BranchExecutor {
     try {
       const res = await fetch(`${this.modelRouterUrl}/route`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...getInternalAuthHeaders(),
+        },
         body: JSON.stringify({
           slot: "review",
           messages: [

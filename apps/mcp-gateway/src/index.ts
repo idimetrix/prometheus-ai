@@ -1,4 +1,5 @@
 import { serve } from "@hono/node-server";
+import { internalAuthMiddleware } from "@prometheus/auth";
 import { createLogger } from "@prometheus/logger";
 import {
   initSentry,
@@ -13,6 +14,8 @@ import {
 } from "@prometheus/utils";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
+import { registerAzureDevOpsAdapter } from "./adapters/azure-devops";
+import { registerBitBucketAdapter } from "./adapters/bitbucket";
 import { registerConfluenceAdapter } from "./adapters/confluence";
 import { registerDatadogAdapter } from "./adapters/datadog";
 import { registerDockerHubAdapter } from "./adapters/docker-hub";
@@ -46,31 +49,12 @@ app.use("/*", traceMiddleware("mcp-gateway"));
 app.use("/*", metricsMiddleware());
 
 // Shared-secret auth middleware for internal service-to-service calls
-app.use("/*", async (c, next) => {
-  if (
-    c.req.path === "/health" ||
-    c.req.path === "/live" ||
-    c.req.path === "/ready" ||
-    c.req.path === "/metrics"
-  ) {
-    return next();
-  }
-  const secret = process.env.INTERNAL_SERVICE_SECRET;
-  if (secret) {
-    const provided = c.req.header("x-internal-secret");
-    if (provided !== secret) {
-      return c.json({ error: "Unauthorized" }, 401);
-    }
-  } else if (process.env.NODE_ENV === "production") {
-    return c.json({ error: "Unauthorized" }, 401);
-  }
-  await next();
-  return;
-});
+app.use("/*", internalAuthMiddleware());
 
 // Register all adapters
 registerGitHubAdapter(registry);
 registerGitLabAdapter(registry);
+registerBitBucketAdapter(registry);
 registerLinearAdapter(registry);
 registerJiraAdapter(registry);
 registerSlackAdapter(registry);
@@ -108,6 +92,9 @@ if (process.env.DOCKERHUB_TOKEN && process.env.DOCKERHUB_NAMESPACE) {
     namespace: process.env.DOCKERHUB_NAMESPACE,
   });
 }
+
+// Azure DevOps adapter — credentials provided per-request via azdo_token/azdo_org
+registerAzureDevOpsAdapter(registry);
 
 // Start health checks (every 5 minutes)
 registry.startHealthChecks(5 * 60 * 1000);
@@ -157,8 +144,53 @@ app.get("/health", async (c) => {
 // Liveness probe — lightweight, just confirms process is responsive
 app.get("/live", (c) => c.json({ status: "ok" }));
 
-// Readiness probe — can accept traffic
-app.get("/ready", (c) => c.json({ status: "ready" }));
+// Readiness probe — checks adapter availability
+app.get("/ready", async (c) => {
+  const checks: Record<string, boolean> = {};
+
+  const healthStatuses = registry.getHealthStatuses();
+  checks.adapters =
+    healthStatuses.length === 0 || healthStatuses.some((s) => s.healthy);
+
+  try {
+    const { redis } = await import("@prometheus/queue");
+    const pong = await redis.ping();
+    checks.redis = pong === "PONG";
+  } catch {
+    checks.redis = false;
+  }
+
+  const allReady = Object.values(checks).every(Boolean);
+
+  if (!allReady) {
+    return c.json({ status: "not ready", checks }, 503);
+  }
+  return c.json({ status: "ready", checks });
+});
+
+// Readiness probe (alias)
+app.get("/health/ready", async (c) => {
+  const checks: Record<string, boolean> = {};
+
+  const healthStatuses = registry.getHealthStatuses();
+  checks.adapters =
+    healthStatuses.length === 0 || healthStatuses.some((s) => s.healthy);
+
+  try {
+    const { redis } = await import("@prometheus/queue");
+    const pong = await redis.ping();
+    checks.redis = pong === "PONG";
+  } catch {
+    checks.redis = false;
+  }
+
+  const allReady = Object.values(checks).every(Boolean);
+
+  if (!allReady) {
+    return c.json({ status: "not ready", checks }, 503);
+  }
+  return c.json({ status: "ready", checks });
+});
 
 // Prometheus metrics
 app.get("/metrics", metricsHandler);

@@ -7,6 +7,7 @@
  * Target: 30%+ pass rate initially, track regression per commit.
  */
 
+import { getInternalAuthHeaders } from "@prometheus/auth";
 import { createLogger } from "@prometheus/logger";
 
 const logger = createLogger("orchestrator:swe-bench");
@@ -125,7 +126,10 @@ export class SWEBenchRunner {
       // Submit the problem statement as a task
       const response = await fetch(`${this.orchestratorUrl}/evaluate`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...getInternalAuthHeaders(),
+        },
         body: JSON.stringify({
           instanceId: instance.instanceId,
           repo: instance.repo,
@@ -197,7 +201,10 @@ export class SWEBenchRunner {
       const response = await fetch(
         `${this.orchestratorUrl}/swe-bench/cases/${encodeURIComponent(caseId)}`,
         {
-          headers: { "Content-Type": "application/json" },
+          headers: {
+            "Content-Type": "application/json",
+            ...getInternalAuthHeaders(),
+          },
           signal: AbortSignal.timeout(10_000),
         }
       );

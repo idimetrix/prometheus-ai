@@ -6,6 +6,7 @@
  * Only transfers patterns with confidence > 0.8.
  */
 
+import { getInternalAuthHeaders } from "@prometheus/auth";
 import { createLogger } from "@prometheus/logger";
 
 const logger = createLogger("project-brain:learning-transfer");
@@ -130,7 +131,10 @@ export class LearningTransfer {
       try {
         await fetch(`${BRAIN_BASE_URL}/memory/store`, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: {
+            "Content-Type": "application/json",
+            ...getInternalAuthHeaders(),
+          },
           body: JSON.stringify({
             projectId: toProjectId,
             type: "procedural",

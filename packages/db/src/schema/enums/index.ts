@@ -12,6 +12,12 @@ export {
   agentModeValues,
 } from "./agent-mode";
 export {
+  type AgentPermission,
+  AgentPermissionEnum,
+  agentPermissionEnum,
+  agentPermissionValues,
+} from "./agent-permission";
+export {
   type AgentStatus,
   AgentStatusEnum,
   agentStatusEnum,
@@ -29,6 +35,12 @@ export {
   blueprintEnforcementEnum,
   blueprintEnforcementValues,
 } from "./blueprint-enforcement";
+export {
+  type CIStatus,
+  CIStatusEnum,
+  ciStatusEnum,
+  ciStatusValues,
+} from "./ci-status";
 export {
   type ComponentType,
   ComponentTypeEnum,
@@ -84,6 +96,18 @@ export {
   integrationStatusValues,
 } from "./integration-status";
 export {
+  type IssueSyncProvider,
+  IssueSyncProviderEnum,
+  issueSyncProviderEnum,
+  issueSyncProviderValues,
+} from "./issue-sync-provider";
+export {
+  type MarketplaceCategory,
+  MarketplaceCategoryEnum,
+  marketplaceCategoryEnum,
+  marketplaceCategoryValues,
+} from "./marketplace-category";
+export {
   type MemoryType,
   MemoryTypeEnum,
   memoryTypeEnum,
@@ -108,6 +132,12 @@ export {
   planTierValues,
 } from "./plan-tier";
 export {
+  type PRReviewStatus,
+  PRReviewStatusEnum,
+  prReviewStatusEnum,
+  prReviewStatusValues,
+} from "./pr-review-status";
+export {
   type ProjectRole,
   ProjectRoleEnum,
   projectRoleEnum,
@@ -120,6 +150,18 @@ export {
   projectStatusValues,
 } from "./project-status";
 export {
+  type RepoIndexStatus,
+  RepoIndexStatusEnum,
+  repoIndexStatusEnum,
+  repoIndexStatusValues,
+} from "./repo-index-status";
+export {
+  type RepoProvider,
+  RepoProviderEnum,
+  repoProviderEnum,
+  repoProviderValues,
+} from "./repo-provider";
+export {
   type ReviewSeverity,
   ReviewSeverityEnum,
   reviewSeverityEnum,
@@ -131,6 +173,18 @@ export {
   reviewStatusEnum,
   reviewStatusValues,
 } from "./review-status";
+export {
+  type RuleSource,
+  RuleSourceEnum,
+  ruleSourceEnum,
+  ruleSourceValues,
+} from "./rule-source";
+export {
+  type RuleType,
+  RuleTypeEnum,
+  ruleTypeEnum,
+  ruleTypeValues,
+} from "./rule-type";
 export {
   type SecurityScanLevel,
   SecurityScanLevelEnum,
@@ -167,3 +221,9 @@ export {
   themeEnum,
   themeValues,
 } from "./theme";
+export {
+  type WorkspaceType,
+  WorkspaceTypeEnum,
+  workspaceTypeEnum,
+  workspaceTypeValues,
+} from "./workspace-type";

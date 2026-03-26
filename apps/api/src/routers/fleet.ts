@@ -1,3 +1,4 @@
+import { getInternalAuthHeaders } from "@prometheus/auth";
 import { agents, organizations, sessions, tasks } from "@prometheus/db";
 import { createLogger } from "@prometheus/logger";
 import { agentTaskQueue } from "@prometheus/queue";
@@ -177,7 +178,10 @@ export const fleetRouter = router({
       // Notify orchestrator to pause the agent
       const res = await fetch(`${ORCHESTRATOR_URL}/fleet/pause`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...getInternalAuthHeaders(),
+        },
         body: JSON.stringify({
           agentId: input.agentId,
           sessionId: input.sessionId,
@@ -241,7 +245,10 @@ export const fleetRouter = router({
       // Notify orchestrator to resume the agent
       const res = await fetch(`${ORCHESTRATOR_URL}/fleet/resume`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...getInternalAuthHeaders(),
+        },
         body: JSON.stringify({
           agentId: input.agentId,
           sessionId: input.sessionId,
@@ -296,7 +303,10 @@ export const fleetRouter = router({
       // Call orchestrator to generate a plan
       const res = await fetch(`${ORCHESTRATOR_URL}/fleet/plan`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...getInternalAuthHeaders(),
+        },
         body: JSON.stringify({
           sessionId: input.sessionId,
           projectId: session.projectId,
@@ -369,7 +379,10 @@ export const fleetRouter = router({
       // Call orchestrator to execute the approved plan
       const res = await fetch(`${ORCHESTRATOR_URL}/fleet/approve-plan`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...getInternalAuthHeaders(),
+        },
         body: JSON.stringify({
           sessionId: input.sessionId,
           projectId: session.projectId,

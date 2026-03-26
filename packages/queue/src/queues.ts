@@ -3,6 +3,7 @@ import { redis } from "./connection";
 import {
   type AgentTaskData,
   type CleanupSandboxData,
+  type ContinueSessionData,
   type CreditGrantData,
   DEFAULT_DLQ_CONFIG,
   type GenerateEmbeddingsData,
@@ -12,7 +13,9 @@ import {
   type ReconciliationData,
   RetryPolicies,
   type SendNotificationData,
+  type SetupProjectEnvironmentData,
   type UsageRollupData,
+  type WebhookDeliveryData,
 } from "./types";
 
 // ========== Helper: Build default job options ==========
@@ -113,6 +116,34 @@ export const cleanupSandboxQueue = new Queue<CleanupSandboxData>(
   }
 );
 
+// ========== Setup Project Environment ==========
+
+/** Project environment setup queue (stack detection, dependency install, build verify) */
+export const setupProjectEnvironmentQueue =
+  new Queue<SetupProjectEnvironmentData>("setup-project-environment", {
+    connection: redis,
+    defaultJobOptions: buildJobOptions(RetryPolicies.standard, {
+      removeOnComplete: 500,
+      removeOnFail: 1000,
+      priority: JobPriority.NORMAL,
+    }),
+  });
+
+// ========== Session Continuation ==========
+
+/** Session continuation queue for long-running sessions via job chaining */
+export const sessionContinuationQueue = new Queue<ContinueSessionData>(
+  "session-continuation",
+  {
+    connection: redis,
+    defaultJobOptions: buildJobOptions(RetryPolicies.standard, {
+      removeOnComplete: 500,
+      removeOnFail: 2000,
+      priority: JobPriority.NORMAL,
+    }),
+  }
+);
+
 // ========== Preview Deployments ==========
 
 /** Preview deployment queue */
@@ -166,6 +197,21 @@ export const reconciliationQueue = new Queue<ReconciliationData>(
 // Re-export the old billingQueue name for backward compat
 export const billingQueue = creditGrantQueue;
 
+// ========== Webhook Delivery ==========
+
+/** Outbound webhook delivery queue */
+export const webhookDeliveryQueue = new Queue<WebhookDeliveryData>(
+  "webhook-delivery",
+  {
+    connection: redis,
+    defaultJobOptions: buildJobOptions(RetryPolicies.light, {
+      removeOnComplete: 500,
+      removeOnFail: 2000,
+      priority: JobPriority.NORMAL,
+    }),
+  }
+);
+
 // ========== Dead Letter Queues ==========
 
 /** DLQ for agent tasks that exhausted all retries */
@@ -202,9 +248,12 @@ export const ALL_QUEUES = {
   "send-notification": notificationQueue,
   "cleanup-sandbox": cleanupSandboxQueue,
   "preview-deployment": previewDeploymentQueue,
+  "setup-project-environment": setupProjectEnvironmentQueue,
   "usage-rollup": usageRollupQueue,
   "credit-grant": creditGrantQueue,
   "credit-reconciliation": reconciliationQueue,
+  "session-continuation": sessionContinuationQueue,
+  "webhook-delivery": webhookDeliveryQueue,
 } as const;
 
 export type QueueName = keyof typeof ALL_QUEUES;

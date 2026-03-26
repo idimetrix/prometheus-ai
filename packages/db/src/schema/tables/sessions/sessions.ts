@@ -31,6 +31,11 @@ export const sessions = pgTable(
       .notNull()
       .defaultNow(),
     endedAt: timestamp("ended_at", { withTimezone: true }),
+    checkpointCount: integer("checkpoint_count").notNull().default(0),
+    lastCheckpointAt: timestamp("last_checkpoint_at", { withTimezone: true }),
+    estimatedCompletionAt: timestamp("estimated_completion_at", {
+      withTimezone: true,
+    }),
   },
   (table) => [
     index("sessions_project_id_idx").on(table.projectId),

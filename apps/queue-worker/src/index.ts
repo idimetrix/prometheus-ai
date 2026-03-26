@@ -3,11 +3,14 @@ import { createLogger } from "@prometheus/logger";
 import type {
   AgentTaskData,
   CleanupSandboxData,
+  ContinueSessionData,
   CreditGrantData,
   GenerateEmbeddingsData,
   IndexProjectData,
   SendNotificationData,
+  SetupProjectEnvironmentData,
   UsageRollupData,
+  WebhookDeliveryData,
 } from "@prometheus/queue";
 import { createRedisConnection } from "@prometheus/queue";
 import {
@@ -22,10 +25,13 @@ import {
 } from "@prometheus/utils";
 import { Queue, Worker } from "bullmq";
 import { processCleanupSandbox } from "./jobs/cleanup-sandbox";
+import { processContinueSession } from "./jobs/continue-session";
 import { processCreditGrant } from "./jobs/credit-grant";
 import { processGenerateEmbeddings } from "./jobs/generate-embeddings";
 import { processIndexProject } from "./jobs/index-project";
+import { processSetupEnvironment } from "./jobs/setup-environment";
 import { processUsageRollup } from "./jobs/usage-rollup";
+import { processWebhookDelivery } from "./jobs/webhook-delivery";
 import { processNotification } from "./notifications";
 import { TaskProcessor } from "./processor";
 import { setupScheduledJobs } from "./scheduler";
@@ -254,6 +260,73 @@ const creditGrantWorker = new Worker<CreditGrantData>(
   }
 );
 
+// ========== Setup Project Environment Worker ==========
+const setupEnvWorker = new Worker<SetupProjectEnvironmentData>(
+  "setup-project-environment",
+  async (job) => {
+    logger.info(
+      {
+        jobId: job.id,
+        projectId: job.data.projectId,
+        sandboxId: job.data.sandboxId,
+      },
+      "Processing setup-project-environment job"
+    );
+    return await processSetupEnvironment(job.data, (progress) => {
+      job.updateProgress(progress).catch(() => {
+        /* fire-and-forget */
+      });
+    });
+  },
+  {
+    connection: createRedisConnection(),
+    concurrency: concurrency.indexing,
+  }
+);
+
+// ========== Session Continuation Worker ==========
+const sessionContinuationWorker = new Worker<ContinueSessionData>(
+  "session-continuation",
+  async (job) => {
+    logger.info(
+      {
+        jobId: job.id,
+        sessionId: job.data.sessionId,
+        checkpointId: job.data.checkpointId,
+        iterationBudget: job.data.iterationBudget,
+      },
+      "Processing session-continuation job"
+    );
+    return await processContinueSession(job.data);
+  },
+  {
+    connection: createRedisConnection(),
+    concurrency: concurrency.agentTasks,
+    lockDuration: 35 * 60 * 1000, // 35 minutes (longer than max job duration)
+  }
+);
+
+// ========== Webhook Delivery Worker ==========
+const webhookDeliveryWorker = new Worker<WebhookDeliveryData>(
+  "webhook-delivery",
+  async (job) => {
+    logger.info(
+      {
+        jobId: job.id,
+        subscriptionId: job.data.subscriptionId,
+        event: job.data.event,
+        attempt: job.data.attempt,
+      },
+      "Processing webhook-delivery job"
+    );
+    return await processWebhookDelivery(job.data);
+  },
+  {
+    connection: createRedisConnection(),
+    concurrency: concurrency.notifications,
+  }
+);
+
 // ========== Event Handlers (logging, DLQ) ==========
 const workers: Record<string, { worker: Worker; dlq?: Queue }> = {
   "agent-tasks": { worker: agentWorker, dlq: agentTaskDLQ },
@@ -262,8 +335,11 @@ const workers: Record<string, { worker: Worker; dlq?: Queue }> = {
   "generate-embeddings": { worker: embeddingsWorker },
   "send-notification": { worker: notificationWorker },
   "cleanup-sandbox": { worker: cleanupWorker },
+  "session-continuation": { worker: sessionContinuationWorker },
+  "setup-project-environment": { worker: setupEnvWorker },
   "usage-rollup": { worker: usageRollupWorker },
   "credit-grant": { worker: creditGrantWorker, dlq: billingDLQ },
+  "webhook-delivery": { worker: webhookDeliveryWorker },
 };
 
 for (const [name, { worker, dlq }] of Object.entries(workers)) {
@@ -349,9 +425,33 @@ const healthServer = createServer((req, res) => {
     res.end(JSON.stringify({ status: "ok" }));
     return;
   }
-  if (req.url === "/ready") {
-    res.writeHead(200, { "Content-Type": "application/json" });
-    res.end(JSON.stringify({ status: "ready" }));
+  if (req.url === "/ready" || req.url === "/health/ready") {
+    (async () => {
+      const checks: Record<string, boolean> = {};
+
+      try {
+        await healthRedis.ping();
+        checks.redis = true;
+      } catch {
+        checks.redis = false;
+      }
+
+      try {
+        const { db } = await import("@prometheus/db");
+        const { sql } = await import("drizzle-orm");
+        await db.execute(sql`SELECT 1`);
+        checks.db = true;
+      } catch {
+        checks.db = false;
+      }
+
+      const allReady = Object.values(checks).every(Boolean);
+      const statusCode = allReady ? 200 : 503;
+      const status = allReady ? "ready" : "not ready";
+
+      res.writeHead(statusCode, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ status, checks }));
+    })();
     return;
   }
   if (req.url === "/metrics") {

@@ -1,3 +1,4 @@
+import { getInternalAuthHeaders } from "@prometheus/auth";
 import { createLogger } from "@prometheus/logger";
 
 const logger = createLogger("project-brain:cognee-engine");
@@ -67,7 +68,10 @@ export class CogneeEngine {
     try {
       const response = await fetch(`${COGNEE_API_URL}/graph/build`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...getInternalAuthHeaders(),
+        },
         body: JSON.stringify({ projectId, relationships }),
       });
 
@@ -143,7 +147,10 @@ export class CogneeEngine {
     try {
       const response = await fetch(`${COGNEE_API_URL}/extract/relationships`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...getInternalAuthHeaders(),
+        },
         body: JSON.stringify({ filePath, content, symbolTable }),
       });
 

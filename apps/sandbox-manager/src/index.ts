@@ -1,4 +1,8 @@
 import { serve } from "@hono/node-server";
+
+const TERMINAL_URL_PATTERN = /^\/terminal\/([^/?]+)/;
+
+import { internalAuthMiddleware } from "@prometheus/auth";
 import { createLogger } from "@prometheus/logger";
 import {
   initSentry,
@@ -18,7 +22,12 @@ import { ContainerManager } from "./container";
 import { GitOperations } from "./git-ops";
 import { createHealthChecker } from "./health";
 import { SandboxPool } from "./pool";
+import { createPreviewProxyRoute } from "./routes/preview-proxy";
 import { screenshotRoute } from "./routes/screenshot";
+import {
+  createTerminalWsRoute,
+  handleTerminalWebSocket,
+} from "./routes/terminal-ws";
 import { validateTimeout } from "./security";
 
 await initTelemetry({ serviceName: "sandbox-manager" });
@@ -33,27 +42,7 @@ app.use("/*", traceMiddleware("sandbox-manager"));
 app.use("/*", metricsMiddleware());
 
 // Shared-secret auth middleware for internal service-to-service calls
-app.use("/*", async (c, next) => {
-  if (
-    c.req.path === "/health" ||
-    c.req.path === "/live" ||
-    c.req.path === "/ready" ||
-    c.req.path === "/metrics"
-  ) {
-    return next();
-  }
-  const secret = process.env.INTERNAL_SERVICE_SECRET;
-  if (secret) {
-    const provided = c.req.header("x-internal-secret");
-    if (provided !== secret) {
-      return c.json({ error: "Unauthorized" }, 401);
-    }
-  } else if (process.env.NODE_ENV === "production") {
-    return c.json({ error: "Unauthorized" }, 401);
-  }
-  await next();
-  return;
-});
+app.use("/*", internalAuthMiddleware());
 
 const containerManager = new ContainerManager();
 const sandboxPool = new SandboxPool(containerManager);
@@ -74,8 +63,44 @@ app.get("/health", async (c) => {
 // Liveness probe — lightweight, just confirms process is responsive
 app.get("/live", (c) => c.json({ status: "ok" }));
 
-// Readiness probe — can accept traffic
-app.get("/ready", (c) => c.json({ status: "ready" }));
+// Readiness probe — checks Docker/sandbox availability
+app.get("/ready", async (c) => {
+  const checks: Record<string, boolean> = {};
+
+  try {
+    checks.docker = await containerManager.checkDockerConnectivity();
+  } catch {
+    checks.docker = false;
+  }
+
+  // In dev mode, Docker is not required
+  const mode = containerManager.getMode();
+  const allReady = mode === "dev" || Object.values(checks).every(Boolean);
+
+  if (!allReady) {
+    return c.json({ status: "not ready", checks, mode }, 503);
+  }
+  return c.json({ status: "ready", checks, mode });
+});
+
+// Readiness probe (alias)
+app.get("/health/ready", async (c) => {
+  const checks: Record<string, boolean> = {};
+
+  try {
+    checks.docker = await containerManager.checkDockerConnectivity();
+  } catch {
+    checks.docker = false;
+  }
+
+  const mode = containerManager.getMode();
+  const allReady = mode === "dev" || Object.values(checks).every(Boolean);
+
+  if (!allReady) {
+    return c.json({ status: "not ready", checks, mode }, 503);
+  }
+  return c.json({ status: "ready", checks, mode });
+});
 
 // ---- Metrics ----
 app.get("/metrics", metricsHandler);
@@ -375,6 +400,14 @@ app.get("/sandbox/:id", (c) => {
 // ---- Screenshots (Playwright) ----
 app.route("/", screenshotRoute);
 
+// ---- Terminal WebSocket ----
+const terminalWsRoute = createTerminalWsRoute(containerManager);
+app.route("/", terminalWsRoute);
+
+// ---- Preview Proxy ----
+const previewProxyRoute = createPreviewProxyRoute(containerManager);
+app.route("/", previewProxyRoute);
+
 // ---- Startup ----
 
 const port = Number(process.env.SANDBOX_MANAGER_PORT ?? 4006);
@@ -389,11 +422,37 @@ async function start() {
     );
   });
 
-  serve({ fetch: app.fetch, port }, () => {
+  const server = serve({ fetch: app.fetch, port }, () => {
     logger.info(
       { port, mode: containerManager.getMode() },
       "Sandbox Manager running"
     );
+  });
+
+  // Handle WebSocket upgrades for the terminal endpoint
+  // @hono/node-server returns a Node.js http.Server
+  const httpServer = server as unknown as import("node:http").Server;
+  httpServer.on("upgrade", async (req, socket, head) => {
+    const url = req.url ?? "";
+    const terminalMatch = url.match(TERMINAL_URL_PATTERN);
+    if (!terminalMatch) {
+      socket.destroy();
+      return;
+    }
+
+    const sandboxId = terminalMatch[1] as string;
+
+    try {
+      const { WebSocketServer } = await import("ws");
+      const wss = new WebSocketServer({ noServer: true });
+      wss.handleUpgrade(req, socket, head, (ws) => {
+        handleTerminalWebSocket(ws, sandboxId, containerManager);
+      });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      logger.error({ error: msg }, "WebSocket upgrade failed");
+      socket.destroy();
+    }
   });
 
   // Register custom cleanup with the centralized shutdown handler

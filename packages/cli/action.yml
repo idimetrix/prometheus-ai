@@ -1,0 +1,36 @@
+name: "Prometheus AI Agent"
+description: "Run a Prometheus AI agent task in CI/CD"
+inputs:
+  task:
+    description: "Task description"
+    required: true
+  project-id:
+    description: "Project ID"
+    required: true
+  api-key:
+    description: "Prometheus API key"
+    required: true
+  api-url:
+    description: "Prometheus API URL"
+    required: false
+    default: "https://api.prometheus.dev"
+  timeout:
+    description: "Timeout in seconds"
+    required: false
+    default: "600"
+  mode:
+    description: "Execution mode (task|plan|ask|fleet)"
+    required: false
+    default: "task"
+outputs:
+  session-id:
+    description: "Session ID of the completed task"
+  pr-url:
+    description: "URL of the created pull request (if any)"
+  success:
+    description: "Whether the task completed successfully"
+  files-changed:
+    description: "JSON array of files changed"
+runs:
+  using: "node20"
+  main: "dist/action.js"

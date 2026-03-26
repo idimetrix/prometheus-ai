@@ -1,4 +1,9 @@
-import { mcpConnections, mcpToolConfigs, projects } from "@prometheus/db";
+import {
+  mcpConnections,
+  mcpToolConfigs,
+  oauthTokens,
+  projects,
+} from "@prometheus/db";
 import { createLogger } from "@prometheus/logger";
 import { decrypt, encrypt, generateId } from "@prometheus/utils";
 import { TRPCError } from "@trpc/server";
@@ -344,7 +349,482 @@ export const integrationsRouter = router({
       });
       return { id, action: "created" as const };
     }),
+
+  // ---------------------------------------------------------------------------
+  // OAuth -- token status per provider
+  // ---------------------------------------------------------------------------
+  oauthStatus: protectedProcedure.query(async ({ ctx }) => {
+    const tokens = await ctx.db.query.oauthTokens.findMany({
+      where: and(
+        eq(oauthTokens.orgId, ctx.orgId),
+        eq(oauthTokens.userId, ctx.auth.userId)
+      ),
+    });
+
+    const providers = ["github", "gitlab", "bitbucket"] as const;
+    return {
+      providers: providers.map((provider) => {
+        const token = tokens.find((t) => t.provider === provider);
+        return {
+          provider,
+          connected: !!token,
+          providerUsername: token?.providerUsername ?? null,
+          expiresAt: token?.expiresAt?.toISOString() ?? null,
+        };
+      }),
+    };
+  }),
+
+  // ---------------------------------------------------------------------------
+  // OAuth -- disconnect a provider
+  // ---------------------------------------------------------------------------
+  oauthDisconnect: protectedProcedure
+    .input(
+      z.object({
+        provider: z.enum(["github", "gitlab", "bitbucket"]),
+      })
+    )
+    .mutation(async ({ input, ctx }) => {
+      const token = await ctx.db.query.oauthTokens.findFirst({
+        where: and(
+          eq(oauthTokens.orgId, ctx.orgId),
+          eq(oauthTokens.userId, ctx.auth.userId),
+          eq(oauthTokens.provider, input.provider)
+        ),
+      });
+
+      if (!token) {
+        throw new TRPCError({
+          code: "NOT_FOUND",
+          message: `No ${input.provider} OAuth connection found`,
+        });
+      }
+
+      await ctx.db.delete(oauthTokens).where(eq(oauthTokens.id, token.id));
+
+      logger.info(
+        { orgId: ctx.orgId, provider: input.provider },
+        "OAuth provider disconnected"
+      );
+      return { success: true };
+    }),
+
+  // ---------------------------------------------------------------------------
+  // OAuth -- list repos from connected provider
+  // ---------------------------------------------------------------------------
+  listRepos: protectedProcedure
+    .input(
+      z.object({
+        provider: z.enum(["github", "gitlab", "bitbucket"]),
+        search: z.string().optional(),
+        page: z.number().int().positive().default(1),
+        perPage: z.number().int().positive().max(100).default(30),
+        sort: z.enum(["updated", "created", "name"]).default("updated"),
+      })
+    )
+    .query(async ({ input, ctx }) => {
+      const token = await ctx.db.query.oauthTokens.findFirst({
+        where: and(
+          eq(oauthTokens.orgId, ctx.orgId),
+          eq(oauthTokens.userId, ctx.auth.userId),
+          eq(oauthTokens.provider, input.provider)
+        ),
+      });
+
+      if (!token) {
+        throw new TRPCError({
+          code: "PRECONDITION_FAILED",
+          message: `Connect your ${input.provider} account first`,
+        });
+      }
+
+      const accessToken = decrypt(token.accessToken);
+      const repos = await fetchReposFromProvider(
+        input.provider,
+        accessToken,
+        input
+      );
+
+      return { repos };
+    }),
+
+  // ---------------------------------------------------------------------------
+  // OAuth -- import a repo as a new project
+  // ---------------------------------------------------------------------------
+  importRepo: protectedProcedure
+    .input(
+      z.object({
+        provider: z.enum(["github", "gitlab", "bitbucket"]),
+        repoFullName: z.string().min(1),
+        branch: z.string().optional(),
+        nameOverride: z.string().optional(),
+        techStackPreset: z.string().optional(),
+      })
+    )
+    .mutation(async ({ input, ctx }) => {
+      const token = await ctx.db.query.oauthTokens.findFirst({
+        where: and(
+          eq(oauthTokens.orgId, ctx.orgId),
+          eq(oauthTokens.userId, ctx.auth.userId),
+          eq(oauthTokens.provider, input.provider)
+        ),
+      });
+
+      if (!token) {
+        throw new TRPCError({
+          code: "PRECONDITION_FAILED",
+          message: `Connect your ${input.provider} account first`,
+        });
+      }
+
+      const accessToken = decrypt(token.accessToken);
+      const repoInfo = await fetchRepoDetails(
+        input.provider,
+        accessToken,
+        input.repoFullName
+      );
+
+      const projectName =
+        input.nameOverride?.trim() || repoInfo.name || input.repoFullName;
+
+      const projectId = generateId("proj");
+      await ctx.db.insert(projects).values({
+        id: projectId,
+        orgId: ctx.orgId,
+        name: projectName,
+        description: repoInfo.description ?? undefined,
+        repoUrl: repoInfo.cloneUrl,
+        techStackPreset: input.techStackPreset ?? "custom",
+        status: "active",
+      });
+
+      logger.info(
+        {
+          orgId: ctx.orgId,
+          projectId,
+          provider: input.provider,
+          repo: input.repoFullName,
+        },
+        "Project imported from repo"
+      );
+
+      return { projectId, name: projectName };
+    }),
 });
+
+// ---------------------------------------------------------------------------
+// Provider repo fetching helpers
+// ---------------------------------------------------------------------------
+
+export interface RepoItem {
+  cloneUrl: string;
+  defaultBranch: string;
+  description: string | null;
+  fullName: string;
+  htmlUrl: string;
+  id: string;
+  language: string | null;
+  name: string;
+  owner: string;
+  private: boolean;
+  updatedAt: string;
+}
+
+function fetchReposFromProvider(
+  provider: "github" | "gitlab" | "bitbucket",
+  accessToken: string,
+  options: { search?: string; page: number; perPage: number; sort: string }
+): Promise<RepoItem[]> {
+  switch (provider) {
+    case "github":
+      return fetchGitHubRepos(accessToken, options);
+    case "gitlab":
+      return fetchGitLabRepos(accessToken, options);
+    case "bitbucket":
+      return fetchBitBucketRepos(accessToken, options);
+    default:
+      return Promise.resolve([]);
+  }
+}
+
+async function fetchGitHubRepos(
+  token: string,
+  options: { search?: string; page: number; perPage: number; sort: string }
+): Promise<RepoItem[]> {
+  const sortMap: Record<string, string> = {
+    updated: "updated",
+    created: "created",
+    name: "full_name",
+  };
+
+  const params = new URLSearchParams({
+    sort: sortMap[options.sort] ?? "updated",
+    direction: "desc",
+    page: String(options.page),
+    per_page: String(options.perPage),
+    type: "all",
+  });
+
+  const resp = await fetch(
+    `https://api.github.com/user/repos?${params.toString()}`,
+    {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: "application/vnd.github+json",
+      },
+    }
+  );
+
+  if (!resp.ok) {
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message: `GitHub API error: ${resp.status}`,
+    });
+  }
+
+  const data = (await resp.json()) as Record<string, unknown>[];
+
+  let repos: RepoItem[] = data.map((r) => ({
+    id: String(r.id),
+    name: String(r.name ?? ""),
+    fullName: String(r.full_name ?? ""),
+    description: r.description ? String(r.description) : null,
+    private: r.private === true,
+    defaultBranch: String(r.default_branch ?? "main"),
+    language: r.language ? String(r.language) : null,
+    updatedAt: String(r.updated_at ?? ""),
+    htmlUrl: String(r.html_url ?? ""),
+    cloneUrl: String(r.clone_url ?? ""),
+    owner: String(
+      (r.owner as Record<string, unknown> | undefined)?.login ?? ""
+    ),
+  }));
+
+  if (options.search) {
+    const q = options.search.toLowerCase();
+    repos = repos.filter(
+      (r) =>
+        r.name.toLowerCase().includes(q) || r.fullName.toLowerCase().includes(q)
+    );
+  }
+
+  return repos;
+}
+
+async function fetchGitLabRepos(
+  token: string,
+  options: { search?: string; page: number; perPage: number; sort: string }
+): Promise<RepoItem[]> {
+  const sortMap: Record<string, string> = {
+    updated: "updated_at",
+    created: "created_at",
+    name: "name",
+  };
+
+  const params = new URLSearchParams({
+    membership: "true",
+    order_by: sortMap[options.sort] ?? "updated_at",
+    sort: "desc",
+    page: String(options.page),
+    per_page: String(options.perPage),
+  });
+
+  if (options.search) {
+    params.set("search", options.search);
+  }
+
+  const resp = await fetch(
+    `https://gitlab.com/api/v4/projects?${params.toString()}`,
+    { headers: { Authorization: `Bearer ${token}` } }
+  );
+
+  if (!resp.ok) {
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message: `GitLab API error: ${resp.status}`,
+    });
+  }
+
+  const data = (await resp.json()) as Record<string, unknown>[];
+
+  return data.map((r) => ({
+    id: String(r.id),
+    name: String(r.name ?? ""),
+    fullName: String(r.path_with_namespace ?? ""),
+    description: r.description ? String(r.description) : null,
+    private: r.visibility === "private",
+    defaultBranch: String(r.default_branch ?? "main"),
+    language: null,
+    updatedAt: String(r.last_activity_at ?? ""),
+    htmlUrl: String(r.web_url ?? ""),
+    cloneUrl: String(r.http_url_to_repo ?? ""),
+    owner: String(
+      (r.namespace as Record<string, unknown> | undefined)?.path ?? ""
+    ),
+  }));
+}
+
+async function fetchBitBucketRepos(
+  token: string,
+  options: { search?: string; page: number; perPage: number; sort: string }
+): Promise<RepoItem[]> {
+  const sortMap: Record<string, string> = {
+    updated: "-updated_on",
+    created: "-created_on",
+    name: "name",
+  };
+
+  const params = new URLSearchParams({
+    sort: sortMap[options.sort] ?? "-updated_on",
+    pagelen: String(options.perPage),
+    page: String(options.page),
+    role: "member",
+  });
+
+  if (options.search) {
+    params.set("q", `name ~ "${options.search}"`);
+  }
+
+  const resp = await fetch(
+    `https://api.bitbucket.org/2.0/repositories?${params.toString()}`,
+    { headers: { Authorization: `Bearer ${token}` } }
+  );
+
+  if (!resp.ok) {
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message: `BitBucket API error: ${resp.status}`,
+    });
+  }
+
+  const data = (await resp.json()) as {
+    values: Record<string, unknown>[];
+  };
+
+  return (data.values ?? []).map((r) => {
+    const links = r.links as Record<string, unknown> | undefined;
+    const htmlLink = links?.html as Record<string, unknown> | undefined;
+    const cloneLinks = (links?.clone as Record<string, unknown>[]) ?? [];
+    const httpsClone = cloneLinks.find((l) => l.name === "https");
+    const mainBranch = r.mainbranch as Record<string, unknown> | undefined;
+
+    return {
+      id: String(r.uuid ?? ""),
+      name: String(r.name ?? ""),
+      fullName: String(r.full_name ?? ""),
+      description: r.description ? String(r.description) : null,
+      private: r.is_private === true,
+      defaultBranch: String(mainBranch?.name ?? "main"),
+      language: r.language ? String(r.language) : null,
+      updatedAt: String(r.updated_on ?? ""),
+      htmlUrl: String(htmlLink?.href ?? ""),
+      cloneUrl: String(httpsClone?.href ?? ""),
+      owner: String(
+        (r.owner as Record<string, unknown> | undefined)?.nickname ?? ""
+      ),
+    };
+  });
+}
+
+async function fetchGitHubRepoDetails(
+  accessToken: string,
+  repoFullName: string
+) {
+  const resp = await fetch(`https://api.github.com/repos/${repoFullName}`, {
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      Accept: "application/vnd.github+json",
+    },
+  });
+  if (!resp.ok) {
+    throw new TRPCError({
+      code: "NOT_FOUND",
+      message: `Repository not found: ${repoFullName}`,
+    });
+  }
+  const data = (await resp.json()) as Record<string, unknown>;
+  return {
+    name: String(data.name ?? ""),
+    description: data.description ? String(data.description) : null,
+    cloneUrl: String(data.clone_url ?? ""),
+    defaultBranch: String(data.default_branch ?? "main"),
+  };
+}
+
+async function fetchGitLabRepoDetails(
+  accessToken: string,
+  repoFullName: string
+) {
+  const encoded = encodeURIComponent(repoFullName);
+  const resp = await fetch(`https://gitlab.com/api/v4/projects/${encoded}`, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+  if (!resp.ok) {
+    throw new TRPCError({
+      code: "NOT_FOUND",
+      message: `Repository not found: ${repoFullName}`,
+    });
+  }
+  const data = (await resp.json()) as Record<string, unknown>;
+  return {
+    name: String(data.name ?? ""),
+    description: data.description ? String(data.description) : null,
+    cloneUrl: String(data.http_url_to_repo ?? ""),
+    defaultBranch: String(data.default_branch ?? "main"),
+  };
+}
+
+async function fetchBitBucketRepoDetails(
+  accessToken: string,
+  repoFullName: string
+) {
+  const resp = await fetch(
+    `https://api.bitbucket.org/2.0/repositories/${repoFullName}`,
+    { headers: { Authorization: `Bearer ${accessToken}` } }
+  );
+  if (!resp.ok) {
+    throw new TRPCError({
+      code: "NOT_FOUND",
+      message: `Repository not found: ${repoFullName}`,
+    });
+  }
+  const data = (await resp.json()) as Record<string, unknown>;
+  const links = data.links as Record<string, unknown> | undefined;
+  const cloneLinks = (links?.clone as Record<string, unknown>[]) ?? [];
+  const httpsClone = cloneLinks.find((l) => l.name === "https");
+  const mainBranch = data.mainbranch as Record<string, unknown> | undefined;
+  return {
+    name: String(data.name ?? ""),
+    description: data.description ? String(data.description) : null,
+    cloneUrl: String(httpsClone?.href ?? ""),
+    defaultBranch: String(mainBranch?.name ?? "main"),
+  };
+}
+
+function fetchRepoDetails(
+  provider: "github" | "gitlab" | "bitbucket",
+  accessToken: string,
+  repoFullName: string
+): Promise<{
+  cloneUrl: string;
+  defaultBranch: string;
+  description: string | null;
+  name: string;
+}> {
+  switch (provider) {
+    case "github":
+      return fetchGitHubRepoDetails(accessToken, repoFullName);
+    case "gitlab":
+      return fetchGitLabRepoDetails(accessToken, repoFullName);
+    case "bitbucket":
+      return fetchBitBucketRepoDetails(accessToken, repoFullName);
+    default:
+      throw new TRPCError({
+        code: "BAD_REQUEST",
+        message: `Unsupported provider: ${provider as string}`,
+      });
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Provider-specific connection tests

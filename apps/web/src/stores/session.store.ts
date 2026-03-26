@@ -23,7 +23,13 @@ export interface FileEntry {
   type: string;
 }
 
-export type SessionMode = "task" | "plan" | "ask" | "watch" | "fleet";
+export type SessionMode =
+  | "task"
+  | "plan"
+  | "ask"
+  | "watch"
+  | "fleet"
+  | "design";
 
 export type AgentStatus =
   | "idle"

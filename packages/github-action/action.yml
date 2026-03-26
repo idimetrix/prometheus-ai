@@ -1,0 +1,40 @@
+name: "Prometheus AI Agent"
+description: "Trigger a Prometheus AI agent to work on your codebase"
+inputs:
+  task:
+    description: "Task description for the agent"
+    required: true
+  project-id:
+    description: "Prometheus project ID"
+    required: true
+  api-key:
+    description: "Prometheus API key"
+    required: true
+  api-url:
+    description: "Prometheus API URL"
+    required: false
+    default: "https://api.prometheus.dev"
+  mode:
+    description: "Agent mode (task, plan, review)"
+    required: false
+    default: "task"
+  timeout:
+    description: "Timeout in seconds"
+    required: false
+    default: "600"
+  wait:
+    description: "Wait for completion"
+    required: false
+    default: "true"
+outputs:
+  task-id:
+    description: "Created task ID"
+  session-id:
+    description: "Agent session ID"
+  pr-url:
+    description: "Created PR URL (if applicable)"
+  status:
+    description: "Task completion status"
+runs:
+  using: "node20"
+  main: "dist/index.js"

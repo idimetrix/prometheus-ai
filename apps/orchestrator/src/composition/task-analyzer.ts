@@ -1,3 +1,4 @@
+import { getInternalAuthHeaders } from "@prometheus/auth";
 import { createLogger } from "@prometheus/logger";
 
 const logger = createLogger("orchestrator:task-analyzer");
@@ -202,7 +203,10 @@ Return ONLY valid JSON matching this schema:
         ],
         slot: "default",
       }),
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        ...getInternalAuthHeaders(),
+      },
       method: "POST",
     });
 

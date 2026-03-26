@@ -1,3 +1,4 @@
+import { getInternalAuthHeaders } from "@prometheus/auth";
 import { createLogger } from "@prometheus/logger";
 import type { GenerateEmbeddingsData } from "@prometheus/queue";
 
@@ -27,7 +28,10 @@ export async function processGenerateEmbeddings(
   try {
     const response = await fetch(`${BRAIN_URL}/index/file`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        ...getInternalAuthHeaders(),
+      },
       body: JSON.stringify({
         projectId,
         filePath,

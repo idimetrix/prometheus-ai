@@ -1,4 +1,5 @@
 import { createInsertSchema, createSelectSchema } from "drizzle-zod";
+import { sessionCheckpoints } from "./session-checkpoints";
 import { sessionEvents, sessionMessages, sessions } from "./sessions";
 
 export const insertSessionSchema = createInsertSchema(sessions);
@@ -15,3 +16,10 @@ export const insertSessionMessageSchema = createInsertSchema(sessionMessages);
 export const selectSessionMessageSchema = createSelectSchema(sessionMessages);
 export type SessionMessage = typeof sessionMessages.$inferSelect;
 export type NewSessionMessage = typeof sessionMessages.$inferInsert;
+
+export const insertSessionCheckpointSchema =
+  createInsertSchema(sessionCheckpoints);
+export const selectSessionCheckpointSchema =
+  createSelectSchema(sessionCheckpoints);
+export type SessionCheckpoint = typeof sessionCheckpoints.$inferSelect;
+export type NewSessionCheckpoint = typeof sessionCheckpoints.$inferInsert;

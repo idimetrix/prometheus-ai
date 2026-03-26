@@ -9,6 +9,11 @@ export {
   grantProjectPermission,
   revokeProjectPermission,
 } from "./fga-client";
+export {
+  getInternalAuthHeaders,
+  internalAuthMiddleware,
+  validateInternalSecret,
+} from "./internal-auth";
 export { authMiddleware } from "./middleware";
 export type {
   CreateOrgParams,

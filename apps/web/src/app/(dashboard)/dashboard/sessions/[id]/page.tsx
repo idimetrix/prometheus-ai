@@ -4,6 +4,7 @@ import { MarkdownRenderer } from "@prometheus/ui";
 import { use, useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { SessionControls } from "@/components/session/session-controls";
+import { WorkspaceLayout } from "@/components/workspace/workspace-layout";
 import { useSessionStream } from "@/hooks/use-session-stream";
 import { trpc } from "@/lib/trpc";
 import { useSessionStore } from "@/stores/session.store";
@@ -29,27 +30,7 @@ function FileTreePanel() {
   };
 
   return (
-    <div className="flex h-full flex-col rounded-xl border border-zinc-800 bg-zinc-900/50">
-      <div className="flex items-center gap-2 border-zinc-800 border-b px-3 py-2">
-        <svg
-          aria-hidden="true"
-          className="h-3.5 w-3.5 text-zinc-500"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth={1.5}
-          viewBox="0 0 24 24"
-        >
-          <path
-            d="M2.25 12.75V12A2.25 2.25 0 0 1 4.5 9.75h15A2.25 2.25 0 0 1 21.75 12v.75m-8.69-6.44-2.12-2.12a1.5 1.5 0 0 0-1.061-.44H4.5A2.25 2.25 0 0 0 2.25 6v12a2.25 2.25 0 0 0 2.25 2.25h15A2.25 2.25 0 0 0 21.75 18V9a2.25 2.25 0 0 0-2.25-2.25h-5.379a1.5 1.5 0 0 1-1.06-.44Z"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          />
-        </svg>
-        <span className="font-medium text-xs text-zinc-400">Files</span>
-        <span className="ml-auto rounded bg-zinc-800 px-1.5 py-0.5 text-[10px] text-zinc-500">
-          {fileTree.length}
-        </span>
-      </div>
+    <div className="flex h-full flex-col">
       <div className="flex-1 overflow-auto p-2">
         {fileTree.length === 0 ? (
           <div className="flex h-full items-center justify-center text-xs text-zinc-600">
@@ -75,310 +56,29 @@ function FileTreePanel() {
   );
 }
 
-// ── Plan Panel ──────────────────────────────────────────────────
+// ── Step Status Helpers ──────────────────────────────────────────
 
-function PlanPanel() {
-  const { planSteps } = useSessionStore();
-
-  const stepStatusIcon = (status: string) => {
-    switch (status) {
-      case "done":
-      case "completed":
-        return (
-          <div className="flex h-5 w-5 items-center justify-center rounded-full bg-green-500/20">
-            <svg
-              aria-hidden="true"
-              className="h-3 w-3 text-green-400"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth={2}
-              viewBox="0 0 24 24"
-            >
-              <path
-                d="m4.5 12.75 6 6 9-13.5"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              />
-            </svg>
-          </div>
-        );
-      case "running":
-      case "in_progress":
-        return (
-          <div className="flex h-5 w-5 items-center justify-center rounded-full bg-violet-500/20">
-            <div className="h-2 w-2 animate-pulse rounded-full bg-violet-400" />
-          </div>
-        );
-      case "failed":
-        return (
-          <div className="flex h-5 w-5 items-center justify-center rounded-full bg-red-500/20">
-            <svg
-              aria-hidden="true"
-              className="h-3 w-3 text-red-400"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth={2}
-              viewBox="0 0 24 24"
-            >
-              <path
-                d="M6 18 18 6M6 6l12 12"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              />
-            </svg>
-          </div>
-        );
-      default:
-        return (
-          <div className="flex h-5 w-5 items-center justify-center rounded-full border border-zinc-700">
-            <div className="h-1.5 w-1.5 rounded-full bg-zinc-600" />
-          </div>
-        );
-    }
-  };
-
-  return (
-    <div className="flex h-full flex-col rounded-xl border border-zinc-800 bg-zinc-900/50">
-      <div className="flex items-center gap-2 border-zinc-800 border-b px-3 py-2">
-        <svg
-          aria-hidden="true"
-          className="h-3.5 w-3.5 text-zinc-500"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth={1.5}
-          viewBox="0 0 24 24"
-        >
-          <path
-            d="M8.25 6.75h12M8.25 12h12m-12 5.25h12M3.75 6.75h.007v.008H3.75V6.75Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0ZM3.75 12h.007v.008H3.75V12Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Zm-.375 5.25h.007v.008H3.75v-.008Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Z"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          />
-        </svg>
-        <span className="font-medium text-xs text-zinc-400">Plan</span>
-        <span className="ml-auto rounded bg-zinc-800 px-1.5 py-0.5 text-[10px] text-zinc-500">
-          {
-            planSteps.filter(
-              (s) => s.status === "done" || s.status === "completed"
-            ).length
-          }
-          /{planSteps.length}
-        </span>
-      </div>
-      <div className="flex-1 overflow-auto p-2">
-        {planSteps.length === 0 ? (
-          <div className="flex h-full items-center justify-center text-xs text-zinc-600">
-            Waiting for plan...
-          </div>
-        ) : (
-          <div className="space-y-1">
-            {planSteps.map((step, i) => (
-              <div
-                className={`flex items-start gap-2 rounded-lg px-2 py-2 ${
-                  step.status === "running" || step.status === "in_progress"
-                    ? "bg-violet-500/5"
-                    : ""
-                }`}
-                key={step.id}
-              >
-                {stepStatusIcon(step.status)}
-                <div className="min-w-0 flex-1">
-                  <div
-                    className={`font-medium text-xs ${
-                      (
-                        {
-                          done: "text-zinc-500 line-through",
-                          completed: "text-zinc-500 line-through",
-                          running: "text-violet-300",
-                          in_progress: "text-violet-300",
-                        } as Record<string, string>
-                      )[step.status] ?? "text-zinc-300"
-                    }`}
-                  >
-                    {i + 1}. {step.title}
-                  </div>
-                  {step.description && (
-                    <div className="mt-0.5 text-[10px] text-zinc-600">
-                      {step.description}
-                    </div>
-                  )}
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-    </div>
-  );
+function getStepColor(status: string): string {
+  if (status === "done" || status === "completed") {
+    return "text-green-400";
+  }
+  if (status === "running" || status === "in_progress") {
+    return "text-violet-400";
+  }
+  return "text-zinc-600";
 }
 
-// ── Terminal Panel ───────────────────────────────────────────────
-
-function TerminalPanel() {
-  const terminalLines = useSessionStore((s) => s.terminalLines);
-  const scrollRef = useRef<HTMLDivElement>(null);
-
-  // Auto-scroll when new terminal lines arrive
-  const lineCount = terminalLines.length;
-  useEffect(() => {
-    if (lineCount > 0 && scrollRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-    }
-  }, [lineCount]);
-
-  return (
-    <div className="flex h-full flex-col rounded-xl border border-zinc-800 bg-zinc-950">
-      <div className="flex items-center gap-2 border-zinc-800 border-b px-3 py-2">
-        <div className="flex gap-1">
-          <div className="h-2.5 w-2.5 rounded-full bg-red-500/60" />
-          <div className="h-2.5 w-2.5 rounded-full bg-yellow-500/60" />
-          <div className="h-2.5 w-2.5 rounded-full bg-green-500/60" />
-        </div>
-        <span className="font-medium text-xs text-zinc-500">Terminal</span>
-        <span className="ml-auto text-[10px] text-zinc-600">
-          {terminalLines.length} lines
-        </span>
-      </div>
-      <div
-        className="flex-1 overflow-auto p-3 font-mono text-xs"
-        ref={scrollRef}
-      >
-        {terminalLines.length === 0 ? (
-          <div className="flex h-full items-center justify-center text-zinc-700">
-            <span className="animate-pulse">Waiting for output...</span>
-          </div>
-        ) : (
-          <div className="space-y-0.5">
-            {terminalLines.map((line, i) => (
-              // biome-ignore lint/suspicious/noArrayIndexKey: terminal lines lack stable unique IDs
-              <div className="flex gap-2" key={`${line.timestamp ?? ""}-${i}`}>
-                {line.timestamp && (
-                  <span className="shrink-0 text-zinc-700">
-                    {new Date(line.timestamp).toLocaleTimeString([], {
-                      hour: "2-digit",
-                      minute: "2-digit",
-                      second: "2-digit",
-                    })}
-                  </span>
-                )}
-                <span
-                  className={(() => {
-                    if (
-                      line.content.startsWith("[ERROR]") ||
-                      line.content.startsWith("Error")
-                    ) {
-                      return "text-red-400";
-                    }
-                    if (line.content.startsWith("[WARN]")) {
-                      return "text-yellow-400";
-                    }
-                    if (
-                      line.content.startsWith("[THINK]") ||
-                      line.content.startsWith("Reasoning:")
-                    ) {
-                      return "text-violet-400 italic";
-                    }
-                    if (
-                      line.content.startsWith("[SUCCESS]") ||
-                      line.content.startsWith("Done")
-                    ) {
-                      return "text-green-400";
-                    }
-                    return "text-zinc-300";
-                  })()}
-                >
-                  {line.content}
-                </span>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-    </div>
-  );
+function getStepIcon(status: string): string {
+  if (status === "done" || status === "completed") {
+    return "done";
+  }
+  if (status === "running" || status === "in_progress") {
+    return "...";
+  }
+  return "o";
 }
 
-// ── Code Diff Panel ─────────────────────────────────────────────
-
-function CodeDiffPanel() {
-  const { events } = useSessionStore();
-  const diffs = events.filter(
-    (e) => e.type === "file_diff" || e.type === "code_change"
-  );
-
-  return (
-    <div className="flex h-full flex-col rounded-xl border border-zinc-800 bg-zinc-900/50">
-      <div className="flex items-center gap-2 border-zinc-800 border-b px-3 py-2">
-        <svg
-          aria-hidden="true"
-          className="h-3.5 w-3.5 text-zinc-500"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth={1.5}
-          viewBox="0 0 24 24"
-        >
-          <path
-            d="M17.25 6.75 22.5 12l-5.25 5.25m-10.5 0L1.5 12l5.25-5.25m7.5-3-4.5 16.5"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          />
-        </svg>
-        <span className="font-medium text-xs text-zinc-400">Changes</span>
-        <span className="ml-auto rounded bg-zinc-800 px-1.5 py-0.5 text-[10px] text-zinc-500">
-          {diffs.length}
-        </span>
-      </div>
-      <div className="flex-1 overflow-auto p-2">
-        {diffs.length === 0 ? (
-          <div className="flex h-full items-center justify-center text-xs text-zinc-600">
-            No changes yet
-          </div>
-        ) : (
-          <div className="space-y-3">
-            {diffs.map((diff) => (
-              <div
-                className="rounded-lg border border-zinc-800 bg-zinc-950"
-                key={diff.id}
-              >
-                <div className="border-zinc-800 border-b px-3 py-1.5">
-                  <span className="font-mono text-[10px] text-zinc-400">
-                    {String(diff.data?.filePath ?? `Change ${diff.id}`)}
-                  </span>
-                </div>
-                <pre className="overflow-auto p-3 text-[11px] leading-relaxed">
-                  {Array.from(
-                    String(diff.data?.diff ?? diff.data?.content ?? "")
-                      .split("\n")
-                      .entries()
-                  ).map(([lineNum, line]) => (
-                    <div
-                      className={(() => {
-                        if (line.startsWith("+")) {
-                          return "bg-green-500/10 text-green-400";
-                        }
-                        if (line.startsWith("-")) {
-                          return "bg-red-500/10 text-red-400";
-                        }
-                        if (line.startsWith("@@")) {
-                          return "text-violet-400";
-                        }
-                        return "text-zinc-500";
-                      })()}
-                      key={lineNum}
-                    >
-                      {line}
-                    </div>
-                  ))}
-                </pre>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
-
-// ── Chat Panel ─────────────────────────────────────────────────
+// ── Agent Activity Panel (Chat + Plan + Code Diff) ──────────────
 
 interface ChatMessage {
   content: string;
@@ -388,7 +88,7 @@ interface ChatMessage {
   timestamp: string;
 }
 
-function ChatPanel({
+function AgentPanel({
   disabled,
   onSend,
 }: {
@@ -396,12 +96,11 @@ function ChatPanel({
   onSend: (content: string) => void;
   sessionId: string;
 }) {
-  const { events, reasoning } = useSessionStore();
+  const { events, reasoning, planSteps } = useSessionStore();
   const [input, setInput] = useState("");
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
-  // Derive chat messages from session events and terminal output
   const messages: ChatMessage[] = [];
 
   for (const event of events) {
@@ -429,7 +128,6 @@ function ChatPanel({
     }
   }
 
-  // Auto-scroll on new messages
   const messageCount = messages.length;
   useEffect(() => {
     if (messageCount > 0 && scrollRef.current) {
@@ -458,8 +156,8 @@ function ChatPanel({
   );
 
   const ROLE_STYLES: Record<string, string> = {
-    user: "ml-8 border-violet-500/20 bg-violet-500/10",
-    agent: "mr-8 border-zinc-800 bg-zinc-900/50",
+    user: "ml-4 border-violet-500/20 bg-violet-500/10",
+    agent: "mr-4 border-zinc-800 bg-zinc-900/50",
     system: "border-blue-500/20 bg-blue-500/5",
   };
 
@@ -470,28 +168,46 @@ function ChatPanel({
   };
 
   return (
-    <div className="flex h-full flex-col rounded-xl border border-zinc-800 bg-zinc-900/50">
-      {/* Header */}
-      <div className="flex items-center gap-2 border-zinc-800 border-b px-3 py-2">
-        <svg
-          aria-hidden="true"
-          className="h-3.5 w-3.5 text-zinc-500"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth={1.5}
-          viewBox="0 0 24 24"
-        >
-          <path
-            d="M8.625 12a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Zm0 0H8.25m4.125 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Zm0 0H12m4.125 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Zm0 0h-.375M21 12c0 4.556-4.03 8.25-9 8.25a9.764 9.764 0 0 1-2.555-.337A5.972 5.972 0 0 1 5.41 20.97a5.969 5.969 0 0 1-.474-.065 4.48 4.48 0 0 0 .978-2.025c.09-.457-.133-.901-.467-1.226C3.93 16.178 3 14.189 3 12c0-4.556 4.03-8.25 9-8.25s9 3.694 9 8.25Z"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          />
-        </svg>
-        <span className="font-medium text-xs text-zinc-400">Chat</span>
-        <span className="ml-auto rounded bg-zinc-800 px-1.5 py-0.5 text-[10px] text-zinc-500">
-          {messages.length} messages
-        </span>
-      </div>
+    <div className="flex h-full flex-col">
+      {/* Plan Steps (collapsible summary) */}
+      {planSteps.length > 0 && (
+        <div className="border-zinc-800 border-b px-3 py-2">
+          <div className="flex items-center gap-2">
+            <span className="font-medium text-[10px] text-zinc-500 uppercase">
+              Plan
+            </span>
+            <span className="rounded bg-zinc-800 px-1.5 py-0.5 text-[10px] text-zinc-500">
+              {
+                planSteps.filter(
+                  (s) => s.status === "done" || s.status === "completed"
+                ).length
+              }
+              /{planSteps.length}
+            </span>
+          </div>
+          <div className="mt-1 space-y-0.5">
+            {planSteps.slice(0, 5).map((step, i) => (
+              <div
+                className="flex items-center gap-1.5 text-[10px]"
+                key={step.id}
+              >
+                <span className={getStepColor(step.status)}>
+                  {getStepIcon(step.status)}
+                </span>
+                <span
+                  className={
+                    step.status === "done" || step.status === "completed"
+                      ? "text-zinc-500 line-through"
+                      : "text-zinc-300"
+                  }
+                >
+                  {i + 1}. {step.title}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Messages */}
       <div className="flex-1 overflow-auto p-3" ref={scrollRef}>
@@ -585,6 +301,144 @@ function ChatPanel({
   );
 }
 
+// ── Terminal Panel ───────────────────────────────────────────────
+
+function TerminalPanel() {
+  const terminalLines = useSessionStore((s) => s.terminalLines);
+  const scrollRef = useRef<HTMLDivElement>(null);
+
+  const lineCount = terminalLines.length;
+  useEffect(() => {
+    if (lineCount > 0 && scrollRef.current) {
+      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    }
+  }, [lineCount]);
+
+  return (
+    <div className="flex h-full flex-col bg-zinc-950">
+      <div
+        className="flex-1 overflow-auto p-3 font-mono text-xs"
+        ref={scrollRef}
+      >
+        {terminalLines.length === 0 ? (
+          <div className="flex h-full items-center justify-center text-zinc-700">
+            <span className="animate-pulse">Waiting for output...</span>
+          </div>
+        ) : (
+          <div className="space-y-0.5">
+            {terminalLines.map((line, i) => (
+              // biome-ignore lint/suspicious/noArrayIndexKey: terminal lines lack stable unique IDs
+              <div className="flex gap-2" key={`${line.timestamp ?? ""}-${i}`}>
+                {line.timestamp && (
+                  <span className="shrink-0 text-zinc-700">
+                    {new Date(line.timestamp).toLocaleTimeString([], {
+                      hour: "2-digit",
+                      minute: "2-digit",
+                      second: "2-digit",
+                    })}
+                  </span>
+                )}
+                <span
+                  className={(() => {
+                    if (
+                      line.content.startsWith("[ERROR]") ||
+                      line.content.startsWith("Error")
+                    ) {
+                      return "text-red-400";
+                    }
+                    if (line.content.startsWith("[WARN]")) {
+                      return "text-yellow-400";
+                    }
+                    if (
+                      line.content.startsWith("[THINK]") ||
+                      line.content.startsWith("Reasoning:")
+                    ) {
+                      return "text-violet-400 italic";
+                    }
+                    if (
+                      line.content.startsWith("[SUCCESS]") ||
+                      line.content.startsWith("Done")
+                    ) {
+                      return "text-green-400";
+                    }
+                    return "text-zinc-300";
+                  })()}
+                >
+                  {line.content}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── Center Content (Code Diff + Preview placeholder) ────────────
+
+function CenterPanel() {
+  const { events } = useSessionStore();
+  const diffs = events.filter(
+    (e) => e.type === "file_diff" || e.type === "code_change"
+  );
+
+  return (
+    <div className="flex h-full flex-col overflow-auto">
+      {diffs.length === 0 ? (
+        <div className="flex h-full items-center justify-center text-xs text-zinc-600">
+          <div className="text-center">
+            <p>Editor / Preview area</p>
+            <p className="mt-1 text-zinc-700">
+              Changes will appear here as the agent works
+            </p>
+          </div>
+        </div>
+      ) : (
+        <div className="space-y-3 p-3">
+          {diffs.map((diff) => (
+            <div
+              className="rounded-lg border border-zinc-800 bg-zinc-950"
+              key={diff.id}
+            >
+              <div className="border-zinc-800 border-b px-3 py-1.5">
+                <span className="font-mono text-[10px] text-zinc-400">
+                  {String(diff.data?.filePath ?? `Change ${diff.id}`)}
+                </span>
+              </div>
+              <pre className="overflow-auto p-3 text-[11px] leading-relaxed">
+                {Array.from(
+                  String(diff.data?.diff ?? diff.data?.content ?? "")
+                    .split("\n")
+                    .entries()
+                ).map(([lineNum, line]) => (
+                  <div
+                    className={(() => {
+                      if (line.startsWith("+")) {
+                        return "bg-green-500/10 text-green-400";
+                      }
+                      if (line.startsWith("-")) {
+                        return "bg-red-500/10 text-red-400";
+                      }
+                      if (line.startsWith("@@")) {
+                        return "text-violet-400";
+                      }
+                      return "text-zinc-500";
+                    })()}
+                    key={lineNum}
+                  >
+                    {line}
+                  </div>
+                ))}
+              </pre>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Main Session Page ───────────────────────────────────────────
 
 export default function SessionPage({
@@ -600,7 +454,6 @@ export default function SessionPage({
   const pauseMutation = trpc.sessions.pause.useMutation();
   const resumeMutation = trpc.sessions.resume.useMutation();
   const cancelMutation = trpc.sessions.cancel.useMutation();
-
   const sendMessageMutation = trpc.sessions.sendMessage.useMutation();
 
   const session = sessionQuery.data;
@@ -614,10 +467,7 @@ export default function SessionPage({
   const handleSendMessage = useCallback(
     async (content: string) => {
       try {
-        await sendMessageMutation.mutateAsync({
-          sessionId,
-          content,
-        });
+        await sendMessageMutation.mutateAsync({ sessionId, content });
       } catch {
         toast.error("Failed to send message");
       }
@@ -626,9 +476,9 @@ export default function SessionPage({
   );
 
   return (
-    <div className="flex h-[calc(100vh-theme(spacing.14)-theme(spacing.12))] flex-col gap-3">
+    <div className="flex h-[calc(100vh-theme(spacing.14)-theme(spacing.12))] flex-col gap-1">
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between px-2">
         <div className="flex items-center gap-3">
           <span
             className={`h-2 w-2 rounded-full ${
@@ -657,28 +507,24 @@ export default function SessionPage({
         </div>
       </div>
 
-      {/* Main layout: Chat (left) + Monitoring Panels (right) */}
-      <div className="flex min-h-0 flex-1 gap-3">
-        {/* Left: Chat panel */}
-        <div className="flex w-1/2 min-w-0 flex-col lg:w-[45%]">
-          <ChatPanel
-            disabled={isEnded}
-            onSend={handleSendMessage}
-            sessionId={sessionId}
-          />
-        </div>
-
-        {/* Right: Monitoring panels (2x2 grid) */}
-        <div className="grid w-1/2 min-w-0 grid-cols-2 grid-rows-2 gap-3 lg:w-[55%]">
-          <FileTreePanel />
-          <PlanPanel />
-          <TerminalPanel />
-          <CodeDiffPanel />
-        </div>
+      {/* Workspace Layout with resizable panels */}
+      <div className="min-h-0 flex-1">
+        <WorkspaceLayout
+          agentPanel={
+            <AgentPanel
+              disabled={isEnded}
+              onSend={handleSendMessage}
+              sessionId={sessionId}
+            />
+          }
+          center={<CenterPanel />}
+          fileTree={<FileTreePanel />}
+          terminal={<TerminalPanel />}
+        />
       </div>
 
       {/* Control bar (sticky bottom) */}
-      <div className="flex items-center justify-between rounded-xl border border-zinc-800 bg-zinc-900/50 px-4 py-3">
+      <div className="flex items-center justify-between rounded-xl border border-zinc-800 bg-zinc-900/50 px-4 py-2">
         <div className="flex items-center gap-2">
           <span
             className={`h-2 w-2 rounded-full ${

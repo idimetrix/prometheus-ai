@@ -1,3 +1,9 @@
+export {
+  BASE_IMAGES,
+  getBaseImage,
+  resolveBaseImage,
+} from "./base-images";
+export { detectTechStack, type TechStackResult } from "./detector";
 export { getPreset, TECH_STACK_PRESETS, type TechStackPreset } from "./presets";
 export {
   DJANGO_REACT_PRESET,

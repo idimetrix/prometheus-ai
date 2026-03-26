@@ -4,6 +4,7 @@
  * Enables semantic search across all projects within an organization.
  * Respects per-project privacy opt-out settings.
  */
+import { getInternalAuthHeaders } from "@prometheus/auth";
 import { codeEmbeddings, db, projects } from "@prometheus/db";
 import { createLogger } from "@prometheus/logger";
 import { eq, inArray, sql } from "drizzle-orm";
@@ -124,7 +125,10 @@ export class OrgKnowledgeLayer {
 
     const response = await fetch(`${modelRouterUrl}/embeddings`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        ...getInternalAuthHeaders(),
+      },
       body: JSON.stringify({ input: text }),
       signal: AbortSignal.timeout(30_000),
     });

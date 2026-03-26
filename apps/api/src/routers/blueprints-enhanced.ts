@@ -1,3 +1,4 @@
+import { getInternalAuthHeaders } from "@prometheus/auth";
 import type { Database } from "@prometheus/db";
 import {
   blueprintComponents,
@@ -98,7 +99,10 @@ export const blueprintsEnhancedRouter = router({
       // Send to project-brain for AI-powered analysis
       const res = await fetch(`${PROJECT_BRAIN_URL}/blueprints/analyze`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...getInternalAuthHeaders(),
+        },
         body: JSON.stringify({
           projectId: input.projectId,
           orgId: ctx.orgId,
@@ -208,7 +212,10 @@ export const blueprintsEnhancedRouter = router({
       // Send scaffold request to orchestrator
       const res = await fetch(`${ORCHESTRATOR_URL}/blueprints/scaffold`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...getInternalAuthHeaders(),
+        },
         body: JSON.stringify({
           projectId: input.projectId,
           orgId: ctx.orgId,

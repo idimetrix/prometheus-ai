@@ -1,3 +1,4 @@
+import { getInternalAuthHeaders } from "@prometheus/auth";
 import { createLogger } from "@prometheus/logger";
 import type { IndexProjectData } from "@prometheus/queue";
 import { EventPublisher } from "@prometheus/queue";
@@ -23,7 +24,11 @@ export async function processIndexProject(
     : await runIncrementalIndex(projectId, filePaths, onProgress);
 
   await extractConventions(projectId, filePaths);
-  await publishCompletion(orgId, projectId, result, triggeredBy);
+
+  // ---- Auto-detect tech stack after indexing ----
+  const stackInfo = await detectAndStoreStack(projectId, orgId, filePaths);
+
+  await publishCompletion(orgId, projectId, result, triggeredBy, stackInfo);
 
   logger.info({ projectId, ...result }, "Project indexing complete");
   return result;
@@ -36,7 +41,10 @@ async function runFullReindex(
   try {
     const response = await fetch(`${BRAIN_URL}/index/directory`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        ...getInternalAuthHeaders(),
+      },
       body: JSON.stringify({ projectId, dirPath: filePaths[0] ?? "." }),
       signal: AbortSignal.timeout(600_000),
     });
@@ -94,7 +102,10 @@ async function indexSingleFile(
   try {
     const response = await fetch(`${BRAIN_URL}/index/file`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        ...getInternalAuthHeaders(),
+      },
       body: JSON.stringify({ projectId, filePath }),
       signal: AbortSignal.timeout(30_000),
     });
@@ -115,6 +126,50 @@ async function indexSingleFile(
   }
 }
 
+async function detectAndStoreStack(
+  projectId: string,
+  orgId: string,
+  filePaths: string[]
+): Promise<Record<string, unknown> | null> {
+  try {
+    const { detectTechStack } = (await import(
+      "@prometheus/config-stacks"
+    )) as typeof import("@prometheus/config-stacks");
+
+    const stack = await detectTechStack(filePaths);
+
+    logger.info(
+      {
+        projectId,
+        languages: stack.languages,
+        frameworks: stack.frameworks,
+        preset: stack.suggestedPreset,
+      },
+      "Tech stack auto-detected during indexing"
+    );
+
+    // Publish stack detection event so downstream consumers (e.g. the web UI)
+    // can update project metadata.
+    try {
+      await publisher.publishFleetEvent(orgId, {
+        type: "stack_detected",
+        data: { projectId, ...stack },
+        timestamp: new Date().toISOString(),
+      });
+    } catch {
+      // Non-critical
+    }
+
+    return stack as unknown as Record<string, unknown>;
+  } catch (err) {
+    logger.warn(
+      { projectId, err },
+      "Stack detection during indexing failed, continuing"
+    );
+    return null;
+  }
+}
+
 async function extractConventions(
   projectId: string,
   filePaths: string[]
@@ -122,7 +177,10 @@ async function extractConventions(
   try {
     const conventionResponse = await fetch(`${BRAIN_URL}/conventions/extract`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        ...getInternalAuthHeaders(),
+      },
       body: JSON.stringify({ projectId, files: filePaths.slice(0, 50) }),
       signal: AbortSignal.timeout(30_000),
     });
@@ -138,12 +196,18 @@ async function publishCompletion(
   orgId: string,
   projectId: string,
   result: { indexed: number; skipped: number; errors: number },
-  triggeredBy: string
+  triggeredBy: string,
+  stackInfo?: Record<string, unknown> | null
 ): Promise<void> {
   try {
     await publisher.publishFleetEvent(orgId, {
       type: "indexing_complete",
-      data: { projectId, ...result, triggeredBy },
+      data: {
+        projectId,
+        ...result,
+        triggeredBy,
+        ...(stackInfo ? { techStack: stackInfo } : {}),
+      },
       timestamp: new Date().toISOString(),
     });
   } catch {

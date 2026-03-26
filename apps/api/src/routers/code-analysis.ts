@@ -1,3 +1,4 @@
+import { getInternalAuthHeaders } from "@prometheus/auth";
 import type { Database } from "@prometheus/db";
 import {
   codeEmbeddings,
@@ -148,7 +149,10 @@ export const codeAnalysisRouter = router({
       try {
         const res = await fetch(`${PROJECT_BRAIN_URL}/analysis/file`, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: {
+            "Content-Type": "application/json",
+            ...getInternalAuthHeaders(),
+          },
           body: JSON.stringify({
             projectId: input.projectId,
             orgId: ctx.orgId,
@@ -473,7 +477,10 @@ export const codeAnalysisRouter = router({
           `${PROJECT_BRAIN_URL}/analysis/suggest-refactoring`,
           {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
+            headers: {
+              "Content-Type": "application/json",
+              ...getInternalAuthHeaders(),
+            },
             body: JSON.stringify({
               projectId: input.projectId,
               orgId: ctx.orgId,
@@ -646,7 +653,10 @@ export const codeAnalysisRouter = router({
           `${PROJECT_BRAIN_URL}/analysis/performance-issues`,
           {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
+            headers: {
+              "Content-Type": "application/json",
+              ...getInternalAuthHeaders(),
+            },
             body: JSON.stringify({
               projectId: input.projectId,
               orgId: ctx.orgId,

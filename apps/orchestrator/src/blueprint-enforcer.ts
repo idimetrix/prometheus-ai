@@ -13,6 +13,7 @@
  */
 
 import crypto from "node:crypto";
+import { getInternalAuthHeaders } from "@prometheus/auth";
 
 // ─── Top-level regex constants ──────────────────────────────────────────
 const RAW_SQL_QUERY_RE =
@@ -67,7 +68,10 @@ export class BlueprintEnforcer {
     try {
       const response = await fetch(`${PROJECT_BRAIN_URL}/blueprint/enforce`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...getInternalAuthHeaders(),
+        },
         body: JSON.stringify({ projectId, changes: [] }),
         signal: AbortSignal.timeout(10_000),
       });
@@ -84,7 +88,10 @@ export class BlueprintEnforcer {
       // Try the context assembly endpoint instead.
       const ctxResponse = await fetch(`${PROJECT_BRAIN_URL}/context/assemble`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...getInternalAuthHeaders(),
+        },
         body: JSON.stringify({
           projectId,
           taskDescription: "blueprint loading",
@@ -157,7 +164,10 @@ export class BlueprintEnforcer {
     try {
       const response = await fetch(`${PROJECT_BRAIN_URL}/context/assemble`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...getInternalAuthHeaders(),
+        },
         body: JSON.stringify({
           projectId,
           taskDescription: "version check",

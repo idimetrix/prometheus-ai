@@ -5,6 +5,7 @@ import {
   webhookSubscriptions,
 } from "@prometheus/db";
 import { createLogger } from "@prometheus/logger";
+import { webhookDeliveryQueue } from "@prometheus/queue";
 import { generateId, signWebhookPayload } from "@prometheus/utils";
 import { TRPCError } from "@trpc/server";
 import { and, desc, eq } from "drizzle-orm";
@@ -22,6 +23,9 @@ const WEBHOOK_EVENTS = [
   "task.failed",
   "pr.created",
   "pr.merged",
+  "deployment.completed",
+  "ci.passed",
+  "ci.failed",
   "credit.low",
   "credit.depleted",
 ] as const;
@@ -328,6 +332,65 @@ export const webhooksOutboundRouter = router({
         message:
           "Store the new signing secret securely. It will not be shown again.",
       };
+    }),
+
+  redeliver: orgAdminProcedure
+    .input(z.object({ deliveryId: z.string().min(1) }))
+    .mutation(async ({ input, ctx }) => {
+      // Find the original delivery
+      const [delivery] = await ctx.db
+        .select()
+        .from(webhookDeliveries)
+        .where(eq(webhookDeliveries.id, input.deliveryId))
+        .limit(1);
+
+      if (!delivery) {
+        throw new TRPCError({
+          code: "NOT_FOUND",
+          message: "Delivery not found",
+        });
+      }
+
+      // Verify subscription ownership
+      const [sub] = await ctx.db
+        .select({ id: webhookSubscriptions.id })
+        .from(webhookSubscriptions)
+        .where(
+          and(
+            eq(webhookSubscriptions.id, delivery.subscriptionId),
+            eq(webhookSubscriptions.orgId, ctx.orgId)
+          )
+        )
+        .limit(1);
+
+      if (!sub) {
+        throw new TRPCError({
+          code: "NOT_FOUND",
+          message: "Webhook subscription not found",
+        });
+      }
+
+      // Enqueue redelivery
+      await webhookDeliveryQueue.add(
+        `webhook-redeliver:${delivery.event}:${delivery.subscriptionId}`,
+        {
+          subscriptionId: delivery.subscriptionId,
+          event: delivery.event,
+          payload: delivery.payload as Record<string, unknown>,
+          attempt: 1,
+        }
+      );
+
+      logger.info(
+        {
+          orgId: ctx.orgId,
+          deliveryId: input.deliveryId,
+          subscriptionId: delivery.subscriptionId,
+        },
+        "Webhook redelivery enqueued"
+      );
+
+      return { success: true };
     }),
 
   availableEvents: protectedProcedure.query(() => ({

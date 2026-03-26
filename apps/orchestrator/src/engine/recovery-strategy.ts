@@ -3,8 +3,19 @@
  *
  * Determines and executes the best recovery strategy when an agent gets stuck.
  * Strategies range from gentle prompting to model upgrades to full abort.
+ *
+ * Enhanced with error-taxonomy-based recovery actions that map each
+ * ErrorCategory to specific, structured recovery actions.
  */
 import { createLogger } from "@prometheus/logger";
+import {
+  classifyError,
+  ErrorCategory,
+  type ErrorClassificationContext,
+  isOOMError,
+  isRateLimitError,
+  isSandboxCrashError,
+} from "./error-taxonomy";
 
 const logger = createLogger("orchestrator:recovery-strategy");
 
@@ -13,6 +24,51 @@ export type RecoveryStrategyType =
   | "rollback_checkpoint"
   | "upgrade_model"
   | "abort_partial";
+
+// ---------------------------------------------------------------------------
+// Recovery Action (error-taxonomy-based)
+// ---------------------------------------------------------------------------
+
+export type RecoveryActionType =
+  | "retry"
+  | "switch_provider"
+  | "restore_checkpoint"
+  | "replan"
+  | "stop";
+
+export interface RecoveryAction {
+  /** The recovery action to take */
+  action: RecoveryActionType;
+  /** Resource adjustments for checkpoint restore */
+  adjustResources?: { memoryLimitMb: number };
+  /** Delay in ms before retrying (for retry actions) */
+  delay?: number;
+  /** Instruction to inject for re-planning */
+  instruction?: string;
+  /** Maximum number of retries */
+  maxRetries?: number;
+  /** Whether to notify the user */
+  notify?: boolean;
+  /** Reason for stopping */
+  reason?: string;
+  /** Whether to recreate the sandbox */
+  recreateSandbox?: boolean;
+  /** Whether to use a stricter prompt */
+  stricterPrompt?: boolean;
+}
+
+export interface ErrorRecoveryContext {
+  /** Current retry attempt count */
+  attemptCount: number;
+  /** Additional classification context */
+  classificationContext?: ErrorClassificationContext;
+  /** Current memory limit in MB */
+  currentMemoryLimitMb?: number;
+  /** The original error */
+  error: Error;
+  /** Session identifier */
+  sessionId: string;
+}
 
 export interface RecoveryContext {
   /** Number of recovery attempts already made */
@@ -210,5 +266,134 @@ export class RecoveryStrategy {
       partialOutput: context.partialResults ?? "",
       description: `Aborting after ${context.attemptCount} recovery attempts. Returning partial results.`,
     };
+  }
+
+  // ---------------------------------------------------------------------------
+  // Error-taxonomy-based recovery
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Determine the appropriate recovery action based on the error taxonomy.
+   * This is the primary entry point for error-based recovery decisions.
+   */
+  recover(errorContext: ErrorRecoveryContext): RecoveryAction {
+    const { error, attemptCount, sessionId, classificationContext } =
+      errorContext;
+
+    const category = classifyError(error, classificationContext);
+
+    logger.info(
+      {
+        sessionId,
+        category,
+        attemptCount,
+        errorMessage: error.message,
+      },
+      "Determining recovery action from error taxonomy"
+    );
+
+    switch (category) {
+      case ErrorCategory.TRANSIENT:
+        return this.recoverTransient(error, attemptCount);
+      case ErrorCategory.RECOVERABLE:
+        return this.recoverRecoverable(error, errorContext);
+      case ErrorCategory.LOGIC:
+        return this.recoverLogic(error, classificationContext);
+      case ErrorCategory.FATAL:
+        return this.recoverFatal(error);
+      default:
+        return { action: "stop", notify: true, reason: error.message };
+    }
+  }
+
+  private recoverTransient(error: Error, attemptCount: number): RecoveryAction {
+    // Rate limit errors: switch to a different provider via model-router
+    if (isRateLimitError(error)) {
+      if (attemptCount === 0) {
+        return { action: "switch_provider" };
+      }
+      // If we already tried switching, fall back to exponential backoff
+      return {
+        action: "retry",
+        delay: this.exponentialBackoff(attemptCount),
+        maxRetries: 3,
+      };
+    }
+
+    // General transient errors: retry with exponential backoff
+    if (attemptCount >= 3) {
+      return {
+        action: "stop",
+        notify: true,
+        reason: `Transient error persisted after 3 retries: ${error.message}`,
+      };
+    }
+
+    return {
+      action: "retry",
+      delay: this.exponentialBackoff(attemptCount),
+      maxRetries: 3,
+    };
+  }
+
+  private recoverRecoverable(
+    error: Error,
+    context: ErrorRecoveryContext
+  ): RecoveryAction {
+    if (isOOMError(error)) {
+      const currentMemory = context.currentMemoryLimitMb ?? 512;
+      return {
+        action: "restore_checkpoint",
+        adjustResources: { memoryLimitMb: currentMemory * 2 },
+      };
+    }
+
+    if (isSandboxCrashError(error)) {
+      return {
+        action: "restore_checkpoint",
+        recreateSandbox: true,
+      };
+    }
+
+    // Generic recoverable: restore checkpoint
+    return { action: "restore_checkpoint" };
+  }
+
+  private recoverLogic(
+    _error: Error,
+    classificationContext?: ErrorClassificationContext
+  ): RecoveryAction {
+    // If the error is about invalid tool output / hallucination, retry with stricter prompt
+    if (classificationContext?.isInvalidToolOutput) {
+      return {
+        action: "retry",
+        stricterPrompt: true,
+        maxRetries: 2,
+      };
+    }
+
+    // Repeated tool calls / infinite loop: re-plan
+    return {
+      action: "replan",
+      instruction:
+        "Previous approach failed. Analyze what went wrong and try a completely different strategy. Do NOT repeat the same tool calls.",
+    };
+  }
+
+  private recoverFatal(error: Error): RecoveryAction {
+    return {
+      action: "stop",
+      notify: true,
+      reason: error.message,
+    };
+  }
+
+  private exponentialBackoff(attempt: number): number {
+    const baseDelay = 1000;
+    const maxDelay = 30_000;
+    const delay = Math.min(baseDelay * 2 ** attempt, maxDelay);
+    // Add jitter (up to 25% of the delay)
+    const jitter = Math.random() * delay * 0.25;
+    return Math.round(delay + jitter);
   }
 }

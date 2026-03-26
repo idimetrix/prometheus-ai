@@ -39,8 +39,13 @@ import {
 } from "./middleware";
 import { generateOpenAPISpec } from "./openapi";
 import { appRouter } from "./routers";
+import { bitbucketOAuthApp } from "./routes/oauth/bitbucket";
+import { githubOAuthApp } from "./routes/oauth/github";
+import { gitlabOAuthApp } from "./routes/oauth/gitlab";
 import { sseApp } from "./routes/sse";
+import { v1App } from "./routes/v1";
 import { alertsWebhookApp } from "./routes/webhooks/alerts";
+import { ciTriggerApp } from "./routes/webhooks/ci-trigger";
 import { clerkWebhookApp } from "./routes/webhooks/clerk";
 import { inboundWebhookApp } from "./routes/webhooks/inbound";
 import { slackWebhookApp } from "./routes/webhooks/slack";
@@ -217,16 +222,62 @@ app.get("/slo", (c) => c.json(sloMonitor.getSummary()));
 // Liveness probe — lightweight, just confirms process is responsive
 app.get("/live", (c) => c.json({ status: "ok" }));
 
-// Readiness probe — checks dependencies are connected
+// Readiness probe — checks all dependencies are connected
 app.get("/ready", async (c) => {
+  const checks: Record<string, boolean> = {};
+
   try {
     const { db } = await import("@prometheus/db");
     const { sql } = await import("drizzle-orm");
     await db.execute(sql`SELECT 1`);
-    return c.json({ status: "ready" });
+    checks.db = true;
   } catch {
-    return c.json({ status: "not ready" }, 503);
+    checks.db = false;
   }
+
+  try {
+    const { redis } = await import("@prometheus/queue");
+    const pong = await redis.ping();
+    checks.redis = pong === "PONG";
+  } catch {
+    checks.redis = false;
+  }
+
+  const allReady = Object.values(checks).every(Boolean);
+
+  if (!allReady) {
+    return c.json({ status: "not ready", checks }, 503);
+  }
+  return c.json({ status: "ready", checks });
+});
+
+// Readiness probe (alias) — same as /ready
+app.get("/health/ready", async (c) => {
+  const checks: Record<string, boolean> = {};
+
+  try {
+    const { db } = await import("@prometheus/db");
+    const { sql } = await import("drizzle-orm");
+    await db.execute(sql`SELECT 1`);
+    checks.db = true;
+  } catch {
+    checks.db = false;
+  }
+
+  try {
+    const { redis } = await import("@prometheus/queue");
+    const pong = await redis.ping();
+    checks.redis = pong === "PONG";
+  } catch {
+    checks.redis = false;
+  }
+
+  const allReady = Object.values(checks).every(Boolean);
+
+  if (!allReady) {
+    return c.json({ status: "not ready", checks }, 503);
+  }
+  return c.json({ status: "ready", checks });
 });
 
 // ---------------------------------------------------------------------------
@@ -236,6 +287,11 @@ app.get("/docs", (c) => {
   const spec = generateOpenAPISpec();
   return c.json(spec);
 });
+
+// ---------------------------------------------------------------------------
+// REST API v1 — public API for headless/automation use
+// ---------------------------------------------------------------------------
+app.route("/api/v1", v1App);
 
 // ---------------------------------------------------------------------------
 // SSE endpoint
@@ -252,6 +308,14 @@ app.route("/webhooks/alerts", alertsWebhookApp);
 app.route("/webhooks/slack", slackWebhookApp);
 app.route("/webhooks/slack/commands", slackCommandsApp);
 app.route("/webhooks/inbound", inboundWebhookApp);
+app.route("/webhooks/ci", ciTriggerApp);
+
+// ---------------------------------------------------------------------------
+// OAuth callback routes — browser redirects, no Bearer token required
+// ---------------------------------------------------------------------------
+app.route("/oauth/github", githubOAuthApp);
+app.route("/oauth/gitlab", gitlabOAuthApp);
+app.route("/oauth/bitbucket", bitbucketOAuthApp);
 
 // ---------------------------------------------------------------------------
 // Internal: model usage logging (called by model-router, fire-and-forget)

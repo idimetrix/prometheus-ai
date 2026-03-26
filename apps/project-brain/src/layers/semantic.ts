@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import { getInternalAuthHeaders } from "@prometheus/auth";
 import { codeEmbeddings, db, fileIndexes } from "@prometheus/db";
 import { createLogger } from "@prometheus/logger";
 import { generateId } from "@prometheus/utils";
@@ -30,7 +31,10 @@ export async function verifyEmbeddingService(): Promise<boolean> {
   try {
     const response = await fetch(`${MODEL_ROUTER_URL}/v1/embeddings`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        ...getInternalAuthHeaders(),
+      },
       body: JSON.stringify({ input: "health check" }),
       signal: AbortSignal.timeout(15_000),
     });
@@ -82,7 +86,10 @@ async function generateEmbedding(text: string): Promise<number[]> {
     try {
       const response = await fetch(`${MODEL_ROUTER_URL}/v1/embeddings`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...getInternalAuthHeaders(),
+        },
         body: JSON.stringify({ input: text }),
         signal: AbortSignal.timeout(30_000),
       });

@@ -60,6 +60,26 @@
       {
         "command": "prometheus.configure",
         "title": "Prometheus: Configure API Settings"
+      },
+      {
+        "command": "prometheus.explainCode",
+        "title": "Prometheus: Explain this code"
+      },
+      {
+        "command": "prometheus.refactorCode",
+        "title": "Prometheus: Refactor this"
+      },
+      {
+        "command": "prometheus.addTests",
+        "title": "Prometheus: Add tests"
+      },
+      {
+        "command": "prometheus.fixCode",
+        "title": "Prometheus: Fix this"
+      },
+      {
+        "command": "prometheus.optimizeCode",
+        "title": "Prometheus: Optimize"
       }
     ],
     "viewsContainers": {
@@ -100,6 +120,11 @@
           "default": "http://localhost:4000",
           "description": "URL of the Prometheus API server"
         },
+        "prometheus.apiKey": {
+          "type": "string",
+          "default": "",
+          "description": "API key for authentication. Can also be stored in VS Code Secret Storage."
+        },
         "prometheus.socketUrl": {
           "type": "string",
           "default": "ws://localhost:4001",
@@ -108,7 +133,30 @@
         "prometheus.apiToken": {
           "type": "string",
           "default": "",
-          "description": "API authentication token"
+          "description": "Legacy API authentication token (use apiKey instead)",
+          "deprecationMessage": "Use prometheus.apiKey instead"
+        },
+        "prometheus.inlineCompletions.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable inline code completions (ghost text suggestions)"
+        },
+        "prometheus.inlineCompletions.debounceMs": {
+          "type": "number",
+          "default": 300,
+          "minimum": 100,
+          "maximum": 2000,
+          "description": "Debounce delay in milliseconds before requesting inline completions"
+        },
+        "prometheus.defaultModel": {
+          "type": "string",
+          "default": "auto",
+          "description": "Default model to use for completions and chat (e.g., 'auto', 'gpt-4', 'claude-3')"
+        },
+        "prometheus.telemetry.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Allow anonymous usage telemetry to help improve Prometheus"
         }
       }
     },

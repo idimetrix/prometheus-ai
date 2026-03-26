@@ -4,6 +4,7 @@
  * Fallback: Voyage 3.5 API with circuit breaker (3 failures → 60s switchover)
  * Matryoshka truncation: 768-dim → 256-dim with L2 re-normalization
  */
+import { getInternalAuthHeaders } from "@prometheus/auth";
 import { createLogger } from "@prometheus/logger";
 
 const logger = createLogger("project-brain:embedding-service");
@@ -108,7 +109,10 @@ export class EmbeddingService {
     for (const text of texts) {
       const response = await fetch(`${OLLAMA_URL}/api/embeddings`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...getInternalAuthHeaders(),
+        },
         body: JSON.stringify({ model: EMBEDDING_MODEL, prompt: text }),
         signal: AbortSignal.timeout(30_000),
       });

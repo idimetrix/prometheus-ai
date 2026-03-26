@@ -1,0 +1,19 @@
+{
+  "name": "@prometheus/github-action",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsup src/index.ts --format esm --target node20 --outDir dist --no-splitting",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@actions/core": "^3.0.0",
+    "@actions/github": "^9.0.0"
+  },
+  "devDependencies": {
+    "tsup": "^8.5.1",
+    "typescript": "^6.0.2"
+  }
+}

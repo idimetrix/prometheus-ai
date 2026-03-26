@@ -3,18 +3,25 @@
  *
  * Handles PR/issue events from GitHub App installation.
  * Auto-creates tasks for:
- * - New issues with specific labels (e.g., "prometheus-auto")
+ * - New issues with specific labels (e.g., "prometheus-auto", "prometheus")
  * - PR review requests
+ * - PR review responses (triggers PRReviewResponder pipeline)
  * - PR comments mentioning @prometheus-bot
  * - Push events (trigger re-index)
  */
 
 import { createHmac, timingSafeEqual } from "node:crypto";
-import { db, processedWebhookEvents, projects, tasks } from "@prometheus/db";
+import {
+  db,
+  processedWebhookEvents,
+  projects,
+  syncedIssues,
+  tasks,
+} from "@prometheus/db";
 import { createLogger } from "@prometheus/logger";
 import { agentTaskQueue, indexingQueue } from "@prometheus/queue";
 import { generateId } from "@prometheus/utils";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import type { Context } from "hono";
 
 const logger = createLogger("api:webhooks:github-app");
@@ -54,11 +61,22 @@ interface GitHubWebhookPayload {
     full_name: string;
     clone_url: string;
   };
+  review?: {
+    body: string;
+    state: string;
+    user: { login: string };
+  };
   sender: { login: string };
 }
 
 const AUTO_LABEL = "prometheus-auto";
+const PROMETHEUS_LABEL = "prometheus";
 const BOT_MENTION = "@prometheus-bot";
+const BOT_USERS = new Set([
+  "prometheus-bot",
+  "prometheus[bot]",
+  "prometheus-ai",
+]);
 
 // ---------------------------------------------------------------------------
 // Signature verification
@@ -167,6 +185,9 @@ export async function handleGitHubAppWebhook(c: Context): Promise<Response> {
       case "pull_request":
         await handlePREvent(payload);
         break;
+      case "pull_request_review":
+        await handlePRReviewEvent(payload);
+        break;
       case "issue_comment":
       case "pull_request_review_comment":
         await handleCommentEvent(payload);
@@ -198,7 +219,10 @@ async function handleIssueEvent(payload: GitHubWebhookPayload): Promise<void> {
     return;
   }
 
-  const hasAutoLabel = issue.labels.some((l) => l.name === AUTO_LABEL);
+  // Trigger on either "prometheus-auto" or "prometheus" labels
+  const hasAutoLabel = issue.labels.some(
+    (l) => l.name === AUTO_LABEL || l.name === PROMETHEUS_LABEL
+  );
   if (!hasAutoLabel) {
     return;
   }
@@ -231,6 +255,45 @@ async function handleIssueEvent(payload: GitHubWebhookPayload): Promise<void> {
     priority: 50,
   });
 
+  // Upsert synced issue record to track the link
+  const existingSynced = await db.query.syncedIssues.findFirst({
+    where: and(
+      eq(syncedIssues.projectId, project.id),
+      eq(syncedIssues.provider, "github"),
+      eq(syncedIssues.externalId, String(issue.number))
+    ),
+  });
+
+  if (existingSynced) {
+    await db
+      .update(syncedIssues)
+      .set({
+        taskId,
+        sessionId,
+        assignedToAgent: true,
+        title: issue.title,
+        body: issue.body,
+        lastSyncedAt: new Date(),
+      })
+      .where(eq(syncedIssues.id, existingSynced.id));
+  } else {
+    await db.insert(syncedIssues).values({
+      id: generateId("si"),
+      projectId: project.id,
+      orgId: project.orgId,
+      provider: "github",
+      externalId: String(issue.number),
+      externalUrl: `https://github.com/${payload.repository.full_name}/issues/${issue.number}`,
+      title: issue.title,
+      body: issue.body,
+      externalStatus: "open",
+      taskId,
+      sessionId,
+      assignedToAgent: true,
+      lastSyncedAt: new Date(),
+    });
+  }
+
   await agentTaskQueue.add(`github-issue-${issue.number}`, {
     taskId,
     sessionId,
@@ -247,7 +310,7 @@ async function handleIssueEvent(payload: GitHubWebhookPayload): Promise<void> {
 
   logger.info(
     { taskId, issueNumber: issue.number },
-    "Task created from GitHub issue"
+    "Task created from GitHub issue (IssueResolver pipeline triggered)"
   );
 }
 
@@ -297,6 +360,84 @@ async function handlePREvent(payload: GitHubWebhookPayload): Promise<void> {
   logger.info(
     { taskId, prNumber: pr.number },
     "Review task created from GitHub PR"
+  );
+}
+
+/**
+ * Handle pull_request_review events — triggers PRReviewResponder pipeline.
+ * Enqueues an agent task to process review comments and respond.
+ */
+async function handlePRReviewEvent(
+  payload: GitHubWebhookPayload
+): Promise<void> {
+  if (payload.action !== "submitted") {
+    return;
+  }
+
+  const review = payload.review;
+  const pr = payload.pull_request;
+  if (!(review && pr && payload.repository)) {
+    return;
+  }
+
+  // Skip reviews from the bot itself to prevent loops
+  if (BOT_USERS.has(review.user.login.toLowerCase())) {
+    logger.debug(
+      { reviewer: review.user.login },
+      "Skipping self-review from bot"
+    );
+    return;
+  }
+
+  // Only respond to reviews on PRs created by our bot or reviews requesting changes
+  if (review.state !== "changes_requested" && review.state !== "commented") {
+    return;
+  }
+
+  const project = await findProjectByRepo(payload.repository.full_name);
+  if (!project) {
+    return;
+  }
+
+  const taskId = generateId("task");
+  const sessionId = generateId("ses");
+
+  await db.insert(tasks).values({
+    id: taskId,
+    sessionId,
+    projectId: project.id,
+    orgId: project.orgId,
+    title: `Respond to PR#${pr.number} review from ${review.user.login}`,
+    description: `Review state: ${review.state}\nReview body: ${review.body ?? "No comment"}\n\nPR: ${pr.title}\nBranch: ${pr.head.ref} → ${pr.base.ref}`,
+    status: "queued",
+    priority: 60,
+  });
+
+  await agentTaskQueue.add(
+    `github-pr-review-response-${pr.number}-${Date.now()}`,
+    {
+      taskId,
+      sessionId,
+      projectId: project.id,
+      orgId: project.orgId,
+      userId: project.orgId,
+      title: `Respond to PR review on PR#${pr.number}`,
+      description: `Process review feedback and apply requested changes:\n\n${review.body ?? ""}`,
+      mode: "task",
+      agentRole: null,
+      creditsReserved: 50,
+      planTier: "pro",
+    }
+  );
+
+  logger.info(
+    {
+      taskId,
+      prNumber: pr.number,
+      reviewer: review.user.login,
+      state: review.state,
+    },
+    "PRReviewResponder task created from GitHub PR review"
   );
 }
 

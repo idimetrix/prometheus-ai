@@ -75,7 +75,14 @@ export type {
   IndexStatus,
 } from "./indexing/incremental-indexer";
 export { IncrementalIndexer } from "./indexing/incremental-indexer";
-
+export { PackageGraph } from "./monorepo/package-graph";
+// ─── Monorepo Support ──────────────────────────────────────────
+export type {
+  WorkspaceDetectionResult,
+  WorkspacePackage,
+  WorkspaceType as MonorepoWorkspaceType,
+} from "./monorepo/workspace-detector";
+export { WorkspaceDetector } from "./monorepo/workspace-detector";
 // ─── Language Grammars ──────────────────────────────────────────
 export type { LanguageGrammar } from "./parsers/language-grammars";
 export {
@@ -86,7 +93,6 @@ export {
   getSupportedLanguages,
   LANGUAGE_GRAMMAR_URLS,
 } from "./parsers/language-grammars";
-
 // ─── Language Queries ───────────────────────────────────────────
 export type { LanguageQuery, QueryPattern } from "./parsers/language-queries";
 export {
@@ -95,7 +101,6 @@ export {
   mapToSymbolKind,
   SymbolKind as QuerySymbolKind,
 } from "./parsers/language-queries";
-
 // ─── Parsers ────────────────────────────────────────────────────
 export type {
   EditRange,
@@ -103,7 +108,6 @@ export type {
   SupportedLanguage,
 } from "./parsers/tree-sitter-wasm";
 export { TreeSitterParser } from "./parsers/tree-sitter-wasm";
-
 // ─── ast-grep search ────────────────────────────────────────────
 export type {
   AntiPattern,
@@ -115,7 +119,6 @@ export {
   astGrepSearch,
   searchAntiPatterns,
 } from "./search/ast-grep-engine";
-
 // ─── Zoekt code search ─────────────────────────────────────────
 export type {
   MatchRange,

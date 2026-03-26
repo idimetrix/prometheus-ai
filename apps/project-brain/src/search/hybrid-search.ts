@@ -6,6 +6,7 @@
  * Target: p99 < 500ms.
  */
 
+import { getInternalAuthHeaders } from "@prometheus/auth";
 import { createLogger } from "@prometheus/logger";
 import type { SearchResult, SemanticLayer } from "../layers/semantic";
 import {
@@ -355,7 +356,10 @@ export class HybridSearch {
           `${SANDBOX_MANAGER_URL}/sandbox/${encodeURIComponent(projectId)}/exec`,
           {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
+            headers: {
+              "Content-Type": "application/json",
+              ...getInternalAuthHeaders(),
+            },
             body: JSON.stringify({ command, timeout: 10_000 }),
             signal: AbortSignal.timeout(15_000),
           }

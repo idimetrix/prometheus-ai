@@ -1,3 +1,4 @@
+import { getInternalAuthHeaders } from "@prometheus/auth";
 import { createLogger } from "@prometheus/logger";
 
 const logger = createLogger("orchestrator:context");
@@ -112,7 +113,10 @@ export class ContextManager {
         `${PROJECT_BRAIN_URL}/api/projects/${this.projectId}/context`,
         {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: {
+            "Content-Type": "application/json",
+            ...getInternalAuthHeaders(),
+          },
           body: JSON.stringify({ query, agentRole, sessionId: this.sessionId }),
           signal: AbortSignal.timeout(5000),
         }
@@ -300,7 +304,10 @@ export class ContextManager {
     try {
       const response = await fetch(`${PROJECT_BRAIN_URL}/context/assemble`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...getInternalAuthHeaders(),
+        },
         body: JSON.stringify({
           projectId: this.projectId,
           sessionId: this.sessionId,
@@ -350,7 +357,10 @@ export class ContextManager {
     try {
       const response = await fetch(`${modelRouterUrl}/route`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...getInternalAuthHeaders(),
+        },
         body: JSON.stringify({
           slot: "fastLoop",
           messages: [

@@ -1,3 +1,4 @@
+import { getInternalAuthHeaders } from "@prometheus/auth";
 import { createLogger } from "@prometheus/logger";
 
 const logger = createLogger("project-brain:memgraph");
@@ -164,7 +165,10 @@ export class MemgraphClient {
     try {
       const response = await fetch(`${this.httpEndpoint}/query`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...getInternalAuthHeaders(),
+        },
         body: JSON.stringify({
           statements: [{ statement: query, parameters }],
         }),

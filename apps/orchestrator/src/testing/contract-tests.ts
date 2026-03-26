@@ -6,6 +6,7 @@
  * and returns the expected response shapes.
  */
 
+import { getInternalAuthHeaders } from "@prometheus/auth";
 import { createLogger } from "@prometheus/logger";
 
 const logger = createLogger("orchestrator:contract-tests");
@@ -77,7 +78,10 @@ export class ContractTestRunner {
       // Test task submission contract
       const taskResponse = await fetch(`${url}/contract-test`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...getInternalAuthHeaders(),
+        },
         body: JSON.stringify({
           type: "contract_test",
           description: "Contract test ping",
@@ -143,7 +147,10 @@ export class ContractTestRunner {
       // Test route endpoint contract
       const routeResponse = await fetch(`${url}/route`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...getInternalAuthHeaders(),
+        },
         body: JSON.stringify({
           slot: "background",
           messages: [{ role: "user", content: "Contract test" }],

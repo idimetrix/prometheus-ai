@@ -1,3 +1,4 @@
+import { getInternalAuthHeaders } from "@prometheus/auth";
 import { createLogger } from "@prometheus/logger";
 import { generateId } from "@prometheus/utils";
 import type { DeploymentConfig, DeploymentResult } from "./index";
@@ -24,7 +25,10 @@ export async function deployToDocker(
 
     const res = await fetch(`${SANDBOX_MANAGER_URL}/containers`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        ...getInternalAuthHeaders(),
+      },
       body: JSON.stringify({
         id: containerId,
         projectId: config.projectId,

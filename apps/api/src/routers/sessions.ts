@@ -1,3 +1,4 @@
+import { getInternalAuthHeaders } from "@prometheus/auth";
 import type { Database } from "@prometheus/db";
 import {
   organizations,
@@ -300,7 +301,10 @@ export const sessionsRouter = router({
       try {
         await fetch(`${ORCHESTRATOR_URL}/sessions/${input.sessionId}/pause`, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: {
+            "Content-Type": "application/json",
+            ...getInternalAuthHeaders(),
+          },
         });
       } catch (err) {
         logger.warn(
@@ -346,7 +350,10 @@ export const sessionsRouter = router({
       try {
         await fetch(`${ORCHESTRATOR_URL}/sessions/${input.sessionId}/resume`, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: {
+            "Content-Type": "application/json",
+            ...getInternalAuthHeaders(),
+          },
         });
       } catch (err) {
         logger.warn(
@@ -418,7 +425,10 @@ export const sessionsRouter = router({
       try {
         await fetch(`${ORCHESTRATOR_URL}/sessions/${input.sessionId}/cancel`, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: {
+            "Content-Type": "application/json",
+            ...getInternalAuthHeaders(),
+          },
         });
       } catch (err) {
         logger.warn(
@@ -590,7 +600,10 @@ export const sessionsRouter = router({
         `${ORCHESTRATOR_URL}/checkpoints/${input.checkpointId}/respond`,
         {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: {
+            "Content-Type": "application/json",
+            ...getInternalAuthHeaders(),
+          },
           body: JSON.stringify({
             action: "approve",
             userId: ctx.auth.userId,
@@ -647,7 +660,10 @@ export const sessionsRouter = router({
         `${ORCHESTRATOR_URL}/checkpoints/${input.checkpointId}/respond`,
         {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: {
+            "Content-Type": "application/json",
+            ...getInternalAuthHeaders(),
+          },
           body: JSON.stringify({
             action: "reject",
             message: input.reason ?? null,
@@ -717,7 +733,10 @@ export const sessionsRouter = router({
         `${ORCHESTRATOR_URL}/checkpoints/${input.checkpointId}/respond`,
         {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: {
+            "Content-Type": "application/json",
+            ...getInternalAuthHeaders(),
+          },
           body: JSON.stringify({
             action: "modify",
             data: { steps: input.steps },
@@ -789,7 +808,10 @@ export const sessionsRouter = router({
         `${ORCHESTRATOR_URL}/sessions/${input.sessionId}/takeover`,
         {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: {
+            "Content-Type": "application/json",
+            ...getInternalAuthHeaders(),
+          },
           body: JSON.stringify({ userId: ctx.auth.userId }),
         }
       );
@@ -835,7 +857,10 @@ export const sessionsRouter = router({
         `${ORCHESTRATOR_URL}/checkpoints/${input.checkpointId}/respond`,
         {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: {
+            "Content-Type": "application/json",
+            ...getInternalAuthHeaders(),
+          },
           body: JSON.stringify({
             action: "approve",
             data: input.data,
@@ -893,7 +918,10 @@ export const sessionsRouter = router({
         `${ORCHESTRATOR_URL}/checkpoints/${input.checkpointId}/respond`,
         {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: {
+            "Content-Type": "application/json",
+            ...getInternalAuthHeaders(),
+          },
           body: JSON.stringify({
             action: "reject",
             message: input.reason,
@@ -950,7 +978,10 @@ export const sessionsRouter = router({
         `${ORCHESTRATOR_URL}/sessions/${input.sessionId}/release`,
         {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: {
+            "Content-Type": "application/json",
+            ...getInternalAuthHeaders(),
+          },
           body: JSON.stringify({
             userId: ctx.auth.userId,
             context: undefined,

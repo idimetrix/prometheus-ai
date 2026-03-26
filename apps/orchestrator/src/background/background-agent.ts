@@ -1,3 +1,4 @@
+import { getInternalAuthHeaders } from "@prometheus/auth";
 import { createLogger } from "@prometheus/logger";
 import type { AgentLoop } from "../agent-loop";
 
@@ -108,7 +109,10 @@ export class BackgroundAgent {
   private async runFullIndex(projectId: string): Promise<string> {
     const response = await fetch(`${PROJECT_BRAIN_URL}/index/directory`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        ...getInternalAuthHeaders(),
+      },
       body: JSON.stringify({ projectId, dirPath: `/workspace/${projectId}` }),
       signal: AbortSignal.timeout(300_000), // 5 min timeout
     });
@@ -144,7 +148,10 @@ Report findings with severity (CRITICAL/HIGH/MEDIUM/LOW) and file locations.`,
   private async runConventionExtract(projectId: string): Promise<string> {
     const response = await fetch(`${PROJECT_BRAIN_URL}/conventions/extract`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        ...getInternalAuthHeaders(),
+      },
       body: JSON.stringify({
         projectId,
         files: [], // Empty means analyze all indexed files

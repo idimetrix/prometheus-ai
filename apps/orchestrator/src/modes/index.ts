@@ -1,5 +1,6 @@
 import type { AgentMode } from "@prometheus/types";
 import { AskModeHandler } from "./ask";
+import { DesignModeHandler } from "./design-mode-handler";
 import { FleetModeHandler } from "./fleet";
 import { PlanModeHandler } from "./plan";
 import { TaskModeHandler } from "./task";
@@ -14,6 +15,7 @@ const MODE_HANDLERS: Record<string, ModeHandler> = {
   plan: new PlanModeHandler(),
   watch: new WatchModeHandler(),
   fleet: new FleetModeHandler(),
+  design: new DesignModeHandler(),
 };
 
 export function getModeHandler(mode: AgentMode): ModeHandler {
@@ -27,6 +29,7 @@ export function getModeHandler(mode: AgentMode): ModeHandler {
 }
 
 export { AskModeHandler } from "./ask";
+export { DesignModeHandler } from "./design-mode-handler";
 export { FleetModeHandler } from "./fleet";
 export { PlanModeHandler } from "./plan";
 export { TaskModeHandler } from "./task";

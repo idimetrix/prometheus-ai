@@ -1,4 +1,16 @@
+export {
+  type CIFailureCategory,
+  type CIFailureData,
+  CILogFetcher,
+  type ParsedCILog,
+} from "./ci-log-fetcher";
 export { type CILoopResult, CILoopRunner } from "./ci-loop-runner";
+export {
+  type CheckRunPayload,
+  type CheckSuitePayload,
+  type CIWebhookEvent,
+  CIWebhookHandler,
+} from "./ci-webhook-handler";
 export {
   type CoverageData,
   type CoverageSummary,

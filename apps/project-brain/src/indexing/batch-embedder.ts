@@ -7,6 +7,7 @@
  * staleness detection.
  */
 
+import { getInternalAuthHeaders } from "@prometheus/auth";
 import { createLogger } from "@prometheus/logger";
 
 const logger = createLogger("project-brain:batch-embedder");
@@ -271,7 +272,10 @@ export class BatchEmbedder {
     for (const text of texts) {
       const response = await fetch(`${this.baseUrl}/api/embeddings`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...getInternalAuthHeaders(),
+        },
         body: JSON.stringify({
           model: this.config.model,
           prompt: text,

@@ -6,6 +6,7 @@
  * Caches loaded context for reuse within a session.
  */
 
+import { getInternalAuthHeaders } from "@prometheus/auth";
 import { createLogger } from "@prometheus/logger";
 
 const logger = createLogger("orchestrator:progressive-loader");
@@ -69,7 +70,10 @@ export class ProgressiveContextLoader {
       const response = await fetch(
         `${BRAIN_BASE_URL}/analysis/${projectId}/summary`,
         {
-          headers: { "Content-Type": "application/json" },
+          headers: {
+            "Content-Type": "application/json",
+            ...getInternalAuthHeaders(),
+          },
           signal: AbortSignal.timeout(15_000),
         }
       );
@@ -128,7 +132,10 @@ export class ProgressiveContextLoader {
       const response = await fetch(
         `${BRAIN_BASE_URL}/files/detail?path=${encodedPath}`,
         {
-          headers: { "Content-Type": "application/json" },
+          headers: {
+            "Content-Type": "application/json",
+            ...getInternalAuthHeaders(),
+          },
           signal: AbortSignal.timeout(10_000),
         }
       );
@@ -185,7 +192,10 @@ export class ProgressiveContextLoader {
       const response = await fetch(
         `${BRAIN_BASE_URL}/search/symbol?name=${encodedSymbol}`,
         {
-          headers: { "Content-Type": "application/json" },
+          headers: {
+            "Content-Type": "application/json",
+            ...getInternalAuthHeaders(),
+          },
           signal: AbortSignal.timeout(10_000),
         }
       );

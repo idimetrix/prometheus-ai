@@ -1,4 +1,5 @@
 import { serve } from "@hono/node-server";
+import { internalAuthMiddleware } from "@prometheus/auth";
 import { createLogger } from "@prometheus/logger";
 import {
   initSentry,
@@ -45,27 +46,7 @@ app.use("/*", traceMiddleware("project-brain"));
 app.use("/*", metricsMiddleware());
 
 // Shared-secret auth middleware for internal service-to-service calls
-app.use("/*", async (c, next) => {
-  if (
-    c.req.path === "/health" ||
-    c.req.path === "/live" ||
-    c.req.path === "/ready" ||
-    c.req.path === "/metrics"
-  ) {
-    return next();
-  }
-  const secret = process.env.INTERNAL_SERVICE_SECRET;
-  if (secret) {
-    const provided = c.req.header("x-internal-secret");
-    if (provided !== secret) {
-      return c.json({ error: "Unauthorized" }, 401);
-    }
-  } else if (process.env.NODE_ENV === "production") {
-    return c.json({ error: "Unauthorized" }, 401);
-  }
-  await next();
-  return;
-});
+app.use("/*", internalAuthMiddleware());
 
 // Initialize layers
 const semantic = new SemanticLayer();
@@ -146,8 +127,59 @@ app.get("/health", async (c) => {
 // Liveness probe — lightweight, just confirms process is responsive
 app.get("/live", (c) => c.json({ status: "ok" }));
 
-// Readiness probe — can accept traffic
-app.get("/ready", (c) => c.json({ status: "ready" }));
+// Readiness probe — checks all dependencies are connected
+app.get("/ready", async (c) => {
+  const checks: Record<string, boolean> = {};
+
+  try {
+    const { db } = await import("@prometheus/db");
+    const { sql } = await import("drizzle-orm");
+    await db.execute(sql`SELECT 1`);
+    checks.db = true;
+  } catch {
+    checks.db = false;
+  }
+
+  try {
+    checks.embedding = await verifyEmbeddingService();
+  } catch {
+    checks.embedding = false;
+  }
+
+  const allReady = Object.values(checks).every(Boolean);
+
+  if (!allReady) {
+    return c.json({ status: "not ready", checks }, 503);
+  }
+  return c.json({ status: "ready", checks });
+});
+
+// Readiness probe (alias)
+app.get("/health/ready", async (c) => {
+  const checks: Record<string, boolean> = {};
+
+  try {
+    const { db } = await import("@prometheus/db");
+    const { sql } = await import("drizzle-orm");
+    await db.execute(sql`SELECT 1`);
+    checks.db = true;
+  } catch {
+    checks.db = false;
+  }
+
+  try {
+    checks.embedding = await verifyEmbeddingService();
+  } catch {
+    checks.embedding = false;
+  }
+
+  const allReady = Object.values(checks).every(Boolean);
+
+  if (!allReady) {
+    return c.json({ status: "not ready", checks }, 503);
+  }
+  return c.json({ status: "ready", checks });
+});
 
 // ---- Context Assembly ----
 
