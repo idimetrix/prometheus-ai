@@ -23,7 +23,7 @@
     "@prometheus/types": "workspace:*",
     "@prometheus/utils": "workspace:*",
     "bullmq": "^5.71.1",
-    "drizzle-orm": "^0.45.1",
+    "drizzle-orm": "^0.45.2",
     "ioredis": "5.10.1"
   },
   "devDependencies": {

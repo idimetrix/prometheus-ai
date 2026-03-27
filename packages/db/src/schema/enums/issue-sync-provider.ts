@@ -7,6 +7,8 @@ export const issueSyncProviderValues = [
   "bitbucket",
   "linear",
   "jira",
+  "azure_devops",
+  "gitea",
 ] as const;
 export type IssueSyncProvider = (typeof issueSyncProviderValues)[number];
 export const issueSyncProviderEnum = pgEnum(

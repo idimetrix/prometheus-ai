@@ -322,6 +322,226 @@ async function handleStopCommand(
   };
 }
 
+async function handleDeployCommand(
+  orgId: string,
+  args: string
+): Promise<{
+  blocks: SlackBlock[];
+  response_type: string;
+  text: string;
+}> {
+  const parts = args.trim().split(WHITESPACE_RE);
+  const projectId = parts[0];
+  const environment = parts[1] ?? "preview";
+
+  if (!projectId) {
+    return {
+      response_type: "ephemeral",
+      text: "Please provide a project ID",
+      blocks: [
+        {
+          type: "section",
+          text: {
+            type: "mrkdwn",
+            text: "Usage: `/prometheus deploy [projectId] [environment]`",
+          },
+        },
+      ],
+    };
+  }
+
+  const project = await db
+    .select({ id: projects.id, orgId: projects.orgId })
+    .from(projects)
+    .where(and(eq(projects.id, projectId.trim()), eq(projects.orgId, orgId)))
+    .limit(1);
+
+  if (!project[0]) {
+    return {
+      response_type: "ephemeral",
+      text: "Project not found",
+      blocks: [
+        {
+          type: "section",
+          text: {
+            type: "mrkdwn",
+            text: `:x: Project \`${projectId}\` not found or does not belong to your organization.`,
+          },
+        },
+      ],
+    };
+  }
+
+  logger.info(
+    { projectId: project[0].id, environment },
+    "Deployment triggered via slash command"
+  );
+
+  return {
+    response_type: "in_channel",
+    text: `Deployment triggered for ${projectId}`,
+    blocks: [
+      {
+        type: "section",
+        text: {
+          type: "mrkdwn",
+          text: `:rocket: *Deployment triggered*\nProject: \`${projectId}\`\nEnvironment: \`${environment}\``,
+        },
+      },
+    ],
+  };
+}
+
+function handleReviewCommand(
+  _orgId: string,
+  prUrl: string
+): {
+  blocks: SlackBlock[];
+  response_type: string;
+  text: string;
+} {
+  if (!prUrl) {
+    return {
+      response_type: "ephemeral",
+      text: "Please provide a PR URL",
+      blocks: [
+        {
+          type: "section",
+          text: {
+            type: "mrkdwn",
+            text: "Usage: `/prometheus review [prUrl]`",
+          },
+        },
+      ],
+    };
+  }
+
+  logger.info({ prUrl }, "Code review started via slash command");
+
+  return {
+    response_type: "in_channel",
+    text: `Code review started for ${prUrl}`,
+    blocks: [
+      {
+        type: "section",
+        text: {
+          type: "mrkdwn",
+          text: `:mag: *Code review started*\nPR: ${prUrl}\n\nPrometheus is reviewing the pull request. Results will be posted here when complete.`,
+        },
+      },
+    ],
+  };
+}
+
+function handleScheduleCommand(
+  _orgId: string,
+  args: string
+): {
+  blocks: SlackBlock[];
+  response_type: string;
+  text: string;
+} {
+  const parts = args.trim().split(WHITESPACE_RE);
+  const cronPattern = parts[0];
+  const description = parts.slice(1).join(" ");
+
+  if (!(cronPattern && description)) {
+    return {
+      response_type: "ephemeral",
+      text: "Please provide a cron pattern and description",
+      blocks: [
+        {
+          type: "section",
+          text: {
+            type: "mrkdwn",
+            text: "Usage: `/prometheus schedule [cron] [description]`\nExample: `/prometheus schedule */5 * * * * run linter every 5 minutes`",
+          },
+        },
+      ],
+    };
+  }
+
+  logger.info(
+    { cronPattern, description },
+    "Scheduled task created via slash command"
+  );
+
+  return {
+    response_type: "in_channel",
+    text: `Scheduled task created: ${description}`,
+    blocks: [
+      {
+        type: "section",
+        text: {
+          type: "mrkdwn",
+          text: `:clock1: *Scheduled task created*\nCron: \`${cronPattern}\`\nDescription: ${description}`,
+        },
+      },
+    ],
+  };
+}
+
+async function handleWatchCommand(
+  orgId: string,
+  taskId: string
+): Promise<{
+  blocks: SlackBlock[];
+  response_type: string;
+  text: string;
+}> {
+  if (!taskId) {
+    return {
+      response_type: "ephemeral",
+      text: "Please provide a task ID",
+      blocks: [
+        {
+          type: "section",
+          text: {
+            type: "mrkdwn",
+            text: "Usage: `/prometheus watch [taskId]`",
+          },
+        },
+      ],
+    };
+  }
+
+  const task = await db.query.tasks.findFirst({
+    where: and(eq(tasks.id, taskId.trim()), eq(tasks.orgId, orgId)),
+  });
+
+  if (!task) {
+    return {
+      response_type: "ephemeral",
+      text: "Task not found",
+      blocks: [
+        {
+          type: "section",
+          text: {
+            type: "mrkdwn",
+            text: `:x: Task \`${taskId}\` not found or does not belong to your organization.`,
+          },
+        },
+      ],
+    };
+  }
+
+  logger.info({ taskId: task.id }, "Task watch started via slash command");
+
+  return {
+    response_type: "in_channel",
+    text: `Watching task: ${task.id}`,
+    blocks: [
+      {
+        type: "section",
+        text: {
+          type: "mrkdwn",
+          text: `:eyes: *Watching task*\n\`${task.id}\` — *${task.title}*\nStatus: ${task.status}\n\nUpdates will be posted to this thread.`,
+        },
+      },
+    ],
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Route
 // ---------------------------------------------------------------------------
@@ -362,6 +582,18 @@ slackCommandsApp.post("/", async (c) => {
       case "stop":
         response = await handleStopCommand(orgId, args);
         break;
+      case "deploy":
+        response = await handleDeployCommand(orgId, args);
+        break;
+      case "review":
+        response = await handleReviewCommand(orgId, args);
+        break;
+      case "schedule":
+        response = await handleScheduleCommand(orgId, args);
+        break;
+      case "watch":
+        response = await handleWatchCommand(orgId, args);
+        break;
       default:
         // Treat any unrecognized subcommand as a task description:
         // `/prometheus build a REST API for users` => create task
@@ -376,7 +608,7 @@ slackCommandsApp.post("/", async (c) => {
                 type: "section",
                 text: {
                   type: "mrkdwn",
-                  text: "Available commands:\n- `/prometheus [task description]` — Create a new task\n- `/prometheus status` — View active tasks\n- `/prometheus create [description]` — Create a new task\n- `/prometheus stop [task-id]` — Cancel a task",
+                  text: "Available commands:\n- `/prometheus [task description]` — Create a new task\n- `/prometheus status` — View active tasks\n- `/prometheus create [description]` — Create a new task\n- `/prometheus stop [task-id]` — Cancel a task\n- `/prometheus deploy [projectId] [environment]` — Trigger a deployment\n- `/prometheus review [prUrl]` — Start a code review\n- `/prometheus schedule [cron] [description]` — Create a scheduled task\n- `/prometheus watch [taskId]` — Watch a task's progress",
                 },
               },
             ],

@@ -14,8 +14,8 @@
   "dependencies": {
     "hono": "^4.12.9",
     "@hono/node-server": "^1.19.11",
-    "ai": "^6.0.138",
-    "drizzle-orm": "^0.45.1",
+    "ai": "^6.0.141",
+    "drizzle-orm": "^0.45.2",
     "ioredis": "5.10.1",
     "@prometheus/db": "workspace:*",
     "@prometheus/types": "workspace:*",

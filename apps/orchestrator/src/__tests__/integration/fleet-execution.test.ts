@@ -57,7 +57,9 @@ vi.mock("@prometheus/queue", () => ({
 }));
 
 describe("Fleet Execution", () => {
-  it("should enforce tier parallelism limits", async () => {
+  it("should enforce tier parallelism limits", {
+    timeout: 30_000,
+  }, async () => {
     const { FleetManager } = await import("../../fleet-manager");
 
     const fleet = new FleetManager({

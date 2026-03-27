@@ -26,7 +26,7 @@
     "@prometheus/queue": "workspace:*",
     "@prometheus/logger": "workspace:*",
     "@prometheus/utils": "workspace:*",
-    "drizzle-orm": "^0.45.1",
+    "drizzle-orm": "^0.45.2",
     "zod": "^4.3.6"
   },
   "devDependencies": {

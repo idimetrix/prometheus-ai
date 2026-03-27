@@ -1,30 +1,12 @@
+import { customAgents, customAgentVersions } from "@prometheus/db";
 import { createLogger } from "@prometheus/logger";
 import { generateId } from "@prometheus/utils";
 import { TRPCError } from "@trpc/server";
+import { and, desc, eq } from "drizzle-orm";
 import { z } from "zod";
 import { protectedProcedure, router } from "../trpc";
 
 const logger = createLogger("custom-agents-router");
-
-/* -------------------------------------------------------------------------- */
-/*  In-memory store (replace with DB table in production)                      */
-/* -------------------------------------------------------------------------- */
-
-interface CustomAgentRecord {
-  createdAt: Date;
-  createdBy: string;
-  description: string;
-  id: string;
-  isShared: boolean;
-  modelPreference: string;
-  name: string;
-  orgId: string;
-  systemPrompt: string;
-  tools: string[];
-  updatedAt: Date;
-}
-
-const agentStore = new Map<string, CustomAgentRecord>();
 
 /* -------------------------------------------------------------------------- */
 /*  Available tools for selection                                              */
@@ -75,25 +57,32 @@ export const customAgentsRouter = router({
         isShared: z.boolean().default(false),
       })
     )
-    .mutation(({ input, ctx }) => {
-      const id = generateId();
-      const now = new Date();
+    .mutation(async ({ input, ctx }) => {
+      const id = generateId("cag");
 
-      const agent: CustomAgentRecord = {
-        id,
-        name: input.name,
-        description: input.description,
-        systemPrompt: input.systemPrompt,
-        tools: input.tools,
-        modelPreference: input.modelPreference,
-        orgId: ctx.orgId,
-        createdBy: ctx.auth.userId,
-        isShared: input.isShared,
-        createdAt: now,
-        updatedAt: now,
-      };
+      const rows = await ctx.db
+        .insert(customAgents)
+        .values({
+          id,
+          orgId: ctx.orgId,
+          name: input.name,
+          description: input.description,
+          systemPrompt: input.systemPrompt,
+          tools: input.tools,
+          modelPreference: input.modelPreference,
+          isShared: input.isShared,
+          version: 1,
+          createdBy: ctx.auth.userId,
+        })
+        .returning();
 
-      agentStore.set(id, agent);
+      const agent = rows[0];
+      if (!agent) {
+        throw new TRPCError({
+          code: "INTERNAL_SERVER_ERROR",
+          message: "Failed to create agent",
+        });
+      }
 
       logger.info(
         { id, name: input.name, orgId: ctx.orgId },
@@ -107,6 +96,7 @@ export const customAgentsRouter = router({
         tools: agent.tools,
         modelPreference: agent.modelPreference,
         isShared: agent.isShared,
+        version: agent.version,
         createdAt: agent.createdAt.toISOString(),
       };
     }),
@@ -124,31 +114,34 @@ export const customAgentsRouter = router({
         .optional()
         .default({ limit: 50, offset: 0 })
     )
-    .query(({ input, ctx }) => {
-      const agents: CustomAgentRecord[] = [];
+    .query(async ({ input, ctx }) => {
+      const agents = await ctx.db.query.customAgents.findMany({
+        where: eq(customAgents.orgId, ctx.orgId),
+        orderBy: [desc(customAgents.updatedAt)],
+        limit: input.limit,
+        offset: input.offset,
+      });
 
-      for (const agent of agentStore.values()) {
-        if (agent.orgId === ctx.orgId) {
-          agents.push(agent);
-        }
-      }
+      const totalResult = await ctx.db
+        .select({ count: customAgents.id })
+        .from(customAgents)
+        .where(eq(customAgents.orgId, ctx.orgId));
 
-      agents.sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime());
+      const total = totalResult.length;
 
-      const items = agents
-        .slice(input.offset, input.offset + input.limit)
-        .map((a) => ({
-          id: a.id,
-          name: a.name,
-          description: a.description,
-          tools: a.tools,
-          modelPreference: a.modelPreference,
-          isShared: a.isShared,
-          createdAt: a.createdAt.toISOString(),
-          updatedAt: a.updatedAt.toISOString(),
-        }));
+      const items = agents.map((a) => ({
+        id: a.id,
+        name: a.name,
+        description: a.description,
+        tools: a.tools,
+        modelPreference: a.modelPreference,
+        isShared: a.isShared,
+        version: a.version,
+        createdAt: a.createdAt.toISOString(),
+        updatedAt: a.updatedAt.toISOString(),
+      }));
 
-      return { items, total: agents.length };
+      return { items, total };
     }),
 
   /**
@@ -156,10 +149,15 @@ export const customAgentsRouter = router({
    */
   get: protectedProcedure
     .input(z.object({ id: z.string().min(1) }))
-    .query(({ input, ctx }) => {
-      const agent = agentStore.get(input.id);
+    .query(async ({ input, ctx }) => {
+      const agent = await ctx.db.query.customAgents.findFirst({
+        where: and(
+          eq(customAgents.id, input.id),
+          eq(customAgents.orgId, ctx.orgId)
+        ),
+      });
 
-      if (!agent || agent.orgId !== ctx.orgId) {
+      if (!agent) {
         throw new TRPCError({
           code: "NOT_FOUND",
           message: "Custom agent not found",
@@ -174,6 +172,7 @@ export const customAgentsRouter = router({
         tools: agent.tools,
         modelPreference: agent.modelPreference,
         isShared: agent.isShared,
+        version: agent.version,
         createdBy: agent.createdBy,
         createdAt: agent.createdAt.toISOString(),
         updatedAt: agent.updatedAt.toISOString(),
@@ -182,6 +181,7 @@ export const customAgentsRouter = router({
 
   /**
    * Update a custom agent.
+   * Saves the current state to customAgentVersions before applying changes.
    */
   update: protectedProcedure
     .input(
@@ -195,39 +195,77 @@ export const customAgentsRouter = router({
         isShared: z.boolean().optional(),
       })
     )
-    .mutation(({ input, ctx }) => {
-      const agent = agentStore.get(input.id);
+    .mutation(async ({ input, ctx }) => {
+      const existing = await ctx.db.query.customAgents.findFirst({
+        where: and(
+          eq(customAgents.id, input.id),
+          eq(customAgents.orgId, ctx.orgId)
+        ),
+      });
 
-      if (!agent || agent.orgId !== ctx.orgId) {
+      if (!existing) {
         throw new TRPCError({
           code: "NOT_FOUND",
           message: "Custom agent not found",
         });
       }
 
+      // Save the current state as a version snapshot before applying changes
+      await ctx.db.insert(customAgentVersions).values({
+        id: generateId("cav"),
+        agentId: existing.id,
+        version: existing.version ?? 1,
+        name: existing.name,
+        description: existing.description,
+        systemPrompt: existing.systemPrompt,
+        tools: existing.tools,
+        modelPreference: existing.modelPreference,
+        createdBy: ctx.auth.userId,
+      });
+
+      // Build the update payload with only provided fields
+      const updates: Record<string, unknown> = {
+        version: (existing.version ?? 1) + 1,
+        updatedAt: new Date(),
+      };
+
       if (input.name !== undefined) {
-        agent.name = input.name;
+        updates.name = input.name;
       }
       if (input.description !== undefined) {
-        agent.description = input.description;
+        updates.description = input.description;
       }
       if (input.systemPrompt !== undefined) {
-        agent.systemPrompt = input.systemPrompt;
+        updates.systemPrompt = input.systemPrompt;
       }
       if (input.tools !== undefined) {
-        agent.tools = input.tools;
+        updates.tools = input.tools;
       }
       if (input.modelPreference !== undefined) {
-        agent.modelPreference = input.modelPreference;
+        updates.modelPreference = input.modelPreference;
       }
       if (input.isShared !== undefined) {
-        agent.isShared = input.isShared;
+        updates.isShared = input.isShared;
       }
-      agent.updatedAt = new Date();
 
-      agentStore.set(input.id, agent);
+      const updatedRows = await ctx.db
+        .update(customAgents)
+        .set(updates)
+        .where(eq(customAgents.id, input.id))
+        .returning();
 
-      logger.info({ id: input.id, orgId: ctx.orgId }, "Custom agent updated");
+      const agent = updatedRows[0];
+      if (!agent) {
+        throw new TRPCError({
+          code: "INTERNAL_SERVER_ERROR",
+          message: "Failed to update agent",
+        });
+      }
+
+      logger.info(
+        { id: input.id, orgId: ctx.orgId, version: agent.version },
+        "Custom agent updated"
+      );
 
       return {
         id: agent.id,
@@ -236,30 +274,183 @@ export const customAgentsRouter = router({
         tools: agent.tools,
         modelPreference: agent.modelPreference,
         isShared: agent.isShared,
+        version: agent.version,
         updatedAt: agent.updatedAt.toISOString(),
       };
     }),
 
   /**
-   * Delete a custom agent.
+   * Delete a custom agent and all its versions.
    */
   delete: protectedProcedure
     .input(z.object({ id: z.string().min(1) }))
-    .mutation(({ input, ctx }) => {
-      const agent = agentStore.get(input.id);
+    .mutation(async ({ input, ctx }) => {
+      const agent = await ctx.db.query.customAgents.findFirst({
+        where: and(
+          eq(customAgents.id, input.id),
+          eq(customAgents.orgId, ctx.orgId)
+        ),
+      });
 
-      if (!agent || agent.orgId !== ctx.orgId) {
+      if (!agent) {
         throw new TRPCError({
           code: "NOT_FOUND",
           message: "Custom agent not found",
         });
       }
 
-      agentStore.delete(input.id);
+      // Versions are cascade-deleted via FK constraint
+      await ctx.db.delete(customAgents).where(eq(customAgents.id, input.id));
 
       logger.info({ id: input.id, orgId: ctx.orgId }, "Custom agent deleted");
 
       return { success: true };
+    }),
+
+  /**
+   * Rollback a custom agent to a previous version.
+   */
+  rollback: protectedProcedure
+    .input(
+      z.object({
+        id: z.string().min(1),
+        versionId: z.string().min(1),
+      })
+    )
+    .mutation(async ({ input, ctx }) => {
+      const agent = await ctx.db.query.customAgents.findFirst({
+        where: and(
+          eq(customAgents.id, input.id),
+          eq(customAgents.orgId, ctx.orgId)
+        ),
+      });
+
+      if (!agent) {
+        throw new TRPCError({
+          code: "NOT_FOUND",
+          message: "Custom agent not found",
+        });
+      }
+
+      const targetVersion = await ctx.db.query.customAgentVersions.findFirst({
+        where: and(
+          eq(customAgentVersions.id, input.versionId),
+          eq(customAgentVersions.agentId, input.id)
+        ),
+      });
+
+      if (!targetVersion) {
+        throw new TRPCError({
+          code: "NOT_FOUND",
+          message: "Version not found",
+        });
+      }
+
+      // Save the current state before rollback
+      const currentVersion = agent.version ?? 1;
+      await ctx.db.insert(customAgentVersions).values({
+        id: generateId("cav"),
+        agentId: agent.id,
+        version: currentVersion,
+        name: agent.name,
+        description: agent.description,
+        systemPrompt: agent.systemPrompt,
+        tools: agent.tools,
+        modelPreference: agent.modelPreference,
+        createdBy: ctx.auth.userId,
+      });
+
+      // Restore from the target version
+      const restoredRows = await ctx.db
+        .update(customAgents)
+        .set({
+          name: targetVersion.name,
+          description: targetVersion.description,
+          systemPrompt: targetVersion.systemPrompt,
+          tools: targetVersion.tools,
+          modelPreference: targetVersion.modelPreference,
+          version: currentVersion + 1,
+          updatedAt: new Date(),
+        })
+        .where(eq(customAgents.id, input.id))
+        .returning();
+
+      const restoredAgent = restoredRows[0];
+      if (!restoredAgent) {
+        throw new TRPCError({
+          code: "INTERNAL_SERVER_ERROR",
+          message: "Failed to restore agent version",
+        });
+      }
+
+      logger.info(
+        {
+          id: input.id,
+          orgId: ctx.orgId,
+          restoredFromVersion: targetVersion.version,
+          newVersion: restoredAgent.version,
+        },
+        "Custom agent rolled back"
+      );
+
+      return {
+        id: restoredAgent.id,
+        name: restoredAgent.name,
+        description: restoredAgent.description,
+        tools: restoredAgent.tools,
+        modelPreference: restoredAgent.modelPreference,
+        isShared: restoredAgent.isShared,
+        version: restoredAgent.version,
+        updatedAt: restoredAgent.updatedAt.toISOString(),
+        rolledBackFromVersion: targetVersion.version,
+      };
+    }),
+
+  /**
+   * List versions of a custom agent.
+   */
+  listVersions: protectedProcedure
+    .input(
+      z.object({
+        id: z.string().min(1),
+        limit: z.number().int().min(1).max(50).default(20),
+        offset: z.number().int().min(0).default(0),
+      })
+    )
+    .query(async ({ input, ctx }) => {
+      // Verify access to the agent
+      const agent = await ctx.db.query.customAgents.findFirst({
+        where: and(
+          eq(customAgents.id, input.id),
+          eq(customAgents.orgId, ctx.orgId)
+        ),
+        columns: { id: true },
+      });
+
+      if (!agent) {
+        throw new TRPCError({
+          code: "NOT_FOUND",
+          message: "Custom agent not found",
+        });
+      }
+
+      const versions = await ctx.db.query.customAgentVersions.findMany({
+        where: eq(customAgentVersions.agentId, input.id),
+        orderBy: [desc(customAgentVersions.version)],
+        limit: input.limit,
+        offset: input.offset,
+      });
+
+      return versions.map((v) => ({
+        id: v.id,
+        version: v.version,
+        name: v.name,
+        description: v.description,
+        tools: v.tools,
+        modelPreference: v.modelPreference,
+        createdBy: v.createdBy,
+        createdAt: v.createdAt.toISOString(),
+      }));
     }),
 
   /**
@@ -273,10 +464,15 @@ export const customAgentsRouter = router({
         message: z.string().min(1).max(5000),
       })
     )
-    .mutation(({ input, ctx }) => {
-      const agent = agentStore.get(input.id);
+    .mutation(async ({ input, ctx }) => {
+      const agent = await ctx.db.query.customAgents.findFirst({
+        where: and(
+          eq(customAgents.id, input.id),
+          eq(customAgents.orgId, ctx.orgId)
+        ),
+      });
 
-      if (!agent || agent.orgId !== ctx.orgId) {
+      if (!agent) {
         throw new TRPCError({
           code: "NOT_FOUND",
           message: "Custom agent not found",

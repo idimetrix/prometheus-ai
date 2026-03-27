@@ -1,0 +1,87 @@
+{
+  "common": {
+    "dashboard": "Painel",
+    "projects": "Projetos",
+    "sessions": "Sess\u00f5es",
+    "settings": "Configura\u00e7\u00f5es",
+    "analytics": "An\u00e1lise",
+    "fleet": "Gerenciador de Frota",
+    "create": "Criar Projeto",
+    "cancel": "Cancelar",
+    "save": "Salvar",
+    "delete": "Excluir",
+    "edit": "Editar",
+    "submit": "Enviar",
+    "loading": "Carregando...",
+    "error": "Algo deu errado",
+    "success": "Sucesso",
+    "pending": "Pendente",
+    "running": "Em execu\u00e7\u00e3o",
+    "completed": "Conclu\u00eddo",
+    "retry": "Tentar novamente",
+    "search": "Pesquisar...",
+    "noResults": "Nenhum resultado encontrado"
+  },
+  "auth": {
+    "signIn": "Entrar",
+    "signUp": "Cadastrar",
+    "signOut": "Sair"
+  },
+  "nav": {
+    "dashboard": "Painel",
+    "projects": "Projetos",
+    "sessions": "Sess\u00f5es",
+    "settings": "Configura\u00e7\u00f5es"
+  },
+  "actions": {
+    "create": "Criar",
+    "delete": "Excluir",
+    "edit": "Editar",
+    "save": "Salvar",
+    "cancel": "Cancelar",
+    "submit": "Enviar"
+  },
+  "status": {
+    "loading": "Carregando...",
+    "error": "Erro",
+    "success": "Sucesso",
+    "pending": "Pendente",
+    "running": "Em execu\u00e7\u00e3o",
+    "completed": "Conclu\u00eddo"
+  },
+  "session": {
+    "chat": "Chat",
+    "terminal": "Terminal",
+    "preview": "Pr\u00e9-visualiza\u00e7\u00e3o",
+    "files": "Arquivos",
+    "agent": "Agente"
+  },
+  "errors": {
+    "generic": "Ocorreu um erro inesperado",
+    "notFound": "P\u00e1gina n\u00e3o encontrada",
+    "unauthorized": "Acesso n\u00e3o autorizado",
+    "forbidden": "Acesso proibido",
+    "networkError": "Erro de conex\u00e3o de rede",
+    "timeout": "A solicita\u00e7\u00e3o expirou",
+    "validation": "Dados do formul\u00e1rio inv\u00e1lidos",
+    "serverError": "Erro interno do servidor"
+  },
+  "agents": {
+    "title": "Agentes IA",
+    "orchestrator": "Orquestrador",
+    "discovery": "Descoberta",
+    "architect": "Arquiteto",
+    "planner": "Planejador",
+    "frontendCoder": "Desenvolvedor Frontend",
+    "backendCoder": "Desenvolvedor Backend",
+    "testEngineer": "Engenheiro de Testes",
+    "securityAuditor": "Auditor de Seguran\u00e7a",
+    "deployEngineer": "Engenheiro de Implanta\u00e7\u00e3o"
+  },
+  "billing": {
+    "credits": "Cr\u00e9ditos",
+    "balance": "Saldo",
+    "usage": "Uso",
+    "upgrade": "Atualizar Plano"
+  }
+}

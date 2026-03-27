@@ -1,4 +1,11 @@
-import { index, pgTable, text, timestamp } from "drizzle-orm/pg-core";
+import {
+  boolean,
+  index,
+  jsonb,
+  pgTable,
+  text,
+  timestamp,
+} from "drizzle-orm/pg-core";
 import { orgRoleEnum, planTierEnum } from "../../enums";
 import { timestamps } from "../../helpers";
 
@@ -11,6 +18,9 @@ export const organizations = pgTable(
     slug: text("slug").notNull().unique(),
     planTier: planTierEnum("plan_tier").notNull().default("hobby"),
     stripeCustomerId: text("stripe_customer_id").unique(),
+    ssoRequired: boolean("sso_required").default(false),
+    ssoProvider: text("sso_provider"),
+    ipAllowlist: jsonb("ip_allowlist").$type<string[]>().default([]),
     ...timestamps,
   },
   (table) => [index("organizations_clerk_org_id_idx").on(table.clerkOrgId)]

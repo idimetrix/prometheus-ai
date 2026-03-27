@@ -3,10 +3,10 @@
     "dashboard": "Tableau de bord",
     "projects": "Projets",
     "sessions": "Sessions",
-    "settings": "Paramètres",
+    "settings": "Param\u00e8tres",
     "analytics": "Analytique",
     "fleet": "Gestionnaire de flotte",
-    "create": "Créer un projet",
+    "create": "Cr\u00e9er un projet",
     "cancel": "Annuler",
     "save": "Enregistrer",
     "delete": "Supprimer",
@@ -14,27 +14,27 @@
     "submit": "Soumettre",
     "loading": "Chargement...",
     "error": "Une erreur est survenue",
-    "success": "Succès",
+    "success": "Succ\u00e8s",
     "pending": "En attente",
     "running": "En cours",
-    "completed": "Terminé",
-    "retry": "Réessayer",
+    "completed": "Termin\u00e9",
+    "retry": "R\u00e9essayer",
     "search": "Rechercher...",
-    "noResults": "Aucun résultat trouvé"
+    "noResults": "Aucun r\u00e9sultat trouv\u00e9"
   },
   "auth": {
     "signIn": "Se connecter",
     "signUp": "S'inscrire",
-    "signOut": "Se déconnecter"
+    "signOut": "Se d\u00e9connecter"
   },
   "nav": {
     "dashboard": "Tableau de bord",
     "projects": "Projets",
     "sessions": "Sessions",
-    "settings": "Paramètres"
+    "settings": "Param\u00e8tres"
   },
   "actions": {
-    "create": "Créer",
+    "create": "Cr\u00e9er",
     "delete": "Supprimer",
     "edit": "Modifier",
     "save": "Enregistrer",
@@ -44,44 +44,44 @@
   "status": {
     "loading": "Chargement...",
     "error": "Erreur",
-    "success": "Succès",
+    "success": "Succ\u00e8s",
     "pending": "En attente",
     "running": "En cours",
-    "completed": "Terminé"
+    "completed": "Termin\u00e9"
   },
   "session": {
     "chat": "Discussion",
     "terminal": "Terminal",
-    "preview": "Aperçu",
+    "preview": "Aper\u00e7u",
     "files": "Fichiers",
     "agent": "Agent"
   },
   "errors": {
     "generic": "Une erreur inattendue est survenue",
     "notFound": "Page introuvable",
-    "unauthorized": "Accès non autorisé",
-    "forbidden": "Accès interdit",
-    "networkError": "Erreur de connexion réseau",
-    "timeout": "La requête a expiré",
-    "validation": "Données de formulaire invalides",
+    "unauthorized": "Acc\u00e8s non autoris\u00e9",
+    "forbidden": "Acc\u00e8s interdit",
+    "networkError": "Erreur de connexion r\u00e9seau",
+    "timeout": "La requ\u00eate a expir\u00e9",
+    "validation": "Donn\u00e9es de formulaire invalides",
     "serverError": "Erreur interne du serveur"
   },
   "agents": {
     "title": "Agents IA",
     "orchestrator": "Orchestrateur",
-    "discovery": "Découverte",
+    "discovery": "D\u00e9couverte",
     "architect": "Architecte",
     "planner": "Planificateur",
-    "frontendCoder": "Développeur Frontend",
-    "backendCoder": "Développeur Backend",
-    "testEngineer": "Ingénieur de tests",
-    "securityAuditor": "Auditeur de sécurité",
-    "deployEngineer": "Ingénieur de déploiement"
+    "frontendCoder": "D\u00e9veloppeur Frontend",
+    "backendCoder": "D\u00e9veloppeur Backend",
+    "testEngineer": "Ing\u00e9nieur de tests",
+    "securityAuditor": "Auditeur de s\u00e9curit\u00e9",
+    "deployEngineer": "Ing\u00e9nieur de d\u00e9ploiement"
   },
   "billing": {
-    "credits": "Crédits",
+    "credits": "Cr\u00e9dits",
     "balance": "Solde",
     "usage": "Utilisation",
-    "upgrade": "Améliorer le plan"
+    "upgrade": "Am\u00e9liorer le plan"
   }
 }

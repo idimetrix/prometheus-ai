@@ -8,6 +8,7 @@ import { cors } from "hono/cors";
 import { apiKeysV1 } from "./api-keys";
 import { chatV1 } from "./chat";
 import { completionsV1 } from "./completions";
+import inlineCompletions from "./completions/inline";
 import { integrationsV1 } from "./integrations";
 import { openapiApp } from "./openapi";
 import { projectsV1 } from "./projects";
@@ -149,6 +150,7 @@ v1App.route("/projects", projectsV1);
 v1App.route("/api-keys", apiKeysV1);
 v1App.route("/chat", chatV1);
 v1App.route("/completions", completionsV1);
+v1App.route("/completions/inline", inlineCompletions);
 v1App.route("/integrations", integrationsV1);
 v1App.route("/zapier", zapierV1);
 

@@ -17,9 +17,10 @@ import { protectedProcedure, router } from "../trpc";
 const logger = createLogger("api:collaboration");
 
 // ---------------------------------------------------------------------------
-// In-memory tracking of active editors (mirrors socket-server state for the
-// API service; in production this would be backed by Redis for cross-service
-// consistency)
+// Editor state is managed by the socket-server via Yjs CRDT.
+// This router provides a REST API mirror for non-WebSocket clients.
+// In production, backing this with Redis (via @prometheus/queue) ensures
+// cross-service consistency.
 // ---------------------------------------------------------------------------
 
 export interface EditorRecord {

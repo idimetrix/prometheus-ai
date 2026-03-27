@@ -247,3 +247,204 @@ export function clearLearnings(orgId: string, projectId: string): void {
   learningStore.delete(key);
   logger.info({ projectId, orgId }, "Learnings cleared");
 }
+
+// ---------------------------------------------------------------------------
+// Feedback tracking
+// ---------------------------------------------------------------------------
+
+interface FeedbackEntry {
+  comment: string | null;
+  createdAt: Date;
+  eventId: string;
+  projectId: string | null;
+  sessionId: string;
+  type: "positive" | "negative" | "correction";
+}
+
+interface CorrectionEntry {
+  corrected: string;
+  correctionType: string;
+  createdAt: Date;
+  original: string;
+  sessionId: string;
+}
+
+/** In-memory feedback store keyed by sessionId. */
+const feedbackStore = new Map<string, FeedbackEntry[]>();
+
+/** In-memory correction store keyed by sessionId. */
+const correctionStore = new Map<string, CorrectionEntry[]>();
+
+/**
+ * Record positive feedback for a specific event in a session.
+ */
+export function recordPositiveFeedback(
+  sessionId: string,
+  eventId: string,
+  projectId?: string
+): void {
+  const entries = feedbackStore.get(sessionId) ?? [];
+  entries.push({
+    sessionId,
+    eventId,
+    type: "positive",
+    comment: null,
+    projectId: projectId ?? null,
+    createdAt: new Date(),
+  });
+  feedbackStore.set(sessionId, entries);
+  logger.info({ sessionId, eventId }, "Positive feedback recorded");
+}
+
+/**
+ * Record negative feedback for a specific event in a session.
+ */
+export function recordNegativeFeedback(
+  sessionId: string,
+  eventId: string,
+  comment: string,
+  projectId?: string
+): void {
+  const entries = feedbackStore.get(sessionId) ?? [];
+  entries.push({
+    sessionId,
+    eventId,
+    type: "negative",
+    comment,
+    projectId: projectId ?? null,
+    createdAt: new Date(),
+  });
+  feedbackStore.set(sessionId, entries);
+  logger.info({ sessionId, eventId }, "Negative feedback recorded");
+}
+
+/**
+ * Record a user correction (original code replaced with corrected version).
+ */
+export function recordCorrection(
+  sessionId: string,
+  original: string,
+  corrected: string,
+  type: string
+): void {
+  const entries = correctionStore.get(sessionId) ?? [];
+  entries.push({
+    sessionId,
+    original,
+    corrected,
+    correctionType: type,
+    createdAt: new Date(),
+  });
+  correctionStore.set(sessionId, entries);
+  logger.info({ sessionId, correctionType: type }, "Correction recorded");
+}
+
+/**
+ * Get recent feedback entries across all sessions for a given project.
+ */
+export function getRecentFeedback(
+  projectId: string,
+  limit = 50
+): FeedbackEntry[] {
+  const results: FeedbackEntry[] = [];
+
+  for (const entries of feedbackStore.values()) {
+    for (const entry of entries) {
+      if (entry.projectId === projectId) {
+        results.push(entry);
+      }
+    }
+  }
+
+  results.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+  return results.slice(0, limit);
+}
+
+function analyzeCommentPatterns(comments: string[]): Record<string, number> {
+  const patterns: Record<string, number> = {};
+  const keywords: Record<string, string[]> = {
+    formatting: ["format", "style"],
+    accuracy: ["wrong", "incorrect"],
+    performance: ["slow", "timeout"],
+  };
+
+  for (const comment of comments) {
+    const lower = comment.toLowerCase();
+    for (const [category, words] of Object.entries(keywords)) {
+      if (words.some((w) => lower.includes(w))) {
+        patterns[category] = (patterns[category] ?? 0) + 1;
+      }
+    }
+  }
+
+  return patterns;
+}
+
+/**
+ * Analyze feedback patterns and return improvement suggestions for a project.
+ */
+export function getImprovementSuggestions(
+  projectId: string
+): Array<{ category: string; suggestion: string; confidence: number }> {
+  const feedback = getRecentFeedback(projectId, 200);
+  const suggestions: Array<{
+    category: string;
+    suggestion: string;
+    confidence: number;
+  }> = [];
+
+  if (feedback.length === 0) {
+    return suggestions;
+  }
+
+  const positive = feedback.filter((f) => f.type === "positive").length;
+  const negative = feedback.filter((f) => f.type === "negative").length;
+  const total = positive + negative;
+
+  if (total > 0 && negative / total > 0.4) {
+    suggestions.push({
+      category: "quality",
+      suggestion:
+        "High negative feedback rate detected. Review agent output patterns and consider adjusting prompts.",
+      confidence: 0.8,
+    });
+  }
+
+  // Analyze negative feedback comments for patterns
+  const negativeComments = feedback
+    .filter((f) => f.type === "negative" && f.comment)
+    .map((f) => f.comment as string);
+
+  const commentPatterns = analyzeCommentPatterns(negativeComments);
+
+  for (const [pattern, count] of Object.entries(commentPatterns)) {
+    if (count >= 3) {
+      suggestions.push({
+        category: pattern,
+        suggestion: `Recurring ${pattern} issues found in ${count} feedback entries. Consider targeted improvements.`,
+        confidence: Math.min(0.9, 0.5 + count * 0.1),
+      });
+    }
+  }
+
+  // Check corrections for patterns
+  let totalCorrections = 0;
+  for (const entries of correctionStore.values()) {
+    totalCorrections += entries.length;
+  }
+
+  if (totalCorrections > 5) {
+    suggestions.push({
+      category: "corrections",
+      suggestion: `${totalCorrections} user corrections recorded. The correction learner should be extracting patterns from these.`,
+      confidence: 0.7,
+    });
+  }
+
+  logger.info(
+    { projectId, suggestionCount: suggestions.length },
+    "Improvement suggestions generated"
+  );
+
+  return suggestions;
+}

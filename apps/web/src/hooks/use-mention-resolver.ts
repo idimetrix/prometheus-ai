@@ -5,7 +5,13 @@ import { trpc } from "@/lib/trpc";
 
 // ── Types ───────────────────────────────────────────────────
 
-export type MentionType = "file" | "folder" | "symbol" | "web" | "docs";
+export type MentionType =
+  | "file"
+  | "folder"
+  | "symbol"
+  | "web"
+  | "docs"
+  | "user";
 
 export interface MentionSearchResult {
   label: string;
@@ -36,6 +42,8 @@ interface UseMentionResolverReturn {
   searchFolders: (query: string) => void;
   /** Search for code symbols (functions, classes, types) */
   searchSymbols: (query: string) => void;
+  /** Search for team members by name */
+  searchUsers: (query: string) => void;
   /** Trigger web search query (returns placeholder results) */
   searchWeb: (query: string) => void;
 }
@@ -279,6 +287,62 @@ export function useMentionResolver({
     [sandboxId, fileListMutation]
   );
 
+  // Search team members by name for @mentions
+  const searchUsers = useCallback((query: string) => {
+    if (!query) {
+      setResults([]);
+      return;
+    }
+    setIsSearching(true);
+
+    // Query team members from the team router
+    fetch(
+      `/api/trpc/team.listMembers?input=${encodeURIComponent(JSON.stringify({ json: {} }))}`
+    )
+      .then(async (res) => {
+        if (res.ok) {
+          const data = (await res.json()) as {
+            result?: {
+              data?: {
+                json?: {
+                  members?: Array<{
+                    name: string;
+                    email: string;
+                    userId: string;
+                    role: string;
+                  }>;
+                };
+              };
+            };
+          };
+          const members = data.result?.data?.json?.members ?? [];
+          const lowerQuery = query.toLowerCase();
+          const filtered = members
+            .filter(
+              (m) =>
+                m.name.toLowerCase().includes(lowerQuery) ||
+                m.email.toLowerCase().includes(lowerQuery)
+            )
+            .slice(0, 10)
+            .map((m) => ({
+              type: "user" as const,
+              label: m.name,
+              sublabel: m.email,
+              value: m.userId,
+            }));
+          setResults(filtered);
+        } else {
+          setResults([]);
+        }
+      })
+      .catch(() => {
+        setResults([]);
+      })
+      .finally(() => {
+        setIsSearching(false);
+      });
+  }, []);
+
   // Web search - returns query as a placeholder that will be resolved server-side
   const searchWeb = useCallback((query: string) => {
     if (!query) {
@@ -305,6 +369,7 @@ export function useMentionResolver({
   const debouncedSearchFolders = useDebouncedCallback(searchFolders, 200);
   const debouncedSearchSymbols = useDebouncedCallback(searchSymbols, 250);
   const debouncedSearchDocs = useDebouncedCallback(searchDocs, 200);
+  const debouncedSearchUsers = useDebouncedCallback(searchUsers, 200);
 
   return {
     isSearching,
@@ -313,6 +378,7 @@ export function useMentionResolver({
     searchFolders: debouncedSearchFolders,
     searchSymbols: debouncedSearchSymbols,
     searchDocs: debouncedSearchDocs,
+    searchUsers: debouncedSearchUsers,
     searchWeb,
     clearResults,
   };

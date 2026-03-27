@@ -16,9 +16,13 @@ import { db, processedWebhookEvents } from "@prometheus/db";
 import { createLogger } from "@prometheus/logger";
 import { eq } from "drizzle-orm";
 import { Hono } from "hono";
+import { handleAzureDevOpsWebhook } from "../../webhooks/azure-devops-handler";
 import { handleCustomWebhook } from "../../webhooks/custom-handler";
+import { handleGiteaWebhook } from "../../webhooks/gitea-handler";
 import { handleGitHubWebhook } from "../../webhooks/github-handler";
+import { handleGitLabWebhook } from "../../webhooks/gitlab-handler";
 import { handleJiraWebhook } from "../../webhooks/jira-handler";
+import { handleLinearWebhook } from "../../webhooks/linear-handler";
 
 const logger = createLogger("api:webhooks:inbound");
 const inboundWebhookApp = new Hono();
@@ -134,6 +138,99 @@ inboundWebhookApp.post("/custom/:orgId", async (c) => {
 
   if (deliveryId && response.status < 400) {
     await recordDelivery(deliveryId, `custom:${orgId}`);
+  }
+
+  return response;
+});
+
+// ---------------------------------------------------------------------------
+// GitLab webhook
+// ---------------------------------------------------------------------------
+inboundWebhookApp.post("/gitlab", async (c) => {
+  const deliveryId =
+    c.req.header("x-gitlab-event-uuid") ?? `gitlab_${Date.now()}`;
+
+  if (deliveryId) {
+    const duplicate = await isDeliveryAlreadyProcessed(deliveryId);
+    if (duplicate) {
+      logger.info(
+        { deliveryId },
+        "Duplicate GitLab webhook delivery, skipping"
+      );
+      return c.json({ ok: true, duplicate: true });
+    }
+  }
+
+  logger.info({ deliveryId }, "Received inbound GitLab webhook");
+  const response = await handleGitLabWebhook(c, db, "");
+
+  if (deliveryId && response.status < 400) {
+    await recordDelivery(deliveryId, "gitlab");
+  }
+
+  return response;
+});
+
+// ---------------------------------------------------------------------------
+// Linear webhook
+// ---------------------------------------------------------------------------
+inboundWebhookApp.post("/linear", async (c) => {
+  const deliveryId = c.req.header("linear-delivery") ?? `linear_${Date.now()}`;
+
+  if (deliveryId) {
+    const duplicate = await isDeliveryAlreadyProcessed(deliveryId);
+    if (duplicate) {
+      logger.info(
+        { deliveryId },
+        "Duplicate Linear webhook delivery, skipping"
+      );
+      return c.json({ ok: true, duplicate: true });
+    }
+  }
+
+  logger.info({ deliveryId }, "Received inbound Linear webhook");
+  const response = await handleLinearWebhook(c, db, "");
+
+  if (deliveryId && response.status < 400) {
+    await recordDelivery(deliveryId, "linear");
+  }
+
+  return response;
+});
+
+// ---------------------------------------------------------------------------
+// Azure DevOps webhook
+// ---------------------------------------------------------------------------
+inboundWebhookApp.post("/azure-devops", async (c) => {
+  const deliveryId = `azdo_${Date.now()}`;
+
+  logger.info({ deliveryId }, "Received inbound Azure DevOps webhook");
+  const response = await handleAzureDevOpsWebhook(c, db, "");
+
+  await recordDelivery(deliveryId, "azure-devops");
+
+  return response;
+});
+
+// ---------------------------------------------------------------------------
+// Gitea webhook
+// ---------------------------------------------------------------------------
+inboundWebhookApp.post("/gitea", async (c) => {
+  const deliveryId = c.req.header("x-gitea-delivery") ?? `gitea_${Date.now()}`;
+
+  if (deliveryId) {
+    const duplicate = await isDeliveryAlreadyProcessed(deliveryId);
+    if (duplicate) {
+      logger.info({ deliveryId }, "Duplicate Gitea webhook delivery, skipping");
+      return c.json({ ok: true, duplicate: true });
+    }
+  }
+
+  logger.info({ deliveryId }, "Received inbound Gitea webhook");
+  const response = await handleGiteaWebhook(c, db, "");
+
+  if (deliveryId && response.status < 400) {
+    await recordDelivery(deliveryId, "gitea");
   }
 
   return response;

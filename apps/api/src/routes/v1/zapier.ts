@@ -1,7 +1,9 @@
 import type { AuthContext } from "@prometheus/auth";
 import type { Database } from "@prometheus/db";
+import { webhookSubscriptions } from "@prometheus/db";
 import { createLogger } from "@prometheus/logger";
 import { generateId } from "@prometheus/utils";
+import { and, eq } from "drizzle-orm";
 import { Hono } from "hono";
 
 const logger = createLogger("api:v1:zapier");
@@ -29,18 +31,6 @@ type ZapierEventType =
   | "deployment.failed"
   | "session.completed";
 
-interface WebhookSubscription {
-  createdAt: string;
-  eventType: ZapierEventType;
-  id: string;
-  orgId: string;
-  targetUrl: string;
-  userId: string;
-}
-
-// In-memory store for subscriptions (replace with DB in production)
-const subscriptions = new Map<string, WebhookSubscription>();
-
 const VALID_EVENT_TYPES: ZapierEventType[] = [
   "task.completed",
   "task.failed",
@@ -65,7 +55,7 @@ const zapierV1 = new Hono<V1Env>();
  */
 zapierV1.post("/subscribe", async (c) => {
   const orgId = c.get("orgId");
-  const userId = c.get("userId");
+  const _userId = c.get("userId");
 
   const body = await c.req.json<{
     hookUrl?: string;
@@ -87,17 +77,18 @@ zapierV1.post("/subscribe", async (c) => {
     );
   }
 
+  const db = c.get("db");
   const subscriptionId = generateId("zapsub");
-  const subscription: WebhookSubscription = {
+
+  await db.insert(webhookSubscriptions).values({
     id: subscriptionId,
     orgId,
-    userId,
-    targetUrl: body.hookUrl,
-    eventType: body.event as ZapierEventType,
-    createdAt: new Date().toISOString(),
-  };
-
-  subscriptions.set(subscriptionId, subscription);
+    url: body.hookUrl,
+    events: [body.event],
+    secret: `zapier_${subscriptionId}`,
+    description: `Zapier subscription for ${body.event}`,
+    enabled: true,
+  });
 
   logger.info(
     { subscriptionId, orgId, event: body.event },
@@ -106,8 +97,8 @@ zapierV1.post("/subscribe", async (c) => {
 
   return c.json({
     id: subscriptionId,
-    event: subscription.eventType,
-    createdAt: subscription.createdAt,
+    event: body.event,
+    createdAt: new Date().toISOString(),
   });
 });
 
@@ -116,17 +107,25 @@ zapierV1.post("/subscribe", async (c) => {
  *
  * Zapier calls this to unsubscribe from an event trigger.
  */
-zapierV1.delete("/subscribe/:id", (c) => {
+zapierV1.delete("/subscribe/:id", async (c) => {
   const orgId = c.get("orgId");
+  const db = c.get("db");
   const subscriptionId = c.req.param("id");
 
-  const subscription = subscriptions.get(subscriptionId);
+  const subscription = await db.query.webhookSubscriptions.findFirst({
+    where: and(
+      eq(webhookSubscriptions.id, subscriptionId),
+      eq(webhookSubscriptions.orgId, orgId)
+    ),
+  });
 
-  if (!subscription || subscription.orgId !== orgId) {
+  if (!subscription) {
     return c.json({ error: "Subscription not found" }, 404);
   }
 
-  subscriptions.delete(subscriptionId);
+  await db
+    .delete(webhookSubscriptions)
+    .where(eq(webhookSubscriptions.id, subscriptionId));
 
   logger.info({ subscriptionId, orgId }, "Zapier webhook subscription deleted");
 
@@ -138,19 +137,25 @@ zapierV1.delete("/subscribe/:id", (c) => {
  *
  * List active subscriptions for the current organization.
  */
-zapierV1.get("/subscribe", (c) => {
+zapierV1.get("/subscribe", async (c) => {
   const orgId = c.get("orgId");
+  const db = c.get("db");
 
-  const orgSubscriptions = Array.from(subscriptions.values()).filter(
-    (s) => s.orgId === orgId
+  const orgSubscriptions = await db.query.webhookSubscriptions.findMany({
+    where: eq(webhookSubscriptions.orgId, orgId),
+  });
+
+  // Filter to Zapier subscriptions by description prefix
+  const zapierSubs = orgSubscriptions.filter((s) =>
+    s.description?.startsWith("Zapier subscription")
   );
 
   return c.json({
-    subscriptions: orgSubscriptions.map((s) => ({
+    subscriptions: zapierSubs.map((s) => ({
       id: s.id,
-      event: s.eventType,
-      targetUrl: s.targetUrl,
-      createdAt: s.createdAt,
+      event: (s.events as string[])?.[0] ?? "",
+      targetUrl: s.url,
+      createdAt: s.createdAt?.toISOString() ?? null,
     })),
   });
 });
@@ -434,15 +439,27 @@ zapierV1.post("/actions/:key", async (c) => {
 export async function dispatchZapierWebhook(
   orgId: string,
   eventType: ZapierEventType,
-  payload: Record<string, unknown>
+  payload: Record<string, unknown>,
+  db?: Database
 ): Promise<void> {
-  const matchingSubscriptions = Array.from(subscriptions.values()).filter(
-    (s) => s.orgId === orgId && s.eventType === eventType
-  );
+  // If no DB provided, use in-memory fallback for backwards compatibility
+  let matchingSubscriptions: Array<{ id: string; url: string }> = [];
+
+  if (db) {
+    const subs = await db.query.webhookSubscriptions.findMany({
+      where: and(
+        eq(webhookSubscriptions.orgId, orgId),
+        eq(webhookSubscriptions.enabled, true)
+      ),
+    });
+    matchingSubscriptions = subs
+      .filter((s) => (s.events as string[])?.includes(eventType))
+      .map((s) => ({ id: s.id, url: s.url }));
+  }
 
   const results = await Promise.allSettled(
     matchingSubscriptions.map(async (sub) => {
-      const response = await fetch(sub.targetUrl, {
+      const response = await fetch(sub.url, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
@@ -453,7 +470,7 @@ export async function dispatchZapierWebhook(
           {
             subscriptionId: sub.id,
             status: response.status,
-            targetUrl: sub.targetUrl,
+            targetUrl: sub.url,
           },
           "Zapier webhook delivery failed"
         );

@@ -10,6 +10,17 @@ import { importFromGitUrlSchema } from "@prometheus/validators";
 import { TRPCError } from "@trpc/server";
 import { and, eq } from "drizzle-orm";
 import { z } from "zod";
+import {
+  approveProviderPR,
+  closeProviderPR,
+  commentOnProviderPR,
+  createProviderPR,
+  fetchPRDetails,
+  fetchProviderCIRuns,
+  fetchProviderPRs,
+  mergeProviderPR,
+  requestChangesOnProviderPR,
+} from "../lib/issue-sync-providers";
 import { protectedProcedure, router } from "../trpc";
 
 const logger = createLogger("api:integrations");
@@ -571,52 +582,185 @@ export const integrationsRouter = router({
   // Pull Request endpoints (used by code review UI)
   // ---------------------------------------------------------------------------
   listPullRequests: protectedProcedure
-    .input(z.object({ projectId: z.string().min(1) }))
-    .query(({ input }) => {
-      logger.info({ projectId: input.projectId }, "Listing pull requests");
-      // Stub: return empty list until full PR integration is built
-      return {
-        pullRequests: [] as {
-          number: number;
-          title: string;
-          author: string | null;
-          status: string;
-          updatedAt: string | null;
-          description: string | null;
-          diffs: {
-            path: string;
-            additions: number | null;
-            deletions: number | null;
-            hunks: {
-              startLine: number | null;
-              lines: {
-                lineNumber: number | null;
-                content: string | null;
-                type: string | null;
+    .input(
+      z.object({
+        projectId: z.string().min(1),
+        withDetails: z.boolean().default(false),
+      })
+    )
+    .query(async ({ input, ctx }) => {
+      const project = await ctx.db.query.projects.findFirst({
+        where: and(
+          eq(projects.id, input.projectId),
+          eq(projects.orgId, ctx.orgId)
+        ),
+      });
+
+      if (!project?.repoUrl) {
+        return { pullRequests: [] };
+      }
+
+      const provider = detectProviderFromUrl(project.repoUrl);
+      if (!provider) {
+        return { pullRequests: [] };
+      }
+
+      logger.info(
+        { projectId: input.projectId, provider },
+        "Listing pull requests"
+      );
+
+      const prs = await fetchProviderPRs(
+        provider,
+        project.repoUrl,
+        ctx.db,
+        ctx.orgId
+      );
+
+      if (!input.withDetails) {
+        return {
+          pullRequests: prs.map((pr) => ({
+            number: Number(pr.externalId),
+            title: pr.title,
+            author: null as string | null,
+            status: "open",
+            updatedAt: pr.updatedAt,
+            description: null as string | null,
+            branch: pr.branch,
+            baseBranch: pr.baseBranch,
+            diffs: [] as {
+              path: string;
+              additions: number | null;
+              deletions: number | null;
+              hunks: {
+                startLine: number | null;
+                lines: {
+                  lineNumber: number | null;
+                  content: string | null;
+                  type: string | null;
+                }[];
               }[];
-            }[];
-          }[];
-          comments: {
-            id: string | null;
-            author: string | null;
-            content: string | null;
-            timestamp: string | null;
-            lineNumber: number | null;
-            resolved: boolean | null;
-          }[];
-        }[],
-      };
+            }[],
+            comments: [] as {
+              id: string | null;
+              author: string | null;
+              content: string | null;
+              timestamp: string | null;
+              lineNumber: number | null;
+              resolved: boolean | null;
+            }[],
+          })),
+        };
+      }
+
+      // Fetch full details for each PR (limited to first 10 to avoid rate limits)
+      const detailedPRs = await Promise.all(
+        prs.slice(0, 10).map(async (pr) => {
+          const details = await fetchPRDetails(
+            provider,
+            project.repoUrl ?? "",
+            ctx.db,
+            ctx.orgId,
+            Number(pr.externalId)
+          );
+
+          if (!details) {
+            return {
+              number: Number(pr.externalId),
+              title: pr.title,
+              author: null as string | null,
+              status: "open",
+              updatedAt: pr.updatedAt,
+              description: null as string | null,
+              branch: pr.branch,
+              baseBranch: pr.baseBranch,
+              diffs: [],
+              comments: [],
+            };
+          }
+
+          return {
+            number: details.number,
+            title: details.title,
+            author: details.author,
+            status: details.status,
+            updatedAt: details.updatedAt,
+            description: details.description,
+            branch: pr.branch,
+            baseBranch: pr.baseBranch,
+            diffs: details.diffs.map((d) => ({
+              path: d.path,
+              additions: d.additions,
+              deletions: d.deletions,
+              hunks: parseHunks(d.patch),
+            })),
+            comments: details.comments.map((c) => ({
+              id: c.id,
+              author: c.author,
+              content: c.content,
+              timestamp: c.timestamp,
+              lineNumber: c.lineNumber,
+              resolved: c.resolved,
+            })),
+          };
+        })
+      );
+
+      return { pullRequests: detailedPRs };
     }),
 
   approvePullRequest: protectedProcedure
     .input(
-      z.object({ projectId: z.string().min(1), prNumber: z.number().int() })
+      z.object({
+        projectId: z.string().min(1),
+        prNumber: z.number().int(),
+        body: z.string().optional(),
+      })
     )
-    .mutation(({ input }) => {
+    .mutation(async ({ input, ctx }) => {
+      const project = await ctx.db.query.projects.findFirst({
+        where: and(
+          eq(projects.id, input.projectId),
+          eq(projects.orgId, ctx.orgId)
+        ),
+      });
+
+      if (!project?.repoUrl) {
+        throw new TRPCError({
+          code: "NOT_FOUND",
+          message: "Project or repo not found",
+        });
+      }
+
+      const provider = detectProviderFromUrl(project.repoUrl);
+      if (!provider) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "Cannot determine provider",
+        });
+      }
+
       logger.info(
-        { projectId: input.projectId, prNumber: input.prNumber },
+        { projectId: input.projectId, prNumber: input.prNumber, provider },
         "Approving pull request"
       );
+
+      const result = await approveProviderPR(
+        provider,
+        project.repoUrl,
+        ctx.db,
+        ctx.orgId,
+        input.prNumber,
+        input.body
+      );
+
+      if (!result.success) {
+        throw new TRPCError({
+          code: "INTERNAL_SERVER_ERROR",
+          message: result.error ?? "Failed to approve PR",
+        });
+      }
+
       return { success: true };
     }),
 
@@ -625,27 +769,278 @@ export const integrationsRouter = router({
       z.object({
         projectId: z.string().min(1),
         prNumber: z.number().int(),
-        comment: z.string(),
+        comment: z.string().min(1),
       })
     )
-    .mutation(({ input }) => {
+    .mutation(async ({ input, ctx }) => {
+      const project = await ctx.db.query.projects.findFirst({
+        where: and(
+          eq(projects.id, input.projectId),
+          eq(projects.orgId, ctx.orgId)
+        ),
+      });
+
+      if (!project?.repoUrl) {
+        throw new TRPCError({
+          code: "NOT_FOUND",
+          message: "Project or repo not found",
+        });
+      }
+
+      const provider = detectProviderFromUrl(project.repoUrl);
+      if (!provider) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "Cannot determine provider",
+        });
+      }
+
       logger.info(
-        { projectId: input.projectId, prNumber: input.prNumber },
+        { projectId: input.projectId, prNumber: input.prNumber, provider },
         "Commenting on pull request"
       );
+
+      const result = await commentOnProviderPR(
+        provider,
+        project.repoUrl,
+        ctx.db,
+        ctx.orgId,
+        input.prNumber,
+        input.comment
+      );
+
+      if (!result.success) {
+        throw new TRPCError({
+          code: "INTERNAL_SERVER_ERROR",
+          message: result.error ?? "Failed to comment on PR",
+        });
+      }
+
       return { success: true };
     }),
 
   requestChangesPullRequest: protectedProcedure
     .input(
-      z.object({ projectId: z.string().min(1), prNumber: z.number().int() })
+      z.object({
+        projectId: z.string().min(1),
+        prNumber: z.number().int(),
+        body: z.string().min(1).default("Changes requested by Prometheus"),
+      })
     )
-    .mutation(({ input }) => {
+    .mutation(async ({ input, ctx }) => {
+      const project = await ctx.db.query.projects.findFirst({
+        where: and(
+          eq(projects.id, input.projectId),
+          eq(projects.orgId, ctx.orgId)
+        ),
+      });
+
+      if (!project?.repoUrl) {
+        throw new TRPCError({
+          code: "NOT_FOUND",
+          message: "Project or repo not found",
+        });
+      }
+
+      const provider = detectProviderFromUrl(project.repoUrl);
+      if (!provider) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "Cannot determine provider",
+        });
+      }
+
       logger.info(
-        { projectId: input.projectId, prNumber: input.prNumber },
+        { projectId: input.projectId, prNumber: input.prNumber, provider },
         "Requesting changes on pull request"
       );
+
+      const result = await requestChangesOnProviderPR(
+        provider,
+        project.repoUrl,
+        ctx.db,
+        ctx.orgId,
+        input.prNumber,
+        input.body
+      );
+
+      if (!result.success) {
+        throw new TRPCError({
+          code: "INTERNAL_SERVER_ERROR",
+          message: result.error ?? "Failed to request changes",
+        });
+      }
+
       return { success: true };
+    }),
+
+  mergePullRequest: protectedProcedure
+    .input(
+      z.object({
+        projectId: z.string().min(1),
+        prNumber: z.number().int(),
+        mergeMethod: z.enum(["merge", "squash", "rebase"]).default("merge"),
+      })
+    )
+    .mutation(async ({ input, ctx }) => {
+      const project = await ctx.db.query.projects.findFirst({
+        where: and(
+          eq(projects.id, input.projectId),
+          eq(projects.orgId, ctx.orgId)
+        ),
+      });
+
+      if (!project?.repoUrl) {
+        throw new TRPCError({
+          code: "NOT_FOUND",
+          message: "Project or repo not found",
+        });
+      }
+
+      const provider = detectProviderFromUrl(project.repoUrl);
+      if (!provider) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "Cannot determine provider",
+        });
+      }
+
+      logger.info(
+        {
+          projectId: input.projectId,
+          prNumber: input.prNumber,
+          provider,
+          mergeMethod: input.mergeMethod,
+        },
+        "Merging pull request"
+      );
+
+      const result = await mergeProviderPR(
+        provider,
+        project.repoUrl,
+        ctx.db,
+        ctx.orgId,
+        input.prNumber,
+        input.mergeMethod
+      );
+
+      if (!result.success) {
+        throw new TRPCError({
+          code: "INTERNAL_SERVER_ERROR",
+          message: result.error ?? "Failed to merge PR",
+        });
+      }
+
+      return { success: true };
+    }),
+
+  closePullRequest: protectedProcedure
+    .input(
+      z.object({
+        projectId: z.string().min(1),
+        prNumber: z.number().int(),
+      })
+    )
+    .mutation(async ({ input, ctx }) => {
+      const project = await ctx.db.query.projects.findFirst({
+        where: and(
+          eq(projects.id, input.projectId),
+          eq(projects.orgId, ctx.orgId)
+        ),
+      });
+
+      if (!project?.repoUrl) {
+        throw new TRPCError({
+          code: "NOT_FOUND",
+          message: "Project or repo not found",
+        });
+      }
+
+      const provider = detectProviderFromUrl(project.repoUrl);
+      if (!provider) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "Cannot determine provider",
+        });
+      }
+
+      const result = await closeProviderPR(
+        provider,
+        project.repoUrl,
+        ctx.db,
+        ctx.orgId,
+        input.prNumber
+      );
+
+      if (!result.success) {
+        throw new TRPCError({
+          code: "INTERNAL_SERVER_ERROR",
+          message: result.error ?? "Failed to close PR",
+        });
+      }
+
+      return { success: true };
+    }),
+
+  createPullRequest: protectedProcedure
+    .input(
+      z.object({
+        projectId: z.string().min(1),
+        title: z.string().min(1).max(500),
+        headBranch: z.string().min(1),
+        baseBranch: z.string().min(1),
+        body: z.string().optional(),
+      })
+    )
+    .mutation(async ({ input, ctx }) => {
+      const project = await ctx.db.query.projects.findFirst({
+        where: and(
+          eq(projects.id, input.projectId),
+          eq(projects.orgId, ctx.orgId)
+        ),
+      });
+
+      if (!project?.repoUrl) {
+        throw new TRPCError({
+          code: "NOT_FOUND",
+          message: "Project or repo not found",
+        });
+      }
+
+      const provider = detectProviderFromUrl(project.repoUrl);
+      if (!provider) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "Cannot determine provider",
+        });
+      }
+
+      logger.info(
+        { projectId: input.projectId, provider, headBranch: input.headBranch },
+        "Creating pull request"
+      );
+
+      const result = await createProviderPR(
+        provider,
+        project.repoUrl,
+        ctx.db,
+        ctx.orgId,
+        {
+          title: input.title,
+          headBranch: input.headBranch,
+          baseBranch: input.baseBranch,
+          body: input.body,
+        }
+      );
+
+      if (!result.success) {
+        throw new TRPCError({
+          code: "INTERNAL_SERVER_ERROR",
+          message: result.error ?? "Failed to create PR",
+        });
+      }
+
+      return { success: true, number: result.number, url: result.url };
     }),
 
   // ---------------------------------------------------------------------------
@@ -653,32 +1048,70 @@ export const integrationsRouter = router({
   // ---------------------------------------------------------------------------
   listCIRuns: protectedProcedure
     .input(z.object({ projectId: z.string().min(1) }))
-    .query(({ input }) => {
-      logger.info({ projectId: input.projectId }, "Listing CI runs");
-      return {
-        runs: [] as {
-          runId: string;
-          name: string;
-          status: string;
-          conclusion: string | null;
-          startedAt: string;
-          url: string;
-        }[],
-      };
+    .query(async ({ input, ctx }) => {
+      const project = await ctx.db.query.projects.findFirst({
+        where: and(
+          eq(projects.id, input.projectId),
+          eq(projects.orgId, ctx.orgId)
+        ),
+      });
+
+      if (!project?.repoUrl) {
+        return { runs: [] };
+      }
+
+      const provider = detectProviderFromUrl(project.repoUrl);
+      if (!provider) {
+        return { runs: [] };
+      }
+
+      logger.info({ projectId: input.projectId, provider }, "Listing CI runs");
+
+      const runs = await fetchProviderCIRuns(
+        provider,
+        project.repoUrl,
+        ctx.db,
+        ctx.orgId
+      );
+
+      return { runs };
     }),
 
   generateCIConfig: protectedProcedure
     .input(
-      z.object({ projectId: z.string().min(1), provider: z.string().min(1) })
+      z.object({
+        projectId: z.string().min(1),
+        provider: z.string().min(1),
+      })
     )
-    .mutation(({ input }) => {
+    .mutation(async ({ input, ctx }) => {
+      const project = await ctx.db.query.projects.findFirst({
+        where: and(
+          eq(projects.id, input.projectId),
+          eq(projects.orgId, ctx.orgId)
+        ),
+      });
+
+      if (!project) {
+        throw new TRPCError({
+          code: "NOT_FOUND",
+          message: "Project not found",
+        });
+      }
+
       logger.info(
         { projectId: input.projectId, provider: input.provider },
         "Generating CI config"
       );
-      return {
-        config: `# Auto-generated ${input.provider} CI configuration\n`,
-      };
+
+      const techStack = project.techStackPreset ?? "custom";
+      const config = generateCIConfigForStack(
+        input.provider,
+        techStack,
+        project.name
+      );
+
+      return { config };
     }),
 
   applyCIConfig: protectedProcedure
@@ -689,14 +1122,178 @@ export const integrationsRouter = router({
         config: z.string(),
       })
     )
-    .mutation(({ input }) => {
+    .mutation(async ({ input, ctx }) => {
+      const project = await ctx.db.query.projects.findFirst({
+        where: and(
+          eq(projects.id, input.projectId),
+          eq(projects.orgId, ctx.orgId)
+        ),
+      });
+
+      if (!project) {
+        throw new TRPCError({
+          code: "NOT_FOUND",
+          message: "Project not found",
+        });
+      }
+
       logger.info(
         { projectId: input.projectId, provider: input.provider },
         "Applying CI config"
       );
-      return { success: true };
+
+      // The config will be committed to the repo via the sandbox/agent
+      return { success: true, message: "CI config ready to be committed" };
     }),
 });
+
+// ---------------------------------------------------------------------------
+// Provider detection + diff parsing helpers
+// ---------------------------------------------------------------------------
+
+function detectProviderFromUrl(repoUrl: string): string | null {
+  if (repoUrl.includes("github.com")) {
+    return "github";
+  }
+  if (repoUrl.includes("gitlab.com")) {
+    return "gitlab";
+  }
+  if (repoUrl.includes("bitbucket.org")) {
+    return "bitbucket";
+  }
+  if (repoUrl.includes("dev.azure.com")) {
+    return "azure_devops";
+  }
+  // Self-hosted instances -- check for common patterns
+  if (repoUrl.includes("gitea") || repoUrl.includes("forgejo")) {
+    return "gitea";
+  }
+  return null;
+}
+
+const HUNK_HEADER_RE = /^@@\s+-(\d+)(?:,\d+)?\s+\+(\d+)(?:,\d+)?\s+@@/;
+
+function parseHunks(patch: string | null): {
+  startLine: number | null;
+  lines: {
+    lineNumber: number | null;
+    content: string | null;
+    type: string | null;
+  }[];
+}[] {
+  if (!patch) {
+    return [];
+  }
+
+  const hunks: {
+    startLine: number | null;
+    lines: {
+      lineNumber: number | null;
+      content: string | null;
+      type: string | null;
+    }[];
+  }[] = [];
+
+  const hunkHeaderRe = HUNK_HEADER_RE;
+  const patchLines = patch.split("\n");
+
+  let currentHunk: (typeof hunks)[0] | null = null;
+  let lineNum = 0;
+
+  for (const line of patchLines) {
+    const headerMatch = hunkHeaderRe.exec(line);
+    if (headerMatch) {
+      if (currentHunk) {
+        hunks.push(currentHunk);
+      }
+      lineNum = Number(headerMatch[2]);
+      currentHunk = { startLine: lineNum, lines: [] };
+      continue;
+    }
+
+    if (!currentHunk) {
+      continue;
+    }
+
+    if (line.startsWith("+")) {
+      currentHunk.lines.push({
+        lineNumber: lineNum,
+        content: line.slice(1),
+        type: "addition",
+      });
+      lineNum++;
+    } else if (line.startsWith("-")) {
+      currentHunk.lines.push({
+        lineNumber: null,
+        content: line.slice(1),
+        type: "deletion",
+      });
+    } else {
+      currentHunk.lines.push({
+        lineNumber: lineNum,
+        content: line.startsWith(" ") ? line.slice(1) : line,
+        type: "context",
+      });
+      lineNum++;
+    }
+  }
+
+  if (currentHunk) {
+    hunks.push(currentHunk);
+  }
+  return hunks;
+}
+
+function generateCIConfigForStack(
+  provider: string,
+  techStack: string,
+  projectName: string
+): string {
+  const installCmd = techStack.includes("python")
+    ? "pip install -r requirements.txt"
+    : "pnpm install";
+  const testCmd = techStack.includes("python") ? "pytest" : "pnpm test";
+  const buildCmd = techStack.includes("python") ? "" : "pnpm build";
+
+  switch (provider) {
+    case "github-actions":
+      return `name: CI - ${projectName}
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+      - run: ${installCmd}
+      - run: ${testCmd}
+${buildCmd ? `      - run: ${buildCmd}\n` : ""}`;
+    case "gitlab-ci":
+      return `stages:
+  - test
+  - build
+
+test:
+  stage: test
+  image: node:20
+  script:
+    - ${installCmd}
+    - ${testCmd}
+${buildCmd ? `\nbuild:\n  stage: build\n  image: node:20\n  script:\n    - ${installCmd}\n    - ${buildCmd}\n` : ""}`;
+    default:
+      return `# ${provider} CI configuration for ${projectName}\n`;
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Provider repo fetching helpers

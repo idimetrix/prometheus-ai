@@ -30,8 +30,8 @@ importers:
         specifier: ^3.0.48
         version: 3.0.48(zod@4.3.6)
       ai:
-        specifier: ^6.0.138
-        version: 6.0.138(zod@4.3.6)
+        specifier: ^6.0.141
+        version: 6.0.141(zod@4.3.6)
       zod:
         specifier: ^4.3.6
         version: 4.3.6
@@ -106,8 +106,8 @@ importers:
         specifier: ^11.15.1
         version: 11.15.1(typescript@6.0.2)
       drizzle-orm:
-        specifier: ^0.45.1
-        version: 0.45.1(@opentelemetry/api@1.9.1)(@types/pg@8.15.6)(gel@2.2.0)(postgres@3.4.8)
+        specifier: ^0.45.2
+        version: 0.45.2(@opentelemetry/api@1.9.1)(@types/pg@8.15.6)(gel@2.2.0)(postgres@3.4.8)
       hono:
         specifier: ^4.12.9
         version: 4.12.9
@@ -204,11 +204,11 @@ importers:
         specifier: workspace:*
         version: link:../../packages/utils
       ai:
-        specifier: ^6.0.138
-        version: 6.0.138(zod@4.3.6)
+        specifier: ^6.0.141
+        version: 6.0.141(zod@4.3.6)
       drizzle-orm:
-        specifier: ^0.45.1
-        version: 0.45.1(@opentelemetry/api@1.9.1)(@types/pg@8.15.6)(gel@2.2.0)(postgres@3.4.8)
+        specifier: ^0.45.2
+        version: 0.45.2(@opentelemetry/api@1.9.1)(@types/pg@8.15.6)(gel@2.2.0)(postgres@3.4.8)
       hono:
         specifier: ^4.12.9
         version: 4.12.9
@@ -253,8 +253,8 @@ importers:
         specifier: workspace:*
         version: link:../../packages/utils
       ai:
-        specifier: ^6.0.138
-        version: 6.0.138(zod@4.3.6)
+        specifier: ^6.0.141
+        version: 6.0.141(zod@4.3.6)
       hono:
         specifier: ^4.12.9
         version: 4.12.9
@@ -305,11 +305,11 @@ importers:
         specifier: workspace:*
         version: link:../../packages/utils
       ai:
-        specifier: ^6.0.138
-        version: 6.0.138(zod@4.3.6)
+        specifier: ^6.0.141
+        version: 6.0.141(zod@4.3.6)
       drizzle-orm:
-        specifier: ^0.45.1
-        version: 0.45.1(@opentelemetry/api@1.9.1)(@types/pg@8.15.6)(gel@2.2.0)(postgres@3.4.8)
+        specifier: ^0.45.2
+        version: 0.45.2(@opentelemetry/api@1.9.1)(@types/pg@8.15.6)(gel@2.2.0)(postgres@3.4.8)
       hono:
         specifier: ^4.12.9
         version: 4.12.9
@@ -366,8 +366,8 @@ importers:
         specifier: ^5.71.1
         version: 5.71.1
       drizzle-orm:
-        specifier: ^0.45.1
-        version: 0.45.1(@opentelemetry/api@1.9.1)(@types/pg@8.15.6)(gel@2.2.0)(postgres@3.4.8)
+        specifier: ^0.45.2
+        version: 0.45.2(@opentelemetry/api@1.9.1)(@types/pg@8.15.6)(gel@2.2.0)(postgres@3.4.8)
       hono:
         specifier: ^4.12.9
         version: 4.12.9
@@ -418,8 +418,8 @@ importers:
         specifier: ^5.71.1
         version: 5.71.1
       drizzle-orm:
-        specifier: ^0.45.1
-        version: 0.45.1(@opentelemetry/api@1.9.1)(@types/pg@8.15.6)(gel@2.2.0)(postgres@3.4.8)
+        specifier: ^0.45.2
+        version: 0.45.2(@opentelemetry/api@1.9.1)(@types/pg@8.15.6)(gel@2.2.0)(postgres@3.4.8)
     devDependencies:
       '@prometheus/config-typescript':
         specifier: workspace:*
@@ -510,8 +510,8 @@ importers:
         specifier: ^8.3.0
         version: 8.3.0(socket.io-adapter@2.5.6)
       drizzle-orm:
-        specifier: ^0.45.1
-        version: 0.45.1(@opentelemetry/api@1.9.1)(@types/pg@8.15.6)(gel@2.2.0)(postgres@3.4.8)
+        specifier: ^0.45.2
+        version: 0.45.2(@opentelemetry/api@1.9.1)(@types/pg@8.15.6)(gel@2.2.0)(postgres@3.4.8)
       socket.io:
         specifier: ^4.8.3
         version: 4.8.3
@@ -682,8 +682,8 @@ importers:
         specifier: ^0.4.6
         version: 0.4.6(react-dom@19.2.4(react@19.2.4))(react@19.2.4)
       posthog-js:
-        specifier: ^1.363.6
-        version: 1.363.6
+        specifier: ^1.364.1
+        version: 1.364.1
       react:
         specifier: ^19.2.4
         version: 19.2.4
@@ -773,8 +773,8 @@ importers:
         specifier: workspace:*
         version: link:../utils
       ai:
-        specifier: ^6.0.138
-        version: 6.0.138(zod@4.3.6)
+        specifier: ^6.0.141
+        version: 6.0.141(zod@4.3.6)
       openai:
         specifier: ^6.33.0
         version: 6.33.0(ws@8.20.0)(zod@4.3.6)
@@ -813,8 +813,8 @@ importers:
         specifier: workspace:*
         version: link:../logger
       ai:
-        specifier: ^6.0.138
-        version: 6.0.138(zod@4.3.6)
+        specifier: ^6.0.141
+        version: 6.0.141(zod@4.3.6)
       openai:
         specifier: ^6.33.0
         version: 6.33.0(ws@8.20.0)(zod@4.3.6)
@@ -898,8 +898,8 @@ importers:
         specifier: workspace:*
         version: link:../utils
       drizzle-orm:
-        specifier: ^0.45.1
-        version: 0.45.1(@opentelemetry/api@1.9.1)(@types/pg@8.15.6)(gel@2.2.0)(postgres@3.4.8)
+        specifier: ^0.45.2
+        version: 0.45.2(@opentelemetry/api@1.9.1)(@types/pg@8.15.6)(gel@2.2.0)(postgres@3.4.8)
       stripe:
         specifier: ^21.0.1
         version: 21.0.1(@types/node@25.5.0)
@@ -1061,11 +1061,11 @@ importers:
         specifier: workspace:*
         version: link:../utils
       drizzle-orm:
-        specifier: ^0.45.1
-        version: 0.45.1(@opentelemetry/api@1.9.1)(@types/pg@8.15.6)(gel@2.2.0)(postgres@3.4.8)
+        specifier: ^0.45.2
+        version: 0.45.2(@opentelemetry/api@1.9.1)(@types/pg@8.15.6)(gel@2.2.0)(postgres@3.4.8)
       drizzle-zod:
         specifier: ^0.8.3
-        version: 0.8.3(drizzle-orm@0.45.1(@opentelemetry/api@1.9.1)(@types/pg@8.15.6)(gel@2.2.0)(postgres@3.4.8))(zod@4.3.6)
+        version: 0.8.3(drizzle-orm@0.45.2(@opentelemetry/api@1.9.1)(@types/pg@8.15.6)(gel@2.2.0)(postgres@3.4.8))(zod@4.3.6)
       postgres:
         specifier: ^3.4.8
         version: 3.4.8
@@ -1528,8 +1528,8 @@ packages:
     peerDependencies:
       zod: ^3.25.76 || ^4.1.8
 
-  '@ai-sdk/gateway@3.0.80':
-    resolution: {integrity: sha512-uM7kpZB5l977lW7+2X1+klBUxIZQ78+1a9jHlaHFEzcOcmmslTl3sdP0QqfuuBcO0YBM2gwOiqVdp8i4TRQYcw==}
+  '@ai-sdk/gateway@3.0.83':
+    resolution: {integrity: sha512-LvlWujbSdEkTBXBLFtF7GS6riXdHhH0O+DpDrCaNQvXeHmSF2jKsOg7JWXiCgygAHM5cWFAO3JYmZp83DjiuBQ==}
     engines: {node: '>=18'}
     peerDependencies:
       zod: ^3.25.76 || ^4.1.8
@@ -3533,11 +3533,11 @@ packages:
     engines: {node: '>=18'}
     hasBin: true
 
-  '@posthog/core@1.24.1':
-    resolution: {integrity: sha512-e8AciAnc6MRFws89ux8lJKFAaI03yEon0ASDoUO7yS91FVqbUGXYekObUUR3LHplcg+pmyiJBI0jolY0SFbGRA==}
+  '@posthog/core@1.24.3':
+    resolution: {integrity: sha512-nTyL1R/8V5vfdH37MbjXDYWFnUoxVijb2TnfJSNHz0+RBLtNnq0hNnBDCwWLl5yh1bzeJBYTT8UF+dV7D8y03w==}
 
-  '@posthog/types@1.363.6':
-    resolution: {integrity: sha512-SPU8psjrpK8prfFyYwvb25F1AgqSM32zdU1XPVIhUa107Cyw+VGw38Gv+AeqkEoAYQE2TFlWJT8DWUrw/mNDoQ==}
+  '@posthog/types@1.364.1':
+    resolution: {integrity: sha512-COB9L+EF9gqGTcK06392yCPC1mbPtqStguFLDin57dxekJM6uwygfxciBi6f6XoFiNEkACpykZYIgjgk5FsuaQ==}
 
   '@prisma/instrumentation@7.4.2':
     resolution: {integrity: sha512-r9JfchJF1Ae6yAxcaLu/V1TGqBhAuSDe3mRNOssBfx1rMzfZ4fdNvrgUBwyb/TNTGXFxlH9AZix5P257x07nrg==}
@@ -4891,8 +4891,8 @@ packages:
     resolution: {integrity: sha512-MnA+YT8fwfJPgBx3m60MNqakm30XOkyIoH1y6huTQvC0PwZG7ki8NacLBcrPbNoo8vEZy7Jpuk7+jMO+CUovTQ==}
     engines: {node: '>= 14'}
 
-  ai@6.0.138:
-    resolution: {integrity: sha512-49OfPe0f5uxJ6jUdA5BBXjIinP6+ZdYfAtpF2aEH64GA5wPcxH2rf/TBUQQ0bbamBz/D+TLMV18xilZqOC+zaA==}
+  ai@6.0.141:
+    resolution: {integrity: sha512-+GomGQWaId3xN0wcugUW/H7xMMaFkID2PiS7K/Wugj45G3efv0BXhQ3psRZoQVoRbOpdNoUqcK/KTB+FR4h6qg==}
     engines: {node: '>=18'}
     peerDependencies:
       zod: ^3.25.76 || ^4.1.8
@@ -5427,8 +5427,8 @@ packages:
     resolution: {integrity: sha512-7OZcmQUrdGI+DUNNsKBn1aW8qSoKuTH7d0mYgSP8bAzdFzKoovxEFnoGQp2dVs82EOJeYycqRtciopszwUf8bw==}
     hasBin: true
 
-  drizzle-orm@0.45.1:
-    resolution: {integrity: sha512-Te0FOdKIistGNPMq2jscdqngBRfBpC8uMFVwqjf6gtTVJHIQ/dosgV/CLBU2N4ZJBsXL5savCba9b0YJskKdcA==}
+  drizzle-orm@0.45.2:
+    resolution: {integrity: sha512-kY0BSaTNYWnoDMVoyY8uxmyHjpJW1geOmBMdSSicKo9CIIWkSxMIj2rkeSR51b8KAPB7m+qysjuHme5nKP+E5Q==}
     peerDependencies:
       '@aws-sdk/client-rds-data': '>=3'
       '@cloudflare/workers-types': '>=4'
@@ -6711,8 +6711,8 @@ packages:
     resolution: {integrity: sha512-d+JFcLM17njZaOLkv6SCev7uoLaBtfK86vMUXhW1Z4glPWh4jozno9APvW/XKFJ3CCxVoC7OL38BqRydtu5nGg==}
     engines: {node: '>=12'}
 
-  posthog-js@1.363.6:
-    resolution: {integrity: sha512-eQ+Ypml3JOEMQWt21XEea6J8vD77TNyoz4Yv/xxjlTRja+ilmJtQw/SuVAB3BobjgHKYUomXX7Fc4gH/zTVpbg==}
+  posthog-js@1.364.1:
+    resolution: {integrity: sha512-7nR2lfxKKqv5SeC+OjeWkWXfK/4RbXxRiqmSAW214y+FuDFVS+Li0mPzTBC/V20uHPWtd92ptrctpY/jKj0F7w==}
 
   preact@10.29.0:
     resolution: {integrity: sha512-wSAGyk2bYR1c7t3SZ3jHcM6xy0lcBcDel6lODcs9ME6Th++Dx2KU+6D3HD8wMMKGA8Wpw7OMd3/4RGzYRpzwRg==}
@@ -7692,7 +7692,7 @@ snapshots:
       '@ai-sdk/provider-utils': 4.0.21(zod@4.3.6)
       zod: 4.3.6
 
-  '@ai-sdk/gateway@3.0.80(zod@4.3.6)':
+  '@ai-sdk/gateway@3.0.83(zod@4.3.6)':
     dependencies:
       '@ai-sdk/provider': 3.0.8
       '@ai-sdk/provider-utils': 4.0.21(zod@4.3.6)
@@ -9819,11 +9819,11 @@ snapshots:
     dependencies:
       playwright: 1.58.2
 
-  '@posthog/core@1.24.1':
+  '@posthog/core@1.24.3':
     dependencies:
       cross-spawn: 7.0.6
 
-  '@posthog/types@1.363.6': {}
+  '@posthog/types@1.364.1': {}
 
   '@prisma/instrumentation@7.4.2(@opentelemetry/api@1.9.1)':
     dependencies:
@@ -11159,9 +11159,9 @@ snapshots:
 
   agent-base@7.1.4: {}
 
-  ai@6.0.138(zod@4.3.6):
+  ai@6.0.141(zod@4.3.6):
     dependencies:
-      '@ai-sdk/gateway': 3.0.80(zod@4.3.6)
+      '@ai-sdk/gateway': 3.0.83(zod@4.3.6)
       '@ai-sdk/provider': 3.0.8
       '@ai-sdk/provider-utils': 4.0.21(zod@4.3.6)
       '@opentelemetry/api': 1.9.0
@@ -11687,16 +11687,16 @@ snapshots:
       esbuild: 0.25.12
       tsx: 4.21.0
 
-  drizzle-orm@0.45.1(@opentelemetry/api@1.9.1)(@types/pg@8.15.6)(gel@2.2.0)(postgres@3.4.8):
+  drizzle-orm@0.45.2(@opentelemetry/api@1.9.1)(@types/pg@8.15.6)(gel@2.2.0)(postgres@3.4.8):
     optionalDependencies:
       '@opentelemetry/api': 1.9.1
       '@types/pg': 8.15.6
       gel: 2.2.0
       postgres: 3.4.8
 
-  drizzle-zod@0.8.3(drizzle-orm@0.45.1(@opentelemetry/api@1.9.1)(@types/pg@8.15.6)(gel@2.2.0)(postgres@3.4.8))(zod@4.3.6):
+  drizzle-zod@0.8.3(drizzle-orm@0.45.2(@opentelemetry/api@1.9.1)(@types/pg@8.15.6)(gel@2.2.0)(postgres@3.4.8))(zod@4.3.6):
     dependencies:
-      drizzle-orm: 0.45.1(@opentelemetry/api@1.9.1)(@types/pg@8.15.6)(gel@2.2.0)(postgres@3.4.8)
+      drizzle-orm: 0.45.2(@opentelemetry/api@1.9.1)(@types/pg@8.15.6)(gel@2.2.0)(postgres@3.4.8)
       zod: 4.3.6
 
   emoji-regex@8.0.0: {}
@@ -13273,15 +13273,15 @@ snapshots:
 
   postgres@3.4.8: {}
 
-  posthog-js@1.363.6:
+  posthog-js@1.364.1:
     dependencies:
       '@opentelemetry/api': 1.9.1
       '@opentelemetry/api-logs': 0.208.0
       '@opentelemetry/exporter-logs-otlp-http': 0.208.0(@opentelemetry/api@1.9.1)
       '@opentelemetry/resources': 2.6.1(@opentelemetry/api@1.9.1)
       '@opentelemetry/sdk-logs': 0.208.0(@opentelemetry/api@1.9.1)
-      '@posthog/core': 1.24.1
-      '@posthog/types': 1.363.6
+      '@posthog/core': 1.24.3
+      '@posthog/types': 1.364.1
       core-js: 3.49.0
       dompurify: 3.3.3
       fflate: 0.4.8

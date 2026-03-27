@@ -216,6 +216,30 @@ import { githubAppListing } from "./routes/github-app-listing";
 
 app.route("/api/github-app", githubAppListing);
 
+import { bitbucketOAuthApp } from "./routes/oauth/bitbucket";
+// ---------------------------------------------------------------------------
+// OAuth routes (public, handle OAuth redirects and callbacks)
+// ---------------------------------------------------------------------------
+import { githubOAuthApp } from "./routes/oauth/github";
+import { gitlabOAuthApp } from "./routes/oauth/gitlab";
+import { jiraOAuthApp } from "./routes/oauth/jira";
+import { linearOAuthApp } from "./routes/oauth/linear";
+import { slackOAuthApp } from "./routes/oauth/slack";
+
+app.route("/oauth/github", githubOAuthApp);
+app.route("/oauth/gitlab", gitlabOAuthApp);
+app.route("/oauth/bitbucket", bitbucketOAuthApp);
+app.route("/oauth/slack", slackOAuthApp);
+app.route("/oauth/jira", jiraOAuthApp);
+app.route("/oauth/linear", linearOAuthApp);
+
+// ---------------------------------------------------------------------------
+// SCIM 2.0 provisioning (enterprise SSO user/group sync)
+// ---------------------------------------------------------------------------
+import { scimApp } from "./routes/scim";
+
+app.route("/scim/v2", scimApp);
+
 // ---------------------------------------------------------------------------
 // Internal: model usage logging (called by model-router, fire-and-forget)
 // ---------------------------------------------------------------------------

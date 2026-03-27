@@ -21,7 +21,7 @@
     "@prometheus/telemetry": "workspace:*",
     "@prometheus/utils": "workspace:*",
     "@prometheus/workflow": "workspace:*",
-    "drizzle-orm": "^0.45.1"
+    "drizzle-orm": "^0.45.2"
   },
   "devDependencies": {
     "@prometheus/config-typescript": "workspace:*",

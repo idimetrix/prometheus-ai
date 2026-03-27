@@ -1,7 +1,11 @@
 import { getInternalAuthHeaders } from "@prometheus/auth";
 import { createLogger } from "@prometheus/logger";
+import { CorrectionLearner } from "./self-improvement/correction-learner";
 
 const logger = createLogger("orchestrator:context");
+
+/** Shared correction learner instance used for context injection. */
+const correctionLearner = new CorrectionLearner();
 
 const PROJECT_BRAIN_URL =
   process.env.PROJECT_BRAIN_URL ?? "http://localhost:4003";
@@ -94,6 +98,20 @@ export class ContextManager {
       params.agentRole
     );
     layers.push(...brainLayers);
+
+    // Layer 9: Previously Learned Corrections
+    const correctionsContent = correctionLearner.generatePromptContext(
+      params.agentRole,
+      this.projectId
+    );
+    if (correctionsContent) {
+      layers.push({
+        name: "learned_corrections",
+        content: correctionsContent,
+        priority: 55,
+        tokenEstimate: this.estimateTokens(correctionsContent),
+      });
+    }
 
     // Assemble within budget
     return this.fitToBudget(layers, params.systemPrompt);

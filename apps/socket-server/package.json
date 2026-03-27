@@ -21,7 +21,7 @@
     "@prometheus/telemetry": "workspace:*",
     "@prometheus/types": "workspace:*",
     "@prometheus/utils": "workspace:*",
-    "drizzle-orm": "^0.45.1"
+    "drizzle-orm": "^0.45.2"
   },
   "devDependencies": {
     "@types/ws": "^8.18.1",

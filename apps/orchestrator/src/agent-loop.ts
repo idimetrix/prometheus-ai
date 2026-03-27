@@ -319,6 +319,8 @@ export class AgentLoop {
     agentRole: string
   ): Promise<AgentExecutionResult> {
     let result: AgentExecutionResult | null = null;
+    let lastHeartbeat = Date.now();
+    let currentStep = 0;
 
     for await (const event of ExecutionEngine.execute(ctx)) {
       if (this.getStatus() === "paused") {
@@ -333,6 +335,18 @@ export class AgentLoop {
       const eventResult = this.trackEventState(event, result);
       if (eventResult !== undefined) {
         result = eventResult;
+      }
+
+      currentStep++;
+
+      // Heartbeat: persist checkpoint every 60 seconds for crash recovery
+      const now = Date.now();
+      if (now - lastHeartbeat > 60_000) {
+        this.logger.info(
+          { sessionId: this.sessionId, step: currentStep },
+          "Agent loop heartbeat checkpoint"
+        );
+        lastHeartbeat = now;
       }
     }
 

@@ -1,0 +1,87 @@
+{
+  "common": {
+    "dashboard": "\u4eea\u8868\u76d8",
+    "projects": "\u9879\u76ee",
+    "sessions": "\u4f1a\u8bdd",
+    "settings": "\u8bbe\u7f6e",
+    "analytics": "\u5206\u6790",
+    "fleet": "\u96c6\u7fa4\u7ba1\u7406\u5668",
+    "create": "\u521b\u5efa\u9879\u76ee",
+    "cancel": "\u53d6\u6d88",
+    "save": "\u4fdd\u5b58",
+    "delete": "\u5220\u9664",
+    "edit": "\u7f16\u8f91",
+    "submit": "\u63d0\u4ea4",
+    "loading": "\u52a0\u8f7d\u4e2d...",
+    "error": "\u51fa\u9519\u4e86",
+    "success": "\u6210\u529f",
+    "pending": "\u5f85\u5904\u7406",
+    "running": "\u8fd0\u884c\u4e2d",
+    "completed": "\u5df2\u5b8c\u6210",
+    "retry": "\u91cd\u8bd5",
+    "search": "\u641c\u7d22...",
+    "noResults": "\u672a\u627e\u5230\u7ed3\u679c"
+  },
+  "auth": {
+    "signIn": "\u767b\u5f55",
+    "signUp": "\u6ce8\u518c",
+    "signOut": "\u9000\u51fa"
+  },
+  "nav": {
+    "dashboard": "\u4eea\u8868\u76d8",
+    "projects": "\u9879\u76ee",
+    "sessions": "\u4f1a\u8bdd",
+    "settings": "\u8bbe\u7f6e"
+  },
+  "actions": {
+    "create": "\u521b\u5efa",
+    "delete": "\u5220\u9664",
+    "edit": "\u7f16\u8f91",
+    "save": "\u4fdd\u5b58",
+    "cancel": "\u53d6\u6d88",
+    "submit": "\u63d0\u4ea4"
+  },
+  "status": {
+    "loading": "\u52a0\u8f7d\u4e2d...",
+    "error": "\u9519\u8bef",
+    "success": "\u6210\u529f",
+    "pending": "\u5f85\u5904\u7406",
+    "running": "\u8fd0\u884c\u4e2d",
+    "completed": "\u5df2\u5b8c\u6210"
+  },
+  "session": {
+    "chat": "\u804a\u5929",
+    "terminal": "\u7ec8\u7aef",
+    "preview": "\u9884\u89c8",
+    "files": "\u6587\u4ef6",
+    "agent": "\u667a\u80fd\u4f53"
+  },
+  "errors": {
+    "generic": "\u53d1\u751f\u4e86\u610f\u5916\u9519\u8bef",
+    "notFound": "\u9875\u9762\u672a\u627e\u5230",
+    "unauthorized": "\u672a\u6388\u6743\u8bbf\u95ee",
+    "forbidden": "\u7981\u6b62\u8bbf\u95ee",
+    "networkError": "\u7f51\u7edc\u8fde\u63a5\u9519\u8bef",
+    "timeout": "\u8bf7\u6c42\u8d85\u65f6",
+    "validation": "\u8868\u5355\u6570\u636e\u65e0\u6548",
+    "serverError": "\u670d\u52a1\u5668\u5185\u90e8\u9519\u8bef"
+  },
+  "agents": {
+    "title": "AI \u667a\u80fd\u4f53",
+    "orchestrator": "\u7f16\u6392\u5668",
+    "discovery": "\u53d1\u73b0",
+    "architect": "\u67b6\u6784\u5e08",
+    "planner": "\u89c4\u5212\u5e08",
+    "frontendCoder": "\u524d\u7aef\u5f00\u53d1\u8005",
+    "backendCoder": "\u540e\u7aef\u5f00\u53d1\u8005",
+    "testEngineer": "\u6d4b\u8bd5\u5de5\u7a0b\u5e08",
+    "securityAuditor": "\u5b89\u5168\u5ba1\u8ba1\u5458",
+    "deployEngineer": "\u90e8\u7f72\u5de5\u7a0b\u5e08"
+  },
+  "billing": {
+    "credits": "\u79ef\u5206",
+    "balance": "\u4f59\u989d",
+    "usage": "\u7528\u91cf",
+    "upgrade": "\u5347\u7ea7\u8ba1\u5212"
+  }
+}

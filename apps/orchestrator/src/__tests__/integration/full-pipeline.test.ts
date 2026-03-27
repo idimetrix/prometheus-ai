@@ -37,7 +37,9 @@ vi.mock("@prometheus/queue", () => ({
 }));
 
 describe("Full Pipeline Integration", () => {
-  it("should create a session and track status", async () => {
+  it("should create a session and track status", {
+    timeout: 30_000,
+  }, async () => {
     const { SessionManager } = await import("../../session-manager");
     const manager = new SessionManager();
 

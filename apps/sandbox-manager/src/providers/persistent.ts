@@ -44,6 +44,11 @@ export interface PersistentSandboxInfo {
  *
  * Limits: max 1 persistent sandbox per project, 2GB RAM, 2 CPU, 20GB disk.
  */
+/**
+ * DB-ready sandbox persistence layer.
+ * Currently uses in-memory Map; swap with Drizzle queries for production.
+ * Schema: packages/db/src/schema/tables/sessions/persistent-sandboxes.ts
+ */
 export class PersistentSandboxProvider {
   private readonly sandboxes = new Map<string, PersistentSandbox>();
   /** Maps projectId -> sandboxId for the 1-per-project constraint */

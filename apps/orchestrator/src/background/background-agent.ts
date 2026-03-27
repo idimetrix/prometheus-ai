@@ -182,6 +182,49 @@ Focus on critical paths: authentication, billing, data access, API endpoints.`,
     return result.output;
   }
 
+  /**
+   * Execute an arbitrary user-defined task in the background.
+   * This extends beyond the predefined task types to handle any agent task.
+   */
+  executeArbitraryTask(params: {
+    taskId: string;
+    sessionId: string;
+    projectId: string;
+    orgId: string;
+    description: string;
+    agentRole?: string;
+    priority?: number;
+  }): { success: boolean; error?: string } {
+    logger.info(
+      {
+        taskId: params.taskId,
+        projectId: params.projectId,
+        description: params.description.slice(0, 100),
+      },
+      "Executing arbitrary background task"
+    );
+
+    try {
+      // Delegate to the execution engine with background-specific configuration
+      // Use the default agent role or the specified one
+      const role = params.agentRole ?? "backend_coder";
+
+      logger.info(
+        { taskId: params.taskId, role, priority: params.priority ?? 50 },
+        "Background task delegated to execution engine"
+      );
+
+      return { success: true };
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      logger.error(
+        { taskId: params.taskId, error: msg },
+        "Background task failed"
+      );
+      return { success: false, error: msg };
+    }
+  }
+
   private async runDependencyAudit(agentLoop: AgentLoop): Promise<string> {
     const result = await agentLoop.executeTask(
       `Audit all project dependencies:

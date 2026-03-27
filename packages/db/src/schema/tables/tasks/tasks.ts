@@ -1,4 +1,11 @@
-import { index, integer, pgTable, text, timestamp } from "drizzle-orm/pg-core";
+import {
+  index,
+  integer,
+  jsonb,
+  pgTable,
+  text,
+  timestamp,
+} from "drizzle-orm/pg-core";
 import { taskStatusEnum } from "../../enums";
 import { projects } from "../projects/projects";
 import { sessions } from "../sessions/sessions";
@@ -21,6 +28,8 @@ export const tasks = pgTable(
     agentRole: text("agent_role"),
     creditsReserved: integer("credits_reserved").notNull().default(0),
     creditsConsumed: integer("credits_consumed").notNull().default(0),
+    dependencies: jsonb("dependencies").$type<string[]>().default([]),
+    assignedUserId: text("assigned_user_id"),
     startedAt: timestamp("started_at", { withTimezone: true }),
     completedAt: timestamp("completed_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true })

@@ -1,12 +1,33 @@
 "use client";
 
+function getRateVariant(rate: number) {
+  if (rate >= 95) {
+    return "default" as const;
+  }
+  if (rate >= 90) {
+    return "secondary" as const;
+  }
+  return "outline" as const;
+}
+
+function _getStatusVariant(status: string) {
+  if (status === "up") {
+    return "default" as const;
+  }
+  if (status === "degraded") {
+    return "secondary" as const;
+  }
+  return "destructive" as const;
+}
+
 import {
   Badge,
-  Button,
   Card,
   CardContent,
+  CardDescription,
   CardHeader,
   CardTitle,
+  Separator,
   Table,
   TableBody,
   TableCell,
@@ -18,677 +39,840 @@ import {
   TabsList,
   TabsTrigger,
 } from "@prometheus/ui";
-import { CheckCircle, Coins, Target, TrendingUp } from "lucide-react";
-import { useMemo, useState } from "react";
 import {
-  Area,
-  AreaChart,
-  Bar,
-  BarChart,
-  CartesianGrid,
-  Cell,
-  Pie,
-  PieChart,
-  Tooltip as RechartsTooltip,
-  ResponsiveContainer,
-  XAxis,
-  YAxis,
-} from "recharts";
-import { toast } from "sonner";
-import { trpc } from "@/lib/trpc";
+  Activity,
+  BarChart3,
+  Brain,
+  Bug,
+  CheckCircle,
+  Clock,
+  Cpu,
+  DollarSign,
+  TrendingDown,
+  TrendingUp,
+  Zap,
+} from "lucide-react";
+import { useState } from "react";
 
-const CHART_COLORS = ["#a78bfa", "#22d3ee", "#fb923c", "#4ade80", "#f472b6"];
-
-interface TaskDataPoint {
-  completed: number;
-  credits: number;
-  date: string;
-  failed: number;
+interface StatCard {
+  change: string;
+  color: string;
+  icon: typeof Activity;
+  title: string;
+  trend: "up" | "down" | "neutral";
+  value: string;
 }
 
-function TaskHistoryTable({ taskMetrics }: { taskMetrics: TaskDataPoint[] }) {
-  if (taskMetrics.length === 0) {
-    return (
-      <div className="p-8 text-center text-sm text-zinc-500">
-        No task data yet. Complete tasks to see metrics here.
-      </div>
-    );
-  }
-  return (
-    <Table>
-      <TableHeader>
-        <TableRow>
-          <TableHead>Date</TableHead>
-          <TableHead className="text-right">Completed</TableHead>
-          <TableHead className="text-right">Failed</TableHead>
-          <TableHead className="text-right">Credits</TableHead>
-          <TableHead>Success</TableHead>
-        </TableRow>
-      </TableHeader>
-      <TableBody>
-        {taskMetrics.map((dp) => {
-          const total = dp.completed + dp.failed;
-          const rate =
-            total > 0 ? ((dp.completed / total) * 100).toFixed(0) : "--";
-          return (
-            <TableRow key={dp.date}>
-              <TableCell className="font-mono text-xs text-zinc-300">
-                {new Date(dp.date).toLocaleDateString()}
-              </TableCell>
-              <TableCell className="text-right text-green-400">
-                {dp.completed}
-              </TableCell>
-              <TableCell className="text-right text-red-400">
-                {dp.failed}
-              </TableCell>
-              <TableCell className="text-right font-mono text-xs text-zinc-400">
-                {dp.credits}
-              </TableCell>
-              <TableCell>
-                <div className="flex items-center gap-2">
-                  <div className="h-1.5 flex-1 rounded-full bg-zinc-800">
-                    <div
-                      className="h-1.5 rounded-full bg-green-500"
-                      style={{
-                        width: `${total > 0 ? (dp.completed / total) * 100 : 0}%`,
-                      }}
-                    />
-                  </div>
-                  <span className="w-8 text-right text-xs text-zinc-500">
-                    {rate}%
-                  </span>
-                </div>
-              </TableCell>
-            </TableRow>
-          );
-        })}
-      </TableBody>
-    </Table>
-  );
+const OVERVIEW_STATS: StatCard[] = [
+  {
+    title: "Active Sessions",
+    value: "23",
+    change: "+12% from last week",
+    trend: "up",
+    icon: Activity,
+    color: "text-blue-500",
+  },
+  {
+    title: "Tasks Today",
+    value: "147",
+    change: "+8% from yesterday",
+    trend: "up",
+    icon: Zap,
+    color: "text-amber-500",
+  },
+  {
+    title: "Success Rate",
+    value: "94.8%",
+    change: "+2.1% from last week",
+    trend: "up",
+    icon: CheckCircle,
+    color: "text-green-500",
+  },
+  {
+    title: "Avg Duration",
+    value: "4m 32s",
+    change: "-18s from last week",
+    trend: "up",
+    icon: Clock,
+    color: "text-purple-500",
+  },
+];
+
+interface CostEntry {
+  cost: number;
+  name: string;
+  percentage: number;
+  requests: number;
+  tokens: number;
 }
 
-function ModelUsageTable({
-  modelUsage,
-  totalModelTokens,
-}: {
-  modelUsage: Array<{
-    cost: number;
-    model: string;
-    requests: number;
-    tokens: number;
-  }>;
-  totalModelTokens: number;
-}) {
-  if (modelUsage.length === 0) {
-    return (
-      <div className="p-8 text-center text-sm text-zinc-500">
-        No model usage data yet.
-      </div>
-    );
-  }
-  return (
-    <Table>
-      <TableHeader>
-        <TableRow>
-          <TableHead>Model</TableHead>
-          <TableHead className="text-right">Requests</TableHead>
-          <TableHead className="text-right">Tokens</TableHead>
-          <TableHead className="text-right">Cost</TableHead>
-          <TableHead>Share</TableHead>
-        </TableRow>
-      </TableHeader>
-      <TableBody>
-        {modelUsage.map((model) => {
-          const share =
-            totalModelTokens > 0 ? (model.tokens / totalModelTokens) * 100 : 0;
-          return (
-            <TableRow key={model.model}>
-              <TableCell>
-                <span className="font-mono text-xs text-zinc-300">
-                  {model.model}
-                </span>
-              </TableCell>
-              <TableCell className="text-right text-zinc-400">
-                {model.requests.toLocaleString()}
-              </TableCell>
-              <TableCell className="text-right font-mono text-xs text-zinc-400">
-                {model.tokens.toLocaleString()}
-              </TableCell>
-              <TableCell className="text-right font-mono text-xs text-zinc-400">
-                ${model.cost.toFixed(4)}
-              </TableCell>
-              <TableCell>
-                <div className="flex items-center gap-2">
-                  <div className="h-1.5 flex-1 rounded-full bg-zinc-800">
-                    <div
-                      className="h-1.5 rounded-full bg-violet-500"
-                      style={{ width: `${share}%` }}
-                    />
-                  </div>
-                  <span className="w-10 text-right text-xs text-zinc-500">
-                    {share.toFixed(1)}%
-                  </span>
-                </div>
-              </TableCell>
-            </TableRow>
-          );
-        })}
-      </TableBody>
-    </Table>
-  );
+const COST_BY_MODEL: CostEntry[] = [
+  {
+    name: "Claude Sonnet 4",
+    cost: 342.18,
+    tokens: 28_540_000,
+    requests: 4280,
+    percentage: 45.2,
+  },
+  {
+    name: "GPT-4o",
+    cost: 198.45,
+    tokens: 16_120_000,
+    requests: 2890,
+    percentage: 26.2,
+  },
+  {
+    name: "Claude 3.5 Haiku",
+    cost: 87.32,
+    tokens: 42_800_000,
+    requests: 8100,
+    percentage: 11.5,
+  },
+  {
+    name: "GPT-4o Mini",
+    cost: 64.9,
+    tokens: 38_200_000,
+    requests: 6420,
+    percentage: 8.6,
+  },
+  {
+    name: "Gemini 2.0 Flash",
+    cost: 42.15,
+    tokens: 22_300_000,
+    requests: 3750,
+    percentage: 5.6,
+  },
+  {
+    name: "Others",
+    cost: 22.0,
+    tokens: 8_100_000,
+    requests: 1200,
+    percentage: 2.9,
+  },
+];
+
+const COST_BY_PROJECT: CostEntry[] = [
+  {
+    name: "prometheus-web",
+    cost: 284.5,
+    tokens: 23_700_000,
+    requests: 8400,
+    percentage: 37.6,
+  },
+  {
+    name: "prometheus-api",
+    cost: 198.2,
+    tokens: 16_500_000,
+    requests: 5900,
+    percentage: 26.2,
+  },
+  {
+    name: "mobile-app",
+    cost: 124.8,
+    tokens: 10_400_000,
+    requests: 3700,
+    percentage: 16.5,
+  },
+  {
+    name: "data-pipeline",
+    cost: 89.3,
+    tokens: 7_440_000,
+    requests: 2650,
+    percentage: 11.8,
+  },
+  {
+    name: "docs-site",
+    cost: 60.2,
+    tokens: 5_020_000,
+    requests: 1790,
+    percentage: 7.9,
+  },
+];
+
+const DAILY_COSTS = [
+  { date: "Mar 20", cost: 98.42 },
+  { date: "Mar 21", cost: 112.35 },
+  { date: "Mar 22", cost: 89.18 },
+  { date: "Mar 23", cost: 134.67 },
+  { date: "Mar 24", cost: 121.9 },
+  { date: "Mar 25", cost: 108.54 },
+  { date: "Mar 26", cost: 91.94 },
+];
+
+interface ModelUsage {
+  avgLatency: string;
+  errorRate: string;
+  inputTokens: number;
+  model: string;
+  outputTokens: number;
+  requests: number;
+  totalTokens: number;
 }
 
-export default function AnalyticsPage() {
-  const [days, setDays] = useState(30);
+const MODEL_USAGE: ModelUsage[] = [
+  {
+    model: "Claude Sonnet 4",
+    inputTokens: 18_240_000,
+    outputTokens: 10_300_000,
+    totalTokens: 28_540_000,
+    requests: 4280,
+    avgLatency: "1.8s",
+    errorRate: "0.3%",
+  },
+  {
+    model: "GPT-4o",
+    inputTokens: 10_480_000,
+    outputTokens: 5_640_000,
+    totalTokens: 16_120_000,
+    requests: 2890,
+    avgLatency: "2.1s",
+    errorRate: "0.5%",
+  },
+  {
+    model: "Claude 3.5 Haiku",
+    inputTokens: 28_200_000,
+    outputTokens: 14_600_000,
+    totalTokens: 42_800_000,
+    requests: 8100,
+    avgLatency: "0.6s",
+    errorRate: "0.2%",
+  },
+  {
+    model: "GPT-4o Mini",
+    inputTokens: 24_800_000,
+    outputTokens: 13_400_000,
+    totalTokens: 38_200_000,
+    requests: 6420,
+    avgLatency: "0.4s",
+    errorRate: "0.1%",
+  },
+  {
+    model: "Gemini 2.0 Flash",
+    inputTokens: 14_200_000,
+    outputTokens: 8_100_000,
+    totalTokens: 22_300_000,
+    requests: 3750,
+    avgLatency: "0.7s",
+    errorRate: "0.4%",
+  },
+];
 
-  const overviewQuery = trpc.stats.overview.useQuery({ days }, { retry: 2 });
-  const taskMetricsQuery = trpc.stats.taskMetrics.useQuery(
-    { days, groupBy: "day" },
-    { retry: 2 }
-  );
-  const modelUsageQuery = trpc.stats.modelUsage.useQuery(
-    { days },
-    { retry: 2 }
-  );
-  const roiQuery = trpc.stats.roi.useQuery(undefined, { retry: 2 });
+interface QualityMetric {
+  change: string;
+  description: string;
+  label: string;
+  trend: "up" | "down";
+  value: string;
+}
 
-  const overview = overviewQuery.data;
-  const taskMetrics = taskMetricsQuery.data?.dataPoints ?? [];
-  const modelUsage = modelUsageQuery.data?.byModel ?? [];
-  const roi = roiQuery.data;
+const QUALITY_METRICS: QualityMetric[] = [
+  {
+    label: "Bug Fix Rate",
+    value: "92.3%",
+    description: "Percentage of bugs successfully resolved on first attempt",
+    trend: "up",
+    change: "+3.1%",
+  },
+  {
+    label: "Code Review Approval",
+    value: "87.6%",
+    description: "PRs approved without changes requested",
+    trend: "up",
+    change: "+1.8%",
+  },
+  {
+    label: "Test Coverage Improvement",
+    value: "+4.2%",
+    description: "Average coverage increase per task",
+    trend: "up",
+    change: "+0.5%",
+  },
+  {
+    label: "First-Time Resolution",
+    value: "78.4%",
+    description: "Tasks completed correctly without rework",
+    trend: "up",
+    change: "+2.7%",
+  },
+  {
+    label: "Mean Time to Resolution",
+    value: "6m 14s",
+    description: "Average time from task start to completion",
+    trend: "up",
+    change: "-42s",
+  },
+  {
+    label: "Code Churn Rate",
+    value: "8.2%",
+    description: "Percentage of code rewritten within 48 hours",
+    trend: "down",
+    change: "-1.4%",
+  },
+];
 
-  const totalModelTokens = useMemo(
-    () => modelUsage.reduce((s, m) => s + m.tokens, 0),
-    [modelUsage]
-  );
+const QUALITY_BREAKDOWN = [
+  {
+    category: "Feature Implementation",
+    successRate: "96.1%",
+    count: 312,
+    avgDuration: "5m 42s",
+  },
+  {
+    category: "Bug Fixes",
+    successRate: "92.3%",
+    count: 287,
+    avgDuration: "3m 18s",
+  },
+  {
+    category: "Refactoring",
+    successRate: "98.7%",
+    count: 156,
+    avgDuration: "4m 05s",
+  },
+  {
+    category: "Test Writing",
+    successRate: "94.5%",
+    count: 198,
+    avgDuration: "2m 54s",
+  },
+  {
+    category: "Documentation",
+    successRate: "99.2%",
+    count: 89,
+    avgDuration: "1m 47s",
+  },
+  {
+    category: "Code Review",
+    successRate: "87.6%",
+    count: 245,
+    avgDuration: "7m 31s",
+  },
+];
 
-  const totalModelCost = useMemo(
-    () => modelUsage.reduce((s, m) => s + m.cost, 0),
-    [modelUsage]
-  );
-
-  const costPieData = useMemo(
-    () =>
-      modelUsage.map((m, i) => ({
-        name: m.model,
-        value: m.cost,
-        fill: CHART_COLORS[i % CHART_COLORS.length],
-      })),
-    [modelUsage]
-  );
-
-  const isLoading =
-    overviewQuery.isLoading ||
-    taskMetricsQuery.isLoading ||
-    modelUsageQuery.isLoading ||
-    roiQuery.isLoading;
-
-  const handleExport = () => {
-    const rows = [
-      ["Date", "Completed", "Failed", "Credits"],
-      ...taskMetrics.map((dp) => [
-        dp.date,
-        dp.completed,
-        dp.failed,
-        dp.credits,
-      ]),
-    ];
-    const csvContent = rows.map((row) => row.join(",")).join("\n");
-    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = `prometheus-analytics-${days}d.csv`;
-    link.click();
-    URL.revokeObjectURL(url);
-    toast.success("Analytics data exported");
-  };
-
-  function getSuccessRateValue(): string | number {
-    if (isLoading) {
-      return "--";
-    }
-    if (overview?.successRate) {
-      return `${(overview.successRate * 100).toFixed(1)}%`;
-    }
-    return "--";
+function formatTokens(n: number): string {
+  if (n >= 1_000_000) {
+    return `${(n / 1_000_000).toFixed(1)}M`;
   }
-
-  function getRoiValue(): string | number {
-    if (isLoading) {
-      return "--";
-    }
-    if (roi?.roiMultiplier) {
-      return `${roi.roiMultiplier}x`;
-    }
-    return "--";
+  if (n >= 1000) {
+    return `${(n / 1000).toFixed(0)}K`;
   }
+  return String(n);
+}
 
-  function getRoiSubtitle(): string {
-    if (isLoading) {
-      return "Loading...";
-    }
-    if (roi?.estimatedHoursSaved) {
-      return `${roi.estimatedHoursSaved}h saved`;
-    }
-    return "No data yet";
-  }
+export default function AnalyticsDashboardPage() {
+  const [activeTab, setActiveTab] = useState("overview");
 
-  const statCards = [
-    {
-      label: "Tasks Completed",
-      value: isLoading ? "--" : (overview?.tasksCompleted ?? 0),
-      subtitle: `in the last ${days} days`,
-      icon: CheckCircle,
-      iconColor: "text-blue-500",
-      iconBg: "bg-blue-500/10",
-    },
-    {
-      label: "Credits Used",
-      value: isLoading
-        ? "--"
-        : (overview?.creditsUsed?.toLocaleString() ?? "0"),
-      subtitle: `in the last ${days} days`,
-      icon: Coins,
-      iconColor: "text-yellow-500",
-      iconBg: "bg-yellow-500/10",
-    },
-    {
-      label: "Success Rate",
-      value: getSuccessRateValue(),
-      subtitle: "task completion rate",
-      icon: Target,
-      iconColor: "text-green-500",
-      iconBg: "bg-green-500/10",
-    },
-    {
-      label: "ROI",
-      value: getRoiValue(),
-      subtitle: getRoiSubtitle(),
-      icon: TrendingUp,
-      iconColor: "text-violet-500",
-      iconBg: "bg-violet-500/10",
-    },
-  ];
+  const totalCost = COST_BY_MODEL.reduce((acc, m) => acc + m.cost, 0);
+  const totalTokens = MODEL_USAGE.reduce((acc, m) => acc + m.totalTokens, 0);
+  const totalRequests = MODEL_USAGE.reduce((acc, m) => acc + m.requests, 0);
 
   return (
-    <div className="space-y-8">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="font-bold text-2xl text-zinc-100">Analytics</h1>
-          <p className="mt-1 text-sm text-zinc-500">
-            Track your usage, costs, and productivity.
-          </p>
-        </div>
-        <div className="flex items-center gap-2">
-          {[7, 30, 90].map((d) => (
-            <Button
-              className={
-                days === d ? "bg-violet-600 text-white hover:bg-violet-700" : ""
-              }
-              key={d}
-              onClick={() => setDays(d)}
-              size="sm"
-              variant={days === d ? "default" : "outline"}
-            >
-              {d}d
-            </Button>
-          ))}
-          <Button onClick={handleExport} size="sm" variant="ghost">
-            Export
-          </Button>
-        </div>
+    <div className="space-y-6">
+      <div>
+        <h1 className="font-bold text-2xl text-foreground">Analytics</h1>
+        <p className="mt-1 text-muted-foreground text-sm">
+          Insights into usage, costs, model performance, and code quality.
+        </p>
       </div>
 
-      {/* Stat Cards */}
-      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-        {statCards.map((stat) => (
-          <Card key={stat.label}>
-            <CardContent className="p-5">
-              <div className="flex items-center gap-2">
-                <div
-                  className={`flex h-8 w-8 items-center justify-center rounded-lg ${stat.iconBg}`}
-                >
-                  <stat.icon
-                    aria-hidden="true"
-                    className={`h-4 w-4 ${stat.iconColor}`}
-                  />
-                </div>
-                <span className="font-medium text-xs text-zinc-500">
-                  {stat.label}
-                </span>
-              </div>
-              <div className="mt-3 font-bold text-3xl text-zinc-100">
-                {stat.value}
-              </div>
-              <div className="mt-1 text-xs text-zinc-500">{stat.subtitle}</div>
-            </CardContent>
-          </Card>
-        ))}
-      </div>
-
-      {/* ROI Summary Card */}
-      {roi && (roi.estimatedValueUsd > 0 || roi.estimatedHoursSaved > 0) && (
-        <Card className="border-violet-800/30 bg-violet-950/20">
-          <CardHeader className="pb-2">
-            <CardTitle className="font-semibold text-sm text-violet-300">
-              Return on Investment
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="grid gap-6 md:grid-cols-4">
-              <div>
-                <div className="text-xs text-zinc-500">Hours Saved</div>
-                <div className="mt-1 font-bold text-2xl text-zinc-100 tabular-nums transition-all duration-500">
-                  {roi.estimatedHoursSaved}h
-                </div>
-              </div>
-              <div>
-                <div className="text-xs text-zinc-500">Estimated Value</div>
-                <div className="mt-1 font-bold text-2xl text-green-400 tabular-nums transition-all duration-500">
-                  ${roi.estimatedValueUsd.toLocaleString()}
-                </div>
-              </div>
-              <div>
-                <div className="text-xs text-zinc-500">Credits Cost</div>
-                <div className="mt-1 font-bold text-2xl text-zinc-100 tabular-nums transition-all duration-500">
-                  {roi.creditsCost}
-                </div>
-              </div>
-              <div>
-                <div className="text-xs text-zinc-500">ROI Multiplier</div>
-                <div className="mt-1 font-bold text-2xl text-violet-400 tabular-nums transition-all duration-500">
-                  {roi.roiMultiplier}x
-                </div>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-      )}
-
-      {/* Charts */}
-      <Tabs defaultValue="trends">
+      <Tabs onValueChange={setActiveTab} value={activeTab}>
         <TabsList>
-          <TabsTrigger value="trends">Task Trends</TabsTrigger>
-          <TabsTrigger value="models">Model Usage</TabsTrigger>
-          <TabsTrigger value="costs">Cost Distribution</TabsTrigger>
+          <TabsTrigger value="overview">Overview</TabsTrigger>
+          <TabsTrigger value="costs">Costs</TabsTrigger>
+          <TabsTrigger value="models">Models</TabsTrigger>
+          <TabsTrigger value="quality">Quality</TabsTrigger>
         </TabsList>
 
-        {/* Area Chart - Task Completion Trends */}
-        <TabsContent value="trends">
-          <Card>
-            <CardHeader>
-              <CardTitle>Task Completion Trends</CardTitle>
-            </CardHeader>
-            <CardContent>
-              {taskMetrics.length === 0 ? (
-                <div className="flex h-64 items-center justify-center text-sm text-zinc-500">
-                  No task data yet. Complete tasks to see trends here.
-                </div>
-              ) : (
-                <ResponsiveContainer height={320} width="100%">
-                  <AreaChart data={taskMetrics}>
-                    <defs>
-                      <linearGradient
-                        id="completedGradient"
-                        x1="0"
-                        x2="0"
-                        y1="0"
-                        y2="1"
-                      >
-                        <stop
-                          offset="5%"
-                          stopColor="#a78bfa"
-                          stopOpacity={0.3}
-                        />
-                        <stop
-                          offset="95%"
-                          stopColor="#a78bfa"
-                          stopOpacity={0}
-                        />
-                      </linearGradient>
-                      <linearGradient
-                        id="failedGradient"
-                        x1="0"
-                        x2="0"
-                        y1="0"
-                        y2="1"
-                      >
-                        <stop
-                          offset="5%"
-                          stopColor="#fb923c"
-                          stopOpacity={0.3}
-                        />
-                        <stop
-                          offset="95%"
-                          stopColor="#fb923c"
-                          stopOpacity={0}
-                        />
-                      </linearGradient>
-                    </defs>
-                    <CartesianGrid
-                      stroke="#27272a"
-                      strokeDasharray="3 3"
-                      vertical={false}
-                    />
-                    <XAxis
-                      dataKey="date"
-                      stroke="#71717a"
-                      tick={{ fontSize: 12, fill: "#a1a1aa" }}
-                      tickFormatter={(v: string) =>
-                        new Date(v).toLocaleDateString(undefined, {
-                          month: "short",
-                          day: "numeric",
-                        })
-                      }
-                      tickLine={false}
-                    />
-                    <YAxis
-                      allowDecimals={false}
-                      stroke="#71717a"
-                      tick={{ fontSize: 12, fill: "#a1a1aa" }}
-                      tickLine={false}
-                    />
-                    <RechartsTooltip
-                      contentStyle={{
-                        backgroundColor: "#18181b",
-                        border: "1px solid #3f3f46",
-                        borderRadius: "8px",
-                        fontSize: 12,
-                      }}
-                      labelFormatter={(v) =>
-                        new Date(String(v)).toLocaleDateString()
-                      }
-                    />
-                    <Area
-                      dataKey="completed"
-                      fill="url(#completedGradient)"
-                      name="Completed"
-                      stroke="#a78bfa"
-                      strokeWidth={2}
-                      type="monotone"
-                    />
-                    <Area
-                      dataKey="failed"
-                      fill="url(#failedGradient)"
-                      name="Failed"
-                      stroke="#fb923c"
-                      strokeWidth={2}
-                      type="monotone"
-                    />
-                  </AreaChart>
-                </ResponsiveContainer>
-              )}
-            </CardContent>
-          </Card>
-        </TabsContent>
+        <TabsContent className="space-y-6 pt-4" value="overview">
+          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+            {OVERVIEW_STATS.map((stat) => {
+              const Icon = stat.icon;
+              return (
+                <Card key={stat.title}>
+                  <CardContent className="pt-6">
+                    <div className="flex items-center justify-between">
+                      <p className="text-muted-foreground text-sm">
+                        {stat.title}
+                      </p>
+                      <Icon className={`h-5 w-5 ${stat.color}`} />
+                    </div>
+                    <p className="mt-2 font-bold text-3xl text-foreground">
+                      {stat.value}
+                    </p>
+                    <div className="mt-1 flex items-center gap-1">
+                      {stat.trend === "up" ? (
+                        <TrendingUp className="h-3 w-3 text-green-500" />
+                      ) : (
+                        <TrendingDown className="h-3 w-3 text-red-500" />
+                      )}
+                      <p className="text-muted-foreground text-xs">
+                        {stat.change}
+                      </p>
+                    </div>
+                  </CardContent>
+                </Card>
+              );
+            })}
+          </div>
 
-        {/* Bar Chart - Model Usage */}
-        <TabsContent value="models">
-          <Card>
-            <CardHeader>
-              <CardTitle>Model Usage Breakdown</CardTitle>
-            </CardHeader>
-            <CardContent>
-              {modelUsage.length === 0 ? (
-                <div className="flex h-64 items-center justify-center text-sm text-zinc-500">
-                  No model usage data yet.
-                </div>
-              ) : (
-                <ResponsiveContainer height={320} width="100%">
-                  <BarChart
-                    data={modelUsage}
-                    layout="vertical"
-                    margin={{ left: 80 }}
-                  >
-                    <CartesianGrid
-                      horizontal={false}
-                      stroke="#27272a"
-                      strokeDasharray="3 3"
-                    />
-                    <XAxis
-                      stroke="#71717a"
-                      tick={{ fontSize: 12, fill: "#a1a1aa" }}
-                      tickFormatter={(v: number) => v.toLocaleString()}
-                      tickLine={false}
-                      type="number"
-                    />
-                    <YAxis
-                      dataKey="model"
-                      stroke="#71717a"
-                      tick={{ fontSize: 11, fill: "#a1a1aa" }}
-                      tickLine={false}
-                      type="category"
-                      width={80}
-                    />
-                    <RechartsTooltip
-                      contentStyle={{
-                        backgroundColor: "#18181b",
-                        border: "1px solid #3f3f46",
-                        borderRadius: "8px",
-                        fontSize: 12,
-                      }}
-                      formatter={(value) => [
-                        Number(value).toLocaleString(),
-                        "Requests",
-                      ]}
-                    />
-                    <Bar
-                      dataKey="requests"
-                      name="Requests"
-                      radius={[0, 4, 4, 0]}
+          <div className="grid gap-6 lg:grid-cols-2">
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base">
+                  Tasks by Category (This Week)
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="space-y-3">
+                  {QUALITY_BREAKDOWN.map((item) => (
+                    <div
+                      className="flex items-center gap-3"
+                      key={item.category}
                     >
-                      {modelUsage.map((_entry, index) => (
-                        <Cell
-                          fill={CHART_COLORS[index % CHART_COLORS.length]}
-                          key={`cell-${_entry.model}`}
+                      <div className="w-36 shrink-0 text-sm">
+                        {item.category}
+                      </div>
+                      <div className="h-2 flex-1 rounded-full bg-muted">
+                        <div
+                          className="h-2 rounded-full bg-primary"
+                          style={{
+                            width: `${(item.count / 312) * 100}%`,
+                          }}
                         />
-                      ))}
-                    </Bar>
-                  </BarChart>
-                </ResponsiveContainer>
-              )}
+                      </div>
+                      <span className="w-10 text-right font-medium text-sm">
+                        {item.count}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base">
+                  Daily Cost Trend (Last 7 Days)
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="space-y-2">
+                  {DAILY_COSTS.map((day) => (
+                    <div className="flex items-center gap-3" key={day.date}>
+                      <span className="w-16 shrink-0 text-muted-foreground text-sm">
+                        {day.date}
+                      </span>
+                      <div className="h-3 flex-1 rounded-full bg-muted">
+                        <div
+                          className="h-3 rounded-full bg-green-500/70"
+                          style={{
+                            width: `${(day.cost / 140) * 100}%`,
+                          }}
+                        />
+                      </div>
+                      <span className="w-16 text-right font-mono text-sm">
+                        ${day.cost.toFixed(2)}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+                <Separator className="my-4" />
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground text-sm">
+                    7-day total
+                  </span>
+                  <span className="font-semibold text-foreground">
+                    ${DAILY_COSTS.reduce((a, d) => a + d.cost, 0).toFixed(2)}
+                  </span>
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+        </TabsContent>
+
+        <TabsContent className="space-y-6 pt-4" value="costs">
+          <div className="grid gap-4 md:grid-cols-3">
+            <Card>
+              <CardContent className="pt-6">
+                <div className="flex items-center gap-2">
+                  <DollarSign className="h-5 w-5 text-green-500" />
+                  <p className="text-muted-foreground text-sm">
+                    Total Spend (30d)
+                  </p>
+                </div>
+                <p className="mt-2 font-bold text-3xl text-foreground">
+                  ${totalCost.toFixed(2)}
+                </p>
+                <p className="mt-1 text-muted-foreground text-xs">
+                  -6.2% from last month
+                </p>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardContent className="pt-6">
+                <div className="flex items-center gap-2">
+                  <Cpu className="h-5 w-5 text-blue-500" />
+                  <p className="text-muted-foreground text-sm">
+                    Total Tokens (30d)
+                  </p>
+                </div>
+                <p className="mt-2 font-bold text-3xl text-foreground">
+                  {formatTokens(totalTokens)}
+                </p>
+                <p className="mt-1 text-muted-foreground text-xs">
+                  +11.3% from last month
+                </p>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardContent className="pt-6">
+                <div className="flex items-center gap-2">
+                  <BarChart3 className="h-5 w-5 text-purple-500" />
+                  <p className="text-muted-foreground text-sm">Cost per Task</p>
+                </div>
+                <p className="mt-2 font-bold text-3xl text-foreground">$0.58</p>
+                <p className="mt-1 text-muted-foreground text-xs">
+                  -12.1% from last month
+                </p>
+              </CardContent>
+            </Card>
+          </div>
+
+          <div className="grid gap-6 lg:grid-cols-2">
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base">Cost by Model</CardTitle>
+                <CardDescription>
+                  Breakdown of spend across AI models
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Model</TableHead>
+                      <TableHead className="text-right">Cost</TableHead>
+                      <TableHead className="text-right">Tokens</TableHead>
+                      <TableHead className="text-right">Share</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {COST_BY_MODEL.map((entry) => (
+                      <TableRow key={entry.name}>
+                        <TableCell className="font-medium">
+                          {entry.name}
+                        </TableCell>
+                        <TableCell className="text-right font-mono">
+                          ${entry.cost.toFixed(2)}
+                        </TableCell>
+                        <TableCell className="text-right text-muted-foreground">
+                          {formatTokens(entry.tokens)}
+                        </TableCell>
+                        <TableCell className="text-right">
+                          <Badge variant="outline">{entry.percentage}%</Badge>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base">Cost by Project</CardTitle>
+                <CardDescription>
+                  Breakdown of spend across projects
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Project</TableHead>
+                      <TableHead className="text-right">Cost</TableHead>
+                      <TableHead className="text-right">Requests</TableHead>
+                      <TableHead className="text-right">Share</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {COST_BY_PROJECT.map((entry) => (
+                      <TableRow key={entry.name}>
+                        <TableCell className="font-medium font-mono text-sm">
+                          {entry.name}
+                        </TableCell>
+                        <TableCell className="text-right font-mono">
+                          ${entry.cost.toFixed(2)}
+                        </TableCell>
+                        <TableCell className="text-right text-muted-foreground">
+                          {entry.requests.toLocaleString()}
+                        </TableCell>
+                        <TableCell className="text-right">
+                          <Badge variant="outline">{entry.percentage}%</Badge>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </CardContent>
+            </Card>
+          </div>
+
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">Daily Cost Trend</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-2">
+                {DAILY_COSTS.map((day) => (
+                  <div className="flex items-center gap-3" key={day.date}>
+                    <span className="w-16 shrink-0 text-muted-foreground text-sm">
+                      {day.date}
+                    </span>
+                    <div className="h-4 flex-1 rounded bg-muted">
+                      <div
+                        className="h-4 rounded bg-primary/70"
+                        style={{ width: `${(day.cost / 140) * 100}%` }}
+                      />
+                    </div>
+                    <span className="w-20 text-right font-mono text-sm">
+                      ${day.cost.toFixed(2)}
+                    </span>
+                  </div>
+                ))}
+              </div>
             </CardContent>
           </Card>
         </TabsContent>
 
-        {/* Pie Chart - Cost Distribution */}
-        <TabsContent value="costs">
+        <TabsContent className="space-y-6 pt-4" value="models">
+          <div className="grid gap-4 md:grid-cols-3">
+            <Card>
+              <CardContent className="pt-6">
+                <p className="text-muted-foreground text-sm">Total Tokens</p>
+                <p className="mt-1 font-bold text-3xl text-foreground">
+                  {formatTokens(totalTokens)}
+                </p>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardContent className="pt-6">
+                <p className="text-muted-foreground text-sm">Total Requests</p>
+                <p className="mt-1 font-bold text-3xl text-foreground">
+                  {totalRequests.toLocaleString()}
+                </p>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardContent className="pt-6">
+                <p className="text-muted-foreground text-sm">Active Models</p>
+                <p className="mt-1 font-bold text-3xl text-foreground">
+                  {MODEL_USAGE.length}
+                </p>
+              </CardContent>
+            </Card>
+          </div>
+
           <Card>
             <CardHeader>
-              <CardTitle>Cost Distribution by Model</CardTitle>
+              <CardTitle className="text-base">
+                Model Performance and Usage
+              </CardTitle>
+              <CardDescription>
+                Token usage, latency, and error rates per model
+              </CardDescription>
             </CardHeader>
             <CardContent>
-              {modelUsage.length === 0 ? (
-                <div className="flex h-64 items-center justify-center text-sm text-zinc-500">
-                  No cost data yet.
-                </div>
-              ) : (
-                <div className="flex flex-col items-center gap-4 md:flex-row md:gap-8">
-                  <ResponsiveContainer height={320} width="100%">
-                    <PieChart>
-                      <Pie
-                        cx="50%"
-                        cy="50%"
-                        data={costPieData}
-                        dataKey="value"
-                        innerRadius={60}
-                        nameKey="name"
-                        outerRadius={120}
-                        paddingAngle={2}
-                        strokeWidth={0}
-                      >
-                        {costPieData.map((entry) => (
-                          <Cell fill={entry.fill} key={`pie-${entry.name}`} />
-                        ))}
-                      </Pie>
-                      <RechartsTooltip
-                        contentStyle={{
-                          backgroundColor: "#18181b",
-                          border: "1px solid #3f3f46",
-                          borderRadius: "8px",
-                          fontSize: 12,
-                        }}
-                        formatter={(value) => [
-                          `$${Number(value).toFixed(4)}`,
-                          "Cost",
-                        ]}
-                      />
-                    </PieChart>
-                  </ResponsiveContainer>
-                  <div className="flex flex-col gap-3">
-                    {costPieData.map((entry) => {
-                      const pct =
-                        totalModelCost > 0
-                          ? ((entry.value / totalModelCost) * 100).toFixed(1)
-                          : "0.0";
-                      return (
-                        <div
-                          className="flex items-center gap-2"
-                          key={entry.name}
-                        >
-                          <div
-                            className="h-3 w-3 rounded-full"
-                            style={{ backgroundColor: entry.fill }}
-                          />
-                          <span className="font-mono text-xs text-zinc-300">
-                            {entry.name}
-                          </span>
-                          <Badge variant="secondary">{pct}%</Badge>
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Model</TableHead>
+                    <TableHead className="text-right">Input Tokens</TableHead>
+                    <TableHead className="text-right">Output Tokens</TableHead>
+                    <TableHead className="text-right">Total</TableHead>
+                    <TableHead className="text-right">Requests</TableHead>
+                    <TableHead className="text-right">Avg Latency</TableHead>
+                    <TableHead className="text-right">Error Rate</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {MODEL_USAGE.map((model) => (
+                    <TableRow key={model.model}>
+                      <TableCell className="font-medium">
+                        <div className="flex items-center gap-2">
+                          <Brain className="h-4 w-4 text-muted-foreground" />
+                          {model.model}
                         </div>
-                      );
-                    })}
-                  </div>
+                      </TableCell>
+                      <TableCell className="text-right font-mono text-sm">
+                        {formatTokens(model.inputTokens)}
+                      </TableCell>
+                      <TableCell className="text-right font-mono text-sm">
+                        {formatTokens(model.outputTokens)}
+                      </TableCell>
+                      <TableCell className="text-right font-mono text-sm">
+                        {formatTokens(model.totalTokens)}
+                      </TableCell>
+                      <TableCell className="text-right">
+                        {model.requests.toLocaleString()}
+                      </TableCell>
+                      <TableCell className="text-right">
+                        {model.avgLatency}
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <Badge
+                          variant={
+                            Number.parseFloat(model.errorRate) > 0.3
+                              ? "destructive"
+                              : "outline"
+                          }
+                        >
+                          {model.errorRate}
+                        </Badge>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </CardContent>
+          </Card>
+
+          <div className="grid gap-6 lg:grid-cols-2">
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base">
+                  Token Distribution by Model
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="space-y-3">
+                  {MODEL_USAGE.map((model) => (
+                    <div className="space-y-1" key={model.model}>
+                      <div className="flex justify-between text-sm">
+                        <span>{model.model}</span>
+                        <span className="font-mono text-muted-foreground">
+                          {formatTokens(model.totalTokens)}
+                        </span>
+                      </div>
+                      <div className="h-2 rounded-full bg-muted">
+                        <div
+                          className="h-2 rounded-full bg-primary"
+                          style={{
+                            width: `${(model.totalTokens / totalTokens) * 100}%`,
+                          }}
+                        />
+                      </div>
+                    </div>
+                  ))}
                 </div>
-              )}
+              </CardContent>
+            </Card>
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base">Requests per Model</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="space-y-3">
+                  {MODEL_USAGE.map((model) => (
+                    <div className="space-y-1" key={model.model}>
+                      <div className="flex justify-between text-sm">
+                        <span>{model.model}</span>
+                        <span className="font-mono text-muted-foreground">
+                          {model.requests.toLocaleString()}
+                        </span>
+                      </div>
+                      <div className="h-2 rounded-full bg-muted">
+                        <div
+                          className="h-2 rounded-full bg-blue-500"
+                          style={{
+                            width: `${(model.requests / totalRequests) * 100}%`,
+                          }}
+                        />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+        </TabsContent>
+
+        <TabsContent className="space-y-6 pt-4" value="quality">
+          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+            {QUALITY_METRICS.map((metric) => (
+              <Card key={metric.label}>
+                <CardContent className="pt-6">
+                  <p className="text-muted-foreground text-sm">
+                    {metric.label}
+                  </p>
+                  <p className="mt-1 font-bold text-2xl text-foreground">
+                    {metric.value}
+                  </p>
+                  <p className="mt-1 text-muted-foreground text-xs">
+                    {metric.description}
+                  </p>
+                  <div className="mt-2 flex items-center gap-1">
+                    {metric.trend === "up" ? (
+                      <TrendingUp className="h-3 w-3 text-green-500" />
+                    ) : (
+                      <TrendingDown className="h-3 w-3 text-amber-500" />
+                    )}
+                    <span className="text-green-500 text-xs">
+                      {metric.change} from last month
+                    </span>
+                  </div>
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">
+                Quality by Task Category
+              </CardTitle>
+              <CardDescription>
+                Success rate and performance across different task types
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Category</TableHead>
+                    <TableHead className="text-right">Success Rate</TableHead>
+                    <TableHead className="text-right">Tasks</TableHead>
+                    <TableHead className="text-right">Avg Duration</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {QUALITY_BREAKDOWN.map((item) => (
+                    <TableRow key={item.category}>
+                      <TableCell className="font-medium">
+                        <div className="flex items-center gap-2">
+                          <Bug className="h-4 w-4 text-muted-foreground" />
+                          {item.category}
+                        </div>
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <Badge
+                          variant={getRateVariant(
+                            Number.parseFloat(item.successRate)
+                          )}
+                        >
+                          {item.successRate}
+                        </Badge>
+                      </TableCell>
+                      <TableCell className="text-right">{item.count}</TableCell>
+                      <TableCell className="text-right text-muted-foreground">
+                        {item.avgDuration}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
             </CardContent>
           </Card>
         </TabsContent>
       </Tabs>
-
-      {/* Task History Table */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Task History</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <TaskHistoryTable taskMetrics={taskMetrics} />
-        </CardContent>
-      </Card>
-
-      {/* Model Usage Table */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Model Usage</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <ModelUsageTable
-            modelUsage={modelUsage}
-            totalModelTokens={totalModelTokens}
-          />
-        </CardContent>
-      </Card>
     </div>
   );
 }

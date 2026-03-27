@@ -9,14 +9,14 @@
     "create": "Projekt erstellen",
     "cancel": "Abbrechen",
     "save": "Speichern",
-    "delete": "Löschen",
+    "delete": "L\u00f6schen",
     "edit": "Bearbeiten",
     "submit": "Absenden",
     "loading": "Wird geladen...",
     "error": "Ein Fehler ist aufgetreten",
     "success": "Erfolgreich",
     "pending": "Ausstehend",
-    "running": "Wird ausgeführt",
+    "running": "Wird ausgef\u00fchrt",
     "completed": "Abgeschlossen",
     "retry": "Erneut versuchen",
     "search": "Suchen...",
@@ -35,7 +35,7 @@
   },
   "actions": {
     "create": "Erstellen",
-    "delete": "Löschen",
+    "delete": "L\u00f6schen",
     "edit": "Bearbeiten",
     "save": "Speichern",
     "cancel": "Abbrechen",
@@ -46,7 +46,7 @@
     "error": "Fehler",
     "success": "Erfolgreich",
     "pending": "Ausstehend",
-    "running": "Wird ausgeführt",
+    "running": "Wird ausgef\u00fchrt",
     "completed": "Abgeschlossen"
   },
   "session": {
@@ -62,8 +62,8 @@
     "unauthorized": "Nicht autorisiert",
     "forbidden": "Zugriff verweigert",
     "networkError": "Netzwerkverbindungsfehler",
-    "timeout": "Zeitüberschreitung der Anfrage",
-    "validation": "Ungültige Formulardaten",
+    "timeout": "Zeit\u00fcberschreitung der Anfrage",
+    "validation": "Ung\u00fcltige Formulardaten",
     "serverError": "Interner Serverfehler"
   },
   "agents": {
@@ -75,7 +75,7 @@
     "frontendCoder": "Frontend-Entwickler",
     "backendCoder": "Backend-Entwickler",
     "testEngineer": "Testingenieur",
-    "securityAuditor": "Sicherheitsprüfer",
+    "securityAuditor": "Sicherheitspr\u00fcfer",
     "deployEngineer": "Deployment-Ingenieur"
   },
   "billing": {
