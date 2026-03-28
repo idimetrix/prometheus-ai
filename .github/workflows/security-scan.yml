@@ -52,7 +52,7 @@ jobs:
           - sandbox-manager
       fail-fast: false
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Build Docker image for scanning
         run: |
@@ -91,7 +91,7 @@ jobs:
     if: ${{ !inputs.scan_scope || inputs.scan_scope == 'all' || inputs.scan_scope == 'dependencies' }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - uses: pnpm/action-setup@v4
 
@@ -124,7 +124,7 @@ jobs:
     if: ${{ !inputs.scan_scope || inputs.scan_scope == 'all' || inputs.scan_scope == 'secrets' }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0  # Full history required for secret scanning
 
@@ -150,7 +150,7 @@ jobs:
     if: ${{ !inputs.scan_scope || inputs.scan_scope == 'all' || inputs.scan_scope == 'sast' }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Run Semgrep
         uses: returntocorp/semgrep-action@v1
@@ -202,7 +202,7 @@ jobs:
     if: ${{ !inputs.scan_scope || inputs.scan_scope == 'all' || inputs.scan_scope == 'dependencies' }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - uses: pnpm/action-setup@v4
 
