@@ -118,10 +118,27 @@ export const chatCommand = new Command("chat")
           input = line.trim();
         }
 
-        if (input === "exit" || input === "quit") {
+        if (input === "exit" || input === "quit" || input === "/exit") {
           console.log("Goodbye!");
           rl.close();
           process.exit(0);
+        }
+
+        if (input === "/clear") {
+          console.clear();
+          console.log("Chat history cleared.\n");
+          rl.prompt();
+          return;
+        }
+
+        if (input === "/help") {
+          console.log("\nAvailable commands:");
+          console.log("  /exit   - Exit the chat session");
+          console.log("  /clear  - Clear the screen");
+          console.log("  /help   - Show this help message");
+          console.log("  exit    - Exit the chat session\n");
+          rl.prompt();
+          return;
         }
 
         if (!input) {
@@ -216,10 +233,37 @@ function runLocalChat(opts: { llmKey?: string; provider?: string }): void {
       input = line.trim();
     }
 
-    if (input === "exit" || input === "quit") {
+    if (input === "exit" || input === "quit" || input === "/exit") {
       console.log("Goodbye!");
       rl.close();
       process.exit(0);
+    }
+
+    if (input === "/clear") {
+      console.clear();
+      console.log("Chat history cleared.\n");
+      rl.prompt();
+      return;
+    }
+
+    if (input.startsWith("/model ")) {
+      const newModel = input.slice(7).trim();
+      console.log("Model switching is not supported mid-session.");
+      console.log(`Current provider: ${opts.provider ?? "auto-detected"}`);
+      console.log(`Requested model: ${newModel}\n`);
+      rl.prompt();
+      return;
+    }
+
+    if (input === "/help") {
+      console.log("\nAvailable commands:");
+      console.log("  /exit       - Exit the chat session");
+      console.log("  /clear      - Clear the screen");
+      console.log("  /model <m>  - Show model info");
+      console.log("  /help       - Show this help message");
+      console.log("  exit        - Exit the chat session\n");
+      rl.prompt();
+      return;
     }
 
     if (!input) {

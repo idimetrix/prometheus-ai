@@ -37,6 +37,7 @@ import { githubAppWebhookApp } from "./routes/webhooks/github-app";
 import { inboundWebhookApp } from "./routes/webhooks/inbound";
 import { slackWebhookApp } from "./routes/webhooks/slack";
 import { slackCommandsApp } from "./routes/webhooks/slack-commands";
+import { slackInteractiveApp } from "./routes/webhooks/slack-interactive";
 import { stripeWebhookApp } from "./routes/webhooks/stripe";
 import { createContext } from "./trpc";
 
@@ -206,6 +207,7 @@ app.route("/webhooks/clerk", clerkWebhookApp);
 app.route("/webhooks/alerts", alertsWebhookApp);
 app.route("/webhooks/slack", slackWebhookApp);
 app.route("/webhooks/slack/commands", slackCommandsApp);
+app.route("/webhooks/slack-interactive", slackInteractiveApp);
 app.route("/webhooks/inbound", inboundWebhookApp);
 app.route("/webhooks/github-app", githubAppWebhookApp);
 

@@ -3,6 +3,7 @@ import {
   integer,
   jsonb,
   pgTable,
+  real,
   text,
   timestamp,
 } from "drizzle-orm/pg-core";
@@ -36,6 +37,20 @@ export const sessions = pgTable(
     estimatedCompletionAt: timestamp("estimated_completion_at", {
       withTimezone: true,
     }),
+    /** Maximum iterations before auto-pause */
+    maxIterations: integer("max_iterations"),
+    /** Maximum credits in USD */
+    maxCreditsUsd: real("max_credits_usd"),
+    /** Maximum duration in minutes */
+    maxDurationMinutes: integer("max_duration_minutes"),
+    /** Last heartbeat from agent */
+    lastHeartbeatAt: timestamp("last_heartbeat_at", { withTimezone: true }),
+    /** Estimated progress 0-100 */
+    progressPercent: real("progress_percent"),
+    /** Current progress description */
+    progressMessage: text("progress_message"),
+    /** Number of errors encountered */
+    errorCount: integer("error_count").notNull().default(0),
   },
   (table) => [
     index("sessions_project_id_idx").on(table.projectId),

@@ -3,7 +3,7 @@
 > **Goal:** Build a professional AI engineering service like Devin that works 24/7, creates full projects from scratch to production, and is 100x better than Claude Code, Codex 5+, GPT 5+, Cursor, and Devin — combined.
 >
 > **Last updated:** 2026-03-26
-> **Total gaps:** 110 (25 P0 / 25 P1 / 30 P2 / 30 P3)
+> **Total gaps:** 135 (28 P0 / 39 P1 / 37 P2 / 31 P3)
 > **Validated:** 13 P0 gaps confirmed working (services boot, LLM calls, sandbox, agent loop, E2E pipeline)
 
 ---
@@ -1668,15 +1668,366 @@ These features would make Prometheus unbeatable — the ultimate AI engineering 
 
 ---
 
+## NEW GAPS — Competitive Analysis (GAPs 111-135)
+
+> Added 2026-03-27 via deep competitor analysis against Devin.ai, v0.app, Claude Code, OpenAI Codex, and Cursor.
+
+---
+
+### GAP-111: Real-Time In-Browser Preview with Hot Reload
+
+- **Priority:** P1 | **Effort:** L
+- **Current State:** `sandpack-preview.tsx` and `preview-proxy.ts` exist but no hot-reloading loop where agent code changes stream into live preview during generation.
+- **Files:** `apps/sandbox-manager/src/routes/preview-proxy.ts`, `apps/web/src/components/preview/sandpack-preview.tsx`
+- **What's Missing:**
+  - WebSocket upgrade support for HMR in preview proxy
+  - Frontend iframe preview component with device size selector
+  - `preview_ready` Socket.IO event on dev server detection
+  - `preview_sessions` DB table (CREATED)
+  - `preview.start`, `preview.status`, `preview.ports` tRPC procedures
+- **Competitor Reference:** v0.app (core feature), Bolt.new, Lovable
+- **Acceptance Criteria:** Agent writes React component → preview iframe updates live → HMR works
+
+---
+
+### GAP-112: Chat-Based Design Iteration Loop
+
+- **Priority:** P1 | **Effort:** M
+- **Current State:** `design-mode-handler.ts` and `design-to-code.ts` pipeline exist but no proven conversational iteration loop with instant visual feedback.
+- **What's Missing:**
+  - Stateful design session preserving component context across turns
+  - Diff-aware updates to preview (modify, don't regenerate)
+  - `chat.designIterate` tRPC procedure
+- **Competitor Reference:** v0.app (core UX), Cursor Composer
+- **Acceptance Criteria:** User says "make header sticky" → existing component modified → preview updates
+
+---
+
+### GAP-113: Image-to-Code from Arbitrary Screenshots
+
+- **Priority:** P1 | **Effort:** M
+- **Current State:** Design-to-code pipeline and screenshot-to-code prompt exist but never validated E2E. Image upload hooks exist.
+- **Files:** `apps/orchestrator/src/pipelines/design-to-code.ts`, `packages/agent-sdk/src/prompts/screenshot-to-code.ts`
+- **What's Missing:**
+  - Validated E2E pipeline: image upload → vision model → code → preview
+  - `design_uploads` DB table (CREATED)
+  - `design_to_code_jobs` DB table (CREATED)
+  - `design` tRPC router with upload, analyze, generate, refine procedures
+  - Iterative refinement loop (generate → screenshot → compare → iterate, max 3 rounds)
+- **Competitor Reference:** v0.app, Cursor, Claude Code
+- **Acceptance Criteria:** Upload screenshot → vision model analyzes → code generated → preview matches original
+
+---
+
+### GAP-114: IDE-Native Inline Editing Experience
+
+- **Priority:** P1 | **Effort:** L
+- **Current State:** VS Code extension has `inline-edit.ts` and `inline-completion.ts` providers — neither verified to work.
+- **Files:** `packages/vscode-extension/src/providers/inline-edit.ts`, `packages/vscode-extension/src/providers/inline-completion.ts`
+- **What's Missing:**
+  - Validate extension builds, installs, connects to API
+  - Test inline completion latency (must be <500ms)
+  - LSP server package for language-agnostic IDE support
+  - Publish to VS Code marketplace
+- **Competitor Reference:** Cursor (core), GitHub Copilot, Windsurf
+- **Acceptance Criteria:** Select code in VS Code → Cmd+K → describe change → diff preview appears
+
+---
+
+### GAP-115: Tab Completion / Autocomplete (<200ms)
+
+- **Priority:** P1 | **Effort:** L
+- **Current State:** Completions API at `apps/api/src/routes/v1/completions/inline.ts` exists but speed unvalidated.
+- **What's Missing:**
+  - Dedicated fast-path inference route (<200ms)
+  - Fill-in-the-middle (FIM) model support
+  - Speculative pre-fetching based on cursor position
+  - Acceptance rate telemetry
+- **Competitor Reference:** Cursor Tab, GitHub Copilot, Windsurf
+- **Acceptance Criteria:** Type in VS Code → ghost text appears in <200ms → Tab accepts
+
+---
+
+### GAP-116: Integrated Web Browser for Agent
+
+- **Priority:** P0 | **Effort:** L
+- **Current State:** `BrowserUseEngine` with navigate/click/fill/extract/screenshot exists, but agents don't browse external sites during task execution.
+- **Files:** `apps/sandbox-manager/src/browser/browser-use-engine.ts`, `packages/agent-sdk/src/tools/browser-automation.ts`
+- **What's Missing:**
+  - Persistent browser session per sandbox (not ephemeral per tool call)
+  - DOM accessibility tree via `page.accessibility.snapshot()`
+  - Vision model integration (bridge `screenshotToVisionSlot()`)
+  - Real-time screenshot streaming to frontend (2 FPS via Socket.IO)
+  - `browser_sessions` and `browser_screenshots` DB tables (CREATED)
+  - `browser` tRPC router
+- **Competitor Reference:** Devin (core — browses docs, SO, APIs), Cursor (web search)
+- **Acceptance Criteria:** Agent receives task requiring docs → browses documentation → uses info in solution
+
+---
+
+### GAP-117: Multi-Day Autonomous Execution
+
+- **Priority:** P1 | **Effort:** XL
+- **Current State:** Background agents exist but limited to specific task types. No multi-day project management.
+- **What's Missing:**
+  - Watchdog with heartbeat monitoring (15s heartbeat, 2min stall detection) (CREATED)
+  - Session budget guards (max iterations, credits, duration) (CREATED)
+  - Automatic error recovery from checkpoints (CREATED)
+  - Session resume after service restart
+  - Long-running columns on sessions table (CREATED)
+  - `session_approval_gates` DB table (CREATED)
+- **Competitor Reference:** Devin (hours/days), OpenAI Codex (long-running)
+- **Acceptance Criteria:** Submit complex task → runs 30+ min → checkpoint/resume works → completes
+
+---
+
+### GAP-118: Hooks System with Configuration UI
+
+- **Priority:** P2 | **Effort:** M
+- **Current State:** `hook-executor.ts` supports block/transform/run_command/call_webhook but no web UI for managing hooks.
+- **Files:** `apps/orchestrator/src/hooks/hook-executor.ts`
+- **What's Missing:**
+  - Web UI in project settings for hook management
+  - Validated hook execution in agent loop
+  - Common hook templates (auto-format, auto-lint, auto-test)
+- **Competitor Reference:** Claude Code (hooks in config file)
+- **Acceptance Criteria:** Create hook in UI → agent writes file → hook auto-formats
+
+---
+
+### GAP-119: PROMETHEUS.md Project Context File
+
+- **Priority:** P1 | **Effort:** S
+- **Current State:** `project-context-loader.ts` and `system-prompt-builder.ts` FULLY IMPLEMENTED. Scans PROMETHEUS.md, CLAUDE.md, AGENTS.md, .cursorrules, copilot-instructions.md. Already integrated into agent-loop.ts.
+- **Files:** `apps/orchestrator/src/context/project-context-loader.ts`, `apps/orchestrator/src/context/system-prompt-builder.ts`
+- **What's Missing:**
+  - E2E validation with a real repo containing PROMETHEUS.md
+  - API endpoints for context file management (`projects.getContextFile`, `projects.detectContextFiles`)
+- **Status:** MOSTLY COMPLETE — needs validation only
+- **Competitor Reference:** Claude Code (CLAUDE.md), OpenAI Codex (AGENTS.md), Cursor (.cursorrules)
+
+---
+
+### GAP-120: Competitive CLI Experience
+
+- **Priority:** P0 | **Effort:** L
+- **Current State:** CLI at `packages/cli/src/` has command stubs but is a thin API wrapper. No local execution, no rich rendering.
+- **Files:** `packages/cli/src/index.ts`, `packages/cli/src/renderer/stream-renderer.ts`
+- **What's Missing:**
+  - Local execution mode (direct LLM API calls, bypass server)
+  - Rich streaming renderer validation
+  - Interactive approval prompts
+  - Plan mode, diff display
+  - npm publish as `prometheus-cli`
+- **Competitor Reference:** Claude Code (entire product), OpenAI Codex CLI
+- **Acceptance Criteria:** `npx prometheus-cli task "Create Express API"` → streams output → creates files → shows diff
+
+---
+
+### GAP-121: GitHub Actions / CI Integration as Product
+
+- **Priority:** P2 | **Effort:** M
+- **Current State:** `packages/github-action/` has api-client and index stubs.
+- **What's Missing:**
+  - Complete GitHub Action: trigger on issue with label → call API → create PR
+  - `action.yml` configuration
+  - Publish to GitHub Actions Marketplace
+- **Competitor Reference:** OpenAI Codex (GitHub-native), Devin
+- **Acceptance Criteria:** Label issue "prometheus" → agent picks up → PR created
+
+---
+
+### GAP-122: Component Gallery / Template Sharing
+
+- **Priority:** P2 | **Effort:** M
+- **Current State:** Template galleries exist but for project scaffolds, not generated components.
+- **What's Missing:**
+  - User-generated component sharing with public URLs
+  - Fork and iterate functionality
+  - Ratings/reviews, search, categories
+- **Competitor Reference:** v0.app, Bolt.new
+- **Acceptance Criteria:** Generate component → share URL → others can fork and iterate
+
+---
+
+### GAP-123: Instant Start / Zero-Config Experience
+
+- **Priority:** P0 | **Effort:** M
+- **Current State:** Requires account creation, project setup, GitHub connection.
+- **What's Missing:**
+  - Anonymous/guest mode for prompt submission without signup
+  - Minimal onboarding: prompt first, account later
+  - Pre-configured sandbox starting immediately
+  - Public generate page
+- **Competitor Reference:** v0.app, Bolt.new, Replit
+- **Acceptance Criteria:** Visit URL → type prompt → get code within 30 seconds
+
+---
+
+### GAP-124: Web App as "Coding in Browser" Experience
+
+- **Priority:** P1 | **Effort:** L
+- **Current State:** 41 workspace panel components exist but not assembled into unified IDE layout.
+- **Files:** `apps/web/src/components/workspace/` (41 components), `workspace-layout.tsx`, `layout-presets.ts`
+- **What's Missing:**
+  - Assemble panels into unified session workspace page (CREATED)
+  - Make workspace default view for active sessions
+  - Wire panels: chat, editor, terminal, preview, file tree, git
+- **Competitor Reference:** Claude Code (claude.ai/code), Devin (devin.ai workspace)
+- **Acceptance Criteria:** Session page shows chat + editor + terminal + preview + file tree in resizable panels
+
+---
+
+### GAP-125: Persistent Development Environments
+
+- **Priority:** P2 | **Effort:** L
+- **Current State:** `persistent-sandboxes.ts` schema and `persistent.ts` provider exist but unvalidated.
+- **What's Missing:**
+  - Validate lifecycle: create → use → suspend → resume
+  - Snapshot management for cost optimization
+  - Automatic cleanup of abandoned environments
+- **Competitor Reference:** Devin, Replit, Codespaces
+- **Acceptance Criteria:** Start project → close browser → come back next day → sandbox intact
+
+---
+
+### GAP-126: Learning from User Feedback Mid-Session
+
+- **Priority:** P1 | **Effort:** M
+- **Current State:** CorrectionLearner and ConventionLearner exist but unclear if corrections persist to future sessions.
+- **What's Missing:**
+  - Validate: user corrects agent → stored as convention → next session uses it
+  - Strengthen CorrectionLearner → Project Brain → system prompt injection pipeline
+- **Competitor Reference:** Devin, Claude Code (memory), Cursor
+- **Acceptance Criteria:** Say "use Zustand not Redux" → next task in project uses Zustand
+
+---
+
+### GAP-127: Parallel Task Execution with Fleet UI
+
+- **Priority:** P1 | **Effort:** L
+- **Current State:** Fleet manager and fleet UI page exist but unvalidated.
+- **Files:** `apps/orchestrator/src/fleet-manager.ts`, `apps/web/src/app/(dashboard)/dashboard/fleet/page.tsx`
+- **What's Missing:**
+  - Validate: submit 5 tasks → 5 sandboxes → 5 agents → 5 PRs
+  - Fleet UI showing all active tasks with independent progress
+- **Competitor Reference:** Devin, OpenAI Codex, Claude Code (sub-agents)
+- **Acceptance Criteria:** Submit 5 tasks simultaneously → all run in parallel → all produce results
+
+---
+
+### GAP-128: Playbooks / Repeatable Workflow Templates
+
+- **Priority:** P2 | **Effort:** M
+- **Current State:** Playbook seed data and UI page exist but no validated execution engine.
+- **Files:** `packages/db/src/seed/playbooks.ts`, `apps/web/src/app/(dashboard)/dashboard/playbooks/page.tsx`
+- **What's Missing:**
+  - Playbook creation UI, trigger mechanisms (manual, webhook, schedule)
+  - Parameterized execution, sharing across teams
+- **Competitor Reference:** Devin (Playbooks)
+- **Acceptance Criteria:** Create "Review dependabot PRs" playbook → trigger → auto-reviews
+
+---
+
+### GAP-129: Session Replay / Watch Agent Work
+
+- **Priority:** P1 | **Effort:** M
+- **Current State:** `replay-viewer.tsx` exists but never validated with real data.
+- **Files:** `apps/web/src/components/session/replay/replay-viewer.tsx`
+- **What's Missing:**
+  - Validate with real session event data
+  - Playback speed controls, step-by-step navigation
+  - Show all steps: tool calls, file changes, terminal output, reasoning
+- **Competitor Reference:** Devin
+- **Acceptance Criteria:** Complete session → open replay → watch all steps with timing
+
+---
+
+### GAP-130: @-Mention Context System
+
+- **Priority:** P2 | **Effort:** M
+- **Current State:** `mention-resolver.ts`, `use-mention-resolver.ts`, `mention-input.tsx` exist but unvalidated.
+- **What's Missing:**
+  - Validate: @file resolves to content, @codebase triggers search
+  - Add types: @pr, @issue, @docs, @web
+- **Competitor Reference:** Cursor (@codebase, @file, @web), Windsurf
+- **Acceptance Criteria:** Type @file:auth/middleware.ts → file content injected into context
+
+---
+
+### GAP-131: Sandbox Web Server Access / Port Forwarding
+
+- **Priority:** P1 | **Effort:** M
+- **Current State:** `preview-proxy.ts` proxies HTTP to sandbox port 3000 but unvalidated.
+- **What's Missing:**
+  - Validate: agent runs `npm run dev` → user accesses preview URL → page loads
+  - Secure tunneling, multi-port support
+  - WebSocket proxy for HMR
+- **Competitor Reference:** Devin, Replit, Bolt.new
+- **Acceptance Criteria:** Agent starts dev server → user clicks preview → page loads correctly
+
+---
+
+### GAP-132: Inline Code Actions in IDE
+
+- **Priority:** P2 | **Effort:** S
+- **Current State:** VS Code extension has `code-action-provider.ts` but needs validation.
+- **What's Missing:**
+  - Validate: select code → right-click → "Ask Prometheus" → response with diff
+- **Competitor Reference:** Cursor, GitHub Copilot
+- **Acceptance Criteria:** Right-click code → "Explain" → explanation appears
+
+---
+
+### GAP-133: Chrome Extension for Web Debugging
+
+- **Priority:** P3 | **Effort:** L
+- **Current State:** `packages/chrome-extension/` has just `popup.tsx` stub.
+- **What's Missing:**
+  - Capture page state, console errors, network requests
+  - Send context to Prometheus for debugging
+- **Competitor Reference:** No direct competitor (unique opportunity)
+- **Acceptance Criteria:** Click extension → captures page state → sends to Prometheus → debugging suggestions
+
+---
+
+### GAP-134: Real-Time Cost Transparency
+
+- **Priority:** P1 | **Effort:** M
+- **Current State:** Cost analytics routers exist but no validated real-time cost display during task execution.
+- **What's Missing:**
+  - Real-time token counter in session UI
+  - Per-task cost breakdown, daily/weekly reports
+  - Budget alerts
+- **Competitor Reference:** Cursor, Claude Code, Devin
+- **Acceptance Criteria:** During session, token counter updates live → cost shown per task
+
+---
+
+### GAP-135: Streaming Chat with Code Execution
+
+- **Priority:** P1 | **Effort:** L
+- **Current State:** Chat router has non-streaming `complete` and `quickAction`. `chat_conversations` and `chat_messages` tables exist.
+- **Files:** `apps/api/src/routers/chat.ts`, `packages/db/src/schema/tables/chat/`
+- **What's Missing:**
+  - `chat.stream` SSE streaming mutation using AI SDK `streamText()`
+  - Conversation CRUD procedures
+  - `chat.executeCode` — run code blocks in sandbox
+  - Streaming markdown rendering in UI
+- **Competitor Reference:** v0.app, Claude Code, ChatGPT
+- **Acceptance Criteria:** Type prompt → tokens stream in real-time → code blocks render → "Run" executes in sandbox
+
+---
+
 ## Summary Scorecard
 
 | Priority | Count | Effort Breakdown | Timeline |
 |----------|-------|-----------------|----------|
-| **P0 Ship Blockers** | 25 | 4 XL, 6 L, 10 M, 5 S | 0-30 days |
-| **P1 Devin Parity** | 25 | 0 XL, 4 L, 20 M, 1 S | 30-60 days |
-| **P2 10x Advantage** | 30 | 1 XL, 15 L, 14 M, 0 S | 60-120 days |
-| **P3 100x Moonshot** | 30 | 9 XL, 12 L, 7 M, 0 S | 120-365 days |
-| **TOTAL** | **110** | **14 XL, 37 L, 51 M, 6 S** | **~12 months** |
+| **P0 Ship Blockers** | 28 | 4 XL, 9 L, 10 M, 5 S | 0-30 days |
+| **P1 Devin Parity** | 39 | 1 XL, 8 L, 26 M, 4 S | 30-60 days |
+| **P2 10x Advantage** | 37 | 1 XL, 17 L, 19 M, 0 S | 60-120 days |
+| **P3 100x Moonshot** | 31 | 9 XL, 13 L, 7 M, 0 S | 120-365 days |
+| **TOTAL** | **135** | **15 XL, 47 L, 62 M, 9 S** | **~12 months** |
 
 ---
 
@@ -1685,20 +2036,31 @@ These features would make Prometheus unbeatable — the ultimate AI engineering 
 ### Month 1: Ship It (P0)
 - All services running and communicating
 - End-to-end task execution working
-- Live demo instance
-- First SWE-bench run
+- Live demo instance, first SWE-bench run
+- Agent web browser for docs browsing (GAP-116)
+- Competitive CLI with local execution (GAP-120)
+- Instant start / zero-config experience (GAP-123)
 
-### Month 2: Match Devin (P1)
+### Month 2: Match Devin + v0 (P1)
 - Slack bot and GitHub App deployed
-- Preview deployments working
-- Multi-language support
-- Onboarding flow polished
+- Streaming chat with code execution (GAP-135)
+- Real-time preview with hot reload (GAP-111)
+- Image-to-code pipeline validated (GAP-113)
+- Web workspace IDE experience (GAP-124)
+- Multi-day autonomous execution (GAP-117)
+- Fleet parallel execution (GAP-127)
+- Session replay (GAP-129)
+- IDE inline editing + tab completion (GAP-114, GAP-115)
 
 ### Month 3-4: Surpass Devin (P2)
 - Multi-agent orchestration proven and measured
 - Memory system improving agent quality
 - Cost optimization saving 60%+ vs competitors
 - Plugin marketplace live
+- GitHub Actions CI integration (GAP-121)
+- Component gallery sharing (GAP-122)
+- Persistent dev environments (GAP-125)
+- @-mention context system (GAP-130)
 
 ### Month 5-12: 100x Moonshot (P3)
 - Full project generation from scratch to production
@@ -1706,6 +2068,7 @@ These features would make Prometheus unbeatable — the ultimate AI engineering 
 - Incident response agent (detect → diagnose → fix → deploy)
 - Design-to-code (Figma → pixel-perfect implementation)
 - Enterprise admin dashboard with SOC2 compliance
+- Chrome extension for web debugging (GAP-133)
 - Voice-driven development
 - Cross-user learning
 

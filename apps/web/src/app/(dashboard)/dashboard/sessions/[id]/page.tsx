@@ -1,6 +1,8 @@
 "use client";
 
 import { MarkdownRenderer } from "@prometheus/ui";
+import type { Route } from "next";
+import Link from "next/link";
 import { use, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { ApprovalGate } from "@/components/session/approval-gate";
@@ -608,6 +610,26 @@ export default function SessionPage({
           >
             {status}
           </span>
+          <Link
+            className="inline-flex items-center gap-1.5 rounded-md border border-violet-500/30 bg-violet-500/10 px-2.5 py-1 font-medium text-violet-300 text-xs transition-colors hover:border-violet-500/50 hover:bg-violet-500/20"
+            href={`/dashboard/sessions/${sessionId}/workspace` as Route}
+          >
+            <svg
+              aria-hidden="true"
+              className="h-3.5 w-3.5"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth={1.5}
+              viewBox="0 0 24 24"
+            >
+              <path
+                d="M6.75 7.5l3 2.25-3 2.25m4.5 0h3m-9 8.25h13.5A2.25 2.25 0 0021 18V6a2.25 2.25 0 00-2.25-2.25H5.25A2.25 2.25 0 003 6v12a2.25 2.25 0 002.25 2.25z"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </svg>
+            Open Workspace
+          </Link>
         </div>
         <div className="flex items-center gap-3 text-xs text-zinc-500">
           <TaskPhaseProgressCompact />

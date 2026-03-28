@@ -4,6 +4,9 @@ import { organizations } from "../organizations/organizations";
 import { projects } from "../projects/projects";
 import { tasks } from "../tasks/tasks";
 import { users } from "../users/users";
+import { browserScreenshots, browserSessions } from "./browser-sessions";
+import { persistentSandboxes } from "./persistent-sandboxes";
+import { previewSessions } from "./preview-sessions";
 import { sessionCheckpoints } from "./session-checkpoints";
 import { sessionEvents, sessionMessages, sessions } from "./sessions";
 
@@ -49,6 +52,51 @@ export const sessionMessagesRelations = relations(
   ({ one }) => ({
     session: one(sessions, {
       fields: [sessionMessages.sessionId],
+      references: [sessions.id],
+    }),
+  })
+);
+
+export const previewSessionsRelations = relations(
+  previewSessions,
+  ({ one }) => ({
+    session: one(sessions, {
+      fields: [previewSessions.sessionId],
+      references: [sessions.id],
+    }),
+  })
+);
+
+export const browserSessionsRelations = relations(
+  browserSessions,
+  ({ one, many }) => ({
+    session: one(sessions, {
+      fields: [browserSessions.sessionId],
+      references: [sessions.id],
+    }),
+    screenshots: many(browserScreenshots),
+  })
+);
+
+export const browserScreenshotsRelations = relations(
+  browserScreenshots,
+  ({ one }) => ({
+    browserSession: one(browserSessions, {
+      fields: [browserScreenshots.browserSessionId],
+      references: [browserSessions.id],
+    }),
+  })
+);
+
+export const persistentSandboxesRelations = relations(
+  persistentSandboxes,
+  ({ one }) => ({
+    project: one(projects, {
+      fields: [persistentSandboxes.projectId],
+      references: [projects.id],
+    }),
+    session: one(sessions, {
+      fields: [persistentSandboxes.sessionId],
       references: [sessions.id],
     }),
   })

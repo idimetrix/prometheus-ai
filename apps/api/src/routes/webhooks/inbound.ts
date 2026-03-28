@@ -30,6 +30,12 @@ const inboundWebhookApp = new Hono();
 /** TTL for webhook idempotency records: 48 hours */
 const WEBHOOK_IDEMPOTENCY_TTL_MS = 48 * 60 * 60 * 1000;
 
+/** Maximum retries for failed webhook processing */
+const MAX_WEBHOOK_RETRIES = 3;
+
+/** Base delay for exponential backoff (ms) */
+const RETRY_BASE_DELAY_MS = 500;
+
 // ---------------------------------------------------------------------------
 // Idempotency helpers
 // ---------------------------------------------------------------------------
@@ -65,6 +71,140 @@ async function recordDelivery(
 }
 
 // ---------------------------------------------------------------------------
+// Webhook delivery logging
+// ---------------------------------------------------------------------------
+
+interface WebhookDeliveryLog {
+  deliveryId: string;
+  errorMessage?: string;
+  retryCount: number;
+  source: string;
+  status: "success" | "failure" | "retry" | "dead_letter";
+  timestamp: Date;
+}
+
+const recentDeliveryLogs: WebhookDeliveryLog[] = [];
+const MAX_LOG_SIZE = 1000;
+
+function logWebhookDelivery(entry: WebhookDeliveryLog): void {
+  recentDeliveryLogs.push(entry);
+  if (recentDeliveryLogs.length > MAX_LOG_SIZE) {
+    recentDeliveryLogs.shift();
+  }
+  logger.info(
+    {
+      deliveryId: entry.deliveryId,
+      source: entry.source,
+      status: entry.status,
+      retryCount: entry.retryCount,
+    },
+    `Webhook delivery ${entry.status}`
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Retry logic with exponential backoff
+// ---------------------------------------------------------------------------
+
+async function withRetry<T>(
+  fn: () => Promise<T>,
+  deliveryId: string,
+  source: string
+): Promise<T> {
+  let lastError: Error | undefined;
+
+  for (let attempt = 0; attempt <= MAX_WEBHOOK_RETRIES; attempt++) {
+    try {
+      const result = await fn();
+
+      logWebhookDelivery({
+        deliveryId,
+        source,
+        status: attempt > 0 ? "retry" : "success",
+        retryCount: attempt,
+        timestamp: new Date(),
+      });
+
+      return result;
+    } catch (err) {
+      lastError = err instanceof Error ? err : new Error(String(err));
+
+      if (attempt < MAX_WEBHOOK_RETRIES) {
+        const delay = RETRY_BASE_DELAY_MS * 2 ** attempt;
+        logger.warn(
+          {
+            deliveryId,
+            source,
+            attempt: attempt + 1,
+            maxRetries: MAX_WEBHOOK_RETRIES,
+            nextRetryMs: delay,
+          },
+          "Webhook processing failed, retrying"
+        );
+        await new Promise((resolve) => setTimeout(resolve, delay));
+      }
+    }
+  }
+
+  // All retries exhausted — log to dead letter queue
+  logWebhookDelivery({
+    deliveryId,
+    source,
+    status: "dead_letter",
+    retryCount: MAX_WEBHOOK_RETRIES,
+    errorMessage: lastError?.message,
+    timestamp: new Date(),
+  });
+
+  logger.error(
+    {
+      deliveryId,
+      source,
+      error: lastError?.message,
+      retryCount: MAX_WEBHOOK_RETRIES,
+    },
+    "Webhook permanently failed, moved to dead letter queue"
+  );
+
+  // Attempt to enqueue to DLQ for later inspection
+  try {
+    const { webhookDeliveryQueue } = await import("@prometheus/queue");
+    await webhookDeliveryQueue.add(`dlq:webhook.${source}.failed`, {
+      subscriptionId: `dlq:${source}`,
+      event: `webhook.${source}.failed`,
+      payload: { deliveryId, source, error: lastError?.message },
+      attempt: MAX_WEBHOOK_RETRIES + 1,
+    });
+  } catch {
+    // Best effort — DLQ enqueue failure should not mask the original error
+  }
+
+  throw lastError ?? new Error("Webhook processing failed after retries");
+}
+
+// ---------------------------------------------------------------------------
+// Delivery log endpoint (for debugging/monitoring)
+// ---------------------------------------------------------------------------
+inboundWebhookApp.get("/deliveries", (c) => {
+  const limit = Number(c.req.query("limit") ?? "100");
+  const source = c.req.query("source");
+  const status = c.req.query("status");
+
+  let filtered = recentDeliveryLogs;
+  if (source) {
+    filtered = filtered.filter((l) => l.source === source);
+  }
+  if (status) {
+    filtered = filtered.filter((l) => l.status === status);
+  }
+
+  return c.json({
+    deliveries: filtered.slice(-limit).reverse(),
+    total: filtered.length,
+  });
+});
+
+// ---------------------------------------------------------------------------
 // GitHub webhook
 // ---------------------------------------------------------------------------
 inboundWebhookApp.post("/github", async (c) => {
@@ -82,13 +222,33 @@ inboundWebhookApp.post("/github", async (c) => {
   }
 
   logger.info({ deliveryId }, "Received inbound GitHub webhook");
-  const response = await handleGitHubWebhook(c);
 
-  if (deliveryId && response.status < 400) {
-    await recordDelivery(deliveryId, "github");
+  try {
+    const response = await withRetry(
+      async () => {
+        const res = await handleGitHubWebhook(c);
+        if (res.status >= 500) {
+          throw new Error(`GitHub webhook handler returned ${res.status}`);
+        }
+        return res;
+      },
+      deliveryId,
+      "github"
+    );
+
+    if (deliveryId && response.status < 400) {
+      await recordDelivery(deliveryId, "github");
+    }
+
+    return response;
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    logger.error(
+      { deliveryId, error: msg },
+      "GitHub webhook failed after retries"
+    );
+    return c.json({ error: "Webhook processing failed", deliveryId }, 500);
   }
-
-  return response;
 });
 
 // ---------------------------------------------------------------------------

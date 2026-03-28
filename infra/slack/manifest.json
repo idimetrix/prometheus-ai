@@ -1,0 +1,64 @@
+{
+  "display_information": {
+    "name": "Prometheus AI",
+    "description": "AI-powered software engineering agent",
+    "background_color": "#1a1a2e",
+    "long_description": "Prometheus AI is an AI-powered software engineering platform with 12 specialist agents. Submit tasks, review code, deploy previews, and manage your engineering workflow directly from Slack."
+  },
+  "features": {
+    "bot_user": {
+      "display_name": "Prometheus",
+      "always_online": true
+    },
+    "slash_commands": [
+      {
+        "command": "/prometheus",
+        "url": "https://api.prometheus.dev/webhooks/slack/commands",
+        "description": "Submit a task to Prometheus AI",
+        "usage_hint": "[task description] or status | create | stop | deploy | review | schedule | watch",
+        "should_escape": false
+      }
+    ],
+    "shortcuts": [
+      {
+        "name": "Create Prometheus Task",
+        "type": "message",
+        "callback_id": "create_task_from_message",
+        "description": "Create a Prometheus task from this message"
+      }
+    ]
+  },
+  "oauth_config": {
+    "redirect_urls": ["https://api.prometheus.dev/oauth/slack/callback"],
+    "scopes": {
+      "bot": [
+        "commands",
+        "chat:write",
+        "chat:write.public",
+        "files:write",
+        "reactions:write",
+        "app_mentions:read",
+        "im:history",
+        "im:read",
+        "im:write",
+        "channels:read",
+        "groups:read",
+        "users:read"
+      ]
+    }
+  },
+  "settings": {
+    "event_subscriptions": {
+      "request_url": "https://api.prometheus.dev/webhooks/slack/events",
+      "bot_events": ["app_mention", "message.im"]
+    },
+    "interactivity": {
+      "is_enabled": true,
+      "request_url": "https://api.prometheus.dev/webhooks/slack-interactive",
+      "message_menu_options_url": "https://api.prometheus.dev/webhooks/slack/interactions"
+    },
+    "org_deploy_enabled": false,
+    "socket_mode_enabled": false,
+    "token_rotation_enabled": false
+  }
+}

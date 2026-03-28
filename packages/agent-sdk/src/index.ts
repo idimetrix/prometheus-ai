@@ -36,6 +36,37 @@ export {
   unregisterCustomRole,
   validateAgentSpec,
 } from "./custom-roles";
+export type { ReviewContext } from "./prompts/code-review";
+// GAP-035: Code review prompts
+export {
+  buildReviewPrompt,
+  CODE_REVIEW_SYSTEM_PROMPT,
+  parseReviewResponse,
+} from "./prompts/code-review";
+// GAP-033: Language-specific prompts
+export { detectProjectLanguage } from "./prompts/language-detector";
+export {
+  getLanguagePrompt,
+  LANGUAGE_CONFIGS as LANGUAGE_PROMPT_CONFIGS,
+} from "./prompts/language-specific";
+// GAP-009: System prompts
+export {
+  AGENT_SYSTEM_PROMPTS,
+  getAgentSystemPrompt,
+  listPromptedRoles,
+} from "./prompts/system-prompts";
+// GAP-028: Test generation prompts
+export {
+  buildTestPrompt,
+  detectTestFramework,
+  TEST_GENERATION_PROMPT,
+} from "./prompts/test-generation";
+// GAP-009: Tool usage guidelines
+export {
+  buildToolUsagePrompt,
+  TOOL_CATEGORY_GUIDELINES,
+  TOOL_USAGE_GUIDELINES,
+} from "./prompts/tool-usage";
 export type { AgentRoleConfig, AiSdkAgentFullConfig } from "./roles";
 // Roles
 export {
@@ -74,6 +105,18 @@ export {
   browserScreenshotSchema,
   browserTools,
 } from "./tools/browser";
+// GAP-034: Browser verification
+export type {
+  BrowserVerifyParams,
+  VerificationResult,
+} from "./tools/browser-verify";
+export { browserVerifyTool } from "./tools/browser-verify";
+// GAP-029: Dependency manager
+export type {
+  Conflict as DependencyConflict,
+  PackageManagerType,
+} from "./tools/dependency-manager";
+export { DependencyManager } from "./tools/dependency-manager";
 // Tool collections
 // Zod schemas for external validation
 export {

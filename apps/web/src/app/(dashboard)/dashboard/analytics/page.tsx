@@ -359,6 +359,92 @@ function formatTokens(n: number): string {
   return String(n);
 }
 
+// ─── Agent Performance Data (GAP-040) ─────────────────────────────────
+interface AgentPerformance {
+  avgTaskTime: string;
+  errorRate: number;
+  role: string;
+  successRate: number;
+  tasksCompleted: number;
+}
+
+const AGENT_PERFORMANCE: AgentPerformance[] = [
+  {
+    role: "Coder",
+    successRate: 95.2,
+    avgTaskTime: "3m 42s",
+    tasksCompleted: 412,
+    errorRate: 2.1,
+  },
+  {
+    role: "Reviewer",
+    successRate: 91.8,
+    avgTaskTime: "5m 18s",
+    tasksCompleted: 245,
+    errorRate: 3.4,
+  },
+  {
+    role: "Tester",
+    successRate: 97.1,
+    avgTaskTime: "2m 54s",
+    tasksCompleted: 198,
+    errorRate: 1.2,
+  },
+  {
+    role: "Planner",
+    successRate: 88.4,
+    avgTaskTime: "6m 05s",
+    tasksCompleted: 156,
+    errorRate: 5.1,
+  },
+  {
+    role: "Debugger",
+    successRate: 92.6,
+    avgTaskTime: "4m 32s",
+    tasksCompleted: 287,
+    errorRate: 3.8,
+  },
+  {
+    role: "Deployer",
+    successRate: 99.1,
+    avgTaskTime: "1m 47s",
+    tasksCompleted: 89,
+    errorRate: 0.4,
+  },
+];
+
+interface DailyUsage {
+  activeUsers: number;
+  credits: number;
+  date: string;
+  tasks: number;
+}
+
+const DAILY_USAGE_TRENDS: DailyUsage[] = [
+  { date: "Mar 20", activeUsers: 18, tasks: 134, credits: 2800 },
+  { date: "Mar 21", activeUsers: 22, tasks: 158, credits: 3200 },
+  { date: "Mar 22", activeUsers: 15, tasks: 112, credits: 2400 },
+  { date: "Mar 23", activeUsers: 26, tasks: 189, credits: 3800 },
+  { date: "Mar 24", activeUsers: 24, tasks: 171, credits: 3500 },
+  { date: "Mar 25", activeUsers: 20, tasks: 148, credits: 3100 },
+  { date: "Mar 26", activeUsers: 23, tasks: 162, credits: 3300 },
+];
+
+interface PopularTask {
+  count: number;
+  percentage: number;
+  type: string;
+}
+
+const POPULAR_TASKS: PopularTask[] = [
+  { type: "Feature Implementation", count: 312, percentage: 24.2 },
+  { type: "Bug Fixes", count: 287, percentage: 22.3 },
+  { type: "Code Review", count: 245, percentage: 19.0 },
+  { type: "Test Writing", count: 198, percentage: 15.4 },
+  { type: "Refactoring", count: 156, percentage: 12.1 },
+  { type: "Documentation", count: 89, percentage: 6.9 },
+];
+
 export default function AnalyticsDashboardPage() {
   const [activeTab, setActiveTab] = useState("overview");
 
@@ -378,6 +464,8 @@ export default function AnalyticsDashboardPage() {
       <Tabs onValueChange={setActiveTab} value={activeTab}>
         <TabsList>
           <TabsTrigger value="overview">Overview</TabsTrigger>
+          <TabsTrigger value="agents">Agent Performance</TabsTrigger>
+          <TabsTrigger value="usage">Usage Trends</TabsTrigger>
           <TabsTrigger value="costs">Costs</TabsTrigger>
           <TabsTrigger value="models">Models</TabsTrigger>
           <TabsTrigger value="quality">Quality</TabsTrigger>
@@ -487,6 +575,221 @@ export default function AnalyticsDashboardPage() {
               </CardContent>
             </Card>
           </div>
+        </TabsContent>
+
+        {/* ─── Agent Performance Tab (GAP-040) ─────────────────────── */}
+        <TabsContent className="space-y-6 pt-4" value="agents">
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">
+                Success Rate by Agent Role
+              </CardTitle>
+              <CardDescription>
+                Performance metrics for each specialist agent
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Agent Role</TableHead>
+                    <TableHead className="text-right">Success Rate</TableHead>
+                    <TableHead className="text-right">Avg Task Time</TableHead>
+                    <TableHead className="text-right">Tasks</TableHead>
+                    <TableHead className="text-right">Error Rate</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {AGENT_PERFORMANCE.map((agent) => (
+                    <TableRow key={agent.role}>
+                      <TableCell className="font-medium">
+                        <div className="flex items-center gap-2">
+                          <Cpu className="h-4 w-4 text-muted-foreground" />
+                          {agent.role}
+                        </div>
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <Badge variant={getRateVariant(agent.successRate)}>
+                          {agent.successRate}%
+                        </Badge>
+                      </TableCell>
+                      <TableCell className="text-right text-muted-foreground">
+                        {agent.avgTaskTime}
+                      </TableCell>
+                      <TableCell className="text-right">
+                        {agent.tasksCompleted}
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <Badge
+                          variant={
+                            agent.errorRate > 3 ? "destructive" : "outline"
+                          }
+                        >
+                          {agent.errorRate}%
+                        </Badge>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">Error Distribution</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-3">
+                {AGENT_PERFORMANCE.map((agent) => (
+                  <div className="flex items-center gap-3" key={agent.role}>
+                    <div className="w-24 shrink-0 text-sm">{agent.role}</div>
+                    <div className="h-2 flex-1 rounded-full bg-muted">
+                      <div
+                        className="h-2 rounded-full bg-red-500/70"
+                        style={{ width: `${agent.errorRate * 10}%` }}
+                      />
+                    </div>
+                    <span className="w-12 text-right font-mono text-sm">
+                      {agent.errorRate}%
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        {/* ─── Usage Trends Tab (GAP-040) ─────────────────────────── */}
+        <TabsContent className="space-y-6 pt-4" value="usage">
+          <div className="grid gap-6 lg:grid-cols-2">
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base">
+                  Daily Active Users (Last 7 Days)
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="space-y-2">
+                  {DAILY_USAGE_TRENDS.map((day) => (
+                    <div className="flex items-center gap-3" key={day.date}>
+                      <span className="w-16 shrink-0 text-muted-foreground text-sm">
+                        {day.date}
+                      </span>
+                      <div className="h-3 flex-1 rounded-full bg-muted">
+                        <div
+                          className="h-3 rounded-full bg-blue-500/70"
+                          style={{
+                            width: `${(day.activeUsers / 30) * 100}%`,
+                          }}
+                        />
+                      </div>
+                      <span className="w-8 text-right font-mono text-sm">
+                        {day.activeUsers}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base">
+                  Tasks per Day (Last 7 Days)
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="space-y-2">
+                  {DAILY_USAGE_TRENDS.map((day) => (
+                    <div className="flex items-center gap-3" key={day.date}>
+                      <span className="w-16 shrink-0 text-muted-foreground text-sm">
+                        {day.date}
+                      </span>
+                      <div className="h-3 flex-1 rounded-full bg-muted">
+                        <div
+                          className="h-3 rounded-full bg-green-500/70"
+                          style={{ width: `${(day.tasks / 200) * 100}%` }}
+                        />
+                      </div>
+                      <span className="w-10 text-right font-mono text-sm">
+                        {day.tasks}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">
+                Credit Consumption (Last 7 Days)
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-2">
+                {DAILY_USAGE_TRENDS.map((day) => (
+                  <div className="flex items-center gap-3" key={day.date}>
+                    <span className="w-16 shrink-0 text-muted-foreground text-sm">
+                      {day.date}
+                    </span>
+                    <div className="h-4 flex-1 rounded bg-muted">
+                      <div
+                        className="h-4 rounded bg-amber-500/70"
+                        style={{ width: `${(day.credits / 4000) * 100}%` }}
+                      />
+                    </div>
+                    <span className="w-16 text-right font-mono text-sm">
+                      {day.credits.toLocaleString()}
+                    </span>
+                  </div>
+                ))}
+              </div>
+              <Separator className="my-4" />
+              <div className="flex justify-between">
+                <span className="text-muted-foreground text-sm">
+                  7-day total
+                </span>
+                <span className="font-semibold text-foreground">
+                  {DAILY_USAGE_TRENDS.reduce(
+                    (a, d) => a + d.credits,
+                    0
+                  ).toLocaleString()}{" "}
+                  credits
+                </span>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">Popular Task Types</CardTitle>
+              <CardDescription>
+                Most common task types this month
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-3">
+                {POPULAR_TASKS.map((task) => (
+                  <div className="flex items-center gap-3" key={task.type}>
+                    <div className="w-44 shrink-0 text-sm">{task.type}</div>
+                    <div className="h-3 flex-1 rounded-full bg-muted">
+                      <div
+                        className="h-3 rounded-full bg-primary"
+                        style={{ width: `${task.percentage * 3}%` }}
+                      />
+                    </div>
+                    <span className="w-12 text-right font-mono text-sm">
+                      {task.count}
+                    </span>
+                    <Badge variant="outline">{task.percentage}%</Badge>
+                  </div>
+                ))}
+              </div>
+            </CardContent>
+          </Card>
         </TabsContent>
 
         <TabsContent className="space-y-6 pt-4" value="costs">

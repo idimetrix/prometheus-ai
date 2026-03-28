@@ -8,8 +8,9 @@ branding:
 
 inputs:
   task:
-    description: "Task description for the agent"
-    required: true
+    description: "Task description for the agent (optional when triggered by issue events)"
+    required: false
+    default: ""
   project-id:
     description: "Prometheus project ID"
     required: true
@@ -48,6 +49,14 @@ inputs:
     description: "Logging verbosity: debug, info, warn, error"
     required: false
     default: "info"
+  task-label:
+    description: "GitHub label that triggers the agent on issue events"
+    required: false
+    default: "prometheus"
+  max-credits:
+    description: "Maximum credits to spend per task"
+    required: false
+    default: "10"
 
 outputs:
   task-id:

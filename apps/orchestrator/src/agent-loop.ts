@@ -6,6 +6,11 @@ import { withSpan } from "@prometheus/telemetry";
 import type { AgentRole } from "@prometheus/types";
 import { generateId, projectBrainClient } from "@prometheus/utils";
 import type { ConfidenceResult } from "./confidence";
+import {
+  type DbProjectRule,
+  loadProjectContext,
+} from "./context/project-context-loader";
+import { buildSystemPromptSection } from "./context/system-prompt-builder";
 import { SessionMemory } from "./continuity/session-memory";
 import {
   createExecutionContext,
@@ -242,6 +247,13 @@ export class AgentLoop {
       agentRole
     );
 
+    // Load project context files (PROMETHEUS.md, CLAUDE.md, etc.) and merge
+    // with DB rules. Falls back gracefully to brain context on failure.
+    const projectContextText = await this.loadProjectContextFiles(
+      brainContext.projectSummary,
+      options?.workDir
+    );
+
     return createExecutionContext({
       sessionId: this.sessionId,
       projectId: this.projectId,
@@ -251,7 +263,7 @@ export class AgentLoop {
       taskDescription: enrichedDescription,
       sandboxId: this.sessionId,
       blueprintContent: brainContext.blueprintContent,
-      projectContext: brainContext.projectSummary,
+      projectContext: projectContextText,
       sprintState: brainContext.sprintState,
       recentCIResults: brainContext.recentCIResults,
       priorSessionContext:
@@ -263,6 +275,74 @@ export class AgentLoop {
         ...options,
       },
     });
+  }
+
+  /**
+   * Load project context from filesystem context files (PROMETHEUS.md,
+   * CLAUDE.md, AGENTS.md, .cursorrules, copilot-instructions.md) and
+   * merge with DB-stored project rules. Falls back to brainSummary if
+   * context loading fails.
+   */
+  private async loadProjectContextFiles(
+    brainSummary: string | null,
+    workDir?: string
+  ): Promise<string | null> {
+    try {
+      const projectRoot = workDir ?? "/workspace";
+
+      // Load DB rules for this project
+      const dbRules = await this.loadDbProjectRules();
+
+      const parsedContext = loadProjectContext(projectRoot, dbRules);
+      const section = buildSystemPromptSection(parsedContext);
+
+      if (section.hasContext) {
+        // Combine brain summary with context file rules
+        const parts: string[] = [];
+        if (brainSummary) {
+          parts.push(brainSummary);
+        }
+        parts.push(section.content);
+        return parts.join("\n\n");
+      }
+
+      return brainSummary;
+    } catch (error) {
+      this.logger.warn(
+        { error: error instanceof Error ? error.message : String(error) },
+        "Failed to load project context files, falling back to brain summary"
+      );
+      return brainSummary;
+    }
+  }
+
+  /**
+   * Load enabled project rules from the database.
+   * Returns an empty array on failure (fault-tolerant).
+   */
+  private async loadDbProjectRules(): Promise<DbProjectRule[]> {
+    try {
+      const rules = await db.query.projectRules.findMany({
+        where: (fields, { and, eq }) =>
+          and(
+            eq(fields.projectId, this.projectId),
+            eq(fields.orgId, this.orgId),
+            eq(fields.enabled, true)
+          ),
+      });
+      return rules.map((r) => ({
+        type: r.type,
+        rule: r.rule,
+        enabled: r.enabled,
+        source: r.source,
+      }));
+    } catch (error) {
+      this.logger.warn(
+        { error: error instanceof Error ? error.message : String(error) },
+        "Failed to load DB project rules"
+      );
+      return [];
+    }
   }
 
   private async loadPriorContext(): Promise<{

@@ -1,0 +1,39 @@
+name: Prometheus AI
+description: AI-powered software engineering - automated issue resolution, code review, and PR creation
+url: https://prometheus.dev
+public: true
+
+default_events:
+  - issues
+  - pull_request
+  - pull_request_review
+  - pull_request_review_comment
+  - push
+  - check_run
+  - check_suite
+  - workflow_run
+  - installation
+
+default_permissions:
+  issues: write
+  pull_requests: write
+  contents: write
+  checks: write
+  statuses: write
+  metadata: read
+  actions: read
+
+# Webhook configuration
+webhook_url: https://api.prometheus.dev/webhooks/github-app
+webhook_secret: ${GITHUB_APP_WEBHOOK_SECRET}
+
+# Setup URL for post-install configuration
+setup_url: https://prometheus.dev/integrations/github/setup
+setup_on_update: true
+
+# Callback URL for OAuth flow
+callback_urls:
+  - https://api.prometheus.dev/oauth/github/callback
+
+# Request OAuth during installation
+request_oauth_on_install: true

@@ -29,9 +29,14 @@ import { generateId } from "@prometheus/utils";
 import { and, eq } from "drizzle-orm";
 import type { Context } from "hono";
 
+import { createCheckRun, updateCheckRun } from "../lib/github-app-client";
+
 const logger = createLogger("api:webhooks:github-handler");
 
 const GITHUB_WEBHOOK_SECRET = process.env.GITHUB_WEBHOOK_SECRET ?? "";
+const GITHUB_APP_INSTALLATION_ID = process.env.GITHUB_APP_INSTALLATION_ID
+  ? Number(process.env.GITHUB_APP_INSTALLATION_ID)
+  : 0;
 const PROMETHEUS_LABEL = "prometheus";
 const BOT_USERS = new Set([
   "prometheus-bot",
@@ -324,6 +329,96 @@ async function createWebhookTask(params: {
 }
 
 // ---------------------------------------------------------------------------
+// Check run helpers (GAP-023)
+// ---------------------------------------------------------------------------
+
+/**
+ * Create a GitHub check run when a task starts processing.
+ * Returns the check run ID if successful, null otherwise.
+ */
+async function createTaskCheckRun(params: {
+  headSha: string;
+  repoFullName: string;
+  taskId: string;
+  taskTitle: string;
+}): Promise<number | null> {
+  if (!GITHUB_APP_INSTALLATION_ID) {
+    return null;
+  }
+
+  return await createCheckRun({
+    installationId: GITHUB_APP_INSTALLATION_ID,
+    repoFullName: params.repoFullName,
+    headSha: params.headSha,
+    name: `Prometheus: ${params.taskTitle.slice(0, 60)}`,
+    status: "in_progress",
+    taskId: params.taskId,
+    title: params.taskTitle,
+    summary: `Prometheus AI is working on task \`${params.taskId}\`...`,
+  });
+}
+
+/**
+ * Update a check run when a task completes.
+ */
+async function completeTaskCheckRun(params: {
+  checkRunId: number;
+  conclusion: "success" | "failure";
+  repoFullName: string;
+  summary: string;
+  taskTitle: string;
+}): Promise<void> {
+  if (!GITHUB_APP_INSTALLATION_ID) {
+    return;
+  }
+
+  await updateCheckRun({
+    installationId: GITHUB_APP_INSTALLATION_ID,
+    repoFullName: params.repoFullName,
+    checkRunId: params.checkRunId,
+    status: "completed",
+    conclusion: params.conclusion,
+    title: params.taskTitle,
+    summary: params.summary,
+  });
+}
+
+/**
+ * Report task progress as a check run on a PR head commit.
+ * Called when a webhook-initiated task creates a check run, then updates
+ * it on completion.
+ */
+export async function reportTaskCheckRun(params: {
+  headSha: string;
+  repoFullName: string;
+  result: "success" | "failure";
+  summary: string;
+  taskId: string;
+  taskTitle: string;
+}): Promise<void> {
+  if (!GITHUB_APP_INSTALLATION_ID) {
+    return;
+  }
+
+  const checkRunId = await createTaskCheckRun({
+    headSha: params.headSha,
+    repoFullName: params.repoFullName,
+    taskId: params.taskId,
+    taskTitle: params.taskTitle,
+  });
+
+  if (checkRunId) {
+    await completeTaskCheckRun({
+      checkRunId,
+      repoFullName: params.repoFullName,
+      conclusion: params.result,
+      taskTitle: params.taskTitle,
+      summary: params.summary,
+    });
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Event handlers
 // ---------------------------------------------------------------------------
 
@@ -365,6 +460,14 @@ async function handlePullRequestOpened(
       prUrl: pr.html_url,
       repoFullName: payload.repository.full_name,
     },
+  });
+
+  // Create a check run on the PR head commit to track progress
+  await createTaskCheckRun({
+    headSha: pr.head.sha,
+    repoFullName: payload.repository.full_name,
+    taskId,
+    taskTitle: `Code Review: PR #${pr.number} — ${pr.title}`,
   });
 
   logger.info(

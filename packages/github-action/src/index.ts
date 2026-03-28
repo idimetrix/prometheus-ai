@@ -4,11 +4,94 @@ import { PrometheusApiClient } from "./api-client";
 
 const PR_NUMBER_RE = /\/pull\/(\d+)/;
 
+/**
+ * Extract a task description from a GitHub issue event payload.
+ * Returns the issue title + body, or null if the event is not an issue event.
+ */
+function extractTaskFromIssueEvent(
+  context: typeof github.context,
+  taskLabel: string
+): string | null {
+  const eventName = context.eventName;
+
+  if (eventName !== "issues") {
+    return null;
+  }
+
+  const payload = context.payload;
+  const action = payload.action;
+  const issue = payload.issue;
+
+  if (!issue) {
+    return null;
+  }
+
+  // Only trigger on issue opened or labeled
+  if (action !== "opened" && action !== "labeled") {
+    return null;
+  }
+
+  // Check if the issue has the required label
+  const labels = (issue.labels ?? []) as Array<{ name: string }>;
+  const hasLabel = labels.some(
+    (l) => l.name.toLowerCase() === taskLabel.toLowerCase()
+  );
+
+  if (!hasLabel) {
+    core.info(
+      `Issue #${issue.number} does not have the "${taskLabel}" label, skipping.`
+    );
+    return null;
+  }
+
+  const title = issue.title ?? "Untitled issue";
+  const body = issue.body ?? "";
+  return `GitHub Issue #${issue.number}: ${title}\n\n${body}`;
+}
+
+/**
+ * Comment on a GitHub issue with the result of the Prometheus agent task.
+ */
+async function commentOnIssue(
+  issueNumber: number,
+  message: string
+): Promise<void> {
+  const token = process.env.GITHUB_TOKEN;
+  if (!token) {
+    core.warning("GITHUB_TOKEN not available, cannot comment on issue.");
+    return;
+  }
+
+  const octokit = github.getOctokit(token);
+  const context = github.context;
+
+  await octokit.rest.issues.createComment({
+    owner: context.repo.owner,
+    repo: context.repo.repo,
+    issue_number: issueNumber,
+    body: message,
+  });
+}
+
 // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: GitHub Action entry point handles inputs, retries, polling, and summary generation
 async function run(): Promise<void> {
   try {
     // Read inputs
-    const task = core.getInput("task", { required: true });
+    const taskLabel = core.getInput("task-label") || "prometheus";
+    const context = github.context;
+
+    // Determine task description: from input or from issue event
+    const issueTask = extractTaskFromIssueEvent(context, taskLabel);
+    const inputTask = core.getInput("task");
+    const task = inputTask || issueTask;
+
+    if (!task) {
+      core.info(
+        "No task provided and no matching issue event detected. Skipping."
+      );
+      return;
+    }
+
     const projectId = core.getInput("project-id", { required: true });
     const apiKey = core.getInput("api-key", { required: true });
     const apiUrl = core.getInput("api-url") || "https://api.prometheus.dev";
@@ -37,7 +120,6 @@ async function run(): Promise<void> {
     core.info(`API URL: ${apiUrl}`);
 
     // Gather context from the GitHub event
-    const context = github.context;
     const repoFullName = `${context.repo.owner}/${context.repo.repo}`;
 
     // Create client and trigger task with retries
@@ -136,6 +218,35 @@ async function run(): Promise<void> {
           `Task ${result.status}: ${JSON.stringify(result.result)}`
         );
         return;
+      }
+
+      // If triggered from an issue event, comment back on the issue
+      const issuePayload = context.payload.issue as
+        | { number: number }
+        | undefined;
+      if (issuePayload) {
+        const prInfo = result.prUrl ? `\n\nPR: ${result.prUrl}` : "";
+        const statusEmoji =
+          result.status === "completed" ? "white_check_mark" : "x";
+        const comment = [
+          `## :${statusEmoji}: Prometheus Agent Result`,
+          "",
+          `**Status:** ${result.status}`,
+          `**Duration:** ${durationSec}s`,
+          `**Task ID:** \`${result.taskId}\``,
+          prInfo,
+        ].join("\n");
+
+        try {
+          await commentOnIssue(issuePayload.number, comment);
+          core.info(`Commented on issue #${issuePayload.number}`);
+        } catch (commentErr) {
+          const errMsg =
+            commentErr instanceof Error
+              ? commentErr.message
+              : String(commentErr);
+          core.warning(`Failed to comment on issue: ${errMsg}`);
+        }
       }
 
       core.info(`Task completed with status: ${result.status}`);

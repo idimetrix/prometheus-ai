@@ -1166,4 +1166,98 @@ slackWebhookApp.post("/actions", async (c) => {
   }
 });
 
+// ---------------------------------------------------------------------------
+// Slash command route: POST /webhooks/slack/commands
+// Handles /prometheus <task> — parses the task text, creates a task, and
+// responds with an ephemeral message.
+// ---------------------------------------------------------------------------
+
+slackWebhookApp.post("/commands", async (c) => {
+  const rawBody = await c.req.text();
+  const timestamp = c.req.header("x-slack-request-timestamp") ?? "";
+  const signature = c.req.header("x-slack-signature") ?? "";
+
+  if (!verifySlackSignature(rawBody, timestamp, signature)) {
+    logger.warn("Invalid Slack slash command signature");
+    return c.json({ error: "Invalid signature" }, 401);
+  }
+
+  try {
+    const formData = new URLSearchParams(rawBody);
+    const commandText = formData.get("text") ?? "";
+    const channelId = formData.get("channel_id") ?? "";
+    const userId = formData.get("user_id") ?? "";
+    const teamId = formData.get("team_id") ?? "";
+
+    if (!commandText.trim()) {
+      return c.json({
+        response_type: "ephemeral",
+        text: "Usage: `/prometheus <task description>` to submit a task to Prometheus AI",
+      });
+    }
+
+    const org = await resolveOrgFromTeam(teamId);
+    if (!org) {
+      return c.json({
+        response_type: "ephemeral",
+        text: "Your Slack workspace is not connected to Prometheus. Please connect via Settings > Integrations > Slack.",
+      });
+    }
+
+    const project = await findDefaultProject(org.id);
+    if (!project) {
+      return c.json({
+        response_type: "ephemeral",
+        text: "No project found for your organization. Please create a project first.",
+      });
+    }
+
+    const { taskId, sessionId } = await createTaskFromSlack({
+      channel: channelId,
+      title: `Slack command: ${commandText.slice(0, 80)}`,
+      description: commandText,
+      orgId: org.id,
+      planTier: org.planTier,
+      projectId: project.id,
+      slackUserId: userId,
+      userId: org.userId,
+    });
+
+    const sessionUrl = buildSessionUrl(sessionId);
+
+    return c.json({
+      response_type: "ephemeral",
+      text: `Task created: ${commandText.slice(0, 200)}`,
+      blocks: [
+        {
+          type: "section",
+          text: {
+            type: "mrkdwn",
+            text: `:rocket: *Task submitted:* ${commandText.slice(0, 200)}`,
+          },
+        },
+        {
+          type: "context",
+          elements: [
+            {
+              type: "mrkdwn",
+              text: `Task \`${taskId}\` | <${sessionUrl}|Track progress>`,
+            },
+          ],
+        },
+      ],
+    });
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    logger.error({ error: msg }, "Slack slash command handler failed");
+    return c.json(
+      {
+        response_type: "ephemeral",
+        text: "An error occurred processing your command. Please try again.",
+      },
+      500
+    );
+  }
+});
+
 export { slackWebhookApp };

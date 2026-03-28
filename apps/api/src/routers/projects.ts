@@ -1091,6 +1091,162 @@ export const projectsRouter = router({
       }),
   }),
 
+  contextFiles: router({
+    detect: protectedProcedure
+      .input(z.object({ projectId: z.string().min(1) }))
+      .query(async ({ input, ctx }) => {
+        await verifyProjectAccess(ctx.db, input.projectId, ctx.orgId);
+        // Read context files from the project's sandbox
+        const contextFileNames = [
+          "PROMETHEUS.md",
+          "CLAUDE.md",
+          "AGENTS.md",
+          ".cursorrules",
+          ".github/copilot-instructions.md",
+        ];
+        const detected: Array<{
+          fileName: string;
+          relativePath: string;
+          priority: number;
+          exists: boolean;
+        }> = [];
+        // Try to find the project's sandbox
+        const project = await ctx.db.query.projects.findFirst({
+          where: and(
+            eq(projects.id, input.projectId),
+            eq(projects.orgId, ctx.orgId)
+          ),
+        });
+        if (!project) {
+          throw new TRPCError({
+            code: "NOT_FOUND",
+            message: "Project not found",
+          });
+        }
+        const relativePaths = [
+          "PROMETHEUS.md",
+          "CLAUDE.md",
+          "AGENTS.md",
+          ".cursorrules",
+          ".github/copilot-instructions.md",
+        ];
+        for (let i = 0; i < contextFileNames.length; i++) {
+          const fileName = contextFileNames[i] as string;
+          const relativePath = relativePaths[i] as string;
+          // Check if file exists via sandbox exec (ls)
+          let exists = false;
+          try {
+            const result = await sandboxExec(
+              input.projectId,
+              `test -f /workspace/${relativePath} && echo "exists"`
+            );
+            exists = result.stdout.trim() === "exists";
+          } catch {
+            // Sandbox may not be available — mark as unknown
+          }
+          detected.push({
+            fileName,
+            relativePath,
+            priority: i + 1,
+            exists,
+          });
+        }
+        return { files: detected.filter((f) => f.exists) };
+      }),
+
+    get: protectedProcedure
+      .input(
+        z.object({
+          projectId: z.string().min(1),
+          fileName: z.string().min(1),
+        })
+      )
+      .query(async ({ input, ctx }) => {
+        await verifyProjectAccess(ctx.db, input.projectId, ctx.orgId);
+        // Map fileName to relative path
+        const pathMap: Record<string, string> = {
+          "PROMETHEUS.md": "PROMETHEUS.md",
+          "CLAUDE.md": "CLAUDE.md",
+          "AGENTS.md": "AGENTS.md",
+          ".cursorrules": ".cursorrules",
+          "copilot-instructions.md": ".github/copilot-instructions.md",
+        };
+        const relativePath = pathMap[input.fileName];
+        if (!relativePath) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: `Unsupported context file: ${input.fileName}`,
+          });
+        }
+        try {
+          const result = await sandboxExec(
+            input.projectId,
+            `cat /workspace/${relativePath}`
+          );
+          if (result.exitCode !== 0) {
+            return { content: null, exists: false, fileName: input.fileName };
+          }
+          return {
+            content: result.stdout,
+            exists: true,
+            fileName: input.fileName,
+          };
+        } catch {
+          return { content: null, exists: false, fileName: input.fileName };
+        }
+      }),
+
+    update: protectedProcedure
+      .input(
+        z.object({
+          projectId: z.string().min(1),
+          fileName: z.string().min(1),
+          content: z.string().min(1).max(50_000),
+        })
+      )
+      .mutation(async ({ input, ctx }) => {
+        await verifyProjectAccess(ctx.db, input.projectId, ctx.orgId);
+        await verifyProjectRole(
+          ctx.db,
+          input.projectId,
+          ctx.auth.userId,
+          "contributor"
+        );
+        const allowedFiles = new Set([
+          "PROMETHEUS.md",
+          "CLAUDE.md",
+          "AGENTS.md",
+          ".cursorrules",
+          "copilot-instructions.md",
+        ]);
+        if (!allowedFiles.has(input.fileName)) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: `Unsupported context file: ${input.fileName}`,
+          });
+        }
+        const pathMap: Record<string, string> = {
+          "PROMETHEUS.md": "PROMETHEUS.md",
+          "CLAUDE.md": "CLAUDE.md",
+          "AGENTS.md": "AGENTS.md",
+          ".cursorrules": ".cursorrules",
+          "copilot-instructions.md": ".github/copilot-instructions.md",
+        };
+        const relativePath = pathMap[input.fileName] ?? input.fileName;
+        // Ensure parent directory exists for nested paths
+        if (relativePath.includes("/")) {
+          const dir = relativePath.split("/").slice(0, -1).join("/");
+          await sandboxExec(input.projectId, `mkdir -p /workspace/${dir}`);
+        }
+        await sandboxWriteFile(input.projectId, relativePath, input.content);
+        logger.info(
+          { projectId: input.projectId, fileName: input.fileName },
+          "Context file updated"
+        );
+        return { success: true, fileName: input.fileName };
+      }),
+  }),
+
   share: protectedProcedure
     .input(shareProjectSchema)
     .mutation(async ({ input, ctx }) => {

@@ -1,6 +1,7 @@
 import { relations } from "drizzle-orm";
 import { projects } from "../projects/projects";
 import { sessions } from "../sessions/sessions";
+import { fleetBatches } from "./fleet-batches";
 import { taskSteps, tasks } from "./tasks";
 
 export const tasksRelations = relations(tasks, ({ one, many }) => ({
@@ -21,3 +22,5 @@ export const taskStepsRelations = relations(taskSteps, ({ one }) => ({
     references: [tasks.id],
   }),
 }));
+
+export const fleetBatchesRelations = relations(fleetBatches, () => ({}));

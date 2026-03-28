@@ -12,6 +12,11 @@ const logger = createLogger("sandbox:preview-proxy");
 const DEFAULT_DEV_SERVER_PORT = 3000;
 const PROXY_TIMEOUT_MS = 15_000;
 
+/** Allowed dev server ports users can proxy to */
+const ALLOWED_PORTS = new Set([
+  3000, 3001, 3002, 4000, 4200, 5173, 5174, 8000, 8080, 8888,
+]);
+
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
@@ -157,6 +162,89 @@ export function createPreviewProxyRoute(containerManager: ContainerManager) {
   });
 
   route.options("/preview/:sandboxId/*", () => {
+    return new Response(null, {
+      status: 204,
+      headers: {
+        ...CORS_HEADERS,
+        "Access-Control-Max-Age": "86400",
+      },
+    });
+  });
+
+  /**
+   * Multi-port preview proxy: /preview/:sandboxId/port/:port/*
+   * Allows proxying to any allowed dev server port inside the sandbox.
+   */
+  route.all("/preview/:sandboxId/port/:port/*", async (c) => {
+    const sandboxId = c.req.param("sandboxId");
+    const port = Number.parseInt(c.req.param("port"), 10);
+
+    if (!ALLOWED_PORTS.has(port)) {
+      return c.json(
+        {
+          error: "Port not allowed",
+          sandboxId,
+          allowedPorts: [...ALLOWED_PORTS],
+        },
+        { status: 400 }
+      );
+    }
+
+    const info = containerManager.getContainerInfo(sandboxId);
+    if (!info) {
+      return c.json({ error: "Sandbox not found", sandboxId }, { status: 503 });
+    }
+
+    const fullPath = c.req.path;
+    const portStr = String(port);
+    const portEnd = fullPath.indexOf(portStr) + portStr.length;
+    const proxyPath = fullPath.slice(portEnd) || "/";
+
+    const targetBase = `http://localhost:${port}`;
+    const targetUrl = new URL(proxyPath, targetBase);
+
+    const sourceUrl = new URL(c.req.url);
+    for (const [key, value] of sourceUrl.searchParams) {
+      targetUrl.searchParams.set(key, value);
+    }
+
+    logger.debug(
+      { sandboxId, port, proxyPath, target: targetUrl.toString() },
+      "Proxying multi-port preview request"
+    );
+
+    try {
+      const headers = buildForwardHeaders(c);
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), PROXY_TIMEOUT_MS);
+
+      const body =
+        c.req.method !== "GET" && c.req.method !== "HEAD"
+          ? await c.req.blob()
+          : undefined;
+
+      const response = await fetch(targetUrl.toString(), {
+        method: c.req.method,
+        headers,
+        body,
+        signal: controller.signal,
+        redirect: "manual",
+      });
+
+      clearTimeout(timeout);
+      const responseHeaders = addCorsHeaders(new Headers(response.headers));
+
+      return new Response(response.body, {
+        status: response.status,
+        statusText: response.statusText,
+        headers: responseHeaders,
+      });
+    } catch (error) {
+      return handleProxyError(error, sandboxId, proxyPath, c);
+    }
+  });
+
+  route.options("/preview/:sandboxId/port/:port/*", () => {
     return new Response(null, {
       status: 204,
       headers: {

@@ -13,6 +13,13 @@ export {
   RUST_AXUM_PRESET,
   type TechStackPresetExtended,
 } from "./presets/index";
+export type {
+  FileTree,
+  ScaffoldOptions,
+  ScaffoldResult,
+  TechStack,
+} from "./scaffolder";
+export { ProjectScaffolder } from "./scaffolder";
 export {
   aiMlSkillPack,
   devopsSkillPack,
@@ -27,6 +34,11 @@ export {
   matchScaffoldTemplate,
   type ScaffoldBlueprint,
 } from "./templates/index";
+export {
+  getScaffoldTemplate,
+  listAllScaffoldTemplates,
+  SCAFFOLD_TEMPLATES,
+} from "./templates/scaffold-templates";
 export type {
   WorkspaceDetectionResult,
   WorkspaceType,

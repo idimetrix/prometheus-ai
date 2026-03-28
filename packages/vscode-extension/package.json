@@ -104,6 +104,10 @@
       {
         "command": "prometheus.optimizeCode",
         "title": "Prometheus: Optimize"
+      },
+      {
+        "command": "prometheus.inlineEdit",
+        "title": "Prometheus: Inline Edit (Cmd+K)"
       }
     ],
     "viewsContainers": {
@@ -190,6 +194,18 @@
         "key": "ctrl+shift+p",
         "mac": "cmd+shift+p",
         "when": "prometheus.sessionActive"
+      },
+      {
+        "command": "prometheus.inlineEdit",
+        "key": "ctrl+k",
+        "mac": "cmd+k",
+        "when": "editorTextFocus"
+      },
+      {
+        "command": "prometheus.explainCode",
+        "key": "ctrl+shift+e",
+        "mac": "cmd+shift+e",
+        "when": "editorHasSelection"
       }
     ]
   },
